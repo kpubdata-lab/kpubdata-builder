@@ -1,25 +1,28 @@
-"""HTTP 서비스 인증 (#384 B2, #385 B3, ADR 0006/0009, #505).
+"""HTTP service authentication (#384 B2, #385 B3, ADR 0006/0009, #505).
 
-인증 결과를 ``bool`` 대신 ``Principal`` 로 반환해 "누가 요청했는가"를 보존한다 (B2).
-본 모듈은 두 인증 경로를 통합한다 (B3, ADR 0009):
+Returns ``Principal`` instead of ``bool`` to preserve "who made the request" (B2).
+This module unifies two authentication paths (B3, ADR 0009):
 
-- ``X-API-Key`` — 서비스 계정(스케줄 워크플로 등 Google 로그인 불가 소비자).
-- ``Authorization: Bearer <Google ID token>`` — 사람 사용자(Studio). JWKS로 오프라인 검증.
+- ``X-API-Key`` — service accounts (scheduled workflows, users who can't use Google login).
+- ``Authorization: Bearer <Google ID token>`` — human users (Studio). JWKS offline verification.
 
-``OIDC_ISSUER`` 미설정 시 Bearer 경로가 비활성화되어 기존 배포에 영향이 없다.
-설정 시 ``OIDC_AUDIENCE`` 가 필수이고 ``pyjwt`` extra가 설치되어야 한다 (fail-closed).
-IdP에 계정을 만든 사람은 누구나 로그인할 수 있는 것이 기본 정책이다 — 특정 조직/개인으로
-제한하려면 ``OIDC_ALLOWED_HD``/``OIDC_ALLOWED_SUBJECTS``/``OIDC_ALLOWED_EMAILS`` 를
-설정한다 (선택, deploy.md 참조).
+When ``OIDC_ISSUER`` is not set, the Bearer path is disabled, with no impact on
+existing deployments. When set, ``OIDC_AUDIENCE`` is required and the ``pyjwt``
+extra must be installed (fail-closed). By default, anyone who creates an IdP
+account can log in — to restrict to specific organizations/individuals, set
+``OIDC_ALLOWED_HD``/``OIDC_ALLOWED_SUBJECTS``/``OIDC_ALLOWED_EMAILS`` (optional,
+see deploy.md).
 
-``Principal`` 의 display 역할과 persistent ownership 역할을 분리한다 (#505):
+Separates ``Principal`` display role from persistent ownership role (#505):
 
-- ``identifier``/``label`` — 사람이 읽는 표시용 라벨이자 기존(#388/#389) ``created_by``와의
-  하위 호환 비교에 쓰인다. OIDC의 경우 로그 노출 최소화를 위해 이미 ``sub`` 앞 8자만
-  담아왔다 — 이 필드는 트렁케이션이 있어 단독으로는 충돌 방지를 보장하지 않는다.
-- ``owner_id`` — ``compute_owner_id()`` 로 계산되는 canonical하고 stable한 persistent
-  owner identity. OIDC는 트렁케이션 없이 전체 issuer+subject를 해시해 충돌을 방지한다.
-  신규 리소스의 ownership 판정은 이 필드를 우선 사용해야 한다(``principal_owns()`` 참조).
+- ``identifier``/``label`` — human-readable display label, used for backward
+  compatibility with prior (#388/#389) ``created_by``. For OIDC, only the first
+  8 chars of ``sub`` are recorded to minimize log exposure — this field has
+  truncation, so it alone doesn't guarantee collision prevention.
+- ``owner_id`` — canonical, stable, persistent owner identity computed by
+  ``compute_owner_id()``. OIDC hashes the full issuer+subject without truncation
+  to prevent collisions. New resource ownership checks should prioritize this
+  field (see ``principal_owns()``).
 """
 
 from __future__ import annotations
@@ -32,12 +35,12 @@ import threading
 import time
 from dataclasses import dataclass
 
-# 서버가 요구하는 API 키. 환경변수로만 주입한다 (#248).
-# ADR 0006에 따라 fail-closed로 동작: dev-mode 미설정 + API 키 미설정 시 인증을 거부한다.
+# Server-required API key. Injected via environment variable only (#248).
+# Per ADR 0006, operates fail-closed: missing dev-mode and missing API key → deny auth.
 _API_KEY_ENV = "KPUBDATA_BUILDER_API_KEY"
 _DEV_MODE_ENV = "KPUBDATA_BUILDER_DEV_MODE"
 
-# OIDC 설정 (ADR 0009, #385). OIDC_ISSUER 미설정 시 Bearer 비활성.
+# OIDC configuration (ADR 0009, #385). Bearer path disabled when OIDC_ISSUER not set.
 _OIDC_ISSUER_ENV = "OIDC_ISSUER"
 _OIDC_AUDIENCE_ENV = "OIDC_AUDIENCE"
 _OIDC_JWKS_URL_ENV = "OIDC_JWKS_URL"
@@ -48,23 +51,23 @@ _TOKEN_LEEWAY_SECONDS = 60
 _OIDC_ALLOWED_HD_ENV = "OIDC_ALLOWED_HD"
 _OIDC_ALLOWED_SUBJECTS_ENV = "OIDC_ALLOWED_SUBJECTS"
 _OIDC_ALLOWED_EMAILS_ENV = "OIDC_ALLOWED_EMAILS"
-#: ownership.enforce_ownership() 이 읽는 이름. 여기서 import 하면 순환이므로
-#: 이름만 둔다 — 두 곳이 갈리면 test_env_var_contract 가 잡는다.
+#: Name read by ownership.enforce_ownership(). Import here would cause circularity,
+#: so we store only the name — test_env_var_contract catches divergence.
 _ENFORCE_OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
-# 허용 목록을 "필수"로 되돌리는 스위치. 미설정이면 공개 가입(제한 없음)이 기본이다.
+# Switch to make allowlist "required", undoing defaults to open registration (no restrictions).
 _OIDC_REQUIRE_ALLOWLIST_ENV = "OIDC_LEGACY_REQUIRE_ALLOWLIST"
 
-#: 관리자로 대우할 ``<issuer>|<sub>`` 목록 (#679). 쉼표 구분.
+#: List of admin subjects as ``<issuer>|<sub>`` (#679). Comma-separated.
 #:
-#: **issuer 를 반드시 함께 적는다.** OIDC ``sub`` 는 issuer 안에서만 유일하고,
-#: ``OIDC_ISSUER`` 는 쉼표 구분 복수를 허용한다. ``sub`` 만 비교하면 issuer B 의
-#: 계정이 issuer A 를 대상으로 지정한 관리자 항목에 걸린다. 그래서 owner_id 도
-#: ``compute_owner_id("oidc", issuer, sub)`` 로 둘을 묶는다 — 관리자 판정이 그보다
-#: 느슨하면 신원 모델이 두 갈래가 된다.
+#: **Always include issuer.** OIDC ``sub`` is unique only within its issuer, and
+#: ``OIDC_ISSUER`` allows comma-separated multiple issuers. Comparing only ``sub``
+#: would match an account from issuer B against an admin entry targeting issuer A.
+#: So ``owner_id`` also uses ``compute_owner_id("oidc", issuer, sub)`` to bind both —
+#: if admin checking is looser, the identity model splits in two.
 #:
-#: 관리자는 **설정으로만** 지정한다. 런타임에 API 로 관리자를 늘릴 수 있으면
-#: 관리자 하나가 탈취됐을 때 되돌릴 방법이 없다 — 설정 파일과 재시작이
-#: 되돌리는 경로다.
+#: Admins are **configured only.** If we could add admins via API at runtime, there'd
+#: be no way to roll back when a single admin is compromised — config file and restart
+#: are the rollback path.
 _ADMIN_SUBJECTS_ENV = "KPUBDATA_BUILDER_ADMIN_SUBJECTS"
 
 _logger = logging.getLogger(__name__)
@@ -72,54 +75,55 @@ _logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Principal:
-    """인증된 요청 주체 (#384, #505).
+    """Authenticated request principal (#384, #505).
 
-    인가(C1/C2/#505)에서 run 소유권 판단에 쓰인다. ``kind`` 는 확장 가능 —
-    ``'dev'``(로컬 개발), ``'service'``(X-API-Key), ``'oidc'``(Bearer, ADR 0009).
-    식별자는 민감 값(원본 API 키 등)을 담지 않는다 — manifest created_by 등에는
-    안전한 라벨(``apikey:<name>``)만 쓴다.
+    Used in authorization (C1/C2/#505) to determine run ownership. ``kind`` is
+    extensible — ``'dev'`` (local development), ``'service'`` (X-API-Key),
+    ``'oidc'`` (Bearer, ADR 0009). Identifiers don't hold sensitive values
+    (raw API keys, etc.) — only safe labels (``apikey:<name>``) are used in
+    manifest created_by, etc.
 
-    ``identifier``/``label`` 은 display/legacy 호환용이고, ``owner_id`` 가 신규
-    persistent ownership 판정에 쓰이는 canonical stable identity다(#505). 이 둘의
-    역할은 의도적으로 분리되어 있다 — display label(예: 향후 프로필 이름/이메일
-    노출)이 바뀌어도 ``owner_id`` 는 바뀌지 않아야 한다.
+    ``identifier``/``label`` are for display/legacy compatibility; ``owner_id``
+    is the canonical, stable identity for new persistent ownership checks
+    (#505). These roles are intentionally separated — even if the display label
+    (e.g., future profile name/email) changes, ``owner_id`` must not.
     """
 
     kind: str
     identifier: str | None = None
     owner_id: str | None = None
-    #: 관리 작업(#679)을 할 수 있는가. ``kind`` 로 유추하지 않는다 — 예전에는
-    #: ``kind in ("dev", "service")`` 가 곧 관리자였고, 그래서 **관리자가 되는
-    #: 유일한 방법이 OIDC 로 로그인하지 않는 것**이었다. 역할을 값으로 들고
-    #: 있어야 OIDC 로 인증한 사람도 관리자가 될 수 있다.
+    #: Can perform admin actions (#679). Don't infer from ``kind`` — previously,
+    #: ``kind in ("dev", "service")`` automatically meant admin, so **the only way
+    #: to become admin was to not log in via OIDC**. By carrying the role as a value,
+    #: OIDC-authenticated users can also be admins.
     is_admin: bool = False
 
     @property
     def label(self) -> str:
-        """manifest created_by용 display 라벨 (#388).
+        """Display label for manifest created_by (#388).
 
-        하위 호환을 위해 유지된다 — legacy(#505 이전) 리소스의 ownership fallback
-        비교에 쓰인다(``principal_owns()`` 참조). 신규 ownership 판정에는 대신
-        ``owner_id`` 를 우선 사용해야 한다.
+        Retained for backward compatibility — used in ownership fallback checks
+        for legacy (#505 era) resources (see ``principal_owns()``). For new
+        ownership checks, prioritize ``owner_id`` instead.
         """
         return f"{self.kind}:{self.identifier}" if self.identifier else self.kind
 
 
 def compute_owner_id(kind: str, *material: str) -> str:
-    """canonical하고 stable한 persistent owner identity를 계산한다 (#505).
+    """Compute canonical, stable persistent owner identity (#505).
 
-    해시 입력은 모든 필드(kind와 material 각 부분)를 8바이트 big-endian 길이
-    프리픽스로 프레이밍해 이어 붙인다 — 구분자 기반 결합(``"\\0"`` 등)은 필드
-    값에 구분자가 포함되면 충돌할 수 있어(예: issuer="a", sub="b\\0c" vs
-    issuer="a\\0b", sub="c") #505의 concatenation collision 방지 보장을 깨뜨릴
-    수 있으므로 쓰지 않는다. 길이 프리픽스는 필드 경계를 결정적으로 고정해
-    모호성이 없다.
+    Hash input frames all fields (kind and each material part) with 8-byte
+    big-endian length prefix and concatenates them — delimiter-based joining
+    (``"\\0"``, etc.) is not used because if a delimiter appears in a field value,
+    collisions can occur (e.g., issuer="a", sub="b\\0c" vs issuer="a\\0b",
+    sub="c"), breaking the concatenation collision prevention guarantee in #505.
+    Length prefixes deterministically fix field boundaries with no ambiguity.
 
-    ``kind`` 을 해시 입력에 포함시켜(principal 종류가 다르면 동일 material이라도
-    절대 같은 owner_id가 나오지 않게 한다 — domain separation).
+    Include ``kind`` in the hash input (if principal kinds differ, same material
+    never produces the same owner_id — domain separation).
 
-    반환값은 SHA-256 hex digest 기반이라 원본 claim(sub/email 등)을 복원할 수
-    없다 — owner ID를 로그/저장소에 남겨도 raw claim이 노출되지 않는다.
+    Return value is SHA-256 hex digest-based, so original claims (sub/email, etc.)
+    cannot be recovered — owner IDs can be logged/stored without exposing raw claims.
     """
     framed = b"".join(_frame_owner_id_field(value) for value in (kind, *material))
     digest = hashlib.sha256(framed).hexdigest()
@@ -132,19 +136,18 @@ def _frame_owner_id_field(value: str) -> bytes:
 
 
 def principal_owns(*, created_by: str | None, owner_id: str | None, principal: Principal) -> bool:
-    """레코드가 ``principal`` 소유인지 판정하는 단일 canonical 구현이다 (#505).
+    """Canonical single implementation checking if a record is owned by ``principal`` (#505).
 
-    ``/query``, ``/builds``, dataset/stage/quality 조회 등 모든 ownership
-    consumer가 이 함수를 공유한다 — endpoint마다 비교 로직을 중복 구현하지 않는다.
+    All ownership consumers — ``/query``, ``/builds``, dataset/stage/quality queries,
+    etc. — share this function. Don't duplicate comparison logic per endpoint.
 
-    - 레코드와 principal 양쪽 모두 stable ``owner_id`` 가 있으면(신규 경로) 이를
-      우선 비교한다 — OIDC subject 트렁케이션 충돌 없이 안전하다.
-    - 둘 중 하나라도 ``owner_id`` 가 없으면(legacy 레코드 또는 owner_id 미설정
-      principal) 기존 ``created_by``/``label`` 비교로 폴백한다(#388/#389 이후
-      하위 호환 — 기존 리소스를 즉시 접근 불가로 만들지 않는다).
-    - 두 값이 모두 없으면(예: created_by가 아예 기록되지 않은 legacy 레코드)
-      비교는 항상 실패한다 — "owner 정보 없음 = 누구나 접근 가능"으로 취급하지
-      않는다(fail-closed).
+    - If both record and principal have stable ``owner_id`` (new path), compare these
+      first — safe without OIDC subject truncation collisions.
+    - If either lacks ``owner_id`` (legacy record or principal without owner_id),
+      fall back to existing ``created_by``/``label`` comparison (#388/#389 after
+      backward compatibility — don't make existing resources inaccessible immediately).
+    - If both values are missing (e.g., legacy record never recorded created_by),
+      comparison always fails — "no owner info = anyone can access" is not fail-closed.
     """
     if owner_id is not None and principal.owner_id is not None:
         return owner_id == principal.owner_id
@@ -153,10 +156,10 @@ def principal_owns(*, created_by: str | None, owner_id: str | None, principal: P
 
 @dataclass(frozen=True)
 class AuthError:
-    """인증 실패. ``status_code`` 로 dispatch 응답 코드를 결정한다 (#385).
+    """Authentication failure. ``status_code`` determines dispatch response (#385).
 
-    기본 401(인증 거부). JWKS 조회 실패 등 일시적 인프라 장애는 503로 구분해
-    클라이언트가 재시도를 구분하게 한다.
+    Default 401 (auth denied). Temporary infrastructure failures like JWKS
+    fetches are distinguished as 503, so clients can tell retryable errors apart.
     """
 
     reason: str
@@ -164,33 +167,34 @@ class AuthError:
 
 
 def _is_dev_mode() -> bool:
-    """로컬 개발 모드인지 확인한다 (#321, ADR 0006).
+    """Check if in local development mode (#321, ADR 0006).
 
-    KPUBDATA_BUILDER_DEV_MODE가 'true'/'1'이면 dev-mode로 간주하여 인증을 생략한다.
-    프로덕션 배포에서는 이 환경변수를 설정하지 않아야 한다.
+    If KPUBDATA_BUILDER_DEV_MODE is 'true'/'1', skip authentication.
+    Production deployments must not set this variable.
     """
     return os.environ.get(_DEV_MODE_ENV, "").lower() in ("true", "1")
 
 
 def _verify_api_key(api_key: str | None) -> Principal | AuthError:
-    """X-API-Key 경로 (B2). fail-closed: 키 미설정·불일치 → AuthError.
+    """X-API-Key path (B2). Fail-closed: missing/mismatched key → AuthError.
 
-    현재 구성은 인스턴스당 단일 공유 정적 키만 지원한다(ADR 0006) — 키 값 자체를
-    owner_id 소재로 쓰지 않는다(원문 secret이 owner_id/로그에 노출되면 안 됨,
-    #505). 고정된 이름표("default")를 해시해 하나의 stable service owner
-    identity를 부여한다.
+    Current config supports only a single shared static key per instance (ADR 0006) —
+    don't use the key value itself as owner_id source (raw secret must not appear in
+    owner_id/logs, #505). Hash a fixed label ("default") to grant one stable service
+    owner identity.
     """
     expected = os.environ.get(_API_KEY_ENV)
     if not expected:
         return AuthError(reason="api key not configured")
-    # compare_digest 는 str 두 개를 받을 때 ASCII 만 허용한다 — 비ASCII 헤더
-    # 하나가 TypeError 로 500 을 만들고, 그 경로는 인증 실패로 기록되지도 않아
-    # 스로틀을 그냥 지나친다. 바이트로 비교하면 그런 입력도 평범한 불일치다.
+    # compare_digest only accepts ASCII when given two strings — a single non-ASCII
+    # header causes TypeError → 500, and that path isn't even logged as auth failure,
+    # slipping past throttle. Byte comparison treats such input as ordinary mismatch.
     if api_key is not None and hmac.compare_digest(
         api_key.encode("utf-8"), expected.encode("utf-8")
     ):
-        # service principal 은 계속 관리자다 — 예전 ``kind in ("dev", "service")``
-        # 게이트와 같은 권한이다(#679). 달라진 것은 그 사실이 값으로 보인다는 것.
+        # service principal remains admin — same authority as the old
+        # ``kind in ("dev", "service")`` gate (#679). The difference is that
+        # this fact is now visible as a value.
         return Principal(
             kind="service",
             owner_id=compute_owner_id("service", "default"),
@@ -200,11 +204,11 @@ def _verify_api_key(api_key: str | None) -> Principal | AuthError:
 
 
 # --- OIDC Bearer (B3, ADR 0009) -------------------------------------------------
-# JWKS 클라이언트는 지연 생성·캐시한다. OIDC 비활성 시 None.
+# JWKS client created lazily and cached. None when OIDC disabled.
 _jwks_client: object | None = None
 _jwks_url_cached: str | None = None
 _jwks_lock = threading.Lock()
-# OIDC discovery 결과 캐시: issuer → (jwks_uri, expires_at). #435.
+# OIDC discovery result cache: issuer → (jwks_uri, expires_at). #435.
 _discovery_cache: dict[str, tuple[str, float]] = {}
 
 
@@ -214,11 +218,11 @@ def _oidc_issuers() -> list[str]:
 
 
 def _discover_jwks_uri(issuer: str) -> str:
-    """OIDC discovery 문서에서 jwks_uri를 읽는다 (RFC 8414, #435).
+    """Fetch jwks_uri from OIDC discovery document (RFC 8414, #435).
 
-    issuer의 ``/.well-known/openid-configuration``을 조회해 ``jwks_uri`` 필드를
-    반환한다. Google/Auth0/Keycloak 등 IdP마다 JWKS 경로가 달라 경로 추정이
-    깨지던 기존 동작을 대체한다. 결과는 TTL 캐시된다.
+    Query issuer's ``/.well-known/openid-configuration`` and return the ``jwks_uri``
+    field. JWKS paths differ by IdP (Google, Auth0, Keycloak, etc.), so prior
+    guessing of the path broke. Result is TTL-cached.
     """
     import json
     import urllib.request
@@ -243,11 +247,11 @@ def _discover_jwks_uri(issuer: str) -> str:
 
 
 def _oidc_jwks_url() -> str:
-    """JWKS URL. OIDC_JWKS_URL 명시 시 discovery를 건너뛴다 (#435).
+    """JWKS URL. When OIDC_JWKS_URL is explicit, skip discovery (#435).
 
-    명시 없으면 첫 issuer의 discovery 문서에서 jwks_uri를 읽는다 (RFC 8414).
-    기존 ``issuer + /.well-known/jwks.json`` 추정은 Google이 저 경로를 쓰지
-    않아 404 → 503 실패를 일으켰다.
+    Without it, read jwks_uri from the first issuer's discovery document (RFC 8414).
+    Prior ``issuer + /.well-known/jwks.json`` guessing caused 404 → 503 failures
+    because Google doesn't use that path.
     """
     explicit = os.environ.get(_OIDC_JWKS_URL_ENV, "").strip()
     if explicit:
@@ -259,10 +263,11 @@ def _oidc_jwks_url() -> str:
 
 
 def _oidc_allowlists() -> tuple[set[str], set[str], set[str]]:
-    """(hd, subjects, emails) 허용 목록 — 설정된 경우에만 적용되는 선택적 제한 (#386).
+    """(hd, subjects, emails) allowlists — optional restrictions applied only when set (#386).
 
-    기본 정책은 공개 가입이다(IdP에 계정이 있으면 누구나 로그인). 특정 도메인/계정만
-    허용하는 제한 배포에서만 이 목록을 설정하고, 그때는 하나라도 매칭돼야 통과한다.
+    Default policy is open registration (anyone with IdP account can log in). Only
+    restricted deployments allowing specific domains/accounts set these lists,
+    and when set, at least one must match to pass.
     """
 
     def _parse(env_name: str) -> set[str]:
@@ -277,11 +282,12 @@ def _oidc_allowlists() -> tuple[set[str], set[str], set[str]]:
 
 
 def _admin_identities() -> set[tuple[str, str]]:
-    """관리자로 대우할 ``(issuer, sub)`` 집합 (#679). 미설정이면 빈 집합.
+    """Set of (issuer, sub) to treat as admins (#679). Empty set if not configured.
 
-    ``issuer|sub`` 형식만 받는다. issuer 가 빠진 항목은 **조용히 무시하지 않고
-    경고를 남기고 버린다** — 관리자 권한 부여가 오타 때문에 조용히 사라지는 것과
-    오타 때문에 조용히 생기는 것 둘 다 피해야 한다.
+    Only accepts ``issuer|sub`` format. Entries missing issuer are **not silently
+    ignored; a warning is logged and they're discarded** — prevent both silent
+    loss of admin rights due to typo and silent accidental granting of admin
+    rights due to typo.
     """
     raw = os.environ.get(_ADMIN_SUBJECTS_ENV, "")
     identities: set[tuple[str, str]] = set()
@@ -303,14 +309,14 @@ def _admin_identities() -> set[tuple[str, str]]:
 
 
 def validate_oidc_config() -> None:
-    """서버 기동 시 호출 (serve). OIDC 설정 오류면 RuntimeError (fail-closed, #385).
+    """Validate OIDC config at server startup. Raise RuntimeError on error (fail-closed, #385).
 
-    - OIDC_ISSUER 미설정 → no-op (Bearer 비활성, 기존 배포 무영향).
-    - OIDC_ISSUER 설정 + OIDC_AUDIENCE 미설정 → 거부.
-    - pyjwt 미설치 → 거부 (``auth`` extra 필요).
-    - 허용 목록(OIDC_ALLOWED_*)은 **선택**이다 — 공개 가입이 기본 정책이기 때문이다.
-      제한 배포에서 목록 누락을 기동 실패로 잡고 싶으면
-      ``OIDC_LEGACY_REQUIRE_ALLOWLIST=true`` 를 설정한다.
+    - OIDC_ISSUER not set → no-op (Bearer disabled, no impact on existing deployments).
+    - OIDC_ISSUER set + OIDC_AUDIENCE not set → reject.
+    - pyjwt not installed → reject (``auth`` extra required).
+    - Allowlists (OIDC_ALLOWED_*) are **optional** — open registration is the default policy.
+      Restricted deployments wanting to fail on missing allowlist should set
+      ``OIDC_LEGACY_REQUIRE_ALLOWLIST=true``.
     """
     if not _oidc_issuers():
         return
@@ -321,11 +327,12 @@ def validate_oidc_config() -> None:
         )
     try:
         import jwt  # noqa: F401
-    except ImportError as e:  # pragma: no cover - dev 환경에서 extra 누락 시
+    except ImportError as e:  # pragma: no cover
         raise RuntimeError(
             "OIDC is enabled but pyjwt is not installed; install with: uv sync --extra auth"
         ) from e
-    # 허용 목록은 선택이다(공개 가입이 기본). 제한 배포만 이 스위치로 필수화한다.
+    # Allowlists are optional (open registration by default). Only restricted
+    # deployments make them mandatory via this switch.
     hd, subs, emails = _oidc_allowlists()
     open_signup = not (hd or subs or emails)
     if open_signup and os.environ.get(_OIDC_REQUIRE_ALLOWLIST_ENV) == "true":
@@ -335,10 +342,10 @@ def validate_oidc_config() -> None:
             f"{_OIDC_REQUIRE_ALLOWLIST_ENV}=true; refusing to start "
             "(fail-closed, ADR 0009, #386)."
         )
-    # 두 기본값이 각각은 의도된 것이지만, 겹치면 "아무 Google 계정이나 로그인해
-    # 모든 run 과 query 에 접근한다" 가 된다. 둘 다 기본값이라 아무도 그 조합을
-    # 고른 적이 없고, 지금까지는 기동 로그에도 흔적이 없었다. 거부하지는 않는다 —
-    # 단일 사용자 배포에서는 정상적인 구성이다.
+    # These defaults are each intentional individually, but together they mean
+    # "any Google account can log in and access all runs and queries." No one has
+    # knowingly chosen this combination, and it left no trace in startup logs until
+    # now. We don't reject it — single-user deployments operate this way normally.
     if open_signup and os.environ.get(_ENFORCE_OWNERSHIP_ENV, "").lower() not in ("true", "1"):
         _logger.warning(
             "OIDC signup is open (no OIDC_ALLOWED_HD/SUBJECTS/EMAILS) and %s is off: "
@@ -350,16 +357,18 @@ def validate_oidc_config() -> None:
 
 
 def validate_dev_mode() -> None:
-    """서버 기동 시 호출 (serve). dev-mode의 운영 배포 사고를 막는다.
+    """Called at server startup (serve). Prevent production accidents from dev-mode.
 
-    dev-mode는 ``authenticate()`` 의 첫 분기로, API 키도 Bearer 토큰도 검사하지 않고
-    모든 요청을 통과시킨다 (#321, ADR 0006). 로컬 개발 전용이므로:
+    Dev-mode is the first branch of ``authenticate()``, skipping API key and Bearer
+    token checks. Pass all requests without authentication (#321, ADR 0006). Local
+    development only:
 
-    - dev-mode가 켜져 있으면 기동 로그에 경고를 남긴다 — 서비스가 무인증으로 열려
-      있다는 사실이 로그만 봐도 드러나야 한다.
-    - dev-mode와 OIDC 설정이 동시에 있으면 기동을 거부한다. 사용자 인증을 구성해두고
-      인증을 통째로 우회하는 것은 어떤 환경에서도 의도일 수 없으며, 운영 배포에
-      dev 플래그가 남아 있는 전형적인 사고 형태다 (fail-closed).
+    - If dev-mode is enabled, log a warning at startup - the fact that service is
+      unauthenticated must be visible just from logs.
+    - If both dev-mode and OIDC are configured, fail to start. Configuring user
+      authentication and then bypassing it entirely is never intentional in any
+      environment; it is a classic production accident when a dev flag is left in
+      (fail-closed).
     """
     if not _is_dev_mode():
         return
@@ -380,7 +389,7 @@ def validate_dev_mode() -> None:
 
 
 def _get_jwks_client() -> object:
-    """PyJWKClient 를 지연 생성·캐시한다 (thread-safe)."""
+    """Create and cache PyJWKClient lazily (thread-safe)."""
     global _jwks_client, _jwks_url_cached
     with _jwks_lock:
         url = _oidc_jwks_url()
@@ -393,23 +402,23 @@ def _get_jwks_client() -> object:
     return _jwks_client
 
 
-#: PyJWT 가 "JWKS 에 이 kid 가 없다" 를 알릴 때 쓰는 문구. 예외 타입이 하나뿐이라
-#: 메시지로 가를 수밖에 없다 — 못 알아보면 기존처럼 503 이므로 안전한 쪽으로 진다.
+#: Text PyJWT uses when "this kid not in JWKS". Only one exception type, so we
+#: must distinguish by message — if unrecognized, fail safe with 503 like before.
 _UNKNOWN_KEY_MARKERS = ("unable to find a signing key", "no matching key")
 
 
 def _is_unknown_signing_key(exc: Exception) -> bool:
-    """JWKS 는 받았는데 그 안에 이 토큰의 kid 가 없는 경우인지 판정한다."""
+    """Check if JWKS was fetched but doesn't contain this token's kid."""
     message = str(exc).casefold()
     return any(marker in message for marker in _UNKNOWN_KEY_MARKERS)
 
 
 def _verify_bearer_token(token: str) -> Principal | AuthError:
-    """Google ID token을 JWKS로 오프라인 검증한다 (#385, ADR 0009).
+    """Offline verify Google ID token via JWKS (#385, ADR 0009).
 
-    - RS256 고정 (alg:none / HS* 거부).
-    - iss/aud/exp/nbf/iat 검증(60s leeway), email_verified 강제.
-    - JWKS 조회 실패 → 503(401이 아님, 일시적 인프라 장애).
+    - RS256 fixed (reject alg:none / HS*).
+    - Verify iss/aud/exp/nbf/iat (60s leeway), require email_verified.
+    - JWKS fetch failure → 503 (not 401; temporary infrastructure fault).
     """
     import jwt
     from jwt import PyJWKClientError
@@ -418,12 +427,12 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
         client = _get_jwks_client()
         signing_key = client.get_signing_key_from_jwt(token)  # type: ignore[attr-defined]
     except PyJWKClientError as exc:
-        # "서명 키를 못 찾았다" 와 "JWKS 에 닿지 못했다" 는 전혀 다른 사건인데
-        # 하나로 묶여 있었다. 전자를 503 으로 돌려주면 (a) 스로틀이 그것을 세지
-        # 않고 — 503 은 클라이언트 잘못이 아니므로 일부러 제외한다 — (b)
-        # PyJWKClient 가 캐시 미스마다 JWKS 를 새로 받으므로, 임의의 kid 를 단
-        # 토큰을 반복해 보내면 요청마다 IdP 아웃바운드 한 건이 나간다.
-        # 알 수 없는 kid 는 그냥 잘못된 자격증명이다.
+        # "No signing key found" and "couldn't reach JWKS" are completely different
+        # events but were grouped. Returning 503 for the former means (a) throttle
+        # won't count it — 503 is client-agnostic, deliberately excluded — (b)
+        # PyJWKClient fetches JWKS on each cache miss, so arbitrary kid means
+        # repeated requests to send the token triggers one IdP outbound per request.
+        # Unknown kid is just invalid credentials.
         if _is_unknown_signing_key(exc):
             return AuthError(reason="invalid token")
         return AuthError(reason="auth service unavailable (jwks)", status_code=503)
@@ -452,7 +461,7 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     if not payload.get("email_verified", False):
         return AuthError(reason="email not verified")
 
-    # 허용 목록 검사 (Google 공개 IdP, #386). 설정된 목록 중 하나라도 매칭되면 통과.
+    # Allowlist check (Google public IdP, #386). If any configured list matches, pass.
     hd_set, sub_set, email_set = _oidc_allowlists()
     if hd_set or sub_set or email_set:
         matched = (
@@ -465,21 +474,23 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
 
     sub = str(payload.get("sub", ""))
     if not sub:
-        # jwt.decode의 require=["sub"]는 claim의 "존재"만 강제하고 값이 비어있지
-        # 않음을 보장하지 않는다. 빈 sub를 허용하면 서로 다른 토큰이 모두 같은
-        # (issuer, "") owner_id로 수렴해 ownership이 섞일 수 있다 (#505).
+        # jwt.decode's require=["sub"] only enforces claim "existence", not that value is
+        # non-empty. Allowing empty sub causes different tokens to converge on the same
+        # (issuer, "") owner_id, mixing up ownership (#505).
         return AuthError(reason="missing subject claim")
     issuer = str(payload.get("iss", ""))
-    # owner_id는 트렁케이션 없는 전체 issuer+subject를 해시한다(#505) — issuer와
-    # sub를 별도 필드로 전달해 구분자 없이도 충돌이 불가능하다(length-prefix
-    # framing). 아래 identifier(로그/표시용, sub 앞 8자)와 달리 충돌 방지가
-    # 필요한 persistent ownership 판정에 쓰인다.
+    # owner_id hashes full issuer+subject without truncation (#505) — passing issuer
+    # and sub as separate fields ensures unambiguous collision prevention without
+    # delimiters (length-prefix framing). Different from identifier below (log/display
+    # use, truncated to first 8 chars of sub) — collision prevention is needed for
+    # persistent ownership judgment.
     owner_id = compute_owner_id("oidc", issuer, sub)
-    # 로그 추적용 식별자로 sub 앞 8자만(전체 sub 노출 최소화).
+    # Trace identifier using first 8 chars of sub only (minimize raw sub exposure).
     #
-    # 관리자 판정은 **(issuer, 전체 sub)** 로 한다. sub 앞 8자로 비교하면 접두사가
-    # 같은 다른 계정이 관리자가 되고, issuer 를 빼면 다른 issuer 의 같은 sub 가
-    # 관리자가 된다 — owner_id 가 둘을 묶는 것과 같은 이유다.
+    # Admin judgment uses **(issuer, full sub)**. Comparing only first 8 chars of sub
+    # would let different accounts with matching prefix become admin, and omitting
+    # issuer would let the same sub from a different issuer become admin — same reason
+    # owner_id binds both.
     return Principal(
         kind="oidc",
         identifier=sub[:8],
@@ -491,18 +502,18 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
 def authenticate(
     *, api_key: str | None = None, bearer_token: str | None = None
 ) -> Principal | AuthError:
-    """요청을 인증해 ``Principal`` 또는 ``AuthError`` 를 반환한다 (B2/B3).
+    """Authenticate request, returning ``Principal`` or ``AuthError`` (B2/B3).
 
-    우선순위:
-    - dev-mode → ``Principal(kind='dev')`` (로컬 개발 편의).
-    - Bearer 토큰 + OIDC 활성 → Bearer 검증 (사람 사용자).
-    - 그 외 → X-API-Key 검증 (서비스 계정).
+    Priority:
+    - dev-mode → ``Principal(kind='dev')`` (local development convenience).
+    - Bearer token + OIDC enabled → Bearer verification (human user).
+    - Otherwise → X-API-Key verification (service account).
 
-    OIDC 비활성 시 Bearer는 무시되어 기존 배포에 영향이 없다.
+    When OIDC is disabled, Bearer is ignored with no impact on existing deployments.
     """
     if _is_dev_mode():
-        # dev principal owner_id는 실행마다 바뀌지 않는 고정 local 식별자다(#505) —
-        # OIDC principal의 owner_id는 항상 "oidc:" 로 시작해 namespace가 겹치지 않는다.
+        # dev principal owner_id is a fixed local identifier that doesn't change per run (#505) —
+        # OIDC principal owner_id always starts with "oidc:" so namespaces don't overlap.
         return Principal(kind="dev", owner_id=compute_owner_id("dev", "local"), is_admin=True)
 
     if bearer_token and _oidc_issuers():
