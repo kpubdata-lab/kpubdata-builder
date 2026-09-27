@@ -35,12 +35,21 @@ _audit_logger = logging.getLogger("kpubdata_builder.admin_audit")
 _audit_logger.setLevel(logging.INFO)
 
 
+#: 이 모듈이 직접 붙인 fallback handler. 붙인 적이 있으면 다시 붙지 않는다 —
+#: 여러 번 붙으면 같은 감사 기록이 여러 줄로 남아 개수를 셀 수 없게 된다.
+_fallback_handler: logging.Handler | None = None
+
+
 def _ensure_audit_output() -> None:
     """handler 가 아무 데도 없을 때만 stderr handler 를 하나 붙인다.
 
-    호출될 때마다 확인하지 않고 import 시 한 번만 한다 — 여러 번 붙으면 같은
-    감사 기록이 여러 줄로 남아 개수를 셀 수 없게 된다.
+    **import 시점이 아니라 첫 기록 시점에 판단한다.** import 는 배포가 logging
+    을 설정하기 전에 일어날 수 있고, 그때 미리 붙여 두면 나중에 배포가 root
+    handler 를 붙였을 때 같은 기록이 양쪽으로 두 번 나간다.
     """
+    global _fallback_handler
+    if _fallback_handler is not None:
+        return
     logger: logging.Logger | None = _audit_logger
     while logger is not None:
         if logger.handlers:
@@ -52,9 +61,7 @@ def _ensure_audit_output() -> None:
     handler.setLevel(logging.INFO)
     handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
     _audit_logger.addHandler(handler)
-
-
-_ensure_audit_output()
+    _fallback_handler = handler
 
 
 def record_admin_action(
@@ -71,6 +78,7 @@ def record_admin_action(
 
     ``target`` 은 자원 **식별자**다. 자원의 내용을 넣지 않는다.
     """
+    _ensure_audit_output()
     _audit_logger.info(
         "admin action: actor=%s owner_id=%s action=%s target=%s outcome=%s",
         principal.label,

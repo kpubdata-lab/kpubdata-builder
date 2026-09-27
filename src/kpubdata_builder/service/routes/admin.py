@@ -85,10 +85,14 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         # 종결된 job 에만 의미가 있으므로 진행 중이면 비워 둔다 — updated_at 을
         # 그대로 넣으면 "아직 도는 run 이 방금 끝났다" 로 읽힌다.
         finished = job.updated_at if job.status in _TERMINAL_JOB_STATUSES else None
+        # created_at 은 요청을 **접수한** 시각이다. 아직 실행 대기 중이라면
+        # 시작 시각이 아니므로 비워 둔다 — 그대로 넣으면 아직 돌지도 않은 job 이
+        # 이미 시작한 것으로 읽힌다.
+        started = None if job.status == "queued" else job.created_at
         rows[job.run_id] = {
             "run_id": job.run_id,
             "status": job.status,
-            "started_at": job.created_at,
+            "started_at": started,
             "finished_at": finished,
             "owner_id": job.owner_id,
         }

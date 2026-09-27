@@ -240,6 +240,14 @@ class TestInFlightRuns:
         assert live["finished_at"] is None
         assert live["started_at"] == "2026-09-27T01:00:00Z"
 
+    def test_a_queued_job_has_no_started_at(self) -> None:
+        """created_at is when the request was accepted, not when the run began."""
+        jobs = [_Job("run-wait", "queued", "2026-09-27T01:00:00Z", "2026-09-27T01:00:00Z", None)]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
+        waiting = next(r for r in response.body["runs"] if r["run_id"] == "run-wait")
+        assert waiting["started_at"] is None
+        assert waiting["finished_at"] is None
+
     def test_a_terminal_job_keeps_its_finished_at(self) -> None:
         jobs = [_Job("run-done", "failed", "2026-09-27T01:00:00Z", "2026-09-27T01:02:00Z", None)]
         response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
@@ -333,6 +341,7 @@ class TestAudit:
         nowhere even when the level allows it."""
         from kpubdata_builder.service import admin_audit
 
+        admin_audit._ensure_audit_output()
         logger: logging.Logger | None = admin_audit._audit_logger
         while logger is not None:
             if logger.handlers:
@@ -341,6 +350,26 @@ class TestAudit:
                 break
             logger = logger.parent
         pytest.fail("no handler anywhere on the audit logger chain")
+
+    def test_the_fallback_decision_is_deferred_to_the_first_record(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deciding at import time would attach a stderr handler before the host
+        had a chance to configure logging, and every record would then be
+        written twice."""
+        from kpubdata_builder.service import admin_audit
+
+        monkeypatch.setattr(admin_audit, "_fallback_handler", None)
+        monkeypatch.setattr(admin_audit._audit_logger, "handlers", [])
+        root = logging.getLogger()
+        monkeypatch.setattr(root, "handlers", [logging.NullHandler()])
+
+        record_admin_action(
+            Principal(kind="dev", owner_id="dev:x", is_admin=True), "admin.config.read"
+        )
+
+        assert admin_audit._audit_logger.handlers == []
+        assert admin_audit._fallback_handler is None
 
     def test_ensuring_output_twice_does_not_duplicate_handlers(self) -> None:
         """Duplicated handlers would write each audit record more than once,
