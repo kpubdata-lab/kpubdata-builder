@@ -23,6 +23,7 @@ Layout::
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -195,6 +196,42 @@ class SnapshotLayout:
         )
 
 
+def content_digest(directory: Path) -> str:
+    """A digest over every file in a snapshot directory, excluding the manifest.
+
+    The manifest is left out because it carries the digest: including it would make the
+    value depend on itself. Paths are relative and sorted, so the same bytes in the same
+    layout give the same digest on any machine.
+
+    Raises:
+        FileNotFoundError: The directory does not exist.
+    """
+    if not directory.is_dir():
+        raise FileNotFoundError(f"no such snapshot directory: {directory}")
+    digest = hashlib.sha256()
+    files = sorted(
+        path for path in directory.rglob("*") if path.is_file() and path.name != MANIFEST_FILENAME
+    )
+    for path in files:
+        digest.update(path.relative_to(directory).as_posix().encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(path.read_bytes())
+    return f"sha256:{digest.hexdigest()}"
+
+
+def is_empty(directory: Path) -> bool:
+    """Whether a snapshot directory holds no file other than its manifest.
+
+    An empty snapshot is a build that produced nothing and said it succeeded. Committing
+    one replaces a table with emptiness, which is worse than failing.
+    """
+    if not directory.is_dir():
+        return True
+    return not any(
+        path.is_file() and path.name != MANIFEST_FILENAME for path in directory.rglob("*")
+    )
+
+
 def _freeze(directory: Path) -> None:
     """Strip write permission from a whole directory tree.
 
@@ -236,6 +273,8 @@ def thaw(directory: Path) -> None:
 
 __all__ = [
     "MANIFEST_FILENAME",
+    "content_digest",
+    "is_empty",
     "SnapshotLayout",
     "SnapshotManifest",
     "thaw",
