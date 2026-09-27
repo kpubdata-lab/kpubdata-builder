@@ -1,129 +1,149 @@
 # AGENTS.md — kpubdata-builder
 
-> **프로젝트 관리·리뷰 정책의 정본은 [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 하나다.**
-> Epic · Issue · Priority · Review Level · Verification · Release 규칙은 그 문서를 따른다.
-> 이 문서에는 이 저장소 고유의 절차(빌드 명령, 디렉터리 규칙)만 남긴다.
-> 충돌하면 POLICY.md 가 우선한다.
+> **[POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md)
+> is the single canonical source for project-management and review policy.** Epic,
+> Issue, Priority, Review Level, Verification and Release rules come from there.
+> This file keeps only what is specific to this repository — build commands and
+> directory rules. POLICY.md wins any conflict.
 
-## 미션
+## Mission
 
-`kpubdata` 위에서 동작하는 오케스트레이션 및 산출물 파이프라인 계층으로 KPubData Builder를 구현한다.
+Implement KPubData Builder: the orchestration and artifact-pipeline layer that
+runs on top of `kpubdata`.
 
-## 기본 규칙
+## Ground rules
 
-- `kpubdata`의 provider 로직을 중복 구현하지 말 것
-- 빌드 스펙은 선언적으로 유지할 것
-- 마법 같은 동작보다 결정적 동작을 우선할 것
-- exporter는 플러그형으로 유지할 것
-- 모든 빌드는 반드시 manifest를 생성할 것
-- 검증은 빠르고 명확하게 실패해야 할 것
+- Do not reimplement `kpubdata`'s provider logic here.
+- Keep build specs declarative.
+- Prefer deterministic behaviour over anything that looks like magic.
+- Keep exporters pluggable.
+- Every build produces a manifest.
+- Validation fails fast and says why.
 
-## 언어 정책
+## Language policy
 
-> 정본은 [kpubdata ADR 0003](https://github.com/yeongseon/kpubdata/blob/main/docs/adrs/0003-language-policy.md)
-> 이다. 근거(한국 OSS 10곳 실측)와 기각한 대안이 거기 있다.
+> [kpubdata ADR 0003](https://github.com/yeongseon/kpubdata/blob/main/docs/adrs/0003-language-policy.md)
+> is canonical. The evidence (measurements across ten Korean OSS projects) and the
+> rejected alternatives are there.
 
-**제목은 영어, 본문은 자유.** 제목은 목록·검색·릴리스 노트에 나타난다.
+**Titles are English; bodies are free.** Titles show up in lists, searches and
+release notes.
 
-| 영역 | 언어 |
+| Area | Language |
 |---|---|
-| 코드 식별자·주석·docstring | 영어 |
-| 커밋 메시지 | 영어 |
-| **PR 제목** | 영어 (Conventional Commits) — squash merge 에서 커밋이 된다 |
-| CHANGELOG·릴리스 노트 | 영어 |
-| **README** | 한국어 기본 + 같은 파일에 영어 절 |
-| **이슈 제목** | 영어 |
-| 이슈 본문 | 한국어 또는 영어 |
-| PR 본문·리뷰 코멘트 | 한국어 또는 영어 |
-| 한국 도메인 문서 (활용신청·공공누리 절차) | 한국어 유지 |
-| 사용자에게 보이는 문자열 리터럴 | **대상 아님** (런타임 동작, 별도 결정) |
+| Code identifiers, comments, docstrings | English |
+| Commit messages | English |
+| **PR titles** | English (Conventional Commits) — a squash merge turns it into a commit |
+| CHANGELOG and release notes | English |
+| **Governance documents** (`AGENTS.md`, `CONTRIBUTING.md`) | English |
+| **README** | Korean first, with an English section in the same file |
+| **Issue titles** | English |
+| Issue bodies | Korean or English |
+| PR bodies and review comments | Korean or English |
+| Korean-domain documents (활용신청, 공공누리 procedures) | Korean |
+| User-visible string literals | **Out of scope** — runtime behaviour, decided separately |
 
-## 라벨 — 무엇을 붙이나
+Operating rules:
 
-POLICY 2.1 · 2.1.1 · 2.1.2 절이 정본이다. **표에 없는 라벨은 새로 만들지 않는다.**
-라벨을 추가하려면 `epic:governance` 를 거친다.
+- Answer an issue in the language it was written in.
+- Write `good first issue` in English, or in both.
+- **Do not let English block a contribution.** If a title is hard to write in
+  English, open it in Korean and say so — triage and review will sort it out.
 
-| 축 | 라벨 | 누가 |
+### Comments and docstrings are gated, not merely requested
+
+The rule above went unenforced long enough to accumulate 3,878 Korean comments and
+docstrings across 255 files. `scripts/check_korean_comments.py` is a ratchet: it
+freezes the current per-file count and fails only when a count grows, or when a
+file absent from the baseline has any. Write new code in English; the existing
+debt is paid down separately (#710).
+
+## Labels — what to apply
+
+POLICY sections 2.1, 2.1.1 and 2.1.2 are canonical. **Do not create a label that
+is not in the table below.** Adding one goes through `epic:governance`.
+
+| Axis | Labels | Who |
 |---|---|---|
-| Epic | `epic:trust` `epic:warehouse` `epic:governance` `epic:byok` `epic:policy` `epic:datasets` `epic:distribution` `epic:brand` `epic:onboarding` | 기존 라벨은 누구나. **새 `epic:*` 를 만드는 것은 사람만** |
-| Priority | `priority:critical` `priority:high` `priority:medium` `priority:low` | **High 이상 승격은 사람만** (POLICY 8) |
-| Review Level | `review:R0` ~ `review:R3` | 자동 부여 대상. **낮추는 것은 사람만** |
-| 유형 | `type:feat` `type:bug` `type:docs` `type:chore` `type:test` `type:refactor` | 누구나 |
-| 영역 | `area:*` | 누구나 |
+| Epic | `epic:trust` `epic:warehouse` `epic:governance` `epic:byok` `epic:policy` `epic:datasets` `epic:distribution` `epic:brand` `epic:onboarding` | Anyone may apply an existing label. **Only a person creates a new `epic:*`** |
+| Priority | `priority:critical` `priority:high` `priority:medium` `priority:low` | **Only a person promotes to High or above** (POLICY 8) |
+| Review Level | `review:R0` – `review:R3` | Assigned by path. **Only a person lowers one** |
+| Type | `type:feat` `type:bug` `type:docs` `type:chore` `type:test` `type:refactor` | Anyone |
+| Area | `area:*` | Anyone |
 
-새 이슈에는 **최소 `epic:*` 와 `type:*`** 를 붙인다. Priority 는 근거가 없으면
-붙이지 않는다 — POLICY 8 은 High 이상에 `Impact:` · `Blocks:` · `Evidence:` 를
-요구하고, 근거 없는 등급은 틀린 등급이다.
+A new issue carries **at least `epic:*` and `type:*`**. Leave Priority off when
+there is no evidence for it — POLICY 8 requires `Impact:`, `Blocks:` and
+`Evidence:` for High and above, and a rating without evidence is a wrong rating.
 
-에이전트가 하지 않는 것:
+What an agent does not do:
 
-- `priority:high` · `priority:critical` 로 올리기 (사람의 판단)
-- 새 `epic:*` 라벨 만들기
-- `review:*` 를 낮추기
-- Epic 이슈를 만들기 — Epic 은 라벨이다 (POLICY 4.1)
+- Promote to `priority:high` or `priority:critical` — that is a person's judgement.
+- Create a new `epic:*` label.
+- Lower a `review:*` level.
+- Create an Epic issue. Epic is a label (POLICY 4.1).
 
-`P0` / `P1` / `P2` 는 **폐기됐다.** 기계적으로 `priority:*` 로 치환하지 않는다 —
-POLICY 8 이 원점 재판정을 요구한다.
+`P0` / `P1` / `P2` are **retired.** Do not substitute them mechanically for
+`priority:*` — POLICY 8 requires a re-rating from zero, so that a wrong priority
+does not survive under a new name.
 
-제목에 `GOV-01:` · `WH-03:` 같은 접두사를 붙이지 않는다. 그것은 백로그 문서의
-일련번호이고 이슈의 이름이 아니다. 분류는 라벨이 한다.
+Do not prefix a title with `GOV-01:` or `WH-03:`. Those are serial numbers from a
+backlog document, not the issue's name. Labels do the classifying.
 
-- 영어로 올라온 이슈에는 영어로 답한다.
-- `good first issue` 는 영어로 쓰거나 병기한다.
-- **영어로 쓰기 어렵다는 이유로 기여를 막지 않는다.** 이슈나 PR 제목을 영어로 쓰기
-  어려우면 한국어로 올리고 그렇게 말해 달라 — triage·리뷰에서 함께 정리한다.
+## Branch rules
 
+- The default branch is `main`. **Never push to `main` directly.** Branch
+  protection now enforces this, so a direct push is refused rather than merely
+  discouraged.
+- Always work on a feature branch and open a PR.
+- Branch names: `feat/issue-<number>-<short-description>`,
+  `fix/issue-<number>-<short-description>`, `docs/<short-description>`.
+- Never force-push to `main`. Never delete `main`.
+- Do not rename or delete a branch you did not create.
+- If a git operation is not obviously safe, **ask instead of guessing.**
 
-## 브랜치 규칙
+## Build order
 
-- 기본 브랜치는 `main`이다. **절대 `main`에 직접 push하지 말 것.**
-- 항상 기능 브랜치에서 작업하고 PR을 열 것.
-- 브랜치 이름 규칙: `feat/issue-<number>-<short-description>`, `fix/issue-<number>-<short-description>`, `docs/<short-description>`
-- `main`에 force-push하지 말고, `main`을 삭제하지 말 것.
-- 자신이 만들지 않은 브랜치를 이름 변경하거나 삭제하지 말 것.
-- 어떤 git 작업이든 확신이 없으면 **추측하지 말고 먼저 물어볼 것.**
+1. The spec model
+2. Medallion pipeline orchestration
+3. Source execution through `kpubdata`
+4. The Polars tabular engine and Silver validation
+5. The artifact model and Gold packaging
+6. The Markdown exporter
+7. The HuggingFace layout exporter
+8. Stage-aware publish hooks
 
-## 우선순위
+## Test expectations
 
-1. 스펙 모델
-2. 메달리온 파이프라인 오케스트레이션
-3. `kpubdata`를 사용하는 소스 실행
-4. Polars 표 처리 엔진과 Silver 검증
-5. 아티팩트 모델과 Gold 패키징
-6. 마크다운 내보내기 도구
-7. HuggingFace 레이아웃 내보내기 도구
-8. 단계 인지형 게시 훅
-
-## 테스트 기대사항
-
-- spec 검증용 유닛 테스트
-- Bronze/Silver/Gold 승격을 위한 단계 인지형 테스트
-- Markdown 출력용 골든 테스트
-- manifest 계약 테스트
-- fixture 기반 소스 실행 테스트
+- Unit tests for spec validation
+- Stage-aware tests for Bronze/Silver/Gold promotion
+- Golden tests for Markdown output
+- Manifest contract tests
+- Fixture-based source execution tests
 
 ---
 
-## 이 프로젝트 이해하기
+## How this project fits together
 
-KPubData Builder는 `kpubdata` 사서가 가져온 원시 데이터를 사용자가 읽기 좋은 **책(보고서)이나 데이터셋 묶음으로 만들어주는 출판사**와 같습니다. 데이터를 수집하고, 검증하고, 원하는 형식으로 예쁘게 포장하는 과정을 담당합니다.
+`kpubdata` fetches; this repository turns what it fetched into published
+artifacts. Collection, validation and packaging each happen in a named stage, and
+every build leaves a manifest describing what came out.
 
-### 핵심 개념 용어 사전
+### Vocabulary
 
-| 용어 | 설명 |
+| Term | Meaning |
 | :--- | :--- |
-| **BuildSpec** | 어떤 데이터를 어떻게 수집해서 어디로 보낼지 적힌 기획서 |
-| **Bronze** | 원시 수집 결과와 소스 스냅샷을 보관하는 첫 단계 |
-| **Silver** | Polars로 표 변환·검증·통계·미리보기를 만드는 중간 단계 |
-| **Gold** | 분할 및 내보내기 준비가 된 패키지를 조립하는 최종 내부 단계 |
-| **Artifact** | 빌드 과정을 통해 만들어진 최종 결과물 (파일 등) |
-| **Manifest** | 빌드 결과물에 대한 상세 명세서 (버전, 생성일 등) |
-| **Polars** | Silver 단계의 표 처리와 검증에 사용하는 단일 표 처리 엔진 |
-| **Exporter** | 데이터를 특정 형식(Markdown, JSON, HuggingFace 등)으로 변환하는 도구 |
-| **Publisher** | 완성된 결과물을 특정 장소(GitHub, HF Hub 등)에 올리는 도구 |
-| **Golden Test** | 이전의 '완벽한 결과물'과 현재 결과물을 비교하여 변경 사항을 확인하는 테스트 |
+| **BuildSpec** | Declares what to collect, how to shape it and where it goes |
+| **Bronze** | First stage: raw collection results and the source snapshot |
+| **Silver** | Middle stage: Polars tabular conversion, validation, statistics, preview |
+| **Gold** | Final internal stage: partitioning and an export-ready package |
+| **Artifact** | Something a build produced (a file, usually) |
+| **Manifest** | The specification of what a build produced — version, timestamps, digests |
+| **Polars** | The one tabular engine, used for Silver conversion and validation |
+| **Exporter** | Converts data into a format (Markdown, JSONL, Parquet, HuggingFace) |
+| **Publisher** | Uploads a finished artifact somewhere (GitHub, HF Hub) |
+| **Golden Test** | Compares current output against a stored known-good file |
 
-### 이 프로젝트의 코드가 실행되는 흐름 (파이프라인)
+### Pipeline flow
 
 ```mermaid
 graph LR
@@ -132,40 +152,46 @@ graph LR
     S --> G[Gold]
     G --> EX[Export]
     EX --> M[Manifest]
-    
-    subgraph "세부 정보"
+
+    subgraph "what each does"
         BS -.-> |YAML| BS
-        B -.-> |kpubdata/원시 스냅샷| B
-        S -.-> |표 변환/검증| S
-        G -.-> |패키징| G
-        EX -.-> |서식화| EX
-        M -.-> |메타데이터| M
+        B -.-> |kpubdata / raw snapshot| B
+        S -.-> |tabular conversion, validation| S
+        G -.-> |packaging| G
+        EX -.-> |formatting| EX
+        M -.-> |metadata| M
     end
 ```
 
 ```text
-[BuildSpec] -> [Bronze (원시 수집)] -> [Silver (Polars 표 변환/검증)] -> [Gold (패키징)] -> [Export (서식화)] -> [Manifest (메타데이터)]
+[BuildSpec] -> [Bronze: raw collection] -> [Silver: Polars conversion and validation]
+            -> [Gold: packaging] -> [Export: formatting] -> [Manifest: metadata]
 ```
 
-## AI 에이전트 코딩 가이드
+## Agent coding rules
 
-### 좋은 프롬프트 예시
-- "새로운 `CSVExporter`를 추가해줘. `exporters/base.py`를 참고해서 `ExportModel`을 구현해."
-- "`BuildSpec` 모델에 데이터 필터링 조건을 추가하는 기능을 넣어줘."
+### Prompts that work
 
-### 에이전트 금지 사항
-- **kpubdata 로직 중복 금지**: 데이터 파싱 로직은 `kpubdata`에 있어야 합니다. 여기서는 가져온 데이터를 다루기만 하세요.
-- **불명확한 경로 사용 금지**: 파일 생성 경로는 항상 명확하게 정의되어야 합니다.
-- **매니페스트 누락 금지**: 모든 빌드 결과물은 반드시 `manifest.json`을 포함해야 합니다.
+- "Add a `CSVExporter`. Follow `exporters/base.py` and implement `ExportModel`."
+- "Add filter conditions to the `BuildSpec` model."
 
-### 에이전트 결과물 검증 체크리스트
-- [ ] `uv run ruff check .`를 통과했는가?
-- [ ] Bronze/Silver/Gold 단계 책임을 문서/구현에서 혼동하지 않았는가?
-- [ ] 새로운 Exporter에 대한 유닛 테스트를 작성했는가?
-- [ ] 단계 인지형 테스트 또는 fixture가 필요한 변경이면 함께 추가했는가?
-- [ ] 골든 테스트를 통해 출력 결과물이 의도대로 나오는지 확인했는가?
+### Forbidden
 
-## 파일 구조 가이드
+- **Duplicating `kpubdata` logic.** Parsing belongs there. Here you only handle
+  what came back.
+- **Unclear output paths.** Where a file is written is always explicit.
+- **A build without a manifest.** Every build output includes `manifest.json`.
+
+### Before handing work back
+
+- [ ] Does `uv run ruff check .` pass?
+- [ ] Are the Bronze/Silver/Gold responsibilities kept distinct in both the code
+  and the docs?
+- [ ] Does the new exporter have unit tests?
+- [ ] If the change needs a stage-aware test or a fixture, is it there?
+- [ ] Does a golden test confirm the output is what you intended?
+
+## Directory layout
 
 ```mermaid
 graph TD
@@ -176,7 +202,7 @@ graph TD
     ROOT --> P[publishers/]
     ROOT --> S[spec.py]
     ROOT --> M[manifest.py]
-    
+
     PL --> ORCH[orchestrator.py]
     ST --> BR[bronze/]
     ST --> SI[silver/]
@@ -185,65 +211,72 @@ graph TD
     E --> ME[markdown.py]
     E --> JE[jsonl.py]
     E --> PE[parquet.py]
-    
+
     P --> HP[huggingface.py]
 ```
 
 ```text
 src/kpubdata_builder/
-├── pipeline/        # 메달리온 단계 흐름 제어
-├── stages/          # bronze/silver/gold 구현
-├── tabular/         # Polars 기반 표 처리
-├── exporters/       # 데이터 형식 변환 (Markdown, JSONL 등)
-├── publishers/      # 결과물 업로드 (HF, GitHub 등)
-├── service/         # HTTP 서비스 모드 (app.py, http.py, auth.py)
-├── store/           # BuildIndex (SQLite 파생 인덱스, ADR 0003)
-├── spec/            # 빌드 기획서(BuildSpec) 정의 및 검증
-└── manifest/        # 빌드 명세서 생성 로직
+├── pipeline/        # medallion stage flow control
+├── stages/          # bronze, silver, gold implementations
+├── tabular/         # Polars-based tabular processing
+├── exporters/       # format conversion (Markdown, JSONL, Parquet)
+├── publishers/      # artifact upload (HF, GitHub)
+├── service/         # HTTP service mode (app.py, http.py, auth.py)
+├── store/           # BuildIndex — derived SQLite index (ADR 0003)
+├── warehouse/       # table catalog: immutable snapshots, CAS pointer (#699)
+├── spec/            # BuildSpec definition and validation
+└── manifest/        # manifest generation
 ```
 
-### 이 파일을 수정해야 할 때
-- **데이터를 새로운 파일 형식으로 저장하고 싶을 때**: `exporters/`에 새 파일을 만듭니다.
-- **결과물을 다른 곳에 자동으로 올리고 싶을 때**: `publishers/`에 새 로직을 추가합니다.
-- **빌드 과정의 단계 승격 규칙을 바꾸고 싶을 때**: `pipeline/`와 `stages/`를 함께 검토합니다.
+### Which file to change
 
-## Exporter 추가 가이드
+- **A new output format**: add a file under `exporters/`.
+- **Uploading somewhere new**: add logic under `publishers/`.
+- **Changing stage promotion rules**: review `pipeline/` and `stages/` together.
 
-### Exporter 개발 단계
+## Adding an exporter
 
 ```mermaid
 flowchart TD
-    Step1[1. BaseExporter 상속받기] --> Step2[2. export 메서드 구현]
-    Step2 --> Step3[3. 포맷 이름 정의]
-    Step3 --> Step4[4. 유닛 테스트 추가]
-    Step4 --> Step5[5. 골든 테스트 확인]
+    Step1[1. subclass BaseExporter] --> Step2[2. implement export]
+    Step2 --> Step3[3. declare the format name]
+    Step3 --> Step4[4. add unit tests]
+    Step4 --> Step5[5. confirm the golden test]
 ```
 
-1. `exporters/base.py`의 `BaseExporter` 클래스를 상속받습니다.
-2. `export(self, artifacts: List[Artifact]) -> List[Path]` 메서드를 구현합니다.
-3. 지원하는 포맷 이름을 클래스 변수로 정의합니다.
-4. `tests/unit/test_exporters.py`에 테스트를 추가합니다.
+1. Subclass `BaseExporter` from `exporters/base.py`.
+2. Implement `export(self, artifacts: List[Artifact]) -> List[Path]`.
+3. Declare the supported format name as a class variable.
+4. Add tests to `tests/unit/test_exporters.py`.
 
-### 골든 테스트란?
-빌드 결과물이 텍스트(예: Markdown)인 경우, 코드가 바뀌어도 결과물의 형식이 유지되는지 확인하기 위해 미리 저장해둔 '정답 파일'과 현재 결과를 1:1로 비교하는 테스트 방식입니다.
+### What a golden test is
+
+When the output is text, such as Markdown, a golden test compares it line for line
+against a stored known-good file. It catches a formatting change that no assertion
+would notice.
 
 ---
 
-## 관련 문서
+## Related documents
 
-### 이 저장소 내 문서
-| 문서 | 설명 |
+### In this repository
+
+| Document | What it covers |
 | :--- | :--- |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | 프로젝트 기여 가이드 |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | 시스템 아키텍처 설계 |
-| [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) | 도메인 모델 정의 |
-| [EXPORT_MODEL.md](./EXPORT_MODEL.md) | 데이터 변환 모델 |
-| [API_CONTRACT.md](./API_CONTRACT.md) | API 인터페이스 규약 |
-| [PRD.md](./PRD.md) | 제품 요구사항 정의서 |
-| [ROADMAP.md](./ROADMAP.md) | 프로젝트 로드맵 |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | How to contribute |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture |
+| [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) | Domain model |
+| [EXPORT_MODEL.md](./EXPORT_MODEL.md) | Export model |
+| [API_CONTRACT.md](./API_CONTRACT.md) | API contract |
+| [PRD.md](./PRD.md) | Product requirements |
+| [ROADMAP.md](./ROADMAP.md) | Roadmap |
+| [docs/CREDENTIAL_SURFACE.md](./docs/CREDENTIAL_SURFACE.md) | Every place a user key can persist |
+| [SECURITY.md](./SECURITY.md) | Security policy and known limits |
 
-### KPubData Product Family
-| 저장소 | 문서 | 설명 |
+### KPubData product family
+
+| Repository | Document | What it covers |
 | :--- | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | [AGENTS.md](https://github.com/yeongseon/kpubdata/blob/main/AGENTS.md) | 코어 에이전트 가이드 |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | [AGENTS.md](https://github.com/yeongseon/kpubdata-studio/blob/main/AGENTS.md) | 스튜디오 에이전트 가이드 |
+| [kpubdata](https://github.com/yeongseon/kpubdata) | [AGENTS.md](https://github.com/yeongseon/kpubdata/blob/main/AGENTS.md) | Core agent guide |
+| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | [AGENTS.md](https://github.com/yeongseon/kpubdata-studio/blob/main/AGENTS.md) | Studio agent guide |
