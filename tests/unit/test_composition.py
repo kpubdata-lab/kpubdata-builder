@@ -1,4 +1,4 @@
-"""Multi-source Join/Composition BuildSpec 및 Gold assembly 검증 (#506)."""
+"""Multi-source Join/Composition BuildSpec and Gold assembly verification (#506)."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ class _FakeClient:
 
 
 # --------------------------------------------------------------------------
-# spec.validator: composition 구조 검증
+# spec.validator: composition structure validation
 # --------------------------------------------------------------------------
 
 
@@ -96,7 +96,7 @@ def test_validate_spec_accepts_valid_composition() -> None:
             join=JoinSpec(left="sales", right="region", left_key="region_id", right_key="id"),
         )
     )
-    validate_spec(spec)  # 예외 없음
+    validate_spec(spec)  # no exception
 
 
 def test_validate_spec_rejects_unknown_composition_alias() -> None:
@@ -149,7 +149,7 @@ def test_validate_spec_rejects_duplicate_alias_when_composition_used() -> None:
 def test_validate_spec_rejects_composition_name_collision_with_source_output_key() -> None:
     spec = _spec(
         CompositionSpec(
-            name="sales",  # sales의 alias와 충돌
+            name="sales",  # conflicts with sales alias
             join=JoinSpec(left="sales", right="region", left_key="region_id", right_key="id"),
         )
     )
@@ -173,13 +173,14 @@ def test_validate_spec_rejects_blank_join_keys() -> None:
 
 
 def test_validate_spec_without_composition_is_unaffected() -> None:
-    # composition 없는 기존 multi-source BuildSpec은 회귀가 없어야 한다 (완료 조건).
+    # Existing multi-source BuildSpec without composition must have no regression
+    # (completion condition).
     spec = _spec(None)
-    validate_spec(spec)  # 예외 없음
+    validate_spec(spec)  # no exception
 
 
 # --------------------------------------------------------------------------
-# spec.loader / spec.serializer: 파싱과 canonical 직렬화
+# spec.loader / spec.serializer: parsing and canonical serialization
 # --------------------------------------------------------------------------
 
 
@@ -274,7 +275,7 @@ def test_canonical_spec_mapping_composition_none_by_default() -> None:
 
 
 # --------------------------------------------------------------------------
-# stages.gold.compose: join 실행 게이트 (키 존재/dtype/duplicate-key)
+# stages.gold.compose: join execution gate (key existence/dtype/duplicate-key)
 # --------------------------------------------------------------------------
 
 
@@ -330,7 +331,7 @@ def test_build_composed_gold_package_rejects_dtype_mismatch() -> None:
 
 
 def test_build_composed_gold_package_warns_on_many_to_many_duplicate_keys() -> None:
-    # 양쪽 다 key "A"가 중복이면 2x2=4행으로 폭증한다.
+    # If both sides have duplicate key "A", rows explode to 2x2=4.
     sales = _make_silver([{"id": "1", "region_id": "A"}, {"id": "2", "region_id": "A"}])
     region = _make_silver([{"id": "A", "name": "S1"}, {"id": "A", "name": "S2"}])
     join = JoinSpec(left="sales", right="region", left_key="region_id", right_key="id")
@@ -345,7 +346,7 @@ def test_build_composed_gold_package_warns_on_many_to_many_duplicate_keys() -> N
     assert stats.right_row_count == 2
     assert stats.right_distinct_key_count == 1
     assert stats.output_row_count == 4
-    assert package.table.height == 4  # 경고만 하고 결과는 만든다(기본 warn)
+    assert package.table.height == 4  # warns only, creates result (default warn)
 
 
 def test_build_composed_gold_package_fails_closed_on_duplicate_key_when_severity_fail() -> None:
@@ -366,7 +367,7 @@ def test_build_composed_gold_package_fails_closed_on_duplicate_key_when_severity
 
 
 # --------------------------------------------------------------------------
-# pipeline.orchestrator._run_composition: skip/failed 분기
+# pipeline.orchestrator._run_composition: skip/failed branches
 # --------------------------------------------------------------------------
 
 
@@ -379,7 +380,7 @@ def test_run_composition_skips_when_referenced_source_missing(tmp_path: Path) ->
     context = BuildContext.create(spec, output_root=tmp_path, run_id="run1")
     sales = _make_silver([{"id": "1", "region_id": "A"}])
 
-    # region의 Silver가 없다 — 실패했거나 스레드 결과에서 capture되지 않은 상태를 흉내.
+    # region's Silver doesn't exist — mimic failed or not-captured-from-thread state.
     result = _run_composition(composition, silver_by_key={"sales": sales}, context=context)
 
     assert result.outcome.status == "skipped"
@@ -418,26 +419,27 @@ def test_run_build_produces_combined_gold_dataset(tmp_path: Path) -> None:
     assert result.composition_outcome is not None
     assert result.composition_outcome.status == "ok"
 
-    # source별 독립 Gold는 그대로 유지된다 (회귀 없음 요건).
+    # Per-source independent Gold remains unchanged (no regression requirement).
     gold_dir = tmp_path / "run1" / "gold"
     assert {p.name for p in gold_dir.iterdir()} == {"sales", "region", "combined"}
 
     combined_table = pl.read_parquet(gold_dir / "combined" / "table.parquet")
-    assert combined_table.height == 2  # region_id "Z"는 inner join에서 제외
+    assert combined_table.height == 2  # region_id "Z" excluded from inner join
 
     manifest = cast(
         dict[str, JsonValue], json.loads(result.manifest_path.read_text(encoding="utf-8"))
     )
     row_counts = cast(dict[str, int], manifest["row_counts"])
     assert row_counts["combined"] == 2
-    assert row_counts["sales"] == 3  # source별 row_count는 조립과 무관하게 그대로
+    assert row_counts["sales"] == 3  # per-source row_count unchanged regardless of assembly
 
     composition_manifest = cast(dict[str, JsonValue], manifest["composition"])
     assert composition_manifest["output_row_count"] == 2
     assert composition_manifest["left"] == "sales"
     assert composition_manifest["right"] == "region"
 
-    # source_refs로 provenance가 개별 노출된다 (② 조사 결과 반영) — 카드에 두 줄로 나온다.
+    # provenance individually exposed via source_refs (investigation result)
+    # — appears two lines in card.
     package_json = json.loads((gold_dir / "combined" / "package.json").read_text(encoding="utf-8"))
     assert package_json["source_refs"] == ["sales", "region"]
     readme = (gold_dir / "combined" / "README.md").read_text(encoding="utf-8")
@@ -459,7 +461,7 @@ def test_run_build_composition_failure_marks_build_failed_but_keeps_source_outpu
     assert result.status == "failed"
     assert result.composition_outcome is not None
     assert result.composition_outcome.status == "failed"
-    # source별 outcome은 join 실패와 무관하게 성공으로 남는다.
+    # Per-source outcome remains success regardless of join failure.
     assert all(o.status == "ok" for o in result.outcomes)
     gold_dir = tmp_path / "run1" / "gold"
     assert (gold_dir / "sales").is_dir()
@@ -468,7 +470,7 @@ def test_run_build_composition_failure_marks_build_failed_but_keeps_source_outpu
 
 
 def test_run_build_without_composition_is_unaffected(tmp_path: Path) -> None:
-    # composition 없는 기존 multi-source BuildSpec 회귀 없음 (완료 조건).
+    # Existing multi-source BuildSpec without composition has no regression (completion condition).
     spec = _spec(None)
 
     result = run_build(spec, client=_combined_data(), output_root=tmp_path, run_id="run1")

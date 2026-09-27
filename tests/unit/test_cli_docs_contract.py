@@ -1,4 +1,4 @@
-"""CLI 도움말과 사용 가이드가 갈라지지 않게 잠근다.
+"""Lock CLI help and usage guide so they don't diverge.
 
 `docs/guides/cli-usage.md` 는 한때 서브커맨드 4개만 적고 "별도 serve 명령은
 없습니다" 라고 단언했는데, 그 시점에 파서에는 11개가 있었고 `serve` 도 그중
@@ -31,8 +31,8 @@ def _parser_subcommands() -> set[str]:
 def _documented_subcommands() -> set[str]:
     text = _DOC.read_text(encoding="utf-8")
     block = text.split("positional arguments:", 1)[1].split("options:", 1)[0]
-    # "    name  Help text..." 형태의 줄에서 이름만 뽑는다. 이어지는 설명 줄은
-    # 들여쓰기가 더 깊어 걸리지 않는다.
+    # Extract name only from lines like "    name  Help text...". Following description lines
+    # have deeper indent and don't match.
     return set(re.findall(r"^ {4}([a-z][a-z-]+) {2,}\S", block, flags=re.MULTILINE))
 
 
@@ -49,5 +49,5 @@ def test_no_documented_subcommand_has_been_removed() -> None:
 
 
 def test_the_guide_does_not_claim_serve_is_missing() -> None:
-    # 이 문장이 실제로 문서에 있었고, 그때 파서에는 serve 가 있었다.
+    # This sentence was actually in docs and parser had serve at that time.
     assert "별도 CLI `serve` 명령은 없습니다" not in _DOC.read_text(encoding="utf-8")

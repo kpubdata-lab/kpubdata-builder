@@ -1,4 +1,4 @@
-"""인증 실패 스로틀 테스트.
+"""Authentication failure throttle test.
 
 슬라이딩 윈도 카운터 자체(AuthFailureThrottle)와, dispatch 인증 게이트에 붙었을 때의
 동작(401 누적 → 429, 성공 시 초기화)을 함께 확인한다.
@@ -26,7 +26,7 @@ _CLIENT = "203.0.113.7"
 
 
 class _FakeClock:
-    """테스트가 시간을 직접 진행시킨다 — 실제 대기 없이 윈도 만료를 검증한다."""
+    """Test advances time directly — validates window expiration without actual wait."""
 
     def __init__(self) -> None:
         self.now = 1_000.0
@@ -104,7 +104,7 @@ class TestAuthFailureThrottle:
         assert throttle.retry_after(_CLIENT) is None
 
     def test_tracked_clients_stay_bounded(self) -> None:
-        # 서로 다른 IP로 실패를 뿌려도 추적 dict가 무한히 자라지 않아야 한다.
+        # Even if failures spread from different IPs, tracking dict must not grow infinitely.
         clock = _FakeClock()
         throttle = AuthFailureThrottle(
             limit=3, window_seconds=60.0, max_clients=8, time_source=clock
@@ -124,7 +124,7 @@ class TestAuthFailureThrottle:
         assert throttle.retry_after(_CLIENT) == 30
 
     def test_malformed_env_falls_back_to_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 설정 오타가 서비스 기동을 깨뜨리지 않아야 한다.
+        # Configuration typos must not break service startup.
         monkeypatch.setenv("KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT", "many")
         monkeypatch.setenv("KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS", "-5")
         throttle = AuthFailureThrottle(time_source=_FakeClock())
@@ -132,11 +132,11 @@ class TestAuthFailureThrottle:
 
 
 class TestDispatchAuthThrottle:
-    """인증 게이트에 붙은 스로틀 — 401 반복이 429로 바뀌는지 확인한다."""
+    """Throttle attached to auth gate — check if repeated 401 becomes 429."""
 
     @pytest.fixture
     def service(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuilderService:
-        # conftest의 dev-mode를 끄고 실제 인증 게이트를 태운다.
+        # Turn off conftest's dev-mode and run real auth gate.
         monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
         monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "correct-key")
         client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
@@ -156,7 +156,7 @@ class TestDispatchAuthThrottle:
         for _ in range(3):
             assert self._version(service, api_key="wrong", client_id=_CLIENT) == 401
         assert self._version(service, api_key="wrong", client_id=_CLIENT) == 429
-        # 올바른 키를 내밀어도 스로틀 구간에서는 막힌다 — 검증 비용 자체를 태우지 않는다.
+        # Even with correct key, blocked during throttle window — does not consume validation cost.
         assert self._version(service, api_key="correct-key", client_id=_CLIENT) == 429
 
     def test_other_clients_are_unaffected(self, service: BuilderService) -> None:
@@ -168,7 +168,7 @@ class TestDispatchAuthThrottle:
         for _ in range(2):
             assert self._version(service, api_key="wrong", client_id=_CLIENT) == 401
         assert self._version(service, api_key="correct-key", client_id=_CLIENT) == 200
-        # 카운터가 비었으므로 다시 한도만큼의 실패 여유가 있다.
+        # Counter is empty, so again has failure allowance up to limit.
         for _ in range(3):
             assert self._version(service, api_key="wrong", client_id=_CLIENT) == 401
         assert self._version(service, api_key="wrong", client_id=_CLIENT) == 429
@@ -182,13 +182,13 @@ class TestDispatchAuthThrottle:
 
 
 class TestHttpAuthThrottle:
-    """HTTP 계층이 peer 주소를 스로틀 식별자로 넘기는지 — 실제 소켓으로 확인한다."""
+    """Verify HTTP layer passes peer address as throttle identifier — check with real socket."""
 
     @pytest.fixture
     def server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterable[str]:
         monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
         monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret")
-        # 서비스 생성 전에 한도를 낮춰 두 번의 실패만으로 스로틀을 태운다.
+        # Lower limit before service creation so throttle triggers on two failures.
         monkeypatch.setenv("KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT", "2")
         client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
         service = BuilderService(output_root=tmp_path, client_factory=lambda **_kwargs: client)
@@ -220,7 +220,7 @@ class TestHttpAuthThrottle:
 
 
 class TestUnknownSigningKeyIsNotAnOutage:
-    """JWKS 에 없는 kid 는 잘못된 자격증명이지 인프라 장애가 아니다.
+    """kid not in JWKS is invalid credential, not infrastructure failure.
 
     503 으로 돌려주면 두 가지가 동시에 깨진다. 스로틀은 503 을 세지 않으므로
     (클라이언트 잘못이 아니라고 보기 때문이다) 무제한으로 시도할 수 있고,
@@ -242,12 +242,12 @@ class TestUnknownSigningKeyIsNotAnOutage:
 
         from kpubdata_builder.service.auth import _is_unknown_signing_key
 
-        # 못 알아보면 기존처럼 503 — 안전한 쪽으로 진다.
+        # If not recognized, 503 as before — err on safe side.
         assert not _is_unknown_signing_key(PyJWKClientError("Fail to fetch data from the url"))
 
 
 class TestApiKeyComparisonAcceptsNonAscii:
-    """비ASCII API 키 헤더가 500 이 되면 안 된다.
+    """Non-ASCII API key header must not become 500.
 
     ``hmac.compare_digest`` 는 str 두 개일 때 ASCII 만 받는다. ``X-API-Key: clé``
     하나가 TypeError 로 500 을 만들었고, 그 경로는 인증 실패로 기록되지도 않아
@@ -277,7 +277,7 @@ class TestApiKeyComparisonAcceptsNonAscii:
 
 
 class TestOpenSignupWithoutOwnershipWarns:
-    """두 기본값이 겹치면 사실상 무제한 접근이다 — 기동 로그에 남긴다."""
+    """If two defaults overlap, access is effectively unlimited — log at startup."""
 
     def test_the_combination_warns(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

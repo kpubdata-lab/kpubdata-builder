@@ -1,4 +1,4 @@
-"""CLI `build` 명령(#4): spec → run_build 연결과 종료 코드/출력 검증."""
+"""CLI `build` command (#4): spec → run_build connection and exit code/output verification."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def test_build_reports_failure_with_exit_one(
 ) -> None:
     spec_path = _write_spec(tmp_path)
     out_dir = tmp_path / "out"
-    # 소스 키가 없는 클라이언트 → bronze fetch 실패
+    # Client without source key → bronze fetch failure
     client = _FakeClient({"datago.other": [{"id": "1"}]})
     monkeypatch.setattr(cli, "_create_client", lambda: client)
 
@@ -101,7 +101,7 @@ def test_build_reports_failure_with_exit_one(
 
     assert exit_code == 1
     assert captured.err
-    # 실패해도 manifest는 남는다
+    # manifest remains even on failure
     assert (out_dir / "run1" / "manifest.json").exists()
 
 

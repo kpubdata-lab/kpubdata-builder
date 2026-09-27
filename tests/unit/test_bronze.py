@@ -1,4 +1,4 @@
-"""브론즈 단계 모델, fetch, persist 동작을 검증한다."""
+"""Verify Bronze stage model, fetch, persist operations."""
 
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ from kpubdata_builder.stages.bronze.build import DatasetResult, SourceDataset
 
 @dataclass(frozen=True)
 class FakeResult:
-    """DatasetResult Protocol을 만족시키는 테스트용 결과 객체."""
+    """Test result object satisfying DatasetResult Protocol."""
 
     items: list[dict[str, JsonValue]]
 
 
 class FakeDataset:
-    """지정된 레코드를 그대로 반환하는 테스트용 데이터셋."""
+    """Test dataset returning specified records as-is."""
 
     def __init__(self, records: list[dict[str, JsonValue]]) -> None:
         self.records = records
@@ -56,7 +56,7 @@ class FakePaginatedDataset:
 
 
 class FakeClient:
-    """dataset 호출 여부를 기록하는 테스트용 클라이언트."""
+    """Test client recording whether dataset was called."""
 
     def __init__(self, dataset: SourceDataset) -> None:
         self.dataset_instance = dataset
@@ -68,7 +68,7 @@ class FakeClient:
 
 
 def test_bronze_models_preserve_record_count_and_timezone() -> None:
-    # 모델이 레코드 수와 timezone-aware 시각을 그대로 유지하는지 확인한다.
+    # Check model preserves record count and timezone-aware datetime.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
     provenance = ProvenanceEvent(
         source_key="datago.apt_trade",
@@ -89,7 +89,7 @@ def test_bronze_models_preserve_record_count_and_timezone() -> None:
 
 
 def test_bronze_models_reject_naive_fetched_at() -> None:
-    # naive datetime이 provenance/model 생성 시 즉시 거부되는지 검증한다.
+    # Verify naive datetime is immediately rejected on provenance/model creation.
     naive = datetime(2026, 5, 8, 12, 0)
 
     with pytest.raises(ValueError, match="timezone-aware"):
@@ -100,7 +100,7 @@ def test_bronze_models_reject_naive_fetched_at() -> None:
 
 
 def test_build_bronze_artifact_fetches_raw_records_without_transforming() -> None:
-    # fetch 결과가 변형 없이 provenance와 함께 BronzeArtifact로 감싸지는지 확인한다.
+    # Check fetch result wrapped as BronzeArtifact with provenance unchanged.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
     records: list[dict[str, JsonValue]] = [
         {"id": "1", "name": "강남구", "amount": 100, "nested": {"b": 2, "a": 1}},
@@ -150,7 +150,7 @@ def test_build_bronze_artifact_uses_list_all_when_available() -> None:
 
 
 def test_persist_bronze_artifact_writes_jsonl_and_metadata(tmp_path: Path) -> None:
-    # persist가 JSONL 본문과 metadata 요약을 같은 디렉터리에 쓰는지 검증한다.
+    # Verify persist writes JSONL body and metadata summary to same directory.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
     artifact = BronzeArtifact(
         source_key="datago.apt_trade",
@@ -198,7 +198,7 @@ def test_persist_bronze_artifact_writes_jsonl_and_metadata(tmp_path: Path) -> No
 
 
 def test_persist_bronze_artifact_separates_different_params(tmp_path: Path) -> None:
-    # 동일 source_key라도 fetch_params가 다르면 다른 artifact 경로를 쓰는지 확인한다.
+    # Check different fetch_params use different artifact path even with same source_key.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
     artifact_a = BronzeArtifact(
         source_key="datago.apt_trade",
@@ -222,7 +222,7 @@ def test_persist_bronze_artifact_separates_different_params(tmp_path: Path) -> N
 
 
 def test_persist_bronze_artifact_rejects_unsafe_run_id(tmp_path: Path) -> None:
-    # 경로 탈출 가능성이 있는 run_id가 사전에 차단되는지 검증한다.
+    # Verify run_id with path escape risk is blocked in advance.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
     artifact = BronzeArtifact(
         source_key="datago.apt_trade",

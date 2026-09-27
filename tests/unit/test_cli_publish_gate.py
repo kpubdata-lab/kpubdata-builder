@@ -1,4 +1,4 @@
-"""CLI publish 가 서비스 publish 와 같은 정책을 따르는지 (#491 후속).
+"""Check if CLI publish follows same policy as service publish (#491 follow-up).
 
 두 가지가 갈려 있었다. CLI 는 ``validate_spec(spec)`` 만 불러서 게시 전용
 규칙(license 선언)을 건너뛰었고, ``rglob("*")`` 로 artifacts_dir 아래 **모든**
@@ -42,7 +42,7 @@ class TestOnlyDatasetArtifactsArePublished:
         ]
 
     def test_source_layers_and_workspace_files_are_not(self, tmp_path: Path) -> None:
-        """bronze 원본은 게시 대상이 아니고, 크기도 gold 와 비교가 안 된다."""
+        """bronze original is not publish target and size not comparable to gold."""
         _, skipped = self._paths(tmp_path)
 
         assert skipped == [
@@ -53,12 +53,12 @@ class TestOnlyDatasetArtifactsArePublished:
         ]
 
     def test_a_directory_named_like_a_layer_deeper_down_is_kept(self, tmp_path: Path) -> None:
-        """최상위 계층 디렉터리만 본다 — gold 안의 'bronze' 라는 이름까지 막지 않는다."""
+        """Only look at top-level directories — don't block 'bronze' name inside gold."""
         assert not _is_non_publishable(tmp_path / "gold" / "bronze" / "x.parquet", tmp_path)
 
 
 class TestTheLicenseGateApplies:
-    """HTTP publish 가 막는 spec 을 CLI 로는 올릴 수 있었다."""
+    """spec blocked by HTTP publish could be uploaded via CLI."""
 
     _NO_LICENSE = (
         "dataset_id: dataset.sample\n"

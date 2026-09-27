@@ -1,4 +1,4 @@
-"""CsvExporter의 출력 규칙을 테스트로 고정한다.
+"""Fix CsvExporter output rules via tests.
 
 CSV는 콤마/따옴표/개행이 포함된 값을 올바르게 인용해야 하고, 컬럼 순서가
 결정적이어야 한다. 헤더 구성·셀 포매팅·빈 데이터 정책·반환 메타데이터를
@@ -19,12 +19,12 @@ from kpubdata_builder.spec import ExportTarget
 
 
 def _read_rows(path: Path) -> list[list[str]]:
-    # 기록된 CSV를 csv.reader로 되읽어 인용/이스케이프를 검증한다.
+    # Re-read recorded CSV with csv.reader to verify quoting/escaping.
     return list(csv.reader(io.StringIO(path.read_text(encoding="utf-8"))))
 
 
 def test_writes_header_and_one_row_per_record(tmp_path: Path) -> None:
-    # 레코드 2개면 헤더 1줄 + 데이터 2줄이 되어야 한다.
+    # 2 records should be header 1 line + data 2 lines.
     artifact = ArtifactDataset(records=({"id": "1", "name": "a"}, {"id": "2", "name": "b"}))
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
@@ -34,7 +34,7 @@ def test_writes_header_and_one_row_per_record(tmp_path: Path) -> None:
 
 
 def test_column_order_follows_schema_when_present(tmp_path: Path) -> None:
-    # schema가 있으면 헤더 순서는 schema 키 순서를 따른다.
+    # If schema present, header order follows schema key order.
     artifact = ArtifactDataset(
         records=({"b": "2", "a": "1"},),
         schema={"a": "str", "b": "str"},
@@ -47,7 +47,7 @@ def test_column_order_follows_schema_when_present(tmp_path: Path) -> None:
 
 
 def test_column_order_is_first_seen_when_no_schema(tmp_path: Path) -> None:
-    # schema가 없으면 레코드에서 처음 등장한 순서를 따르며, 누락 키는 빈 셀로 채운다.
+    # Without schema, follow first appearance order in records, fill missing keys with empty cells.
     artifact = ArtifactDataset(records=({"id": "1"}, {"id": "2", "extra": "x"}))
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
@@ -57,7 +57,7 @@ def test_column_order_is_first_seen_when_no_schema(tmp_path: Path) -> None:
 
 
 def test_quotes_values_with_comma_quote_and_newline(tmp_path: Path) -> None:
-    # 콤마/따옴표/개행이 포함된 값이 인용되어 round-trip 되는지 검증한다.
+    # Verify values with comma/quote/newline are quoted and round-trip.
     artifact = ArtifactDataset(
         records=({"v": 'a,b "c" \n d'},),
         schema={"v": "str"},
@@ -70,7 +70,7 @@ def test_quotes_values_with_comma_quote_and_newline(tmp_path: Path) -> None:
 
 
 def test_formats_special_cell_values(tmp_path: Path) -> None:
-    # None은 빈 셀, bool은 소문자, 중첩 list/dict는 결정적 JSON 문자열로 직렬화한다.
+    # None as empty cell, bool as lowercase, nested list/dict as deterministic JSON string.
     artifact = ArtifactDataset(
         records=({"nullable": None, "flag": True, "nested": {"b": 2, "a": 1}, "items": [1, 2]},),
         schema={"nullable": "str", "flag": "bool", "nested": "json", "items": "json"},
@@ -85,7 +85,7 @@ def test_formats_special_cell_values(tmp_path: Path) -> None:
 
 
 def test_preserves_unicode(tmp_path: Path) -> None:
-    # 한글이 깨지지 않고 그대로 보존되는지 확인한다.
+    # Confirm Korean text preserved without corruption.
     artifact = ArtifactDataset(records=({"district": "강남구"},), schema={"district": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
@@ -96,7 +96,7 @@ def test_preserves_unicode(tmp_path: Path) -> None:
 
 
 def test_empty_records_without_schema_writes_empty_file(tmp_path: Path) -> None:
-    # schema도 records도 없으면 빈 파일(크기 0)로 기록한다.
+    # No schema or records means empty file (size 0) recorded.
     artifact = ArtifactDataset(records=())
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
@@ -107,7 +107,7 @@ def test_empty_records_without_schema_writes_empty_file(tmp_path: Path) -> None:
 
 
 def test_schema_without_records_writes_header_only(tmp_path: Path) -> None:
-    # schema는 있고 records가 없으면 헤더만 기록한다.
+    # Schema without records records header only.
     artifact = ArtifactDataset(records=(), schema={"id": "str", "name": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
@@ -117,7 +117,7 @@ def test_schema_without_records_writes_header_only(tmp_path: Path) -> None:
 
 
 def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
-    # 반환된 Path가 실제 생성된 파일을 가리키고 메타데이터가 정확한지 확인한다.
+    # Confirm returned Path points to actually created file and metadata accurate.
     artifact = ArtifactDataset(records=({"id": "1"},), schema={"id": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
@@ -130,9 +130,9 @@ def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
 
 
 def test_formula_injection_trigger_chars_are_prefixed(tmp_path: Path) -> None:
-    # 수식 트리거 문자(=, +, -, @, 탭)로 시작하는 문자열은 홑따옴표 접두사가
-    # 붙어야 한다 (CWE-1236).  캐리지리턴(\r)은 CSV round-trip이 불안정하므로
-    # 별도 test_formula_injection_cr_prefix 에서 raw 파일 내용으로 검증한다.
+    # String starting with formula trigger character (=, +, -, @, tab) gets single-quote prefix
+    # (CWE-1236). Carriage return (\r) CSV round-trip unstable so
+    # separate test_formula_injection_cr_prefix verifies with raw file contents.
     trigger_values = ["=CMD", "+SUM()", "-1+1", "@SUM", "\tTAB"]
     artifact = ArtifactDataset(
         records=tuple({"v": val} for val in trigger_values),
@@ -143,26 +143,26 @@ def test_formula_injection_trigger_chars_are_prefixed(tmp_path: Path) -> None:
     result = CsvExporter().export(artifact, target, tmp_path)
 
     rows = _read_rows(result.output_path)
-    data_rows = rows[1:]  # 헤더 제외
+    data_rows = rows[1:]  # header excluded
     for i, val in enumerate(trigger_values):
         assert data_rows[i][0] == "'" + val, f"트리거 값 {val!r}에 접두사가 없음"
 
 
 def test_formula_injection_cr_prefix(tmp_path: Path) -> None:
-    # 캐리지리턴(\r)으로 시작하는 문자열도 홑따옴표 접두사가 붙어야 한다.
-    # csv.reader round-trip은 \r을 불안정하게 처리하므로 raw 파일 내용으로 검증한다.
+    # String starting with carriage return (\r) also gets single-quote prefix.
+    # csv.reader round-trip handles \r unreliably so verify with raw file contents.
     artifact = ArtifactDataset(records=({"v": "\rCR"},), schema={"v": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
 
     raw = result.output_path.read_bytes()
-    # 홑따옴표가 \r 앞에 붙으면 파일 내에 b"'\r" 시퀀스가 나타난다.
+    # Single quote prefix before \r results in b"'\r" sequence in file.
     assert b"'\r" in raw, "캐리지리턴 앞에 홑따옴표 접두사가 없음"
 
 
 def test_formula_injection_normal_strings_unchanged(tmp_path: Path) -> None:
-    # 트리거 문자로 시작하지 않는 일반 문자열은 그대로 유지되어야 한다.
+    # Normal string not starting with trigger char must remain unchanged.
     normal_values = ["hello", "world", "1234", "", "한글", "abc=def"]
     artifact = ArtifactDataset(
         records=tuple({"v": val} for val in normal_values),
@@ -179,7 +179,7 @@ def test_formula_injection_normal_strings_unchanged(tmp_path: Path) -> None:
 
 
 def test_formula_injection_numeric_values_unchanged(tmp_path: Path) -> None:
-    # 숫자(int/float)는 트리거 문자 검사를 거치지 않고 str()로 변환되어야 한다.
+    # numbers (int/float) not checked for trigger chars and converted via str().
     artifact = ArtifactDataset(
         records=({"i": -1, "f": -3.14},),
         schema={"i": "int", "f": "float"},
@@ -193,12 +193,12 @@ def test_formula_injection_numeric_values_unchanged(tmp_path: Path) -> None:
 
 
 def test_registry_exposes_csv_exporter() -> None:
-    # CSV exporter가 kind 문자열 "csv"로 레지스트리에 등록되어 있는지 확인한다.
+    # Confirm CSV exporter registered in registry with kind string "csv".
     assert isinstance(EXPORTER_REGISTRY["csv"], CsvExporter)
 
 
 def test_wraps_io_failure_in_export_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 파일 쓰기 실패가 ExportError로 래핑되는지 확인한다.
+    # Confirm file write failure wrapped as ExportError.
     import os
 
     artifact = ArtifactDataset(records=({"id": "1"},), schema={"id": "str"})

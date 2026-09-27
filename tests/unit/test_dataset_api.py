@@ -1,4 +1,4 @@
-"""Built Dataset Catalog/Detail API 테스트 (#488).
+"""Built Dataset Catalog/Detail API test (#488).
 
 동일 dataset_id의 run grouping, latest run 선정, legacy 제외, ownership 격리,
 multi-source row_count 보존을 검증한다.
@@ -71,7 +71,7 @@ def _write_fixture_run(
     errors: tuple[str, ...] = (),
     created_by: str | None = None,
 ) -> None:
-    """실제 파이프라인을 실행하지 않고 canonical snapshot + manifest만 기록한다.
+    """Record only canonical snapshot + manifest without running actual pipeline.
 
     row_count 집계처럼 오케스트레이터의 동시 소스 실행(ThreadPoolExecutor)과 무관한
     로직을 검증할 때, 멀티소스 빌드의 실제 동시 실행에 의존하지 않기 위한 결정적
@@ -166,7 +166,7 @@ class TestDatasetGrouping:
         assert str(tmp_path) not in json.dumps(detail.body)
 
     def test_partial_index_merges_all_canonical_filesystem_runs(self, tmp_path: Path) -> None:
-        """부분 index가 canonical filesystem run을 숨기거나 중복시키지 않는다."""
+        """Partial index neither hides nor duplicates canonical filesystem run."""
         for run_id, dataset_id in (
             ("run-a", "dataset.a"),
             ("run-b", "dataset.b"),
@@ -203,7 +203,7 @@ class TestDatasetGrouping:
         ]
 
     def test_more_than_500_runs_are_not_silently_truncated(self, tmp_path: Path) -> None:
-        """run_count와 요청 limit은 hidden 500 cap의 영향을 받지 않는다."""
+        """run_count and request limit unaffected by hidden 500 cap."""
         _write_fixture_run(tmp_path, "bulk-000", dataset_id="dataset.bulk")
         snapshot = (tmp_path / "bulk-000" / "buildspec.yaml").read_bytes()
         manifest = (tmp_path / "bulk-000" / "manifest.json").read_bytes()
@@ -262,15 +262,16 @@ class TestDatasetGrouping:
         dispatch(service, "POST", "/build", {"spec": _spec_yaml("dataset.a"), "run_id": "older"})
         dispatch(service, "POST", "/build", {"spec": _spec_yaml("dataset.a"), "run_id": "newer"})
 
-        # 'newer'가 시간상 나중에 빌드됐으므로 finished_at도 더 최신이다.
+        # 'newer' was built later so finished_at is more recent.
         resp = dispatch(service, "GET", "/datasets/dataset.a", None)
         assert resp.status_code == 200
         assert resp.body["latest_run_id"] == "newer"
 
     def test_multi_source_row_counts_are_preserved_not_collapsed(self, tmp_path: Path) -> None:
-        # 실제 오케스트레이터의 동시 멀티소스 실행에 의존하지 않는 결정적 fixture로
-        # row_count 집계 로직만 검증한다 (Windows 환경의 사전 존재 concurrency
-        # 이슈와 무관하게 만들기 위함 — 별도 보고).
+        # Use deterministic fixture not depending on actual orchestrator
+        # concurrent multi-source execution
+        # verify only row_count aggregation logic (Windows environment pre-existing concurrency
+        # made independent of issue — reported separately).
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -309,12 +310,12 @@ class TestDatasetGrouping:
             ),
             encoding="utf-8",
         )
-        # legacy run에는 buildspec.yaml snapshot이 없다.
+        # legacy run has no buildspec.yaml snapshot.
 
-        # ADR 0003: legacy-run은 service.build()를 거치지 않았으므로 SQLite 인덱스에
-        # 아직 없다 — rebuild_index로 파일시스템을 재스캔해 인덱스에 반영한다.
-        # Windows에서는 열려 있는 sqlite 연결이 파일 rename을 막으므로, 기존 연결을
-        # 먼저 닫고 재구축 후 새 BuilderService로 조회한다.
+        # ADR 0003: legacy-run didn't go through service.build() so not yet in SQLite index
+        # — rebuild_index rescans filesystem and reflects in index.
+        # On Windows, open sqlite connection blocks file rename, so close existing connection
+        # first, rebuild, then query with new BuilderService.
         service._build_index.close()
         rebuild_index(tmp_path)
         service2 = _service(tmp_path)
@@ -323,7 +324,7 @@ class TestDatasetGrouping:
         datasets = cast(list[dict[str, object]], datasets_resp.body["datasets"])
         assert all(d["latest_run_id"] != "legacy-run" for d in datasets)
 
-        # /builds에는 여전히 legacy run이 나타난다.
+        # legacy run still appears in /builds.
         builds_resp = dispatch(service2, "GET", "/builds", None)
         builds = cast(list[dict[str, object]], builds_resp.body["builds"])
         assert any(b["run_id"] == "legacy-run" for b in builds)
@@ -331,7 +332,7 @@ class TestDatasetGrouping:
     def test_get_dataset_falls_back_to_filesystem_when_index_never_populated(
         self, tmp_path: Path
     ) -> None:
-        """BuildIndex가 아직 채워지지 않은 상태(run이 index를 거치지 않고 파일시스템에만
+        """BuildIndex not yet populated (run not via index, only on filesystem
         존재)에서도 GET /datasets/{id}가 정본(snapshot+manifest)에서 찾아내야 한다.
 
         list_by_dataset()은 빈 테이블에 대해 예외 없이 빈 목록을 반환하므로, "아직 채워지지
@@ -394,7 +395,7 @@ class TestDatasetGrouping:
 
 
 class TestDatasetTotal:
-    """GET /datasets `total` (#488 후속, additive, API 1.22.0).
+    """GET /datasets `total` (#488 follow-up, additive, API 1.22.0).
 
     total = canonical grouping + ownership 이후, pagination 이전의 distinct
     dataset_id 개수. items.length/limit을 total로 쓰지 않는다.
@@ -425,7 +426,7 @@ class TestDatasetTotal:
             )
         resp = dispatch(service, "GET", "/datasets", None, query="limit=2")
         assert resp.status_code == 200
-        # 페이지는 limit에 걸리지만 total은 전체 distinct 개수를 그대로 보고한다.
+        # Page respects limit but total reports all distinct count as-is.
         assert len(cast(list[object], resp.body["datasets"])) == 2
         assert resp.body["total"] == 5
 
@@ -442,7 +443,7 @@ class TestDatasetTotal:
         service = _service(tmp_path)
         dispatch(service, "POST", "/build", {"spec": _spec_yaml("dataset.real"), "run_id": "r1"})
 
-        # buildspec.yaml snapshot이 없는 legacy run — grouping/total 대상이 아니다.
+        # legacy run without buildspec.yaml snapshot — not grouping/total target.
         legacy_dir = tmp_path / "legacy-run"
         legacy_dir.mkdir()
         (legacy_dir / "manifest.json").write_text(
@@ -490,7 +491,7 @@ class TestDatasetTotal:
         )
         resp = dispatch(service, "GET", "/datasets", None)
         assert resp.status_code == 200
-        # userA는 dataset.a + dataset.shared(본인 run)만 본다 — dataset.b는 제외.
+        # userA sees dataset.a + dataset.shared (own run) only — dataset.b excluded.
         assert {d["dataset_id"] for d in cast(list[dict[str, object]], resp.body["datasets"])} == {
             "dataset.a",
             "dataset.shared",
@@ -500,9 +501,9 @@ class TestDatasetTotal:
     def test_paginated_response_does_not_render_full_summary_past_the_page(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """limit보다 dataset이 훨씬 많아도 expensive full summary는 page 후보에만 돈다.
+        """Even if datasets >> limit, expensive full summary only runs on page candidates.
 
-        #488 후속 리뷰: total을 세느라 catalog 전체에 ``build_dataset_summary``
+        #Post-488 review: counting total across entire catalog ``build_dataset_summary``
         (snapshot+manifest 재파싱 + stage 산출물 probe)가 도는 regression 방지.
         page 밖 dataset은 경량 ``dataset_summary_renderable``로만 센다.
         """
@@ -534,13 +535,13 @@ class TestDatasetTotal:
         assert resp.status_code == 200
         assert len(cast(list[object], resp.body["datasets"])) == 1
         assert resp.body["total"] == 6
-        # full summary는 page(limit=1) 후보 하나에만, 나머지는 경량 검증만.
+        # full summary for page (limit=1) candidate only, rest light validation.
         assert len(summary_calls) == 1
         assert len(renderable_calls) == 5
 
 
 class TestDatasetOwnership:
-    """#488 semantics D: 동일 dataset_id라도 타 사용자 run은 grouping/latest에서 제외."""
+    """488 semantics D: other user runs excluded from grouping/latest even with same dataset_id."""
 
     def _build_as(
         self, service: BuilderService, dataset_id: str, run_id: str, identifier: str
@@ -575,7 +576,7 @@ class TestDatasetOwnership:
     def test_latest_selection_does_not_leak_other_users_newer_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """동일 dataset_id를 가진 타 사용자의 더 최신 run이 latest로 선택되면 안 된다."""
+        """Newer run from other user with same dataset_id must not be selected as latest."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         self._build_as(service, "dataset.shared2", "r-a-old", "userA")
@@ -604,7 +605,7 @@ class TestDatasetOwnership:
 
 
 class TestGroupingLogic:
-    """dataset grouping/latest 선정의 순수 함수 단위 테스트 (#488 semantics C)."""
+    """Pure function unit test for dataset grouping/latest selection (#488 semantics C)."""
 
     def _record(self, run_id: str, dataset_id: str, finished_at: str | None) -> RunRecord:
         return RunRecord(
@@ -627,7 +628,7 @@ class TestGroupingLogic:
         same_time = "2025-01-01T00:00:00Z"
         a = self._record("run-a", "d", same_time)
         z = self._record("run-z", "d", same_time)
-        # run_id 내림차순 타이브레이크: "run-z" > "run-a"
+        # run_id descending tiebreak: "run-z" > "run-a"
         assert is_more_recent(z, a)
         assert not is_more_recent(a, z)
         assert pick_latest([a, z]).run_id == "run-z"
@@ -652,8 +653,8 @@ class TestGroupingLogic:
 
 
 class TestFilterOwnership:
-    """datasets_service.filter_ownership — dataset/quality/stage가 공유하는 ownership
-    필터의 순수 함수 단위 테스트 (#505: canonical owner_id 우선, legacy 폴백)."""
+    """datasets_service.filter_ownership — ownership shared by dataset/quality/stage
+    pure function unit test of filter (#505: canonical owner_id first, legacy fallback)."""
 
     def _record(
         self, run_id: str, *, created_by: str | None, owner_id: str | None = None

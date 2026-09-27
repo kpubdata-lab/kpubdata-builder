@@ -1,1 +1,1 @@
-"""kpubdata-builder 유닛 테스트 패키지."""
+"""kpubdata-builder unit test package."""
