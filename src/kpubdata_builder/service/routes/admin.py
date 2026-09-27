@@ -40,6 +40,7 @@ _MAX_LIMIT = 200
 #: 비공개라 여기서 다시 적는다.
 _TERMINAL_JOB_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
+
 def _forbidden(principal: Principal, action: str) -> ServiceResponse:
     """관리자가 아닌 요청. **거부도 기록한다** — 누가 관리 경로를 두드렸는지가
     허용된 요청만큼 중요하다."""
@@ -131,7 +132,7 @@ def _admin_config(principal: Principal) -> ServiceResponse:
         200,
         {
             "enforce_ownership": ownership_module.enforce_ownership(),
-            "publish_server_credential_fallback": (publish_credentials.server_fallback_allowed()),
+            "publish_server_credential_fallback": publish_credentials.server_fallback_allowed(),
         },
     )
 
