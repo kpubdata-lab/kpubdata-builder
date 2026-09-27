@@ -88,7 +88,7 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         # 그대로 넣으면 "아직 도는 run 이 방금 끝났다" 로 읽힌다.
         finished = job.updated_at if job.status in _TERMINAL_JOB_STATUSES else None
         rows[job.run_id] = (
-            job.created_at,
+            finished or job.created_at,
             {
                 "run_id": job.run_id,
                 "status": job.status,
