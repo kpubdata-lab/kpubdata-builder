@@ -43,12 +43,37 @@ class _FakeIndex:
         return self._entries[:limit]
 
 
+@dataclass(frozen=True)
+class _Job:
+    """Shaped like BuildJobSnapshot: created_at/updated_at, not started/finished."""
+
+    run_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    owner_id: str | None
+
+
+class _FakeAsyncBuilds:
+    def __init__(self, jobs: list[_Job]) -> None:
+        self._jobs = jobs
+
+    def list_all(self) -> list[_Job]:
+        return list(self._jobs)
+
+
 class _FakeService:
-    def __init__(self, index: _FakeIndex) -> None:
+    def __init__(self, index: _FakeIndex, jobs: list[_Job] | None = None) -> None:
         self._build_index = index
+        self._async_builds = _FakeAsyncBuilds(jobs or [])
 
 
-def _service(entries: list[_Entry] | None = None, *, fail: bool = False) -> Any:
+def _service(
+    entries: list[_Entry] | None = None,
+    *,
+    fail: bool = False,
+    jobs: list[_Job] | None = None,
+) -> Any:
     rows = (
         entries
         if entries is not None
@@ -71,7 +96,7 @@ def _service(entries: list[_Entry] | None = None, *, fail: bool = False) -> Any:
             ),
         ]
     )
-    return cast(Any, _FakeService(_FakeIndex(rows, fail=fail)))
+    return cast(Any, _FakeService(_FakeIndex(rows, fail=fail), jobs))
 
 
 _ADMIN = Principal(kind="oidc", identifier="admin123", owner_id="oidc:admin", is_admin=True)
@@ -192,6 +217,47 @@ class TestOwnershipIsNotWidened:
             )
             is True
         )
+
+
+class TestInFlightRuns:
+    """BuildIndex is only written once a manifest exists, so queued and running
+    jobs are absent from it -- and a stuck run is what an operator looks for."""
+
+    def test_a_running_job_appears(self) -> None:
+        jobs = [
+            _Job("run-live", "running", "2026-09-27T01:00:00Z", "2026-09-27T01:00:30Z", "oidc:c")
+        ]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
+        ids = {run["run_id"] for run in response.body["runs"]}
+        assert "run-live" in ids
+        assert {"run-a", "run-b"} <= ids
+
+    def test_a_running_job_has_no_finished_at(self) -> None:
+        """Passing updated_at through would read as "this run just finished"."""
+        jobs = [_Job("run-live", "running", "2026-09-27T01:00:00Z", "2026-09-27T01:00:30Z", None)]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
+        live = next(r for r in response.body["runs"] if r["run_id"] == "run-live")
+        assert live["finished_at"] is None
+        assert live["started_at"] == "2026-09-27T01:00:00Z"
+
+    def test_a_terminal_job_keeps_its_finished_at(self) -> None:
+        jobs = [_Job("run-done", "failed", "2026-09-27T01:00:00Z", "2026-09-27T01:02:00Z", None)]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
+        done = next(r for r in response.body["runs"] if r["run_id"] == "run-done")
+        assert done["finished_at"] == "2026-09-27T01:02:00Z"
+
+    def test_the_index_entry_wins_for_the_same_run(self) -> None:
+        """A terminal index row is more recent than the registry's snapshot."""
+        jobs = [_Job("run-a", "running", "2026-09-27T00:00:00Z", "2026-09-27T00:00:10Z", None)]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
+        rows = [r for r in response.body["runs"] if r["run_id"] == "run-a"]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "succeeded"
+
+    def test_the_limit_still_caps_the_merged_list(self) -> None:
+        jobs = [_Job(f"j{i}", "queued", f"2026-09-27T02:{i:02d}:00Z", "x", None) for i in range(10)]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN, "limit=3")
+        assert response.body["count"] == 3
 
 
 class TestIndexFailure:
