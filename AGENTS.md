@@ -20,21 +20,28 @@
 
 ## 언어 정책
 
-> 정본은 [kpubdata/AGENTS.md](https://github.com/yeongseon/kpubdata/blob/main/AGENTS.md#언어-정책)
-> 다. 여기와 다르면 그쪽이 맞다. 아직 확정 전이고 ADR 로 정리해 논의한다.
+> 정본은 [kpubdata ADR 0003](https://github.com/yeongseon/kpubdata/blob/main/docs/adrs/0003-language-policy.md)
+> 이다. 근거(한국 OSS 10곳 실측)와 기각한 대안이 거기 있다.
 
-- **Documentation** (`docs/`, `*.md`): 한국어로 작성한다.
-- **Code** (주석, docstring): **영어로 작성한다.** 글로벌 오픈소스로 공개하기
-  때문이다 — docstring 은 `help()`·API 문서·IDE 힌트에 그대로 나오는 공개
-  문서다.
-  - 사용자에게 보이는 **문자열 리터럴**은 대상이 아니다. 예외·로그 메시지와 UI
-    문자열의 언어는 런타임 동작이고 별도 결정이다.
-- **Commit messages**: Always in English.
-- **PR titles**: **Always in English**, Conventional Commits. squash merge 에서 PR
-  제목이 그대로 커밋 메시지가 되고 CHANGELOG·릴리스 노트로 이어진다.
-- **CHANGELOG·릴리스 노트**: 영어.
-- **Issue / PR 본문, 리뷰 코멘트**: **어느 언어든 환영한다.** 영어로 올라온
-  이슈에는 영어로 답한다.
+**밖으로 나가거나 오래 남는 것은 영어다.**
+
+| 영역 | 언어 |
+|---|---|
+| 코드 식별자·주석·docstring | 영어 |
+| 커밋 메시지 | 영어 |
+| **PR 제목** | 영어 (Conventional Commits) — squash merge 에서 커밋이 된다 |
+| CHANGELOG·릴리스 노트 | 영어 |
+| **README** | 영어 기본 |
+| 이슈 제목·본문 | 한국어 또는 영어 |
+| PR 본문·리뷰 코멘트 | 한국어 또는 영어 |
+| 한국 도메인 문서 (활용신청·공공누리 절차) | 한국어 유지 |
+| 사용자에게 보이는 문자열 리터럴 | **대상 아님** (런타임 동작, 별도 결정) |
+
+- 영어로 올라온 이슈에는 영어로 답한다.
+- `good first issue` 는 영어로 쓰거나 병기한다.
+- **영어로 쓰기 어렵다는 이유로 기여를 막지 않는다.** PR 제목을 영어로 쓰기 어려우면
+  한국어로 내고 말해 달라 — 리뷰에서 함께 정리한다.
+
 
 ## 브랜치 규칙
 
