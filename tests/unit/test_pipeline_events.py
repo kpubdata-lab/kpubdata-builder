@@ -1,6 +1,9 @@
 """Structured event emission tests for ``pipeline.orchestrator.run_build`` (#496).
 
-HTTP route/ownership/bounded query covered by test_events_api.py. This file verifies at orchestrator level whether events fire only at actual execution boundaries (run/source fetch/medallion stage/quality checkpoint), non-executed stages are not faked as complete, and successful events persist even on failure.
+HTTP route/ownership/bounded query covered by test_events_api.py. This file verifies at
+orchestrator level whether events fire only at actual execution boundaries (run/source
+fetch/medallion stage/quality checkpoint), non-executed stages are not faked as complete, and
+successful events persist even on failure.
 """
 
 from __future__ import annotations
@@ -245,7 +248,9 @@ class TestQualityCheckpoint:
         assert quality_events[0].status == "ok"
 
     def test_quality_evaluated_survives_downstream_gate_failure(self, tmp_path: Path) -> None:
-        """Even if a source fails due to quality FAIL, the quality_evaluated event itself remains."""
+        """Even if a source fails due to quality FAIL, the quality_evaluated event itself
+        remains.
+        """
         from kpubdata_builder.spec.models import QualityPolicy
 
         client = _FakeClient({"datago.air": [{"id": "1"}, {"id": "2"}]})
@@ -318,11 +323,14 @@ class TestRecorderFailureIsolation:
     def test_event_append_failure_does_not_fail_otherwise_successful_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Event recording infrastructure failure does not cause already-successful builds to fail (#496).
+        """Event recording infrastructure failure does not cause already-successful builds to
+            fail (#496).
 
         BuildEventStore.append() itself does not swallow failure (test_event_store.py);
-        recorder absorbs it to not affect build progress — but (not because "derived index so loss OK" per ADR 0003)
-        to prevent event recording failure from corrupting the *different* source of truth (manifest/source outcome).
+        recorder absorbs it to not affect build progress — but (not because "derived index so
+        loss OK" per ADR 0003)
+        to prevent event recording failure from corrupting the *different* source of truth
+        (manifest/source outcome).
         That absorption is not silent disappearance; fault-injection tests below verify it via
         ``BuildManifest.warnings``.
         """
@@ -368,7 +376,7 @@ class TestRecorderFailureIsolation:
     def test_stage_completed_append_failure_does_not_flip_successful_source_to_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Bronze stage_completed append failure does not flip actually-successful sources to failed.
+        """A stage_completed append failure must not flip actually-successful sources to failed.
 
         stage_completed is called *after* actual persist (``persist_bronze_artifact``) completes —
         if exception leaks to pipeline control flow here,
@@ -401,7 +409,8 @@ class TestRecorderFailureIsolation:
 
         recorder.run_finished() is called before manifest_writer
         (pipeline/orchestrator.py) — if this failure propagates and aborts run_build,
-        manifest.json never gets created, violating AGENTS.md 'manifest omission forbidden' far more severely.
+        manifest.json never gets created, violating AGENTS.md 'manifest omission forbidden' far
+        more severely.
         """
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         store = BuildEventStore(tmp_path)
@@ -421,7 +430,9 @@ class TestRecorderFailureIsolation:
     def test_run_failed_append_failure_still_writes_manifest_with_real_errors(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """run_failed append failure also does not obscure manifest recording or actual failure reason (#496)."""
+        """run_failed append failure also does not obscure manifest recording or actual
+        failure reason (#496).
+        """
         client = _FakeClient({})  # All sources fail fetch.
         store = BuildEventStore(tmp_path)
         _selective_failing_append(monkeypatch, lambda e: e.event == "run_failed")

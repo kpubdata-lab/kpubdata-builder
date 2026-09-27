@@ -25,7 +25,10 @@ from kpubdata_builder.service.publish_credentials import (
 class _Repo:
     """Fake repository that does not validate slot names.
 
-    **This fake hid the bug.** Original implementation created slot as ``publish:huggingface:HF_TOKEN``, but real store validates provider key with ``^[a-z0-9][a-z0-9_-]{0,63}$`` raising ValueError. Fake just dict lookup, so passed. Below ``TestAgainstTheRealStore`` re-verifies same contract against actual SQLite store.
+    **This fake hid the bug.** Original implementation created slot as
+    ``publish:huggingface:HF_TOKEN``, but real store validates provider key with
+    ``^[a-z0-9][a-z0-9_-]{0,63}$`` raising ValueError. Fake just dict lookup, so passed. Below
+    ``TestAgainstTheRealStore`` re-verifies same contract against actual SQLite store.
     """
 
     def __init__(self, secrets: dict[str, str]) -> None:
@@ -301,7 +304,8 @@ class TestKaggleUsesTheCredentialsItIsGiven:
 class TestClosingTheServerFallback:
     """Multi-user deployment must be able to close server token fallback (#635).
 
-    While fallback is open, principal without stored credential still publishes as server owner — adding per-requester credential alone does not close original issue.
+    While fallback is open, principal without stored credential still publishes as server owner —
+    adding per-requester credential alone does not close original issue.
     """
 
     def test_the_fallback_is_open_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,7 +346,10 @@ class TestClosingTheServerFallback:
 class TestTheSwitchActuallyBlocksPublishing:
     """Verify ``REQUIRE_OWN_PUBLISH_CREDENTIAL=true`` actually blocks publishing.
 
-    resolver returned {} from start and unit test passed. But publish_api omitted kwarg if credentials empty by if credentials:, and publisher read os.environ without args. So even with switch on, any authenticated user could publish as server account — all three pieces passed individual tests.
+    resolver returned {} from start and unit test passed. But publish_api omitted kwarg if
+    credentials empty by if credentials:, and publisher read os.environ without args. So even
+    with switch on, any authenticated user could publish as server account — all three pieces
+    passed individual tests.
     """
 
     def _hf_api(self, monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]) -> None:

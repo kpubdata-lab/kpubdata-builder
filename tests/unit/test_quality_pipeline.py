@@ -1,7 +1,8 @@
 """Quality WARN/FAIL gate — orchestrator/preview integration tests (#486).
 
 Verify WARN continues Build, FAIL blocks Gold entry while preserving quality_results in manifest,
-multi-source splits per-source results, Preview and Build give identical judgment on identical data/rules.
+multi-source splits per-source results, Preview and Build give identical judgment on identical
+data/rules.
 """
 
 from __future__ import annotations
@@ -203,7 +204,9 @@ class TestEvaluationErrorGate:
 
 
 class TestSchemaValidationFailurePreservesQualityResults:
-    """Even if existing #189 legacy schema gate fails, quality_results remains in manifest (#486)."""
+    """Even if existing #189 legacy schema gate fails, quality_results remains in manifest
+    (#486).
+    """
 
     def test_missing_required_column_preserves_schema_check_results(self, tmp_path: Path) -> None:
         spec = BuildSpec(

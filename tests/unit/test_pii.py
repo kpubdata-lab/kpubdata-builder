@@ -1,6 +1,7 @@
 """PII scanner unit tests (#441, QG-1).
 
-Verify patterns (resident ID/mobile/email/business ID), column name heuristics, and security principle (no raw value exposure).
+Verify patterns (resident ID/mobile/email/business ID), column name heuristics, and security
+principle (no raw value exposure).
 """
 
 from __future__ import annotations

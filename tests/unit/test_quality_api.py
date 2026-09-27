@@ -558,8 +558,10 @@ class TestBuildQualityAvailability:
 class TestQualitySummary:
     """GET /quality/summary — last 24h cross-run quality aggregate (#486 follow-up, API 1.22.0).
 
-    Verify WARN/PASS/FAIL run count aggregation, 24h boundary, unevaluated run exclusion, ownership filtering.
-    Time basis is service-internal ``datetime.now``, so fixture uses relative timestamp from actual current time.
+    Verify WARN/PASS/FAIL run count aggregation, 24h boundary, unevaluated run exclusion,
+    ownership filtering.
+    Time basis is service-internal ``datetime.now``, so fixture uses relative timestamp from
+    actual current time.
     """
 
     @staticmethod
@@ -820,8 +822,11 @@ class TestQualitySummary:
         assert resp.body["warn_runs"] == 1
 
     def test_run_absent_from_index_still_counted(self, tmp_path: Path) -> None:
-        """Even if index write is lost and a specific run is completely absent from index (other runs present)
-        if canonical manifest is inside window, included in 24h aggregate (ADR 0003 fallback)."""
+        """A run absent from the index is still counted when the canonical manifest is in window.
+
+        Even if index write is lost and a specific run is completely absent from
+        index (other runs present), if the canonical manifest is inside the
+        window it is included in the 24h aggregate (ADR 0003 fallback)."""
         _write_fixture_run(
             tmp_path,
             "r-unindexed",

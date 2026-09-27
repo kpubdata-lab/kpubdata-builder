@@ -81,7 +81,8 @@ def test_preview_build_returns_schema_and_sample() -> None:
 
 def test_preview_build_writes_no_files(monkeypatch: pytest.MonkeyPatch) -> None:
     # Previous test verified that temp directory not passed to preview_build was empty,
-    # effectively always passing (#196). We intercept actual filesystem write calls to verify preview_build
+    # effectively always passing (#196). We intercept actual filesystem write calls to verify
+    # preview_build
     # guarantees no writes.
     spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
     client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
@@ -134,7 +135,9 @@ def test_preview_build_records_failure_for_missing_source() -> None:
 
 
 def test_preview_build_fetches_by_provider_dataset_and_reports_alias() -> None:
-    """Even with alias, fetch uses provider.dataset key, surface key is alias (#98 review same regression)."""
+    """Even with alias, fetch uses provider.dataset key, surface key is alias (#98 review
+    same regression).
+    """
     spec = _spec(SourceRef(provider="datago", dataset="apt_trade", alias="trades"))
     client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
 
@@ -307,9 +310,12 @@ class TestDiff:
         assert preview.diff_truncated is False
 
     def test_wide_dataset_truncates_diffs_but_keeps_accurate_summary_end_to_end(self) -> None:
-        # #497 sample/diff memory ceiling: limit (row count) alone cannot cap the number of diff items in wide datasets
-        # (high column count) — MAX_PREVIEW_DIFF_ITEMS actually caps the number of PreviewDiffItems in the response
-        # and marks it explicitly with diff_truncated; end-to-end test with 1 row × (MAX_PREVIEW_DIFF_ITEMS + 100) columns all cast.
+        # 497 sample/diff memory ceiling: limit (row count) alone cannot cap the number of diff
+        # items in wide datasets
+        # (high column count) — MAX_PREVIEW_DIFF_ITEMS actually caps the number of PreviewDiffItems
+        # in the response
+        # and marks it explicitly with diff_truncated; end-to-end test with 1 row ×
+        # (MAX_PREVIEW_DIFF_ITEMS + 100) columns all cast.
         #
         max_items = preview_module.MAX_PREVIEW_DIFF_ITEMS
         column_count = max_items + 100
@@ -338,7 +344,8 @@ class TestDiff:
     def test_columns_without_declared_cast_never_produce_a_diff_end_to_end(self) -> None:
         # Currently normalize_table() never changes values of columns not in casts
         # (records_to_dataframe() carries original values as-is), so columns not in casts produce
-        # no diff end-to-end — the "transform=None" branch here verifies _diff_sample() directly (TestDiffSampleHelper below).
+        # no diff end-to-end — the "transform=None" branch here verifies _diff_sample() directly
+        # (TestDiffSampleHelper below).
         #
         source = SourceRef(
             provider="datago",
@@ -358,7 +365,8 @@ class TestDiff:
 
 class TestDiffSampleHelper:
     """Verify ``_diff_sample`` directly — situation where columns not in casts change is currently
-    Silver pipeline (values must pass declared cast to change) cannot reproduce end-to-end, so transform=None branch fixed at this pure function level.
+    Silver pipeline (values must pass declared cast to change) cannot reproduce end-to-end, so
+    transform=None branch fixed at this pure function level.
     """
 
     def test_transform_is_null_when_column_has_no_declared_cast(self) -> None:
@@ -404,8 +412,10 @@ class TestDiffSampleHelper:
         assert truncated is False
 
     def test_max_items_caps_materialized_diffs_but_keeps_accurate_summary(self) -> None:
-        # #497 sample/diff memory ceiling: limit only restricts row count, so in wide datasets the diffs list itself can grow unbounded
-        # — max_items truncates only the list, but changed_cells/changed_rows must hold the actual untruncated sums.
+        # 497 sample/diff memory ceiling: limit only restricts row count, so in wide datasets the
+        # diffs list itself can grow unbounded
+        # — max_items truncates only the list, but changed_cells/changed_rows must hold the actual
+        # untruncated sums.
         #
         columns = tuple(f"c{i}" for i in range(10))
         source_rows = [dict.fromkeys(columns, "before")]
@@ -531,7 +541,8 @@ class TestDiffSampleHelper:
     def test_diff_unavailable_when_row_count_is_not_preserved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Today's Silver path does not filter/reorder rows (see test_silver.py TestRowPreservingInvariant),
+        # Today's Silver path does not filter/reorder rows (see test_silver.py
+        # TestRowPreservingInvariant),
         # but simulate a hypothetical future where that assumption breaks to verify the count guard
         # operates fail-closed.
         real_build_silver_dataset = build_silver_dataset
@@ -672,7 +683,8 @@ class TestSourceKinds:
 def test_preview_applies_the_same_transform_rules_as_build() -> None:
     """Preview and Build show same columns in same declaration (#611).
 
-    Preview is user's path to check results before Build. If rename/derived missing only in Preview, state is "column absent in preview but present in build output"
+    Preview is user's path to check results before Build. If rename/derived missing only in
+    Preview, state is "column absent in preview but present in build output"
     breaking the Preview↔Build identical judgment principle #486 established.
     """
     from kpubdata_builder.spec.models import DerivedColumn

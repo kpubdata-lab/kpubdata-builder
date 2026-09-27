@@ -261,7 +261,8 @@ def test_run_build_snapshot_round_trip_preserves_legacy_license_fallback(
     """Serializer does not promote legacy metadata.license to top-level (#487).
 
     snapshot preserves metadata as-is, so re-parsing and re-running snapshot
-    must produce same license via legacy fallback of ``_dataset_card_license`` — verify that canonical spec's license representation and dataset card rendering are reproducible.
+    must produce same license via legacy fallback of ``_dataset_card_license`` — verify that
+    canonical spec's license representation and dataset card rendering are reproducible.
     """
     spec = BuildSpec(
         dataset_id="apt_trade",
@@ -288,7 +289,8 @@ def test_run_build_snapshot_round_trip_preserves_legacy_license_fallback(
 
 
 def test_run_build_dataset_card_ignores_non_string_metadata_version(tmp_path: Path) -> None:
-    """If metadata.version is null/number/list/dict, render as unversioned without stringification (#487).
+    """If metadata.version is null/number/list/dict, render as unversioned without
+        stringification (#487).
 
     As metadata was expanded to JsonValue, ``str(None) == "None"`` exposed directly to card,
     prevents regression.
@@ -317,7 +319,8 @@ def test_run_build_does_not_forward_arbitrary_metadata_to_exporters(tmp_path: Pa
     """Arbitrary metadata must not leak to exporter.
 
     Before #629, orchestrator created metadata for exporter in two places, and
-    test intercepted the second one (``_execute_exports``). Now that second path is gone — ``_gold_package_metadata`` is the sole source exporter sees, so verify contract there.
+    test intercepted the second one (``_execute_exports``). Now that second path is gone —
+    ``_gold_package_metadata`` is the sole source exporter sees, so verify contract there.
     """
     spec = BuildSpec(
         dataset_id="apt_trade",
@@ -391,7 +394,8 @@ def test_run_build_redacts_path_from_unexpected_exception(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # #225: absolute paths from unexpected exceptions (OS errors, etc.) must not be exposed to client.
+    # 225: absolute paths from unexpected exceptions (OS errors, etc.) must not be exposed to
+    # client.
     # #246: details must be logged with logger.error, not warnings.warn.
     spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
     client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
@@ -464,7 +468,8 @@ def test_run_build_preserves_partial_artifacts_when_later_stage_fails(
 def test_run_build_fails_source_when_silver_validation_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Failed validation Silver datasets must not flow to Gold and sources must be marked failed (#189).
+    # Failed validation Silver datasets must not flow to Gold and sources must be marked failed
+    # (#189).
     import dataclasses
 
     from kpubdata_builder.stages.silver import build_silver_dataset as real_build
@@ -575,7 +580,8 @@ def test_run_build_rejects_unsafe_run_id(tmp_path: Path) -> None:
 
 def test_run_build_executes_sources_concurrently(tmp_path: Path) -> None:
     # Verify parallel execution by directly observing concurrent fetch count (#247).
-    # Why use concurrency counter instead of wall-clock threshold: CI runners have performance variance
+    # Why use concurrency counter instead of wall-clock threshold: CI runners have performance
+    # variance
     # and time-based assertions become flaky on slower runners (regression observed on slow runners:
     # sequential execution test failed despite not actually being sequential).
     import threading
@@ -636,7 +642,8 @@ def test_run_build_executes_sources_concurrently(tmp_path: Path) -> None:
 def test_run_build_preserves_source_order_in_manifest_with_multiple_sources(
     tmp_path: Path,
 ) -> None:
-    # Even if thread pool completion order changes, manifest inputs/outcomes must follow spec.sources
+    # Even if thread pool completion order changes, manifest inputs/outcomes must follow
+    # spec.sources
     # order to be deterministic (#247: executor.map returns results in submission order).
     spec = _spec(
         SourceRef(provider="datago", dataset="a"),
@@ -852,7 +859,8 @@ class TestExportsRunExactlyOnce:
         )
 
     def test_an_undeclared_license_leaves_the_key_out(self, tmp_path: Path) -> None:
-        # An empty string results in an empty license being published instead of the exporter default —
+        # An empty string results in an empty license being published instead of the exporter
+        # default —
         # not declaring and declaring as empty are different.
         assert "license" not in orchestrator._gold_package_metadata(self._spec_with_exports())
 

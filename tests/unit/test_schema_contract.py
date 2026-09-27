@@ -1,7 +1,8 @@
 """Source schema contract verification tests (#437, VAL-1).
 
 Verify BuildSpec ``sources[].schema`` declaration (1) parses to SchemaContract in loader,
-(2) validator rejects unknown dtype/cast, (3) Silver validation gate catches required/dtype violations.
+(2) validator rejects unknown dtype/cast, (3) Silver validation gate catches required/dtype
+violations.
 Previously gate existed but had no pass condition (orchestrator didn't pass arg, always ok).
 """
 
@@ -142,7 +143,9 @@ class TestSchemaContractEnforcement:
         assert silver.validation.ok
 
     def test_no_contract_backward_compat(self) -> None:
-        """Existing behavior when argument not passed (contract None) — always ok (backward compatible)."""
+        """Existing behavior when argument not passed (contract None) — always ok (backward
+        compatible).
+        """
         bronze = self._bronze([{"a": 1}])
         silver = build_silver_dataset(bronze)
         assert silver.validation.ok
@@ -174,7 +177,9 @@ class _FakeClient:
 
 
 class TestTransformRulesReachTheBuild:
-    """schema.rename/derived declarations are reflected in Silver outputs via orchestrator (#611)."""
+    """schema.rename/derived declarations are reflected in Silver outputs via orchestrator
+    (#611).
+    """
 
     def test_rename_and_derived_appear_in_the_silver_table(self, tmp_path: Path) -> None:
         import polars as pl

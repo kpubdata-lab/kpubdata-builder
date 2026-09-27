@@ -1,4 +1,6 @@
-"""Publisher boundary (#28): verify PublishResult contract and LocalPublisher registration behavior."""
+"""Publisher boundary (#28): verify PublishResult contract and LocalPublisher registration
+behavior.
+"""
 
 from __future__ import annotations
 
@@ -60,7 +62,8 @@ def test_publish_result_is_immutable() -> None:
 
 class TestLocalPublisherFailurePolicy:
     def test_rejects_duplicate_basenames(self, tmp_path: Path) -> None:
-        # Two same-named files in different directories are rejected in flat copy because one overwrites the other.
+        # Two same-named files in different directories are rejected in flat copy because one
+        # overwrites the other.
         d1 = tmp_path / "a"
         d2 = tmp_path / "b"
         d1.mkdir()
@@ -158,7 +161,8 @@ class TestHuggingFacePublisher:
     def test_preserves_directory_layout_in_repo_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Nested directory shards must not be flattened to bare filenames but preserve relative paths (#170).
+        # Nested directory shards must not be flattened to bare filenames but preserve relative
+        # paths (#170).
         calls = _install_fake_hf(monkeypatch)
         (tmp_path / "data").mkdir()
         readme = tmp_path / "README.md"
@@ -208,7 +212,8 @@ class TestHuggingFacePublisher:
     def test_same_basename_different_dirs_do_not_collide(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Even same-named files are separated into different repo paths when directory structure is preserved
+        # Even same-named files are separated into different repo paths when directory structure is
+        # preserved
         # so silent overwrites do not occur (#170).
         calls = _install_fake_hf(monkeypatch)
         d1 = tmp_path / "a"
@@ -260,7 +265,8 @@ class TestHuggingFacePublisher:
 
     def test_relative_paths_preserve_layout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # commonpath of relative-path artifacts is Path("."), which is parent==self but
-        # not absolute, so not a basename fallback candidate. Directory layout must be preserved (#205).
+        # not absolute, so not a basename fallback candidate. Directory layout must be preserved
+        # (#205).
         calls = _install_fake_hf(monkeypatch)
 
         result = HuggingFacePublisher().publish(
@@ -370,7 +376,8 @@ class TestKagglePublisher:
     def test_missing_kaggle_package_raises_runtime_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Only kaggle import is blocked with ImportError. sys.modules monkeypatch is spurious in environments
+        # Only kaggle import is blocked with ImportError. sys.modules monkeypatch is spurious in
+        # environments
         # where kaggle is installed, so __import__ is intercepted directly (#181).
         import builtins
 
@@ -415,7 +422,8 @@ class TestKagglePublisher:
     def test_authentication_failure_wrapped_in_publish_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # authenticate() exception must be converted to PublishError instead of raw traceback (#178).
+        # authenticate() exception must be converted to PublishError instead of raw traceback
+        # (#178).
         class _AuthFailApi(_FakeKaggleApi):
             def authenticate(self) -> None:
                 raise OSError("kaggle.json not found")
@@ -430,7 +438,8 @@ class TestKagglePublisher:
     def test_dataset_list_failure_wrapped_in_publish_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dataset_list failure is swallowed and propagated without creating new (public) dataset (#177).
+        # dataset_list failure is swallowed and propagated without creating new (public) dataset
+        # (#177).
         class _ListFailApi(_FakeKaggleApi):
             def dataset_list(self, *, mine: bool, search: str) -> list[str]:
                 del mine, search

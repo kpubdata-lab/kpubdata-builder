@@ -1,17 +1,22 @@
-"""Builder Service Contract (#63, #226, #317, #319, #209) OpenAPI spec structure and runtime verification.
+"""Builder Service Contract (#63, #226, #317, #319, #209) structure and runtime verification.
 
-No OpenAPI validator installed; structurally verify contract is OpenAPI 3.1 and covers both sync routes
+No OpenAPI validator installed; structurally verify contract is OpenAPI 3.1 and covers both sync
+routes
 and wire form actually implemented by BuilderService (service/app.py).
 Verify. Contract now describes only implemented endpoints (#226); prevent silent drift
-where only one side changes by explicitly locking implementation route ↔ contract operationId mapping (#317).
-Also verify bidirectional consistency between YAML contract and actual dispatch implementation (#317);
+where only one side changes by explicitly locking implementation route ↔ contract operationId
+mapping (#317).
+Also verify bidirectional consistency between YAML contract and actual dispatch implementation
+(#317);
 extend scope with status code and response schema verification (#319).
 
-Structural verification (above) checks if YAML *declaration* matches dispatch *routing list* (#317, #319).
+Structural verification (above) checks if YAML *declaration* matches dispatch *routing list*
+(#317, #319).
 ``TestResponseConformance`` (#209, ADR-0005) goes further: **actual dispatch response
 body conforms to declared schema **(wire-level conformance)** via pure Python
 validator (``_openapi.py``) — #319's static schema check only verifies "schema declares required
-it declares"; runtime check catches when app.py response has missing required fields or type changes even if declaration unchanged.
+it declares"; runtime check catches when app.py response has missing required fields or type
+changes even if declaration unchanged.
 """
 
 from __future__ import annotations
@@ -360,7 +365,9 @@ def test_source_preview_schema_covers_diff_and_sampling_shape() -> None:
 
 
 def test_preview_request_schema_declares_bounded_limit_and_sample_mode() -> None:
-    """#497: limit ceiling (1000, behavioral tightening) and sample_mode/seed reflected in contract."""
+    """#497: limit ceiling (1000, behavioral tightening) and sample_mode/seed reflected in
+    contract.
+    """
     preview_request = _load_contract()["components"]["schemas"]["PreviewRequest"]
 
     assert preview_request["properties"]["limit"]["maximum"] == 1000
@@ -370,7 +377,8 @@ def test_preview_request_schema_declares_bounded_limit_and_sample_mode() -> None
 
 
 # All operations described in the contract must actually be implemented in BuilderService.
-# Implementation path names match the contract one-to-one (#226: aspirational async/publish routes removed).
+# Implementation path names match the contract one-to-one (#226: aspirational async/publish routes
+# removed).
 _IMPLEMENTED_OPERATIONS = {
     "adminListRuns",
     "adminGetConfig",
@@ -425,12 +433,14 @@ def _contract_operation_ids() -> set[str]:
 
 def test_contract_operations_match_implementation() -> None:
     # Contract operation set must exactly match implemented sync route set.
-    # If unimplemented operations are added to contract or routes disappear, this test breaks (#226).
+    # If unimplemented operations are added to contract or routes disappear, this test breaks
+    # (#226).
     assert _contract_operation_ids() == _IMPLEMENTED_OPERATIONS
 
 
 def test_build_responses_pin_wire_status_codes() -> None:
-    # Contract must lock actual status codes for POST /build (200 success, 502 partial failure) (#226).
+    # Contract must lock actual status codes for POST /build (200 success, 502 partial failure)
+    # (#226).
     build = _load_contract()["paths"]["/build"]["post"]["responses"]
     assert "200" in build
     assert "502" in build
@@ -736,7 +746,8 @@ def test_response_schemas_have_required_fields() -> None:
     """YAML response schema must declare required fields for 200 response of major endpoints,
     it declares (#319).
 
-    This test verifies contract completeness: each operation defines schema for success response (200)
+    This test verifies contract completeness: each operation defines schema for success response
+    (200)
     and includes required fields.
     """
     contract = _load_contract()
@@ -791,12 +802,15 @@ def test_response_schemas_have_required_fields() -> None:
 #
 # Static validation (above) checks contract YAML matches dispatch routing list. Tests below
 # call actual dispatch() and verify returned JSON body conforms to declared response schema.
-# Use pure Python validator (_openapi.py) without external dependencies; this closes ADR-0005 open question
+# Use pure Python validator (_openapi.py) without external dependencies; this closes ADR-0005 open
+# question
 # #1 (whether schema validation should be pure-Python lightweight) toward "pure-Python lightweight".
 #
-# #319's test_response_schemas_have_required_fields only checks if schema *declared* required fields.
+# 319's test_response_schemas_have_required_fields only checks if schema *declared* required
+# fields.
 # If app.py omits required fields or changes types in actual response but declaration stays same,
-# static check passes — this runtime check catches that wire drift. Test all 6 operations declared in contract
+# static check passes — this runtime check catches that wire drift. Test all 6 operations declared
+# in contract
 # (/version, /validate, /preview, /build, /artifacts, /builds) across success+error status codes.
 #
 # ---------------------------------------------------------------------------
@@ -853,7 +867,9 @@ def _conform_service(tmp_path: Path) -> BuilderService:
 
 
 def _assert_conforms(resp: ServiceResponse, path: str, method: str) -> None:
-    """Verify actual dispatch response conforms to contract schema (status code declaration + body shape)."""
+    """Verify actual dispatch response conforms to contract schema (status code declaration +
+    body shape).
+    """
     contract = _load_contract()
     schema = response_schema(contract, path, method, resp.status_code)
     assert schema is not None, (
@@ -960,7 +976,8 @@ class TestResponseConformance:
         _assert_conforms(resp, "/preview", "POST")
 
     def test_preview_200_wide_dataset_diff_truncated(self, tmp_path: Path) -> None:
-        # #497 sample/diff memory ceiling: even if diffs are actually truncated (diff_truncated=true),
+        # 497 sample/diff memory ceiling: even if diffs are actually truncated
+        # (diff_truncated=true),
         # verify response still satisfies contract at wire-level.
         from kpubdata_builder.pipeline import MAX_PREVIEW_DIFF_ITEMS
 
@@ -1264,7 +1281,8 @@ class TestResponseConformance:
         _assert_conforms(resp, "/monitoring/summary", "GET")
 
     def test_monitoring_summary_200_after_build(self, tmp_path: Path) -> None:
-        # Verify contract is not violated even if latency sample is recorded after request processing.
+        # Verify contract is not violated even if latency sample is recorded after request
+        # processing.
         service = _conform_service(tmp_path)
         dispatch(service, "POST", "/build", {"spec": _CONFORM_SPEC_YAML, "run_id": "conform-mon"})
         resp = dispatch(service, "GET", "/monitoring/summary", None)

@@ -1,4 +1,6 @@
-"""quality BuildSpec extension (range/compare_columns/severity) parsing/validation/serialization tests (#486)."""
+"""quality BuildSpec extension (range/compare_columns/severity)
+parsing/validation/serialization tests (#486).
+"""
 
 from __future__ import annotations
 

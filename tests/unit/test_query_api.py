@@ -288,7 +288,9 @@ class TestQueryOwnershipEnforcement:
     def test_query_owner_id_mismatch_denied_despite_matching_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """New record with owner_id is rejected even if label matches but owner_id differs (#505)."""
+        """New record with owner_id is rejected even if label matches but owner_id differs
+        (#505).
+        """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         self._prepare_run(
             monkeypatch, tmp_path, created_by="oidc:userA", owner_id="oidc:canonical-real-owner"
