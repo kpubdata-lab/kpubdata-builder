@@ -1,13 +1,14 @@
-"""HTTP 전송 계층 통합 테스트 (#256).
+"""HTTP transport layer integration tests (#256).
 
-tests/integration/test_studio_contract.py는 dispatch(service, method, path, body)를
-직접 호출해 Builder↔Studio 계약을 검증하지만, 실제 HTTP 전송 계층(service/http.py)은
-그 테스트 경로에 포함되지 않는다. 이 파일은 실제 ThreadingHTTPServer를 기동하고
-urllib.request로 진짜 HTTP 요청을 보내, http.py가 담당하는 로직(Content-Length 파싱,
-body 크기 제한, JSON 파싱/검증, query string 분리, 예외 시 JSON 500, Content-Type
-헤더 등)이 dispatch()의 계약과 함께 실제로 동작하는지 검증한다.
+tests/integration/test_studio_contract.py validates the Builder↔Studio contract by calling
+dispatch(service, method, path, body) directly, but the actual HTTP transport layer
+(service/http.py) is not included in that test path. This file starts a real
+ThreadingHTTPServer and sends real HTTP requests via urllib.request to verify that http.py's
+logic (Content-Length parsing, body size limits, JSON parsing/validation, query string
+separation, JSON 500 on exception, Content-Type header etc.) works correctly alongside
+dispatch()'s contract.
 
-검증 대상 엔드포인트(정상 경로):
+Endpoints under test (normal paths):
     - GET  /version
     - POST /validate
     - POST /preview
@@ -16,15 +17,15 @@ body 크기 제한, JSON 파싱/검증, query string 분리, 예외 시 JSON 500
     - GET  /artifacts/{run_id}
     - GET  /builds
 
-검증 대상 엔드포인트(오류 경로):
-    - 빈 body GET 요청
-    - 초과 크기 body -> 413
-    - 잘못된 JSON -> 400
-    - 비객체 JSON(배열) -> 400
-    - 존재하지 않는 경로 -> 404
+Endpoints under test (error paths):
+    - empty body GET request
+    - oversized body -> 413
+    - malformed JSON -> 400
+    - non-object JSON (array) -> 400
+    - nonexistent path -> 404
 
-데이터는 in-test fake source client(dataset(key).list(**params).items)로 공급한다.
-실제 네트워크 호출은 하지 않는다.
+Data is supplied by in-test fake source client (dataset(key).list(**params).items).
+No actual network calls are made.
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ exports:
 
 
 class _FakeResult:
-    """SourceClient Protocol의 DatasetResult 부분(items)을 만족하는 fake."""
+    """Fake satisfying the SourceClient Protocol's DatasetResult part (items)."""
 
     def __init__(self, items: list[dict[str, JsonValue]]) -> None:
         self._items = items
@@ -74,7 +75,7 @@ class _FakeResult:
 
 
 class _FakeDataset:
-    """dataset(key).list(**params) 부분을 만족하는 fake."""
+    """Fake satisfying the dataset(key).list(**params) part."""
 
     def __init__(self, items: list[dict[str, JsonValue]]) -> None:
         self._items = items
@@ -84,7 +85,7 @@ class _FakeDataset:
 
 
 class _FakeClient:
-    """builder가 의존하는 SourceClient Protocol을 구조적으로 만족하는 fake."""
+    """Fake structurally satisfying the SourceClient Protocol that builder depends on."""
 
     def __init__(self, data: dict[str, list[dict[str, JsonValue]]]) -> None:
         self._data = data
@@ -102,8 +103,8 @@ def _service(tmp_path: Path) -> BuilderService:
 
 @pytest.fixture()
 def http_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterable[str]:
-    """실제 HTTPServer를 임의 포트에 기동해 http.py를 경유한 왕복을 검증한다."""
-    # 테스트에서는 dev-mode를 설정하여 인증을 생략한다 (#321, ADR 0006).
+    """Start real HTTPServer on arbitrary port to verify round-trip via http.py."""
+    # Tests set dev-mode to skip auth (#321, ADR 0006).
     monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
     server = HTTPServer(("127.0.0.1", 0), make_handler(_service(tmp_path)))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -195,7 +196,7 @@ class TestArtifactsRoundTrip:
 
 
 def _http_get_bytes(url: str) -> tuple[int, bytes]:
-    """HTTP GET을 보내 (status, raw body bytes)를 돌려준다. HTTPError도 status로 정규화."""
+    """Send HTTP GET and return (status, raw body bytes). HTTPError normalized to status."""
     try:
         with urllib.request.urlopen(url, timeout=5.0) as resp:
             return resp.status, resp.read()
@@ -204,18 +205,18 @@ def _http_get_bytes(url: str) -> tuple[int, bytes]:
 
 
 def _canonical_to_url(base_url: str, run_id: str, canonical: str) -> str:
-    """canonical run-relative POSIX 경로를 Studio downloader와 동일하게 URL로 만든다:
-    "/" 구분자는 그대로 두고 각 segment만 percent-encode한다."""
+    """Convert canonical run-relative POSIX path to URL identical to Studio downloader:
+    keep "/" separators, percent-encode segments only."""
     encoded = "/".join(quote(seg, safe="") for seg in canonical.split("/"))
     return f"{base_url}/artifacts/{quote(run_id, safe='')}/{encoded}"
 
 
 class TestArtifactDownloadRoundTrip:
-    """실제 HTTP 경계를 통과하는 개별 artifact 파일 다운로드 (#323 후속).
+    """Individual artifact file download through real HTTP boundary (#323 follow-up).
 
-    이전 회귀: Studio가 manifest.outputs(= output_root 절대 storage 경로, OS 구분자
-    포함)를 file_path로 그대로 써서 브라우저가 "\\"를 "%5C"로 인코딩 -> Builder가 400.
-    canonical identity는 GET /artifacts/{run_id}가 주는 run-relative POSIX 경로다.
+    Previous regression: Studio used manifest.outputs (= output_root absolute storage path with OS
+    separators) directly as file_path, browser encoded "\\" to "%5C" -> Builder returned 400.
+    Canonical identity is the run-relative POSIX path given by GET /artifacts/{run_id}.
     """
 
     def _build(self, base_url: str, run_id: str) -> list[str]:
@@ -240,7 +241,7 @@ class TestArtifactDownloadRoundTrip:
                 "silver",
                 "gold",
             }
-        # 빌드는 nested 산출물을 만든다.
+        # Build creates nested artifacts.
         assert any("/" in f for f in files)
 
     def test_downloads_nested_artifact_by_canonical_path(
@@ -254,7 +255,7 @@ class TestArtifactDownloadRoundTrip:
         on_disk = (tmp_path / "http-dl-2").joinpath(*nested.split("/")).read_bytes()
         assert payload == on_disk
 
-        # 최상위 파일(manifest.json)도 같은 흐름으로 받힌다.
+        # Top-level files (manifest.json) also received same way.
         url = _canonical_to_url(http_server, "http-dl-2", "manifest.json")
         status, payload = _http_get_bytes(url)
         assert status == 200
@@ -264,7 +265,7 @@ class TestArtifactDownloadRoundTrip:
         self, http_server: str
     ) -> None:
         self._build(http_server, "http-dl-3")
-        # manifest.outputs가 줬던 형태: output_root dir 이름 + "\\" 구분자 (%5C).
+        # Form that manifest.outputs gave: output_root dir name + "\\" separator (%5C).
         bad = (
             f"{http_server}/artifacts/http-dl-3/"
             "dist-new-user-preview%5Chttp-dl-3%5Cbronze%5Cdatago.air_quality%5Craw_records.jsonl"
@@ -292,10 +293,11 @@ class TestArtifactDownloadRoundTrip:
     def test_cannot_reach_other_run_via_listing(self, http_server: str, tmp_path: Path) -> None:
         files_a = self._build(http_server, "http-dl-a")
         self._build(http_server, "http-dl-b")
-        # run A의 canonical 경로로 run B를 요청해도 A 안에서만 resolve된다 (교차 접근 불가).
+        # Requesting run B with run A's canonical path still resolves within A only
+        # (no cross-access).
         nested = next(f for f in files_a if "/" in f)
         status, _ = _http_get_bytes(_canonical_to_url(http_server, "http-dl-b", nested))
-        # B에도 같은 상대 경로 파일이 있으므로 200이지만, 내용은 B의 것이어야 한다.
+        # B also has the same relative path file so 200, but content must be B's.
         assert status == 200
         on_disk_b = (tmp_path / "http-dl-b").joinpath(*nested.split("/")).read_bytes()
         _, payload = _http_get_bytes(_canonical_to_url(http_server, "http-dl-b", nested))
@@ -316,7 +318,7 @@ class TestBuildsRoundTrip:
 
 class TestEmptyBodyRequest:
     def test_get_with_no_body_succeeds(self, http_server: str) -> None:
-        # GET 요청은 Content-Length/body가 없어도 정상 처리돼야 한다.
+        # GET request must be processed normally even without Content-Length/body.
         req = urllib.request.Request(f"{http_server}/version", method="GET")
         with urllib.request.urlopen(req, timeout=5.0) as resp:
             assert resp.status == 200
@@ -331,7 +333,7 @@ class TestOversizedBodyRequest:
             conn.putrequest("POST", "/validate")
             conn.putheader("Content-Type", "application/json")
             conn.putheader("Content-Length", str(_MAX_BODY_BYTES + 1))
-            conn.endheaders()  # body는 보내지 않는다 - 핸들러가 헤더만 보고 거부한다.
+            conn.endheaders()  # Do not send body - handler rejects after seeing headers only.
             response = conn.getresponse()
             assert response.status == 413
             body = cast(dict[str, object], json.loads(response.read()))
