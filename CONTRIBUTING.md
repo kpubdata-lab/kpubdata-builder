@@ -1,5 +1,10 @@
 # KPubData-Builder 기여 가이드 (CONTRIBUTING.md)
 
+> **프로젝트 관리·리뷰 정책의 정본은 [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 하나다.**
+> Epic · Issue · Priority · Review Level · Verification · Release 규칙은 그 문서를 따른다.
+> 이 문서에는 이 저장소 고유의 절차(빌드 명령, 디렉터리 규칙)만 남긴다.
+> 충돌하면 POLICY.md 가 우선한다.
+
 KPubData-Builder 프로젝트에 기여하고 싶으신가요? 환영합니다! 이 프로젝트는 KPubData에서 가져온 데이터를 다양한 형식(CSV, JSON, SQL 등)으로 가공하고 내보내는 역할을 합니다.
 
 ## 1. 환영 인사 및 프로젝트 소개
