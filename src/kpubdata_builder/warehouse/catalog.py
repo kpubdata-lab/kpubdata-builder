@@ -19,6 +19,10 @@ Schema::
       lease_id, snapshot_id, acquired_at, expires_at
 
 ``state``: ``staging`` -> ``validated`` -> ``committed``, or ``quarantined``.
+A snapshot that lost a compare-and-swap, or that a crash left behind, becomes
+``abandoned`` so garbage collection can reclaim it — a ``validated`` row that
+nobody will ever commit would otherwise keep its files forever.
+``retiring`` marks a snapshot being deleted: no new lease is issued for one.
 
 The pointer update is a compare-and-swap::
 
@@ -61,7 +65,9 @@ from .errors import (
 #
 # 2: baseline scoping columns on table_snapshots (#700) — owner_id,
 #    coverage_fingerprint, source_params_fingerprint, schema_contract_version.
-SCHEMA_VERSION = 2
+# 3: 'abandoned' and 'retiring' states (#699 N-01, N-03). SQLite cannot alter a
+#    CHECK constraint, so the table is rebuilt and copied row for row.
+SCHEMA_VERSION = 3
 
 CATALOG_FILENAME = "_warehouse.sqlite"
 
@@ -74,7 +80,14 @@ _SNAPSHOT_COLUMNS = (
     " source_params_fingerprint, schema_contract_version"
 )
 
-SnapshotState = Literal["staging", "validated", "committed", "quarantined"]
+SnapshotState = Literal[
+    "staging",
+    "validated",
+    "committed",
+    "quarantined",
+    "abandoned",
+    "retiring",
+]
 
 # Default lease lifetime, so a crashed query cannot pin a snapshot forever.
 DEFAULT_LEASE_SECONDS = 3600
@@ -89,6 +102,35 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
         "ALTER TABLE table_snapshots ADD COLUMN coverage_fingerprint TEXT",
         "ALTER TABLE table_snapshots ADD COLUMN source_params_fingerprint TEXT",
         "ALTER TABLE table_snapshots ADD COLUMN schema_contract_version TEXT",
+    ),
+    # A CHECK constraint cannot be altered in SQLite, so widening the state vocabulary
+    # means rebuilding the table. Every row is copied, which is the point: this catalog
+    # is canonical and a migration that loses rows is not a migration.
+    2: (
+        "ALTER TABLE table_snapshots RENAME TO table_snapshots_v2",
+        "CREATE TABLE table_snapshots ("
+        " id TEXT PRIMARY KEY,"
+        " table_id TEXT NOT NULL REFERENCES tables(id),"
+        " run_id TEXT NOT NULL,"
+        " schema_version INTEGER NOT NULL,"
+        " coverage_hash TEXT NOT NULL,"
+        " artifact_digest TEXT NOT NULL,"
+        " row_count INTEGER,"
+        " state TEXT NOT NULL CHECK (state IN"
+        "   ('staging','validated','committed','quarantined','abandoned','retiring')),"
+        " created_at TEXT NOT NULL,"
+        " committed_at TEXT,"
+        " owner_id TEXT,"
+        " coverage_fingerprint TEXT,"
+        " source_params_fingerprint TEXT,"
+        " schema_contract_version TEXT)",
+        "INSERT INTO table_snapshots SELECT id, table_id, run_id, schema_version,"
+        " coverage_hash, artifact_digest, row_count, state, created_at, committed_at,"
+        " owner_id, coverage_fingerprint, source_params_fingerprint,"
+        " schema_contract_version FROM table_snapshots_v2",
+        "DROP TABLE table_snapshots_v2",
+        "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
+        " ON table_snapshots(table_id, created_at DESC)",
     ),
 }
 
@@ -269,7 +311,8 @@ class TableCatalog:
                 " artifact_digest TEXT NOT NULL,"
                 " row_count INTEGER,"
                 " state TEXT NOT NULL CHECK (state IN"
-                "   ('staging','validated','committed','quarantined')),"
+                "   ('staging','validated','committed','quarantined',"
+                "    'abandoned','retiring')),"
                 " created_at TEXT NOT NULL,"
                 " committed_at TEXT,"
                 " owner_id TEXT,"
@@ -512,6 +555,153 @@ class TableCatalog:
                 "UPDATE table_snapshots SET state = 'quarantined' WHERE id = ?", (snapshot_id,)
             )
 
+    def abandon(self, snapshot_id: str) -> None:
+        """Mark a snapshot nobody will commit, so its files can be reclaimed.
+
+        Two things produce one. A compare-and-swap loser stays ``validated`` for ever
+        — the caller is told not to retry, so nothing moves it again. And a crash
+        between ``begin_snapshot`` and a commit leaves ``staging`` or ``validated``
+        behind. Neither is an orphan the layout can spot, because the catalog knows
+        about them, so garbage collection skipped them and their bytes stayed on disk.
+
+        Committed snapshots cannot be abandoned — use ``quarantine``, which refuses the
+        current one. A snapshot already ``abandoned`` is accepted so that a retried
+        cleanup is not an error.
+
+        Raises:
+            SnapshotStateError: The snapshot is committed, quarantined or retiring.
+            SnapshotNotFound: No such snapshot.
+        """
+        with self._immediate() as conn:
+            row = conn.execute(
+                "SELECT state FROM table_snapshots WHERE id = ?", (snapshot_id,)
+            ).fetchone()
+            if row is None:
+                raise SnapshotNotFound(f"no such snapshot: {snapshot_id!r}")
+            if row[0] == "abandoned":
+                return
+            if row[0] not in ("staging", "validated"):
+                raise SnapshotStateError(
+                    f"snapshot {snapshot_id!r} is in state {row[0]!r}; only an "
+                    "uncommitted snapshot can be abandoned"
+                )
+            conn.execute(
+                "UPDATE table_snapshots SET state = 'abandoned' WHERE id = ?", (snapshot_id,)
+            )
+
+    def stale_uncommitted(self, table_id: str, *, before: str) -> list[SnapshotRow]:
+        """Uncommitted snapshots created before ``before``.
+
+        The age cut-off is what separates a crash from work in progress. The catalog
+        cannot tell them apart by state alone — a ``staging`` row is what both look
+        like — so the caller decides how long a build is allowed to take.
+
+        Args:
+            table_id: The table to examine.
+            before: An ISO 8601 timestamp. Snapshots created at or after it are left
+                alone.
+        """
+        rows = self._conn.execute(
+            f"SELECT {_SNAPSHOT_COLUMNS} FROM table_snapshots"
+            " WHERE table_id = ? AND state IN ('staging','validated') AND created_at < ?"
+            " ORDER BY created_at",
+            (table_id, before),
+        ).fetchall()
+        return [SnapshotRow(*row) for row in rows]
+
+    def begin_retiring(self, snapshot_id: str, *, now: str | None = None) -> SnapshotRow:
+        """Move a snapshot to ``retiring``, refusing if a lease is live.
+
+        The check and the transition happen in **one transaction**, which is the whole
+        point. ``assert_deletable`` followed by a delete has a gap: a query can resolve
+        the pointer and take a lease between the two, and then its snapshot is deleted
+        underneath it. Nothing issues a lease for a ``retiring`` snapshot, so once this
+        returns the snapshot cannot gain a reader.
+
+        Raises:
+            ImmutableSnapshot: It is the table's current snapshot.
+            SnapshotInUse: A live lease exists.
+            SnapshotNotFound: No such snapshot.
+        """
+        moment = now or _now()
+        with self._immediate() as conn:
+            row = conn.execute(
+                f"SELECT {_SNAPSHOT_COLUMNS} FROM table_snapshots WHERE id = ?",
+                (snapshot_id,),
+            ).fetchone()
+            if row is None:
+                raise SnapshotNotFound(f"no such snapshot: {snapshot_id!r}")
+            snapshot = SnapshotRow(*row)
+            current = conn.execute(
+                "SELECT current_snapshot_id FROM tables WHERE id = ?", (snapshot.table_id,)
+            ).fetchone()
+            if current is not None and current[0] == snapshot_id:
+                raise ImmutableSnapshot(
+                    f"snapshot {snapshot_id!r} is the current snapshot of table "
+                    f"{snapshot.table_id!r}; deleting it would leave nothing to read"
+                )
+            live = conn.execute(
+                "SELECT COUNT(*) FROM snapshot_leases WHERE snapshot_id = ? AND expires_at > ?",
+                (snapshot_id, moment),
+            ).fetchone()[0]
+            if live:
+                raise SnapshotInUse(
+                    f"snapshot {snapshot_id!r} has {live} live lease(s); a query is reading it"
+                )
+            conn.execute(
+                "UPDATE table_snapshots SET state = 'retiring' WHERE id = ?", (snapshot_id,)
+            )
+        return snapshot
+
+    def pin(
+        self, snapshot_id: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS
+    ) -> PinnedSnapshot:
+        """Take a lease on a specific snapshot rather than on whatever is current.
+
+        Querying a snapshot by id — a saved analysis, a restore, a comparison against
+        a past state — needs the same protection from garbage collection that
+        ``resolve_current`` gives. Without this, such a query had no lease at all.
+
+        A ``retiring`` snapshot is refused: it is on its way out, and handing it a new
+        reader is how a delete races a query.
+
+        Raises:
+            SnapshotStateError: The snapshot is retiring or was never committed.
+            SnapshotNotFound: No such snapshot.
+        """
+        lease_id = f"lease_{secrets.token_hex(12)}"
+        acquired = datetime.now(timezone.utc)
+        with self._immediate() as conn:
+            row = conn.execute(
+                "SELECT table_id, state FROM table_snapshots WHERE id = ?", (snapshot_id,)
+            ).fetchone()
+            if row is None:
+                raise SnapshotNotFound(f"no such snapshot: {snapshot_id!r}")
+            table_id, state = row
+            if state == "retiring":
+                raise SnapshotStateError(
+                    f"snapshot {snapshot_id!r} is being deleted; no new lease is issued for it"
+                )
+            if state not in ("committed", "quarantined"):
+                raise SnapshotStateError(
+                    f"snapshot {snapshot_id!r} is in state {state!r}; only a snapshot "
+                    "that was committed can be read"
+                )
+            revision = conn.execute(
+                "SELECT revision FROM tables WHERE id = ?", (table_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO snapshot_leases (lease_id, snapshot_id, acquired_at, expires_at)"
+                " VALUES (?, ?, ?, ?)",
+                (
+                    lease_id,
+                    snapshot_id,
+                    acquired.isoformat(),
+                    (acquired + timedelta(seconds=lease_seconds)).isoformat(),
+                ),
+            )
+        return PinnedSnapshot(snapshot_id, lease_id, revision)
+
     def _transition(self, snapshot_id: str, *, expected: tuple[str, ...], new: str) -> None:
         """Change state, refusing when the current state is not in ``expected``."""
         with self._immediate() as conn:
@@ -528,7 +718,43 @@ class TableCatalog:
 
     # ------------------------------------------------------- compare-and-swap
 
-    def commit_snapshot(self, snapshot_id: str, *, expected_revision: int) -> TableRow:
+    def _verify_promoted(self, snapshot_id: str) -> None:
+        """Re-read a promoted snapshot and check it against what was recorded.
+
+        Verification happens **outside** the commit transaction on purpose: reading a
+        directory is slow, and holding the write lock for it would block every other
+        commit on the catalog. The window that opens is acceptable — the files are
+        already immutable at this point, so nothing legitimate changes them, and the
+        check is against damage rather than against a concurrent writer.
+
+        Raises:
+            SnapshotStateError: The directory is empty, or its digest does not match.
+            SnapshotNotFound: No such snapshot.
+        """
+        from .layout import SnapshotLayout, content_digest, is_empty
+
+        snapshot = self.get_snapshot(snapshot_id)
+        directory = SnapshotLayout(self._root, snapshot.table_id).snapshot_dir(snapshot_id)
+        if is_empty(directory):
+            raise SnapshotStateError(
+                f"snapshot {snapshot_id!r} has no files. Committing it would replace the "
+                "table with emptiness, which is worse than failing the refresh."
+            )
+        actual = content_digest(directory)
+        if actual != snapshot.artifact_digest:
+            raise SnapshotStateError(
+                f"snapshot {snapshot_id!r} does not match its recorded digest "
+                f"({snapshot.artifact_digest} recorded, {actual} on disk). The files "
+                "changed after they were promoted."
+            )
+
+    def commit_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        expected_revision: int,
+        verify_before_commit: bool = False,
+    ) -> TableRow:
         """Commit a snapshot and move the table pointer to it.
 
         **One transaction**: marking the snapshot ``committed`` and moving the
@@ -539,19 +765,30 @@ class TableCatalog:
         (``SnapshotLayout.promote``). The order matters — moving the pointer before
         the files are in place makes it point at nothing.
 
+        Pass ``verify_before_commit=True`` to re-read the promoted directory and check
+        it against the recorded digest. Without it this only trusts the catalog's own
+        state, so a snapshot that was promoted and then damaged — or that a build left
+        empty while reporting success — becomes current anyway. Committing an empty
+        snapshot replaces a table with emptiness, which is worse than failing.
+
         Args:
             snapshot_id: The snapshot to commit. Must be ``validated``.
             expected_revision: The table revision that was read. A mismatch is a
                 conflict.
+            verify_before_commit: Re-read the files and compare their digest to the one
+                recorded, and refuse an empty directory.
 
         Returns:
             The updated table row.
 
         Raises:
             SnapshotConflict: Another commit moved the pointer first. Not a retry.
-            SnapshotStateError: The snapshot is not ``validated``.
+            SnapshotStateError: The snapshot is not ``validated``, or verification
+                found the files empty or changed.
             SnapshotNotFound: No such snapshot.
         """
+        if verify_before_commit:
+            self._verify_promoted(snapshot_id)
         with self._immediate() as conn:
             row = conn.execute(
                 "SELECT table_id, state FROM table_snapshots WHERE id = ?", (snapshot_id,)

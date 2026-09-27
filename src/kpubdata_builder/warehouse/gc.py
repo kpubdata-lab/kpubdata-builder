@@ -68,12 +68,17 @@ def collect_orphan_staging(catalog: TableCatalog, table_id: str) -> list[str]:
 def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     """Delete one snapshot's files and then its catalog row.
 
+    The lease check and the state change happen in one transaction inside
+    ``begin_retiring``, and no lease is issued for a ``retiring`` snapshot. Checking
+    and then deleting in two steps left a gap: a query could resolve the pointer and
+    take a lease between them, and lose its data mid-read.
+
     Raises:
         ImmutableSnapshot: It is the table's current snapshot.
         SnapshotInUse: A query holds a live lease on it.
         SnapshotNotFound: No such snapshot.
     """
-    snapshot = catalog.assert_deletable(snapshot_id)
+    snapshot = catalog.begin_retiring(snapshot_id)
     directory = SnapshotLayout(catalog.root, snapshot.table_id).snapshot_dir(snapshot_id)
     if directory.exists():
         # Committed snapshots are read-only, and a read-only directory will not let
@@ -83,6 +88,22 @@ def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     # Files first, catalog second. The other order creates the orphan it is meant
     # to clean up.
     catalog.forget_snapshot(snapshot_id)
+
+
+def abandon_stale(catalog: TableCatalog, table_id: str, *, before: str) -> list[str]:
+    """Mark uncommitted snapshots older than ``before`` as abandoned.
+
+    The catalog cannot tell a crashed build from a slow one — both look like a
+    ``staging`` row — so the age cut-off is the caller's judgement about how long a
+    build may take. Nothing is deleted here; the next collection pass reclaims them.
+
+    Returns the snapshot ids marked.
+    """
+    marked: list[str] = []
+    for snapshot in catalog.stale_uncommitted(table_id, before=before):
+        catalog.abandon(snapshot.id)
+        marked.append(snapshot.id)
+    return marked
 
 
 def collect(
@@ -115,7 +136,22 @@ def collect(
     report.staging_removed = collect_orphan_staging(catalog, table_id)
 
     table = catalog.get_table(table_id)
-    committed = [s for s in catalog.list_snapshots(table_id) if s.state == "committed"]
+    snapshots = catalog.list_snapshots(table_id)
+
+    # Snapshots nobody will ever commit: a compare-and-swap loser, or what a crash left
+    # behind once someone marked it. Their files are not orphans the layout can spot,
+    # because the catalog knows about them, so nothing reclaimed them (#699 N-01).
+    for snapshot in [s for s in snapshots if s.state in ("abandoned", "retiring")]:
+        try:
+            delete_snapshot(catalog, snapshot.id)
+        except ImmutableSnapshot:
+            report.kept_current.append(snapshot.id)
+        except SnapshotInUse:
+            report.kept_leased.append(snapshot.id)
+        else:
+            report.snapshots_removed.append(snapshot.id)
+
+    committed = [s for s in snapshots if s.state == "committed"]
     # list_snapshots is newest first, so everything past `keep` is a candidate.
     for snapshot in committed[keep:]:
         if snapshot.id == table.current_snapshot_id:
@@ -132,4 +168,10 @@ def collect(
     return report
 
 
-__all__ = ["GCReport", "collect", "collect_orphan_staging", "delete_snapshot"]
+__all__ = [
+    "GCReport",
+    "abandon_stale",
+    "collect",
+    "collect_orphan_staging",
+    "delete_snapshot",
+]

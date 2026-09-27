@@ -17,6 +17,7 @@ import pytest
 from kpubdata_builder.warehouse import (
     ImmutableSnapshot,
     SnapshotConflict,
+    SnapshotInUse,
     SnapshotLayout,
     SnapshotManifest,
     SnapshotNotFound,
@@ -25,6 +26,7 @@ from kpubdata_builder.warehouse import (
     TableNotFound,
 )
 from kpubdata_builder.warehouse import gc as warehouse_gc
+from kpubdata_builder.warehouse import layout as warehouse_layout
 
 WORKSPACE = "ws_personal"
 
@@ -458,3 +460,297 @@ def test_a_path_traversing_identifier_is_refused(catalog: TableCatalog) -> None:
     table = catalog.create_table(WORKSPACE, "sales")
     with pytest.raises(ValueError):
         SnapshotLayout(catalog.root, table.id).snapshot_dir("../escape")
+
+
+class TestNothingKeepsItsFilesForever:
+    """A snapshot nobody will commit has to become collectable (#699 N-01).
+
+    Two things produce one, and neither is an orphan the layout can spot — the catalog
+    knows about them, so garbage collection skipped them and the bytes stayed.
+    """
+
+    def test_a_compare_and_swap_loser_can_be_reclaimed(self, catalog: TableCatalog) -> None:
+        """The loser is told not to retry, so nothing would ever move it again."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        first = _write_snapshot(catalog, table.id, run_id="run-1")
+        second = _write_snapshot(catalog, table.id, run_id="run-2", coverage="cov-2")
+        layout = SnapshotLayout(catalog.root, table.id)
+        layout.promote(first)
+        layout.promote(second)
+        expected = catalog.get_table(table.id).revision
+        catalog.commit_snapshot(first, expected_revision=expected)
+        with pytest.raises(SnapshotConflict):
+            catalog.commit_snapshot(second, expected_revision=expected)
+
+        # Before: validated for ever, files on disk, GC walks past it.
+        assert catalog.get_snapshot(second).state == "validated"
+        report = warehouse_gc.collect(catalog, table.id, keep=0)
+        assert second not in report.snapshots_removed
+        assert layout.snapshot_dir(second).exists()
+
+        catalog.abandon(second)
+        report = warehouse_gc.collect(catalog, table.id, keep=0)
+        assert second in report.snapshots_removed
+        assert not layout.snapshot_dir(second).exists()
+        with pytest.raises(SnapshotNotFound):
+            catalog.get_snapshot(second)
+
+    def test_a_crashed_build_is_abandoned_by_age(self, catalog: TableCatalog) -> None:
+        """A staging row is what a crash and a slow build both look like.
+
+        The age cut-off is the caller's judgement, so work in progress survives.
+        """
+        table = catalog.create_table(WORKSPACE, "sales")
+        crashed = catalog.begin_snapshot(
+            table.id,
+            run_id="crashed",
+            schema_version=1,
+            coverage_hash="cov",
+            artifact_digest="sha256:0",
+        )
+        SnapshotLayout(catalog.root, table.id).begin(crashed.id)
+
+        # Nothing is old enough yet.
+        assert (
+            warehouse_gc.abandon_stale(catalog, table.id, before="1999-01-01T00:00:00+00:00") == []
+        )
+        assert catalog.get_snapshot(crashed.id).state == "staging"
+
+        marked = warehouse_gc.abandon_stale(catalog, table.id, before="2999-01-01T00:00:00+00:00")
+        assert marked == [crashed.id]
+        assert catalog.get_snapshot(crashed.id).state == "abandoned"
+
+    def test_a_committed_snapshot_cannot_be_abandoned(self, catalog: TableCatalog) -> None:
+        """Abandon is for uncommitted work; retiring a live snapshot is a delete."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        only = _write_snapshot(catalog, table.id, run_id="run-1")
+        _commit(catalog, table.id, only)
+
+        with pytest.raises(SnapshotStateError, match="uncommitted"):
+            catalog.abandon(only)
+
+    def test_abandoning_twice_is_not_an_error(self, catalog: TableCatalog) -> None:
+        """A retried cleanup must not fail."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot = catalog.begin_snapshot(
+            table.id,
+            run_id="run-1",
+            schema_version=1,
+            coverage_hash="cov",
+            artifact_digest="sha256:0",
+        )
+        catalog.abandon(snapshot.id)
+        catalog.abandon(snapshot.id)
+        assert catalog.get_snapshot(snapshot.id).state == "abandoned"
+
+
+class TestADeleteCannotRaceAReader:
+    """Checking for a lease and then deleting leaves a gap (#699 N-03).
+
+    A query could resolve the pointer and take a lease between the two steps, and then
+    lose its data mid-read.
+    """
+
+    def test_retiring_refuses_a_new_lease(self, catalog: TableCatalog) -> None:
+        """Once a snapshot is on its way out, nothing may start reading it."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        first = _write_snapshot(catalog, table.id, run_id="run-1")
+        _commit(catalog, table.id, first)
+        second = _write_snapshot(catalog, table.id, run_id="run-2", coverage="cov-2")
+        _commit(catalog, table.id, second)
+
+        catalog.begin_retiring(first)
+
+        with pytest.raises(SnapshotStateError, match="being deleted"):
+            catalog.pin(first)
+
+    def test_retiring_refuses_while_a_lease_is_live(self, catalog: TableCatalog) -> None:
+        """The check and the transition are one transaction, so this cannot slip."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        first = _write_snapshot(catalog, table.id, run_id="run-1")
+        _commit(catalog, table.id, first)
+        second = _write_snapshot(catalog, table.id, run_id="run-2", coverage="cov-2")
+        _commit(catalog, table.id, second)
+
+        with catalog.pinned(table.id):  # pins `second`, the current one
+            pass
+        pin = catalog.pin(first)
+        with pytest.raises(SnapshotInUse):
+            catalog.begin_retiring(first)
+        assert catalog.get_snapshot(first).state == "committed"
+
+        catalog.release(pin.lease_id)
+        catalog.begin_retiring(first)
+        assert catalog.get_snapshot(first).state == "retiring"
+
+    def test_retiring_refuses_the_current_snapshot(self, catalog: TableCatalog) -> None:
+        """The gate that already existed still holds on this path."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        only = _write_snapshot(catalog, table.id, run_id="run-1")
+        _commit(catalog, table.id, only)
+
+        with pytest.raises(ImmutableSnapshot):
+            catalog.begin_retiring(only)
+
+    def test_pin_protects_a_snapshot_queried_by_id(self, catalog: TableCatalog) -> None:
+        """A saved analysis reads a specific snapshot and had no lease at all."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        first = _write_snapshot(catalog, table.id, run_id="run-1")
+        _commit(catalog, table.id, first)
+        second = _write_snapshot(catalog, table.id, run_id="run-2", coverage="cov-2")
+        _commit(catalog, table.id, second)
+
+        pin = catalog.pin(first)
+        assert pin.snapshot_id == first
+
+        report = warehouse_gc.collect(catalog, table.id, keep=0)
+        assert first in report.kept_leased
+        assert SnapshotLayout(catalog.root, table.id).snapshot_dir(first).exists()
+
+        catalog.release(pin.lease_id)
+        assert first in warehouse_gc.collect(catalog, table.id, keep=0).snapshots_removed
+
+    def test_pin_refuses_an_uncommitted_snapshot(self, catalog: TableCatalog) -> None:
+        """Reading something that was never committed is reading a partial write."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot = _write_snapshot(catalog, table.id, run_id="run-1")
+
+        with pytest.raises(SnapshotStateError, match="committed"):
+            catalog.pin(snapshot)
+
+    def test_a_version_2_catalog_migrates_to_the_wider_state_set(self, tmp_path: Path) -> None:
+        """SQLite cannot alter a CHECK constraint, so the table is rebuilt.
+
+        Every row has to survive that: this catalog is canonical, and a migration that
+        loses rows is not a migration.
+        """
+        import sqlite3
+
+        root = tmp_path / "warehouse"
+        catalog = TableCatalog(root)
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot_id = _write_snapshot(catalog, table.id, run_id="run-1")
+        _commit(catalog, table.id, snapshot_id)
+        catalog.close()
+
+        conn = sqlite3.connect(str(root / "_warehouse.sqlite"), isolation_level=None)
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+        conn.close()
+
+        reopened = TableCatalog(root)
+        row = reopened.get_snapshot(snapshot_id)
+        assert row.run_id == "run-1"
+        assert row.state == "committed"
+        assert reopened.get_table(table.id).current_snapshot_id == snapshot_id
+        # And the wider vocabulary now works.
+        second = _write_snapshot(reopened, table.id, run_id="run-2", coverage="cov-2")
+        reopened.abandon(second)
+        assert reopened.get_snapshot(second).state == "abandoned"
+
+
+class TestCommitCanCheckTheFilesItIsAbout:
+    """commit_snapshot trusted the catalog's own state and nothing else (#699 N-02).
+
+    A snapshot promoted and then damaged, or a build that produced nothing and reported
+    success, became current anyway.
+    """
+
+    def _promote_with_digest(self, catalog: TableCatalog, table_id: str, *, rows: str) -> str:
+        """Take a snapshot to promoted, recording the digest of what was written."""
+        snapshot = catalog.begin_snapshot(
+            table_id,
+            run_id="run-1",
+            schema_version=1,
+            coverage_hash="cov",
+            artifact_digest="sha256:placeholder",
+            row_count=1,
+        )
+        layout = SnapshotLayout(catalog.root, table_id)
+        staging = layout.begin(snapshot.id)
+        if rows:
+            (staging / "part-0.csv").write_text(rows, encoding="utf-8")
+        # The digest is recorded after the bytes are written, which is the only order
+        # that can be checked later.
+        digest = warehouse_layout.content_digest(staging)
+        catalog._conn.execute(  # noqa: SLF001 - the fixture stands in for the writer
+            "UPDATE table_snapshots SET artifact_digest = ? WHERE id = ?",
+            (digest, snapshot.id),
+        )
+        layout.write_manifest(
+            snapshot.id,
+            SnapshotManifest(
+                snapshot_id=snapshot.id,
+                table_id=table_id,
+                logical_name="t",
+                run_id="run-1",
+                schema_version=1,
+                coverage_hash="cov",
+                artifact_digest=digest,
+                row_count=1,
+                created_at=snapshot.created_at,
+            ),
+        )
+        catalog.mark_validated(snapshot.id)
+        layout.promote(snapshot.id)
+        return snapshot.id
+
+    def test_verification_passes_for_an_intact_snapshot(self, catalog: TableCatalog) -> None:
+        """The case the check must not break."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot_id = self._promote_with_digest(catalog, table.id, rows="a\n1\n")
+
+        updated = catalog.commit_snapshot(
+            snapshot_id,
+            expected_revision=catalog.get_table(table.id).revision,
+            verify_before_commit=True,
+        )
+        assert updated.current_snapshot_id == snapshot_id
+
+    def test_an_empty_snapshot_is_refused(self, catalog: TableCatalog) -> None:
+        """A build that produced nothing must not replace a table with emptiness."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot_id = self._promote_with_digest(catalog, table.id, rows="")
+
+        with pytest.raises(SnapshotStateError, match="no files"):
+            catalog.commit_snapshot(snapshot_id, expected_revision=0, verify_before_commit=True)
+        assert catalog.get_table(table.id).current_snapshot_id is None
+
+    def test_changed_files_are_refused(self, catalog: TableCatalog) -> None:
+        """Damage after promotion is what the recorded digest exists to catch."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot_id = self._promote_with_digest(catalog, table.id, rows="a\n1\n")
+        directory = SnapshotLayout(catalog.root, table.id).snapshot_dir(snapshot_id)
+
+        warehouse_layout.thaw(directory)
+        (directory / "part-0.csv").write_text("a\n999\n", encoding="utf-8")
+
+        with pytest.raises(SnapshotStateError, match="recorded digest"):
+            catalog.commit_snapshot(snapshot_id, expected_revision=0, verify_before_commit=True)
+        assert catalog.get_table(table.id).current_snapshot_id is None
+
+    def test_verification_is_off_by_default(self, catalog: TableCatalog) -> None:
+        """Existing callers keep their behaviour; the check is opt-in.
+
+        Recorded rather than assumed: the default has to stay cheap, because reading a
+        directory holds nothing but wall-clock time and every commit would pay it.
+        """
+        table = catalog.create_table(WORKSPACE, "sales")
+        snapshot_id = self._promote_with_digest(catalog, table.id, rows="a\n1\n")
+        directory = SnapshotLayout(catalog.root, table.id).snapshot_dir(snapshot_id)
+        warehouse_layout.thaw(directory)
+        (directory / "part-0.csv").write_text("changed\n", encoding="utf-8")
+
+        catalog.commit_snapshot(snapshot_id, expected_revision=0)
+        assert catalog.get_table(table.id).current_snapshot_id == snapshot_id
+
+    def test_the_digest_ignores_the_manifest(self, catalog: TableCatalog) -> None:
+        """The manifest carries the digest, so including it would be self-referential."""
+        table = catalog.create_table(WORKSPACE, "sales")
+        layout = SnapshotLayout(catalog.root, table.id)
+        staging = layout.begin("snap_digest")
+        (staging / "part-0.csv").write_text("a\n1\n", encoding="utf-8")
+        before = warehouse_layout.content_digest(staging)
+        (staging / "_snapshot.json").write_text('{"anything": true}', encoding="utf-8")
+
+        assert warehouse_layout.content_digest(staging) == before
