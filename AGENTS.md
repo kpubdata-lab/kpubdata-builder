@@ -38,6 +38,36 @@
 | 한국 도메인 문서 (활용신청·공공누리 절차) | 한국어 유지 |
 | 사용자에게 보이는 문자열 리터럴 | **대상 아님** (런타임 동작, 별도 결정) |
 
+## 라벨 — 무엇을 붙이나
+
+POLICY 2.1 · 2.1.1 · 2.1.2 절이 정본이다. **표에 없는 라벨은 새로 만들지 않는다.**
+라벨을 추가하려면 `epic:governance` 를 거친다.
+
+| 축 | 라벨 | 누가 |
+|---|---|---|
+| Epic | `epic:trust` `epic:warehouse` `epic:governance` `epic:byok` `epic:policy` `epic:datasets` `epic:distribution` `epic:brand` `epic:onboarding` | 기존 라벨은 누구나. **새 `epic:*` 를 만드는 것은 사람만** |
+| Priority | `priority:critical` `priority:high` `priority:medium` `priority:low` | **High 이상 승격은 사람만** (POLICY 8) |
+| Review Level | `review:R0` ~ `review:R3` | 자동 부여 대상. **낮추는 것은 사람만** |
+| 유형 | `type:feat` `type:bug` `type:docs` `type:chore` `type:test` `type:refactor` | 누구나 |
+| 영역 | `area:*` | 누구나 |
+
+새 이슈에는 **최소 `epic:*` 와 `type:*`** 를 붙인다. Priority 는 근거가 없으면
+붙이지 않는다 — POLICY 8 은 High 이상에 `Impact:` · `Blocks:` · `Evidence:` 를
+요구하고, 근거 없는 등급은 틀린 등급이다.
+
+에이전트가 하지 않는 것:
+
+- `priority:high` · `priority:critical` 로 올리기 (사람의 판단)
+- 새 `epic:*` 라벨 만들기
+- `review:*` 를 낮추기
+- Epic 이슈를 만들기 — Epic 은 라벨이다 (POLICY 4.1)
+
+`P0` / `P1` / `P2` 는 **폐기됐다.** 기계적으로 `priority:*` 로 치환하지 않는다 —
+POLICY 8 이 원점 재판정을 요구한다.
+
+제목에 `GOV-01:` · `WH-03:` 같은 접두사를 붙이지 않는다. 그것은 백로그 문서의
+일련번호이고 이슈의 이름이 아니다. 분류는 라벨이 한다.
+
 - 영어로 올라온 이슈에는 영어로 답한다.
 - `good first issue` 는 영어로 쓰거나 병기한다.
 - **영어로 쓰기 어렵다는 이유로 기여를 막지 않는다.** 이슈나 PR 제목을 영어로 쓰기
