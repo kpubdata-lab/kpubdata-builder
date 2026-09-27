@@ -103,8 +103,9 @@ def validate_spec(spec: BuildSpec) -> None:
                     f"sources[{i}].alias must not be blank when provided",
                 )
             )
-    if not spec.exports:
-        problems.append(_p("missing_exports", "exports", "at least one export target is required"))
+    # exports may be empty (#703). A build with none ends at a committed table,
+    # which is a complete job — publishing is an explicit follow-up, not the only
+    # way to finish.
     for i, export in enumerate(spec.exports):
         if not export.output_path.strip():
             problems.append(

@@ -132,6 +132,41 @@ def test_run_build_executes_full_pipeline_and_writes_workspace(tmp_path: Path) -
     ]
 
 
+def test_run_build_finishes_without_any_export_target(tmp_path: Path) -> None:
+    """A build with no exports is a complete job, not a misconfiguration (#703).
+
+    The product promise is "collect Korean public data into my own environment and
+    analyse it with SQL", and that promise is kept without publishing anything.
+    Requiring an export target made the common case pay for the rare one: a local
+    analysis had to declare where to publish before the build would finish.
+    """
+    spec = BuildSpec(
+        dataset_id="apt_trade",
+        title="Apartment Trades",
+        description="seoul apartment trades",
+        sources=(SourceRef(provider="datago", dataset="apt_trade"),),
+        exports=(),
+    )
+    client = _FakeClient({"datago.apt_trade": [{"id": "1", "amount": 1000}]})
+
+    result = run_build(spec, client=client, output_root=tmp_path, run_id="run-materialise")
+
+    assert result.status == "ok"
+    assert result.outcomes[0].stages_completed == ("bronze", "silver", "gold")
+
+    # The materialised table is there, which is the point of the run.
+    gold_parquet = tmp_path / "run-materialise" / "gold" / "datago.apt_trade" / "table.parquet"
+    assert gold_parquet.exists()
+    assert pl.read_parquet(gold_parquet).to_dicts() == [{"id": "1", "amount": 1000}]
+
+    # And nothing was exported, because nothing was asked for.
+    manifest = cast(
+        dict[str, JsonValue], json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    )
+    outputs = cast(list[str], manifest["outputs"])
+    assert not [path for path in outputs if path.endswith("data.jsonl")]
+
+
 def test_run_build_executes_export_targets(tmp_path: Path) -> None:
     spec = BuildSpec(
         dataset_id="apt_trade",

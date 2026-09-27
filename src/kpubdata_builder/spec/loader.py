@@ -75,7 +75,11 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
         metadata = _parse_json_mapping(data.get("metadata", {}), field_name="metadata")
         publish = _parse_bool(data.get("publish", False), field_name="publish")
         sources = _parse_sources(_require_present(data, "sources"))
-        exports = _parse_exports(_require_present(data, "exports"))
+        # exports is optional (#703). A warehouse build that only materialises a
+        # table is a complete job, and requiring an export target made the common
+        # case pay for the rare one — a local analysis had to declare where to
+        # publish before it could finish.
+        exports = _parse_exports(data.get("exports", []))
         splits = _parse_splits(data.get("splits"))
         pii = _parse_pii(data.get("pii"))
         license_obj = data.get("license")
@@ -543,11 +547,13 @@ def _parse_derived(value: object, *, prefix: str) -> tuple[DerivedColumn, ...]:
 
 
 def _parse_exports(value: object) -> tuple[ExportTarget, ...]:
-    """exports 배열을 ExportTarget 튜플로 변환한다."""
+    """Convert the exports array into a tuple of ExportTarget.
+
+    An empty list is valid (#703): the build then ends at a materialised table
+    instead of at an exported artifact.
+    """
     if not isinstance(value, list):
         raise TypeError("exports must be a list")
-    if not value:
-        raise ValueError("exports must not be empty")
 
     items = cast(list[object], value)
     parsed_exports: list[ExportTarget] = []
