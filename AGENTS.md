@@ -271,8 +271,8 @@ would notice.
 | [API_CONTRACT.md](./API_CONTRACT.md) | API contract |
 | [PRD.md](./PRD.md) | Product requirements |
 | [ROADMAP.md](./ROADMAP.md) | Roadmap |
-| [docs/CREDENTIAL_SURFACE.md](./docs/CREDENTIAL_SURFACE.md) | Every place a user key can persist |
-| [SECURITY.md](./SECURITY.md) | Security policy and known limits |
+| [CREDENTIAL_SURFACE.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/CREDENTIAL_SURFACE.md) | Every place a user key can persist |
+| [SECURITY.md](https://github.com/yeongseon/kpubdata-builder/blob/main/SECURITY.md) | Security policy and known limits |
 
 ### KPubData product family
 
