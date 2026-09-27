@@ -2,7 +2,7 @@
 
 > **이 문서는 작업 진행상태의 정본이 아니다.** 방향(NOW / NEXT / LATER)만 적는다.
 > Issue 의 Status · Priority · Epic · Target Release 는 GitHub Project 에서 관리한다 — [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 2.1절.
-> 데이터셋 지원 상태는 여기에 손으로 적지 않는다 — spec 과 evidence 에서 생성되는 `SUPPORTED_DATA.md` · `docs/status.md` 가 기준이다(3절).
+> 데이터셋 지원 상태는 이 저장소가 소유하지 않는다 — [kpubdata 의 생성 문서](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md)가 기준이다(POLICY 3절).
 
 > **✅ 는 "그 범위의 작업이 끝났다" 는 뜻이고, 릴리스 여부가 아니다.**
 >
