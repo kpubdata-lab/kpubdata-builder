@@ -66,8 +66,8 @@ def test_path_safety_failure_is_fail_closed_without_path_leak(
     monkeypatch: pytest.MonkeyPatch,
     stage: str,
 ) -> None:
-    """ensure_within 실패(ValueError)는 경로 정보 없이 artifact unavailable로
-    처리된다(#504 review — invalid_request로 원문 예외가 새어나가지 않는다)."""
+    """ensure_within failure (ValueError) becomes artifact unavailable without path info,
+    handled (#504 review — original exception does not leak as invalid_request)."""
     manifest = {"inputs": ["source"]}
     monkeypatch.setattr(
         resolver_module.datasets_service, "read_manifest", lambda root, run_id: manifest

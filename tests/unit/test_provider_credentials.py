@@ -1,4 +1,4 @@
-"""Issue #492 Provider credential/status/test 회귀 테스트."""
+"""Issue #492 Provider credential/status/test regression tests."""
 
 from __future__ import annotations
 

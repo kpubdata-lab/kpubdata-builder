@@ -1,9 +1,6 @@
-"""``pipeline.orchestrator.run_build``의 structured event 방출 테스트 (#496).
+"""Structured event emission tests for ``pipeline.orchestrator.run_build`` (#496).
 
-HTTP route/ownership/bounded query는 test_events_api.py가 다룬다. 이 파일은
-실제 실행 boundary(run/source fetch/medallion stage/quality checkpoint)에서만
-event가 발생하는지, 실행되지 않은 stage를 완료로 가장하지 않는지, 실패해도
-이전 성공 event가 남아 있는지를 orchestrator 수준에서 직접 검증한다.
+HTTP route/ownership/bounded query covered by test_events_api.py. This file verifies at orchestrator level whether events fire only at actual execution boundaries (run/source fetch/medallion stage/quality checkpoint), non-executed stages are not faked as complete, and successful events persist even on failure.
 """
 
 from __future__ import annotations
@@ -82,7 +79,7 @@ class TestRunLifecycle:
         assert events[-1].status == "ok"
 
     def test_failed_run_emits_run_failed_with_status_fail(self, tmp_path: Path) -> None:
-        client = _FakeClient({})  # 모든 source가 fetch 실패
+        client = _FakeClient({})  # All sources fail fetch.
         store = BuildEventStore(tmp_path)
         spec = _spec(SourceRef(provider="datago", dataset="missing", alias="air"))
 
@@ -96,7 +93,7 @@ class TestRunLifecycle:
         assert events[-1].status == "fail"
 
     def test_no_event_store_does_not_raise(self, tmp_path: Path) -> None:
-        """event_store를 생략한 기존 호출자(CLI 등)는 아무 것도 바뀌지 않는다."""
+        """Existing callers omitting event_store (CLI, etc.) remain unchanged."""
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         spec = _spec(SourceRef(provider="datago", dataset="air", alias="air"))
 
@@ -190,10 +187,10 @@ class TestStageLifecycle:
         assert bronze_events == ["stage_started", "stage_failed"]
 
     def test_silver_validation_failure_bronze_stays_completed(self, tmp_path: Path) -> None:
-        """silver가 실패해도 bronze의 성공 event는 삭제되지 않는다(append-only)."""
+        """Bronze success events are not deleted even if silver fails (append-only)."""
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         store = BuildEventStore(tmp_path)
-        # required column이 실제로 존재하지 않는 컬럼이라 silver validation이 실패한다.
+        # required column does not actually exist, so silver validation fails.
         spec = BuildSpec(
             dataset_id="events.fixture",
             title="Events Fixture",
@@ -222,7 +219,7 @@ class TestStageLifecycle:
         assert "gold" not in {e.stage for e in events}
 
     def test_not_reached_stage_never_marked_completed(self, tmp_path: Path) -> None:
-        """도달하지 못한 stage는 completed/failed 어느 쪽으로도 기록되지 않는다."""
+        """Unreached stages are recorded as neither completed nor failed."""
         client = _FakeClient({})
         store = BuildEventStore(tmp_path)
         spec = _spec(SourceRef(provider="datago", dataset="missing", alias="air"))
@@ -248,7 +245,7 @@ class TestQualityCheckpoint:
         assert quality_events[0].status == "ok"
 
     def test_quality_evaluated_survives_downstream_gate_failure(self, tmp_path: Path) -> None:
-        """quality FAIL로 소스가 실패해도 quality_evaluated event 자체는 남는다."""
+        """Even if a source fails due to quality FAIL, the quality_evaluated event itself remains."""
         from kpubdata_builder.spec.models import QualityPolicy
 
         client = _FakeClient({"datago.air": [{"id": "1"}, {"id": "2"}]})
@@ -288,7 +285,7 @@ class TestPartialRunMultiSource:
         events = store.list_for_run("r1", limit=100, tail=False)
         good_events = [e.event for e in events if e.source_key == "good"]
         bad_events = [e.event for e in events if e.source_key == "bad"]
-        assert "stage_completed" in good_events  # 성공한 source의 event가 살아남는다
+        assert "stage_completed" in good_events  # Events of successful source survive.
         assert "stage_failed" in bad_events
         assert events[-1].event == "run_failed"
 
@@ -296,11 +293,11 @@ class TestPartialRunMultiSource:
 def _selective_failing_append(
     monkeypatch: pytest.MonkeyPatch, should_fail: Callable[[BuildEvent], bool]
 ) -> None:
-    """``event``가 ``should_fail``에 해당할 때만 append를 실패시키는 fault injection.
+    """Fault injection that fails append only when ``event`` matches ``should_fail``.
 
-    나머지 event는 원래 구현(``BuildEventStore.append``)에 그대로 위임한다 —
-    특정 boundary 하나만 장애를 겪고 나머지 timeline은 정상 기록되는, 실제
-    transient 장애(디스크 hiccup 등)에 가까운 상황을 흉내낸다.
+    Remaining events delegated as-is to original implementation (``BuildEventStore.append``) —
+    simulates realistic transient failure (disk hiccup, etc.) where only one boundary fails
+    and rest records normally.
     """
     original_append = BuildEventStore.append
 
@@ -321,14 +318,13 @@ class TestRecorderFailureIsolation:
     def test_event_append_failure_does_not_fail_otherwise_successful_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """event 기록 인프라 장애가 이미 성공한 build를 실패시키지 않는다 (#496).
+        """Event recording infrastructure failure does not cause already-successful builds to fail (#496).
 
-        BuildEventStore.append() 자체는 실패를 삼키지 않지만(test_event_store.py),
-        recorder가 그 실패를 흡수해 build 진행에는 영향을 주지 않는다 — 그러나
-        (ADR 0003의 "파생 인덱스라 잃어도 된다"는 이유가 아니라) event 기록
-        실패가 manifest/소스 outcome이라는 *다른* 정본을 침범하지 않기 위해서다.
-        그 흡수가 조용한 실종이 아니라는 것은 아래 fault-injection 테스트들이
-        ``BuildManifest.warnings``를 통해 확인한다.
+        BuildEventStore.append() itself does not swallow failure (test_event_store.py);
+        recorder absorbs it to not affect build progress — but (not because "derived index so loss OK" per ADR 0003)
+        to prevent event recording failure from corrupting the *different* source of truth (manifest/source outcome).
+        That absorption is not silent disappearance; fault-injection tests below verify it via
+        ``BuildManifest.warnings``.
         """
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         store = BuildEventStore(tmp_path)
@@ -345,12 +341,12 @@ class TestRecorderFailureIsolation:
 
         assert result.status == "ok"
         assert result.outcomes[0].status == "ok"
-        assert _manifest_warnings(result.manifest_path)  # 실패가 완전히 사라지지 않는다
+        assert _manifest_warnings(result.manifest_path)  # Failure does not completely disappear.
 
     def test_run_started_append_failure_still_builds_and_warns(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """run_started append가 실패해도 build는 계속 진행되고 manifest에 남는다 (#496)."""
+        """Even if run_started append fails, build continues and manifest is recorded (#496)."""
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         store = BuildEventStore(tmp_path)
         _selective_failing_append(monkeypatch, lambda e: e.event == "run_started")
@@ -361,23 +357,23 @@ class TestRecorderFailureIsolation:
         )
 
         assert result.status == "ok"
-        assert result.manifest_path.exists()  # AGENTS.md '매니페스트 누락 금지'
+        assert result.manifest_path.exists()  # AGENTS.md 'manifest omission is forbidden'.
         warnings = _manifest_warnings(result.manifest_path)
         assert any("run_started" in w for w in warnings)
-        # 이후 event(run_finished 등)는 store가 복구됐으므로 정상 기록된다 —
-        # 하나의 장애가 나머지 timeline까지 지워버리지 않는다(append-only).
+        # Subsequent events (run_finished, etc.) are recorded normally because store is recovered —
+        # one failure does not erase the rest of the timeline (append-only).
         events = store.list_for_run("r1", limit=100, tail=False)
         assert events[-1].event == "run_finished"
 
     def test_stage_completed_append_failure_does_not_flip_successful_source_to_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """bronze stage_completed append 실패가 실제로 성공한 source를 실패로 뒤집지 않는다.
+        """Bronze stage_completed append failure does not flip actually-successful sources to failed.
 
-        stage_completed는 실제 persist(``persist_bronze_artifact``)가 *이미 끝난 뒤*
-        호출된다 — 여기서 예외가 파이프라인 제어 흐름으로 새어나가면
-        ``_run_source_pipeline``의 공통 except가 "이 source 실패"로 잘못 해석해
-        실제로는 디스크에 이미 쓰인 bronze 산출물을 실패로 보고하게 된다(#496).
+        stage_completed is called *after* actual persist (``persist_bronze_artifact``) completes —
+        if exception leaks to pipeline control flow here,
+        the common except in ``_run_source_pipeline`` misinterprets it as "this source failed" and
+        reports already-written bronze artifacts as failed (#496).
         """
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         store = BuildEventStore(tmp_path)
@@ -394,19 +390,18 @@ class TestRecorderFailureIsolation:
         assert result.outcomes[0].status == "ok"
         assert result.outcomes[0].stages_completed == ("bronze", "silver", "gold")
         bronze_dir = tmp_path / "r1" / "bronze"
-        assert bronze_dir.exists() and any(bronze_dir.iterdir())  # 실제 산출물이 살아있다
+        assert bronze_dir.exists() and any(bronze_dir.iterdir())  # Actual artifacts remain intact.
         warnings = _manifest_warnings(result.manifest_path)
         assert any("stage_completed" in w and "bronze" in w for w in warnings)
 
     def test_run_finished_append_failure_still_writes_manifest(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """run_finished append 실패가 manifest 기록 자체를 막지 않는다 (#496).
+        """run_finished append failure does not prevent manifest recording (#496).
 
-        recorder.run_finished()은 manifest_writer보다 먼저 호출된다
-        (pipeline/orchestrator.py) — 만약 이 실패가 그대로 전파돼 run_build를
-        중단시키면 manifest.json이 아예 생기지 않는, AGENTS.md '매니페스트
-        누락 금지'를 위반하는 훨씬 나쁜 상태가 된다.
+        recorder.run_finished() is called before manifest_writer
+        (pipeline/orchestrator.py) — if this failure propagates and aborts run_build,
+        manifest.json never gets created, violating AGENTS.md 'manifest omission forbidden' far more severely.
         """
         client = _FakeClient({"datago.air": [{"id": "1"}]})
         store = BuildEventStore(tmp_path)
@@ -420,14 +415,14 @@ class TestRecorderFailureIsolation:
         assert result.status == "ok"
         assert result.manifest_path.exists()
         manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-        assert manifest["errors"] == []  # 실제 소스 실행은 전혀 실패하지 않았다
+        assert manifest["errors"] == []  # Actual source execution did not fail at all.
         assert any("run_finished" in w for w in manifest["warnings"])
 
     def test_run_failed_append_failure_still_writes_manifest_with_real_errors(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """run_failed append 실패도 manifest 기록과 실제 실패 사유를 가리지 않는다 (#496)."""
-        client = _FakeClient({})  # 모든 source가 fetch 실패
+        """run_failed append failure also does not obscure manifest recording or actual failure reason (#496)."""
+        client = _FakeClient({})  # All sources fail fetch.
         store = BuildEventStore(tmp_path)
         _selective_failing_append(monkeypatch, lambda e: e.event == "run_failed")
         spec = _spec(SourceRef(provider="datago", dataset="missing", alias="air"))
@@ -439,5 +434,7 @@ class TestRecorderFailureIsolation:
         assert result.status == "failed"
         assert result.manifest_path.exists()
         manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-        assert manifest["errors"]  # 진짜 실패 사유는 event 기록 실패와 무관하게 남는다
+        assert manifest[
+            "errors"
+        ]  # Actual failure reason remains regardless of event recording failure.
         assert any("run_failed" in w for w in manifest["warnings"])

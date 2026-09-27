@@ -1,9 +1,9 @@
-"""요청자별 publish credential 해석 (#635).
+"""Per-requester publish credential interpretation (#635).
 
-publish credential 이 서버 환경변수 하나였다. 그러면 인증된 아무 사용자나
-서버 소유자의 Hugging Face / Kaggle 계정으로 게시할 수 있다 — provider
-credential 은 이미 principal 별 저장소를 갖고 있는데(ADR 0012) publish 경로만
-그 앞을 지나쳐 환경변수를 직접 읽었다.
+Credential was a single server environment variable. Then any authenticated user
+could publish as server owner's Hugging Face / Kaggle account — provider credential
+already has per-principal storage (ADR 0012) but publish path bypassed it to read
+environment directly.
 """
 
 from __future__ import annotations
@@ -23,13 +23,9 @@ from kpubdata_builder.service.publish_credentials import (
 
 
 class _Repo:
-    """slot 이름을 검증하지 않는 가짜 저장소.
+    """Fake repository that does not validate slot names.
 
-    **이 가짜가 버그를 숨겼다.** 처음 구현은 slot 을
-    ``publish:huggingface:HF_TOKEN`` 으로 만들었는데, 실제 저장소는 provider key
-    를 ``^[a-z0-9][a-z0-9_-]{0,63}$`` 로 검증하므로 ValueError 가 난다. 가짜는
-    그냥 dict 조회라 통과했다. 아래 ``TestAgainstTheRealStore`` 가 실제 SQLite
-    저장소로 같은 계약을 다시 확인한다.
+    **This fake hid the bug.** Original implementation created slot as ``publish:huggingface:HF_TOKEN``, but real store validates provider key with ``^[a-z0-9][a-z0-9_-]{0,63}$`` raising ValueError. Fake just dict lookup, so passed. Below ``TestAgainstTheRealStore`` re-verifies same contract against actual SQLite store.
     """
 
     def __init__(self, secrets: dict[str, str]) -> None:
@@ -56,7 +52,7 @@ class TestResolution:
         }
 
     def test_the_server_token_is_still_the_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 단일 사용자 배포에서는 전역 토큰 하나가 정상 구성이다 — 깨지 않는다.
+        # In single-user deployment, one global token is correct configuration — do not break it.
         monkeypatch.setenv("HF_TOKEN", "server-token")
 
         assert resolve_publish_credentials(_Repo({}), "oidc:a", "huggingface").values == {
@@ -82,7 +78,7 @@ class TestResolution:
     def test_a_paired_credential_is_never_half_stored_half_server(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """하나는 요청자 것, 하나는 서버 것을 섞으면 어느 계정인지 알 수 없다."""
+        """Mixing one requester's and one server's makes it unclear which account."""
         monkeypatch.setenv("KAGGLE_USERNAME", "server-user")
         monkeypatch.setenv("KAGGLE_KEY", "server-key")
         repo = _Repo({f"oidc:a|{_slot('kaggle', 'KAGGLE_USERNAME')}": "her-user"})
@@ -97,8 +93,8 @@ class TestResolution:
     def test_a_publish_slot_does_not_collide_with_a_provider_slot(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 같은 owner 가 datago credential 과 HF 토큰을 둘 다 가질 수 있어야 한다.
-        # provider slot 에 값이 있어도 publish 는 그것을 집지 않는다.
+        # Same owner must be able to have both datago credential and HF token.
+        # publish does not pick that up even if provider slot has a value.
         monkeypatch.delenv("HF_TOKEN", raising=False)
         repo = _Repo({"oidc:a|huggingface": "provider-shaped-value"})
 
@@ -180,10 +176,7 @@ class TestPublisherPrefersPassedCredentials:
 
 
 class TestAgainstTheRealStore:
-    """가짜가 아니라 실제 SQLite 저장소로 확인한다 (#635, #655).
-
-    slot 이름이 저장소의 provider key 검증을 통과하는지는 가짜로는 알 수 없다.
-    """
+    """Verify with actual SQLite repository, not fake (#635, #655)."""
 
     @staticmethod
     def _repository(tmp_path: Path) -> SQLiteCredentialRepository:
@@ -222,7 +215,7 @@ class TestAgainstTheRealStore:
         ).values == {"HF_TOKEN": "server-token"}
 
     def test_a_publish_slot_never_collides_with_a_provider_slot(self, tmp_path: Path) -> None:
-        # 같은 owner 가 datago provider key 와 HF 토큰을 둘 다 가질 수 있어야 한다.
+        # Same owner must be able to have both datago provider key and HF token.
         repository = self._repository(tmp_path)
         repository.put("oidc:a", "datago", "provider-key")
         repository.put("oidc:a", _slot("huggingface", "HF_TOKEN"), "hf-token")
@@ -235,8 +228,8 @@ class TestABrokenStoreDoesNotBreakPublishing:
     def test_a_failing_lookup_falls_back_to_the_server(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 저장소 장애가 게시 실패가 되면, 전역 토큰만 쓰던 배포가 credential
-        # 백엔드를 켠 순간 게시를 못 하게 된다.
+        # If repository failure becomes publish failure, a deployment using only global token breaks
+        # the moment credential backend is enabled.
         monkeypatch.setenv("HF_TOKEN", "server-token")
 
         assert resolve_publish_credentials(_BrokenRepo(), "oidc:a", "huggingface").values == {
@@ -246,7 +239,7 @@ class TestABrokenStoreDoesNotBreakPublishing:
 
 class TestKaggleUsesTheCredentialsItIsGiven:
     def test_the_passed_credentials_reach_the_sdk(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """인자를 받기만 하고 쓰지 않으면 모든 게시가 서버 계정으로 나간다."""
+        """If argument is accepted but not used, all publishing goes under server account."""
         import sys
         import types
 
@@ -270,7 +263,7 @@ class TestKaggleUsesTheCredentialsItIsGiven:
 
         from kpubdata_builder.publishers.kaggle import KagglePublisher
 
-        with pytest.raises(Exception):  # noqa: B017 - authenticate 가 멈추는 지점
+        with pytest.raises(Exception):  # noqa: B017 - authenticate breakpoint.
             KagglePublisher().publish(
                 (),
                 destination="owner/name",
@@ -280,7 +273,7 @@ class TestKaggleUsesTheCredentialsItIsGiven:
         assert seen == {"user": "her-user", "key": "her-key"}
 
     def test_the_environment_is_restored_afterwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 한 요청의 자격이 다음 요청에 남으면 안 된다.
+        # One request's credentials must not remain for the next request.
         import sys
         import types
 
@@ -306,16 +299,14 @@ class TestKaggleUsesTheCredentialsItIsGiven:
 
 
 class TestClosingTheServerFallback:
-    """다중 사용자 배포는 서버 토큰 폴백을 닫을 수 있어야 한다 (#635).
+    """Multi-user deployment must be able to close server token fallback (#635).
 
-    폴백이 열려 있는 한, credential 을 저장하지 않은 principal 은 여전히 서버
-    소유자 계정으로 게시한다 — 요청자별 credential 을 넣은 것만으로는 원래
-    문제가 닫히지 않는다.
+    While fallback is open, principal without stored credential still publishes as server owner — adding per-requester credential alone does not close original issue.
     """
 
     def test_the_fallback_is_open_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 단일 사용자 배포에서 전역 토큰 하나는 정상 구성이다. 기본값을 뒤집으면
-        # 그 배포가 조용히 게시를 멈춘다.
+        # In single-user deployment, one global token is correct. Flip the default and
+        # that deployment silently stops publishing.
         monkeypatch.delenv("KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL", raising=False)
         monkeypatch.setenv("HF_TOKEN", "server-token")
 
@@ -332,8 +323,8 @@ class TestClosingTheServerFallback:
         resolution = resolve_publish_credentials(_Repo({}), "oidc:b", "huggingface")
 
         assert resolution.values == {}
-        # 비어 있다는 것만으로는 부족하다 — 호출자가 "그럼 안 넘기면 되지" 로
-        # 처리하면 publisher 가 환경변수로 내려간다. 거절이라고 말해야 한다.
+        # Empty alone is not enough — if caller thinks "then just don't pass it",
+        # publisher falls back to env var. Must say reject.
         assert resolution.refused is True
 
     def test_closing_it_does_not_affect_a_principal_with_their_own(
@@ -349,13 +340,9 @@ class TestClosingTheServerFallback:
 
 
 class TestTheSwitchActuallyBlocksPublishing:
-    """``REQUIRE_OWN_PUBLISH_CREDENTIAL=true`` 가 실제로 게시를 막는지.
+    """Verify ``REQUIRE_OWN_PUBLISH_CREDENTIAL=true`` actually blocks publishing.
 
-    resolver 는 처음부터 ``{}`` 를 돌려주고 있었고 그 단위 테스트도 통과했다.
-    그런데 ``publish_api`` 가 ``if credentials:`` 로 빈 결과면 kwarg 를 생략했고,
-    publisher 는 인자가 없으면 ``os.environ`` 을 읽었다. 그래서 스위치를 켜도
-    인증된 아무나 서버 계정으로 게시할 수 있었다 — 세 조각 모두 각자의 테스트를
-    통과하면서.
+    resolver returned {} from start and unit test passed. But publish_api omitted kwarg if credentials empty by if credentials:, and publisher read os.environ without args. So even with switch on, any authenticated user could publish as server account — all three pieces passed individual tests.
     """
 
     def _hf_api(self, monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]) -> None:
@@ -377,7 +364,7 @@ class TestTheSwitchActuallyBlocksPublishing:
     def test_an_empty_mapping_does_not_fall_back_to_the_server_token(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """이게 우회의 마지막 관문이었다."""
+        """This was the last gate to bypass."""
         captured: dict[str, object] = {}
         self._hf_api(monkeypatch, captured)
         monkeypatch.setenv("HF_TOKEN", "server-token")
@@ -392,10 +379,7 @@ class TestTheSwitchActuallyBlocksPublishing:
     def test_omitting_the_argument_still_uses_the_server_token(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """CLI 경로는 그대로다 — 실행하는 사람과 서버 환경이 같은 경우다.
-
-        ``None`` 과 ``{}`` 의 구분이 이 fix 의 전부이므로 양쪽을 함께 고정한다.
-        """
+        """CLI path remains same — when executor and server environment are identical."""
         captured: dict[str, object] = {}
         self._hf_api(monkeypatch, captured)
         monkeypatch.setenv("HF_TOKEN", "server-token")
@@ -409,7 +393,7 @@ class TestTheSwitchActuallyBlocksPublishing:
     def test_kaggle_with_an_empty_mapping_hides_the_server_account(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Kaggle SDK 는 환경변수만 읽는다. 비워 주지 않으면 서버 계정을 집어 든다."""
+        """Kaggle SDK only reads environment variables. If not cleared, picks up server account."""
         import os
 
         from kpubdata_builder.publishers.kaggle import _kaggle_environment
@@ -421,7 +405,7 @@ class TestTheSwitchActuallyBlocksPublishing:
             assert "KAGGLE_USERNAME" not in os.environ
             assert "KAGGLE_KEY" not in os.environ
 
-        # 블록을 벗어나면 원래대로 돌아온다.
+        # Exiting the block restores to original.
         assert os.environ["KAGGLE_USERNAME"] == "server-user"
         assert os.environ["KAGGLE_KEY"] == "server-key"
 
@@ -439,11 +423,7 @@ class TestTheSwitchActuallyBlocksPublishing:
 
 
 class TestReadinessAgreesWithPublish:
-    """readiness 와 POST 가 같은 기준으로 판정해야 한다.
-
-    readiness 는 서버 환경변수만 봤다. 그래서 폴백을 닫아 둔 배포에서 readiness
-    는 ready 를 답하고 POST 는 거절하는, 서로 다른 두 답이 나왔다.
-    """
+    """readiness and POST must use the same criteria."""
 
     def test_a_refused_resolution_blocks_readiness(self) -> None:
         from kpubdata_builder.service.publish import credential_blocker
@@ -474,7 +454,7 @@ class TestReadinessAgreesWithPublish:
     def test_callers_without_a_resolution_keep_the_old_server_check(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """CLI/기존 호출자는 동작이 바뀌지 않는다."""
+        """CLI/existing callers' behavior is unchanged."""
         from kpubdata_builder.service.publish import credential_blocker
 
         monkeypatch.setenv("HF_TOKEN", "server-token")
@@ -483,12 +463,7 @@ class TestReadinessAgreesWithPublish:
 
 
 class TestKaggleCredentialsDoNotCross:
-    """환경변수는 스레드가 아니라 프로세스에 속한다.
-
-    receipt 직렬화는 ``(owner, run, target)`` 단위라 서로 다른 principal 의 동시
-    publish 를 막지 않는다. lock 이 없을 때 실제로 한쪽이 다른 쪽의 자격을 보고
-    (``('bob', 'alice')``), 다른 쪽 정리 과정에서 변수가 사라져 KeyError 까지 났다.
-    """
+    """Environment variables belong to process, not thread."""
 
     def test_concurrent_publishes_each_see_their_own_credentials(
         self, monkeypatch: pytest.MonkeyPatch
@@ -537,11 +512,7 @@ class TestKaggleCredentialsDoNotCross:
     def test_an_empty_mapping_also_hides_the_kaggle_json_file(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """env 를 비워도 SDK 는 ``~/.kaggle/kaggle.json`` 을 읽는다.
-
-        그 파일이 서버에 있으면 결국 서버 계정으로 인증되므로, 두 번째 방어선이
-        없으면 REQUIRE_OWN_PUBLISH_CREDENTIAL 이 다시 우회된다.
-        """
+        """Even if env is cleared, SDK reads ``~/.kaggle/kaggle.json``."""
         import os
         from pathlib import Path
 
@@ -558,7 +529,7 @@ class TestKaggleCredentialsDoNotCross:
         assert "KAGGLE_CONFIG_DIR" not in os.environ
 
     def test_the_cli_path_is_left_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``None`` 은 호출자가 정하지 않았다는 뜻이다 — 환경도 config 도 그대로."""
+        """``None`` means caller did not decide — environment and config unchanged."""
         import os
 
         from kpubdata_builder.publishers.kaggle import _kaggle_environment
