@@ -426,3 +426,67 @@ BuildSpec 계약은 [BUILD_SPEC.md](./BUILD_SPEC.md)를 참고하세요. Bronze/
 | [kpubdata](https://github.com/yeongseon/kpubdata) | 공공데이터 접근·정규화 코어 + curated dataset collection 브랜드 |
 | [kpubdata-builder](https://github.com/yeongseon/kpubdata-builder) | 원시 데이터 → 정제·검증·배포 가능한 데이터셋 빌드 엔진 |
 | [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | 데이터셋 워크벤치 UI (inspect, transform, preview, export) |
+
+---
+
+## In English
+
+Korean is the primary language of this README. This section is the minimum needed
+to decide whether to keep reading — not a full translation. See
+[ADR 0003 in kpubdata](https://github.com/yeongseon/kpubdata/blob/main/docs/adrs/0003-language-policy.md)
+for why it is arranged this way.
+
+### What this is
+
+The execution layer that turns Korean public data into **reproducible, validated
+artifacts**. It sits on top of [kpubdata](https://github.com/yeongseon/kpubdata)
+and runs a Medallion pipeline:
+
+```
+BuildSpec (YAML)
+   → Bronze   raw responses, preserved byte-for-byte
+   → Silver   typed and normalised
+   → Gold     composed, exportable
+   → Manifest provenance, quality, digests
+```
+
+A build is driven by a declarative `BuildSpec`, and the same spec produces the same
+output — that is the property the whole design exists to protect.
+
+### What it deliberately does not do
+
+- **It does not decide what your data means.** Transformations are declared in the
+  spec, not inferred from the values.
+- **It does not publish by default.** Export and publish are separate, gated steps.
+- **It is not yet a warehouse.** Immutable table snapshots with a transactional
+  current pointer are in progress —
+  [#699](https://github.com/yeongseon/kpubdata-builder/issues/699).
+
+### Security posture, stated plainly
+
+This is a BYOK service: you supply your own provider keys.
+
+- Provider credentials are stored **encrypted per principal**, not kept out of
+  storage. An operator holding the master key can decrypt them. Whether that
+  changes is [#682](https://github.com/yeongseon/kpubdata-builder/issues/682).
+- `ENFORCE_OWNERSHIP` **defaults off**, which suits a single-user deployment and
+  does not suit a multi-user one. The service warns at startup when the unsafe
+  combination is configured.
+- [docs/CREDENTIAL_SURFACE.md](docs/CREDENTIAL_SURFACE.md) lists every place a key
+  is known to reach, including the four we could not determine.
+
+Read [SECURITY.md](SECURITY.md) before reporting anything.
+
+### Getting started
+
+```bash
+docker compose up            # builder + optional Keycloak
+# or
+pip install kpubdata-builder
+kpubdata-builder validate specs/example.yaml
+```
+
+### Contributing
+
+Issues and pull requests are welcome in **Korean or English**. Titles are in
+English; bodies may be either. [CONTRIBUTING.md](CONTRIBUTING.md) has the details.
