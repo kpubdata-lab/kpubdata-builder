@@ -1,11 +1,12 @@
-"""BuildSpec YAML 로딩·파싱 (Medallion 재구성: 기존 spec.py에서 분리).
+"""BuildSpec YAML loading/parsing (Medallion refactor: separated from legacy spec.py).
 
-이 모듈은 YAML 텍스트를 읽어 메모리 매핑으로 만든 뒤, models.py의 불변
-데이터 클래스로 구조화한다. 타입/필수 키 검증 실패는 SpecLoadError로 변환한다.
+This module reads YAML text and structures it as an in-memory mapping,
+then converts it to immutable dataclasses in models.py. Type and required key
+validation failures are converted to SpecLoadError.
 
-주요 함수:
-    - load_spec: YAML 파일 경로를 받아 BuildSpec으로 변환
-    - parse_spec: 이미 로드된 매핑을 BuildSpec으로 파싱
+Main functions:
+    - load_spec: Convert YAML file path to BuildSpec.
+    - parse_spec: Parse already-loaded mapping into BuildSpec.
 """
 
 from __future__ import annotations
@@ -35,39 +36,40 @@ from .models import (
     SplitSpec,
 )
 
-# JoinSpec.type 허용 어휘 (#506). 초기 범위는 equi-join inner/left로 제한한다.
+# JoinSpec.type permitted vocabulary (#506). Initial scope limited to equi-join inner/left.
 _JOIN_TYPES = ("inner", "left")
 
-# JoinSpec.on_duplicate_key 허용 어휘 (#506). quality의 severity 관례를 재사용한다.
+# JoinSpec.on_duplicate_key permitted vocabulary (#506). Reuses quality severity convention.
 _JOIN_DUPLICATE_KEY_SEVERITIES = ("warn", "fail")
 
-# quality.*_severity 값의 허용 어휘 (#486). 기존 threshold 위반은 "warn"이 기본이며,
-# 명시적으로 "fail"을 선언해야 Gold 진입 전 소스가 실패한다.
+# quality.*_severity allowed vocabulary (#486). Default "warn" for existing threshold
+# violations; must explicitly declare "fail" for Gold entry before source failure.
 _QUALITY_SEVERITIES = ("warn", "fail")
 
-# quality.compare_columns[].operator 허용 어휘 (#486). 자유형 expression/eval은 금지하고
-# 이 집합만 허용한다 — invalid operator는 파싱 단계에서 즉시 거부된다.
+# quality.compare_columns[].operator permitted vocabulary (#486). Freeform
+# expression/eval is forbidden; only this set is allowed — invalid operators are
+# rejected immediately at parse time.
 _COMPARE_COLUMNS_OPERATORS = ("eq", "ne", "gt", "gte", "lt", "lte")
 
 
 def parse_spec(data: dict[str, object]) -> BuildSpec:
-    """메모리 상의 매핑 데이터를 BuildSpec으로 파싱한다.
+    """Parse in-memory mapping data into BuildSpec.
 
-    매개변수:
-        data: YAML 로더가 반환한 최상위 매핑.
+    Args:
+        data: Top-level mapping returned by YAML loader.
 
-    반환값:
-        BuildSpec: 검증 가능한 빌드 명세 객체.
+    Returns:
+        BuildSpec: Validated build specification object.
 
-    예외:
-        SpecLoadError: 필드 타입이 맞지 않거나 필수 키가 없을 때.
+    Raises:
+        SpecLoadError: When field types mismatch or required keys are missing.
     """
     try:
         dataset_id = _require_string(data, "dataset_id")
         title = _require_string(data, "title")
         description = _require_string(data, "description")
-        # transforms 필드는 제거됨 (#438). VAL-1 의 sources[].schema.casts 가 대체.
-        # 조용히 무시하지 않고 명시적 에러로 사용자에게 알린다.
+        # transforms field removed (#438). Replaced by sources[].schema.casts in VAL-1.
+        # Do not silently ignore; raise explicit error to inform users.
         if "transforms" in data:
             raise ValueError("'transforms' is removed; use sources[].schema.casts instead (#438)")
         if "normalization_mode" in data:
@@ -111,17 +113,7 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
 
 
 def load_spec(path: Path) -> BuildSpec:
-    """YAML 파일을 읽어 BuildSpec으로 변환한다.
-
-    매개변수:
-        path: BuildSpec YAML 경로.
-
-    반환값:
-        BuildSpec: 로드된 명세 객체.
-
-    예외:
-        SpecLoadError: 파일 읽기, YAML 파싱, 최상위 구조 검증 실패 시.
-    """
+    """Read YAML file and convert to BuildSpec."""
     try:
         raw_data = cast(object, yaml.safe_load(path.read_text(encoding="utf-8")))
     except (FileNotFoundError, OSError, yaml.YAMLError) as exc:
@@ -136,7 +128,7 @@ def load_spec(path: Path) -> BuildSpec:
 
 
 def _require_string(data: dict[str, object], key: str, *, prefix: str = "") -> str:
-    """필수 문자열 필드를 추출한다."""
+    """Extract required string field."""
     label = f"{prefix}.{key}" if prefix else key
     if key not in data:
         raise KeyError(f"{label} is required")
@@ -155,14 +147,14 @@ def _require_present(data: dict[str, object], key: str) -> object:
 
 
 def _parse_bool(value: object, *, field_name: str) -> bool:
-    """불리언 필드 타입을 검증한다."""
+    """Validate boolean field type."""
     if not isinstance(value, bool):
         raise TypeError(f"{field_name} must be a boolean")
     return value
 
 
 def _parse_string_list(value: object, *, field_name: str) -> tuple[str, ...]:
-    """문자열 목록 필드를 불변 튜플로 변환한다."""
+    """Convert string list field to immutable tuple."""
     if not isinstance(value, list):
         raise TypeError(f"{field_name} must be a list")
 
@@ -173,7 +165,7 @@ def _parse_string_list(value: object, *, field_name: str) -> tuple[str, ...]:
 
 
 def _parse_string_dict(value: object, *, field_name: str) -> dict[str, JsonValue]:
-    """문자열 키/값 매핑을 검증하고 새 dict로 복사한다."""
+    """Validate string key/value mapping and copy to new dict."""
     if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a mapping")
 
@@ -189,16 +181,16 @@ def _parse_string_dict(value: object, *, field_name: str) -> dict[str, JsonValue
 def _validate_json_value(
     value: object, *, field_name: str, _ancestors: frozenset[int] = frozenset()
 ) -> JsonValue:
-    """값이 JSON 프리미티브/컨테이너인지 재귀적으로 검증한다.
+    """Recursively validate that value is JSON primitive/container.
 
-    YAML anchor/alias로 만들어진 순환 구조(예: ``a: &x {self: *x}``)를 만나면
-    무한 재귀로 ``RecursionError`` crash가 발생할 수 있다. 현재 재귀 경로상의
-    컨테이너 ``id()``를 추적해 순환을 감지하면 ``ValueError``로 명확히 실패한다
-    (load_spec이 이를 SpecLoadError로 감싼다) (#169).
+    Circular structures created by YAML anchor/alias (e.g. ``a: &x {self: *x}``)
+    can cause infinite recursion and RecursionError crash. Track container ``id()``
+    in the current recursion path to detect cycles and fail explicitly with ValueError
+    (wrapped by load_spec into SpecLoadError), rather than crash (#169).
     """
     if isinstance(value, float) and not math.isfinite(value):
-        # NaN/Infinity는 json.dumps가 비표준 토큰(NaN/Infinity)으로 직렬화하므로,
-        # 표준 JSON 계약을 깨지 않도록 비유한 float를 전역적으로 거부한다 (#201).
+        # NaN/Infinity serialize as non-standard tokens by json.dumps, so reject
+        # them globally to preserve standard JSON contract (#201).
         raise ValueError(f"{field_name} must be a finite number, got {value!r}")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -228,7 +220,7 @@ def _validate_json_value(
 
 
 def _parse_json_mapping(value: object, *, field_name: str) -> dict[str, JsonValue]:
-    """JSON 호환 값만 담는 매핑 필드를 검증한다."""
+    """Validate mapping fields containing only JSON-compatible values."""
     if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a mapping")
 
@@ -242,12 +234,7 @@ def _parse_json_mapping(value: object, *, field_name: str) -> dict[str, JsonValu
 
 
 def _parse_param_grid(value: object, *, field_name: str) -> dict[str, tuple[JsonValue, ...]]:
-    """``param_grid`` 를 키별 값 튜플로 파싱한다 (#613).
-
-    각 값은 **리스트여야 한다.** 스칼라를 허용하면 "값 하나짜리 축" 과 "공통
-    파라미터" 가 구문상 구분되지 않고, 그 둘은 의미가 다르다 — 후자는 ``params``
-    가 표현한다. 비었는지/문자열인지 같은 의미 검증은 validator 가 맡는다.
-    """
+    """Parse ``param_grid`` to key-value tuples (#613)."""
     if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a mapping")
 
@@ -269,9 +256,9 @@ def _parse_param_grid(value: object, *, field_name: str) -> dict[str, tuple[Json
     return parsed
 
 
-# kind별로만 유효한 field들 (#498). 서로 다른 kind의 field가 섞인 source는 명백한
-# 계약 오류이므로 loader가 즉시 거부한다 — "kind=file인데 provider도 있음" 같은
-# 모호한 spec을 조용히 부분 해석하지 않는다.
+# Fields valid only per kind (#498). Different kind fields in one source is
+# an explicit contract violation, so loader rejects immediately — do not silently
+# interpret ambiguous specs like "kind=file but provider is present".
 _PUBLIC_API_ONLY_FIELDS: tuple[str, ...] = ("upload_id", "format", "encoding", "endpoint", "method")
 _FILE_ONLY_FIELDS: tuple[str, ...] = (
     "provider",
@@ -300,11 +287,12 @@ def _reject_foreign_fields(
 
 
 def _parse_sources(value: object) -> tuple[SourceRef, ...]:
-    """sources 배열을 SourceRef 튜플로 변환한다 (#498).
+    """Convert sources array to SourceRef tuple (#498).
 
-    ``kind`` 로 public_api(기본, 하위 호환)/file/url을 구분해 서로 다른 field
-    조합을 파싱한다. ``kind`` 를 생략한 기존 source는 항상 ``public_api`` 로
-    해석된다 — 기존 Public API BuildSpec은 재작성 없이 그대로 동작한다.
+    Distinguish public_api (default, backward compatible)/file/url by ``kind``
+    and parse different field combinations. Omitted ``kind`` on existing source
+    is always interpreted as ``public_api`` — existing Public API BuildSpec
+    works unchanged.
     """
     if not isinstance(value, list):
         raise TypeError("sources must be a list")
@@ -316,8 +304,8 @@ def _parse_sources(value: object) -> tuple[SourceRef, ...]:
     for index, item in enumerate(items):
         prefix = f"sources[{index}]"
         mapping = _ensure_mapping(item, field_name=prefix)
-        # normalization_mode 필드는 제거됨 (#438). sources[].schema 가 대체.
-        # 조용히 무시하지 않고 명시적 에러로 알린다.
+        # normalization_mode field removed (#438). Replaced by sources[].schema.
+        # Do not silently ignore; raise explicit error.
         if "normalization_mode" in mapping:
             raise TypeError(
                 f"sources[{index}].normalization_mode is removed; "
@@ -374,8 +362,8 @@ def _parse_public_api_source(
 def _parse_file_source(
     mapping: dict[str, object], *, index: int, alias: str, schema: SchemaContract | None
 ) -> SourceRef:
-    """kind='file' source를 파싱한다 (#498). 값 vocabulary(허용 format/encoding
-    존재 여부, upload_id 형태)의 의미 검증은 validator.py가 담당한다."""
+    """Parse kind='file' source (#498). Semantic validation of value vocabulary
+    (allowed format/encoding existence, upload_id shape) is handled by validator.py."""
     prefix = f"sources[{index}]"
     _reject_foreign_fields(mapping, _FILE_ONLY_FIELDS, prefix=prefix, kind="file")
     upload_id = _require_string(mapping, "upload_id", prefix=prefix)
@@ -396,8 +384,8 @@ def _parse_file_source(
 def _parse_url_source(
     mapping: dict[str, object], *, index: int, alias: str, schema: SchemaContract | None
 ) -> SourceRef:
-    """kind='url' source를 파싱한다 (#498). scheme/userinfo/method vocabulary 같은
-    SSRF 관련 의미 검증은 validator.py가 담당한다 — 여기서는 구조만 본다."""
+    """Parse kind='url' source (#498). SSRF-related semantic validation like
+    scheme/userinfo/method vocabulary is handled by validator.py — here only structure."""
     prefix = f"sources[{index}]"
     _reject_foreign_fields(mapping, _URL_ONLY_FIELDS, prefix=prefix, kind="url")
     endpoint = _require_string(mapping, "endpoint", prefix=prefix)
@@ -418,10 +406,11 @@ def _parse_url_source(
 
 
 def _parse_schema(value: object, *, prefix: str) -> SchemaContract:
-    """sources[].schema 매핑을 SchemaContract로 변환한다 (#437).
+    """Convert sources[].schema mapping to SchemaContract (#437).
 
-    required/dtypes/casts 세 필드를 파싱한다. dtype/cast 값은 문자열이어야 하고,
-    실제 polars dtype 으로 해석 가능한지는 validator.py 가 검증한다 (로더는 구조만).
+    Parse three fields: required/dtypes/casts. dtype/cast values must be strings;
+    actual interpretation as polars dtype is validated by validator.py (loader
+    checks structure only).
     """
     mapping = _ensure_mapping(value, field_name=f"{prefix}.schema")
     required = _parse_string_list(
@@ -467,9 +456,9 @@ def _parse_schema(value: object, *, prefix: str) -> SchemaContract:
 
 
 def _parse_column_null_tokens(value: object, *, prefix: str) -> dict[str, ColumnNullTokens]:
-    """schema.column_null_tokens 를 파싱한다 (#623).
+    """Parse schema.column_null_tokens (#623).
 
-    두 표기를 받는다. 목록만 쓰면 ``on_absent`` 는 기본값 ``"error"`` 다.
+    Accepts two notations. When using only list, ``on_absent`` defaults to ``"error"``.
 
         column_null_tokens:
           foo: ["", "NA"]
@@ -477,7 +466,8 @@ def _parse_column_null_tokens(value: object, *, prefix: str) -> dict[str, Column
             tokens: [""]
             on_absent: ignore
 
-    ``on_absent`` 어휘의 검증은 validator.py 가 한다 — 로더는 구조만 본다.
+    Semantic validation of ``on_absent`` vocabulary is handled by validator.py —
+    loader checks structure only.
     """
     mapping = _ensure_mapping(value, field_name=prefix)
     parsed: dict[str, ColumnNullTokens] = {}
@@ -499,11 +489,12 @@ def _parse_column_null_tokens(value: object, *, prefix: str) -> dict[str, Column
 
 
 def _parse_coalesce(value: object, *, prefix: str) -> dict[str, tuple[str, ...]]:
-    """``{이름: (문자열, ...)}`` 형태의 선언을 파싱한다 (#620, #623).
+    """Parse ``{name: (string, ...)}`` form declarations (#620, #623).
 
-    schema.coalesce 와 schema.column_null_tokens 가 같은 모양이라 함께 쓴다.
+    schema.coalesce and schema.column_null_tokens share shape, used together.
 
-    구조만 검사한다 — 후보가 비었는지 같은 의미 검증은 validator.py 가 한다.
+    Check structure only — semantic validation like empty candidates is handled
+    by validator.py.
     """
     mapping = _ensure_mapping(value, field_name=prefix)
     parsed: dict[str, tuple[str, ...]] = {}
@@ -513,7 +504,7 @@ def _parse_coalesce(value: object, *, prefix: str) -> dict[str, tuple[str, ...]]
 
 
 def _parse_zfill(value: object, *, prefix: str) -> dict[str, int]:
-    """schema.zfill 을 ``{컬럼: 폭}`` 으로 변환한다 (#620)."""
+    """Convert schema.zfill to ``{column: width}`` (#620)."""
     mapping = _ensure_mapping(value, field_name=prefix)
     parsed: dict[str, int] = {}
     for column, width in mapping.items():
@@ -524,9 +515,10 @@ def _parse_zfill(value: object, *, prefix: str) -> dict[str, int]:
 
 
 def _parse_derived(value: object, *, prefix: str) -> tuple[DerivedColumn, ...]:
-    """schema.derived 배열을 DerivedColumn 튜플로 변환한다 (#611).
+    """Convert schema.derived array to DerivedColumn tuple (#611).
 
-    구조만 검사한다 — kind 어휘와 컬럼 개수의 의미 검증은 validator.py 가 한다.
+    Check structure only — semantic validation of kind vocabulary and column
+    count is handled by validator.py.
     """
     if not isinstance(value, list):
         raise TypeError(f"{prefix} must be a list")
@@ -570,7 +562,7 @@ def _parse_exports(value: object) -> tuple[ExportTarget, ...]:
 
 
 def _parse_splits(value: object) -> SplitSpec | None:
-    """splits 매핑을 SplitSpec으로 변환한다(없으면 None)."""
+    """Convert the splits mapping into a SplitSpec (None when absent)."""
     if value is None:
         return None
     mapping = _ensure_mapping(value, field_name="splits")
@@ -599,7 +591,7 @@ def _parse_splits(value: object) -> SplitSpec | None:
 
 
 def _ensure_mapping(value: object, *, field_name: str) -> dict[str, object]:
-    """문자열 키를 가진 매핑인지 확인하고 복사본을 반환한다."""
+    """Verify mapping with string keys and return copy."""
     if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a mapping")
 
@@ -613,9 +605,10 @@ def _ensure_mapping(value: object, *, field_name: str) -> dict[str, object]:
 
 
 def _parse_pii(value: object) -> PiiPolicy | None:
-    """pii 매핑을 PiiPolicy로 변환한다 (없으면 None, #441).
+    """Convert pii mapping to PiiPolicy (None if absent, #441).
 
-    mode 는 block(기본)/warn/allow 중 하나. allow_columns 는 오탐 해제용 컬럼 목록.
+    mode is one of block (default)/warn/allow. allow_columns is list of columns
+    to exclude false positives.
     """
     if value is None:
         return None
@@ -632,14 +625,14 @@ def _parse_pii(value: object) -> PiiPolicy | None:
 
 
 def _parse_severity(value: object, *, field_name: str) -> str:
-    """quality severity 값("warn"/"fail")을 검증한다 (#486)."""
+    """Validate quality severity value ("warn"/"fail") (#486)."""
     if not isinstance(value, str) or value not in _QUALITY_SEVERITIES:
         raise ValueError(f"{field_name} must be one of {_QUALITY_SEVERITIES}, got {value!r}")
     return value
 
 
 def _parse_severity_map(value: object, *, field_name: str) -> dict[str, str]:
-    """컬럼별 severity override 매핑을 검증한다 (#486)."""
+    """Validate per-column severity override mapping (#486)."""
     if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a mapping")
     result: dict[str, str] = {}
@@ -659,7 +652,7 @@ def _parse_optional_number(value: object, *, field_name: str) -> float | None:
 
 
 def _parse_range_rules(value: object) -> tuple[RangeRule, ...]:
-    """quality.range 배열을 RangeRule 튜플로 변환한다 (#486)."""
+    """Convert quality.range array to RangeRule tuple (#486)."""
     if not isinstance(value, list):
         raise TypeError("quality.range must be a list")
     rules: list[RangeRule] = []
@@ -675,10 +668,10 @@ def _parse_range_rules(value: object) -> tuple[RangeRule, ...]:
 
 
 def _parse_compare_columns_rules(value: object) -> tuple[CompareColumnsRule, ...]:
-    """quality.compare_columns 배열을 CompareColumnsRule 튜플로 변환한다 (#486).
+    """Convert quality.compare_columns array to CompareColumnsRule tuple (#486).
 
-    자유형 expression/eval은 금지하고, operator는 ``_COMPARE_COLUMNS_OPERATORS``만
-    허용한다 — invalid operator는 여기서 즉시 거부된다.
+    Freeform expression/eval is forbidden; only ``_COMPARE_COLUMNS_OPERATORS``
+    are allowed — invalid operators are rejected immediately here.
     """
     if not isinstance(value, list):
         raise TypeError("quality.compare_columns must be a list")
@@ -701,12 +694,12 @@ def _parse_compare_columns_rules(value: object) -> tuple[CompareColumnsRule, ...
 
 
 def _parse_quality(value: object) -> QualityPolicy | None:
-    """quality 매핑을 QualityPolicy로 변환한다 (없으면 None, #446/#486).
+    """Convert quality mapping to QualityPolicy (None if absent, #446/#486).
 
-    max_duplicate_rate/min_rows 는 스칼라, max_null_ratio 는 {컬럼명: 비율} 매핑
-    — 기존 #446 syntax 그대로다. ``*_severity`` 필드(#486)는 선택이며 생략 시
-    "warn"이 기본이다. ``range``/``compare_columns``는 #486에서 추가된 typed
-    확장 규칙이다.
+    max_duplicate_rate/min_rows are scalars, max_null_ratio is {column: ratio}
+    mapping — as-is from existing #446 syntax. ``*_severity`` fields (#486) are
+    optional, default "warn". ``range``/``compare_columns`` are typed extension
+    rules added in #486.
     """
     if value is None:
         return None
@@ -750,12 +743,13 @@ def _parse_quality(value: object) -> QualityPolicy | None:
 
 
 def _parse_join(value: object) -> JoinSpec:
-    """composition.join 매핑을 JoinSpec으로 변환한다 (#506).
+    """Convert composition.join mapping to JoinSpec (#506).
 
-    left/right/left_key/right_key는 필수 문자열이다. type/on_duplicate_key는
-    고정 어휘 필드라 pii.mode와 동일하게 여기서 즉시 검증한다 — left/right가
-    실제 sources[].alias와 대응하는지, join key가 실제로 존재/호환되는지는
-    구조가 아니라 값 검증이라 validator/orchestrator가 각각 담당한다.
+    left/right/left_key/right_key are required strings. type/on_duplicate_key
+    are fixed-vocabulary fields validated here immediately like pii.mode —
+    whether left/right match actual sources[].alias and whether join keys
+    actually exist/are compatible is semantic validation (not structural),
+    handled by validator/orchestrator respectively.
     """
     mapping = _ensure_mapping(value, field_name="composition.join")
     left = _require_string(mapping, "left", prefix="composition.join")
@@ -788,7 +782,7 @@ def _parse_join(value: object) -> JoinSpec:
 
 
 def _parse_composition(value: object) -> CompositionSpec | None:
-    """composition 매핑을 CompositionSpec으로 변환한다 (없으면 None, #506)."""
+    """Convert composition mapping to CompositionSpec (None if absent, #506)."""
     if value is None:
         return None
     mapping = _ensure_mapping(value, field_name="composition")

@@ -1,4 +1,4 @@
-"""GoldPackage export plan 실행을 담당한다."""
+"""Execute GoldPackage export plan."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from ..stages.gold import GoldPackage
 
 
 def export_gold_package(package: GoldPackage, *, output_dir: Path) -> tuple[Path, ...]:
-    """GoldPackage의 export target을 파일/디렉터리 산출물로 기록한다."""
+    """Record GoldPackage export targets to file/directory outputs."""
     artifact = ArtifactDataset(
         records=tuple(_json_record(row) for row in package.table.to_dicts()),
         schema={name: str(dtype) for name, dtype in package.table.schema.items()},

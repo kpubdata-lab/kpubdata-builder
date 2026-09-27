@@ -1,14 +1,14 @@
-"""빌더 명세 검증 루틴 (Medallion 재구성: 기존 validator.py에서 이동).
+"""Builder spec validation routines (Medallion refactor: moved from legacy validator.py).
 
-이 모듈은 BuildSpec이 최소 실행 요건을 충족하는지 검사한다. exporter
-레지스트리에 의존하므로 spec 패키지 __init__에서 re-export 하지 않고
-``kpubdata_builder.spec.validator`` 경로로 직접 가져온다 (순환 import 회피).
+This module checks BuildSpec meets minimum execution requirements. Depends on exporter
+registry, so not re-exported from spec package __init__ — import directly via
+``kpubdata_builder.spec.validator`` path (avoids circular import).
 
-주요 함수:
-    - validate_spec: dataset_id, sources, exports 같은 필수 조건 검증
+Main functions:
+    - validate_spec: Validate required conditions like dataset_id, sources, exports
 
-BL3 (#417): problems를 {code, path, message, hint} 객체 배열로 구조화.
-기존 문자열 problems 소비자를 위해 message는 항상 포함.
+BL3 (#417): Structures problems as {code, path, message, hint} object array.
+For legacy string problems consumers, message always included.
 """
 
 from __future__ import annotations
@@ -39,12 +39,13 @@ from .models import (
 
 @dataclass(frozen=True)
 class ValidationProblem:
-    """구조화된 검증 문제 (#417).
+    """Structured validation problem (#417).
 
-    code: 기계가 읽을 수 있는 원인 코드.
-    path: 필드 경로 (예: sources[0].params.base_date).
-    message: 사람이 읽을 수 있는 설명 (항상 포함 — 기존 호환).
-    hint: 수정 제안 (선택).
+    Attributes:
+        code: Machine-readable cause code.
+        path: Field path (e.g., sources[0].params.base_date).
+        message: Human-readable description (always included — backward compatible).
+        hint: Suggested fix (optional).
     """
 
     code: str
@@ -61,10 +62,10 @@ def _p(code: str, path: str, message: str, hint: str | None = None) -> Validatio
 
 
 def validate_spec(spec: BuildSpec) -> None:
-    """BuildSpec의 최소 실행 가능성을 검증한다.
+    """Validate BuildSpec minimum executability.
 
-    예외:
-        ValidationError: 하나 이상의 검증 규칙을 만족하지 못한 경우.
+    Raises:
+        ValidationError: When one or more validation rules fail.
     """
     problems: list[ValidationProblem] = []
     if not spec.dataset_id.strip():
@@ -76,8 +77,8 @@ def validate_spec(spec: BuildSpec) -> None:
     if not spec.sources:
         problems.append(_p("missing_sources", "sources", "at least one source is required"))
     for i, source in enumerate(spec.sources):
-        # provider/dataset은 kind="public_api"(기본값)에서만 의미가 있다 — 다른
-        # kind의 필수/금지 field는 _source_kind_problems가 검증한다 (#498).
+        # provider/dataset only meaningful for kind="public_api" (default) — other kinds'
+        # required/forbidden fields validated by _source_kind_problems (#498).
         if source.kind == "public_api":
             if not source.provider.strip():
                 problems.append(
@@ -146,7 +147,7 @@ def validate_spec(spec: BuildSpec) -> None:
 
 
 def _split_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """splits 정의의 검증 문제를 모은다."""
+    """Collect validation problems in splits definition."""
     split = spec.splits
     if split is None:
         return []
@@ -205,8 +206,8 @@ def _split_problems(spec: BuildSpec) -> list[ValidationProblem]:
                 hint="Use 'ratio' or 'key'",
             )
         )
-    # 시계열 데이터 누수 검사 (#444). ratio 모드에서 key가 시간 컬럼이면
-    # 랜덤 셔플이 미래 정보를 train 으로 색는다.
+        # Time series data leakage check (#444). In ratio mode, if key is time
+        # column, random shuffle exposes future information to train.
     _TIME_INDICATORS = (
         "date",
         "time",
@@ -235,11 +236,11 @@ def _split_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
 
 def _schema_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """sources[].schema 계약 자체의 유효성을 검증한다 (#437).
+    """Validate sources[].schema contract itself (#437).
 
-    dtypes/casts 의 문자열이 ``_NAMED_DTYPES`` 키로 해석 가능한지 확인한다.
-    로더(loader._parse_schema)는 구조만 검사하고, 여기서 의미를 검사한다 —
-    알 수 없는 dtype 문자열이 런타임(정규화/검증)에서야 실패하는 것을 막는다.
+    Check dtypes/casts strings are interpretable as ``_NAMED_DTYPES`` keys.
+    Loader (loader._parse_schema) checks structure only; here checks semantics —
+    prevents unknown dtype strings from failing only at runtime (normalize/validate).
     """
     problems: list[ValidationProblem] = []
     supported = sorted(_NAMED_DTYPES)
@@ -287,9 +288,9 @@ def _schema_problems(spec: BuildSpec) -> list[ValidationProblem]:
             _derived_problems(
                 source.schema.derived,
                 prefix=f"sources[{i}]",
-                # derived 앞에 도는 선언들이 이름 지은 컬럼만 모은다. dtypes 는
-                # 컬럼을 만들지 않고 기대 타입을 선언할 뿐이므로 뺀다 — 파생 컬럼의
-                # dtype 을 선언하는 것은 정상적인 사용이다.
+                # Declarations before derived collect only named columns. dtypes only
+                # declare expected type without creating columns, so excluded — declaring
+                # dtype for derived column is normal usage.
                 reserved_names=set(source.schema.rename.values())
                 | set(source.schema.casts)
                 | set(source.schema.zfill)
@@ -302,10 +303,10 @@ def _schema_problems(spec: BuildSpec) -> list[ValidationProblem]:
 def _column_null_token_problems(
     column_null_tokens: dict[str, ColumnNullTokens], *, prefix: str
 ) -> list[ValidationProblem]:
-    """schema.column_null_tokens 선언 자체의 유효성을 검증한다 (#623).
+    """Validate schema.column_null_tokens declaration itself (#623).
 
-    토큰이 비면 그 컬럼에 아무 일도 일어나지 않는다. 선언을 써 두고 동작하지 않는
-    상태가 가장 나쁘다 — 결측이 값으로 남은 채 품질 지표가 그것을 세지 않는다.
+    If tokens empty, nothing happens to that column. Declaring but non-functioning
+    is worst — missing remains as value and quality metrics do not count it.
     """
     problems: list[ValidationProblem] = []
     for column, rule in column_null_tokens.items():
@@ -334,15 +335,15 @@ def _column_null_token_problems(
 def _coalesce_problems(
     coalesce: dict[str, tuple[str, ...]], *, prefix: str
 ) -> list[ValidationProblem]:
-    """schema.coalesce 선언 자체의 유효성을 검증한다 (#620).
+    """Validate schema.coalesce declaration itself (#620).
 
-    후보가 비면 normalize 가 런타임에 "후보가 하나도 없다"로 실패한다. 선언 시점에
-    막는 편이 어디를 고쳐야 하는지 말해 준다.
+    If candidates empty, normalize fails at runtime with "no candidates". Preventing
+    at declaration time tells where to fix.
 
-    겹치는 그룹도 여기서 막는다. 각 규칙은 수렴한 후보 컬럼을 지우므로, 한 규칙의
-    target 이 다른 규칙의 후보이면 결과가 매핑 순회 순서에 달린다. 그런데
-    ``canonical_spec_mapping()`` 은 키를 정렬해 스냅샷을 쓰기 때문에, 같은 digest 의
-    선언이 원래 빌드와 다르게 동작할 수 있다 — recipe 재현 가능성이 거기서 깨진다.
+    Also blocks overlapping groups here. Each rule removes resolved candidate columns,
+    so if one rule's target is another's candidate, result depends on mapping traverse
+    order. But ``canonical_spec_mapping()`` sorts keys for snapshot, so same digest
+    declaration can behave differently from original build — recipe reproducibility breaks.
     """
     problems: list[ValidationProblem] = []
     targets = set(coalesce)
@@ -399,7 +400,7 @@ def _coalesce_problems(
 
 
 def _zfill_problems(zfill: dict[str, int], *, prefix: str) -> list[ValidationProblem]:
-    """schema.zfill 의 폭이 말이 되는지 검증한다 (#620)."""
+    """Validate schema.zfill width makes sense (#620)."""
     problems: list[ValidationProblem] = []
     for column, width in zfill.items():
         if width < 1:
@@ -413,16 +414,17 @@ def _zfill_problems(zfill: dict[str, int], *, prefix: str) -> list[ValidationPro
     return problems
 
 
-#: kind별로 요구하는 입력 컬럼 개수 (#611). None이면 1개 이상이면 된다.
+#: Per-kind required input column count (#611). None means 1 or more.
 _DERIVED_ARITY: dict[str, int | None] = {"date_parts": 3, "join_key": None}
 
 
 def _rename_problems(rename: dict[str, str], *, prefix: str) -> list[ValidationProblem]:
-    """schema.rename 의 대상 이름이 서로 겹치지 않는지 검증한다 (#611 후속).
+    """Validate schema.rename target names don't overlap (#611 follow-up).
 
-    두 원 필드가 같은 canonical 이름으로 모이면 normalize_table 에서 Polars
-    DuplicateError 로 터진다 — 선언 시점에 spec 용어로 막는다. (대상 이름이 rename
-    되지 않는 *기존* 컬럼과 겹치는 경우는 원천을 봐야 알 수 있어 런타임 가드가 맡는다.)
+    When two source fields coalesce to same canonical name, normalize_table crashes
+    with Polars DuplicateError — prevent at declaration time with spec terminology.
+    (Target name overlapping existing non-renamed *source* column requires checking source
+    so runtime guard handles it.)
     """
     problems: list[ValidationProblem] = []
     seen: dict[str, str] = {}
@@ -446,14 +448,15 @@ def _derived_problems(
     prefix: str,
     reserved_names: set[str] | None = None,
 ) -> list[ValidationProblem]:
-    """schema.derived 규칙의 kind 어휘, 컬럼 개수, 이름 충돌을 검증한다 (#611).
+    """Validate schema.derived rule kind vocabulary, column count, name collisions (#611).
 
-    normalize_table 은 date_parts 를 (year, month, day) 로 unpack 하므로, 개수가
-    맞지 않으면 런타임에 ValueError 로 터진다. 선언 시점에 막는다.
+    normalize_table unpacks date_parts to (year, month, day), so mismatched count
+    crashes at runtime with ValueError. Prevent at declaration time.
 
-    ``reserved_names`` 는 derived 앞 단계가 이미 이름 지은 컬럼명(rename 대상, casts/
-    zfill/coalesce 키)이다. 파생 컬럼이 그 이름을 쓰면 with_columns 가 기존 컬럼을 소리 없이
-    덮어쓴다 — 선언끼리 겹치는 것은 여기서, 원천 컬럼과 겹치는 것은 런타임 가드가 막는다.
+    ``reserved_names`` are column names already declared by earlier steps (rename targets,
+    casts/zfill/coalesce keys). If derived column uses that name, with_columns silently
+    overwrites existing column — overlaps between declarations caught here, overlaps with
+    source column caught by runtime guard.
     """
     problems: list[ValidationProblem] = []
     reserved = set(reserved_names or ())
@@ -502,20 +505,19 @@ def _derived_problems(
 
 
 def _source_kind_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """kind vocabulary와 kind='file'/'url' source의 값·SSRF 관련 형태를 검증한다 (#498).
+    """Validate kind vocabulary and kind='file'/'url' source value/SSRF-related shapes (#498).
 
-    ``kind`` 자체가 ``SOURCE_KINDS``(public_api/file/url) 밖이면 여기서
-    거부한다 — loader(YAML 경로)는 이미 거부하지만, ``SourceRef(kind="ftp",
-    ...)``처럼 loader를 거치지 않고 BuildSpec을 직접 구성하면 이 검사가 유일한
-    방어선이다(fail-closed, #538 review). canonical source kind 계약은
-    public_api | file | url 세 가지뿐이며, 알 수 없는 kind를 암묵적으로
-    public_api처럼 처리하지 않는다.
+    If kind itself outside ``SOURCE_KINDS`` (public_api/file/url), reject here — loader
+    (YAML path) already rejects, but ``SourceRef(kind="ftp", ...)`` constructed directly
+    without loader makes this check the only defense (fail-closed, #538 review). Canonical
+    source kind contract is only three: public_api | file | url; unknown kind never
+    implicitly treated as public_api.
 
-    나머지는 loader가 검사하지 않는 의미 규칙(허용 format/encoding/method
-    vocabulary, URL scheme/userinfo, upload_id 형태)만 다룬다. 실제 네트워크
-    SSRF 방어(DNS resolve·redirect 재검증)는 fetch 시점(ingestion.url_fetch)의
-    책임이다 — 여기서는 명백히 안전하지 않은 선언(scheme=http, userinfo 포함
-    등)을 build 실행 전에 빠르게 거부한다.
+    Rest handles semantic rules loader doesn't check (allowed format/encoding/method
+    vocabulary, URL scheme/userinfo, upload_id shape). Actual network connectivity
+    verified only at runtime. SSRF defense (DNS resolve/redirect re-validation) is
+    responsibility of fetch time (ingestion.url_fetch) — here quickly rejects clearly
+    unsafe declarations (scheme=http, contains userinfo, etc.) before build execution.
     """
     problems: list[ValidationProblem] = []
     for i, source in enumerate(spec.sources):
@@ -628,22 +630,21 @@ def _endpoint_problems(endpoint: str, path: str) -> list[ValidationProblem]:
 
 
 def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """출력 키가 겹치거나 경로로 안전하지 않은 source 선언을 잡는다 (#630).
+    """Catch source declarations with overlapping output keys or unsafe paths (#630).
 
-    산출물 디렉터리(``bronze/<key>/``, ``silver/<key>/``, ``gold/<key>/``)와
-    ``row_counts``/``schema_summaries`` 의 키가 모두 이 값이다. 같은
-    ``(provider, dataset)`` 을 params 만 달리해 alias 없이 두 번 선언하면 두
-    source 가 같은 키를 갖는데, source 들은 스레드 풀에서 동시에 돌고 persist 는
-    디렉터리를 통째로 교체하므로 한쪽 산출물이 사라진다. dict 키도 하나만
-    살아남는다. 그런데 두 outcome 모두 "ok" 라서 **run 은 성공으로 보고되고
-    데이터는 절반이 조용히 없어진다.**
+    Output directories (``bronze/<key>/``, ``silver/<key>/``, ``gold/<key>/``) and
+    ``row_counts``/``schema_summaries`` keys all use this value. Same
+    ``(provider, dataset)`` declared twice with different params and no alias means
+    two sources get same key; sources run concurrently in thread pool and persist
+    replaces directories wholesale, so one output vanishes. Only one dict key survives.
+    Both outcomes are "ok" so **run reports success but half the data silently disappears**.
 
-    alias 는 경로 세그먼트가 된다. persist 의 ``validate_path_segment`` 가
-    결국 잡기는 하지만 그때는 이미 fetch 를 마친 뒤다. 선언 단계에서 멈춘다.
+    alias becomes path segment. persist's ``validate_path_segment`` eventually catches
+    it but only after fetch completes. Stop at declaration stage.
     """
-    # spec -> stages 최상위 import 는 순환이다(stages.bronze.resolve 가 spec 을
-    # 읽는다). 키 계산을 여기서 복제하면 두 정의가 갈리므로(#629 가 정확히 그
-    # 사고였다) 정의는 하나로 두고 import 만 미룬다.
+    # spec -> stages top-level import is circular (stages.bronze.resolve reads spec).
+    # Duplicating key calculation here risks diverging definitions (#629 was exactly
+    # that bug) so keep definition singular, defer import only.
     from ..stages._path_safety import validate_path_segment
     from ..stages.bronze.resolve import source_identity
 
@@ -668,8 +669,8 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
             try:
                 provider, dataset = source_identity(source)
             except (AttributeError, TypeError):
-                # kind 별 필수 field 가 비었을 때다. 그쪽 문제는
-                # _source_kind_problems 가 이미 보고하므로 여기서 겹쳐 말하지 않는다.
+                # When kind-specific required field empty. _source_kind_problems already
+                # reports that; don't repeat here.
                 continue
             key = f"{provider}.{dataset}"
 
@@ -689,10 +690,11 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
 
 def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """``param_grid`` 선언 자체의 유효성을 검증한다 (#613).
+    """Validate ``param_grid`` declaration itself (#613).
 
-    전개는 데카르트 곱이라 선언 하나가 호출 수를 곱한다. 잘못된 선언이 런타임까지
-    가면 이미 수백 번 호출한 뒤에 실패하므로, 선언 시점에 막는다.
+    Expansion is Cartesian product so one declaration multiplies call count. Bad
+    declaration failing at runtime means hundreds of calls already executed; prevent
+    at declaration stage.
     """
     problems: list[ValidationProblem] = []
     for i, source in enumerate(spec.sources):
@@ -711,8 +713,8 @@ def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
         for key, values in source.param_grid.items():
             field = f"{prefix}.{key}"
             if not values:
-                # 빈 축 하나가 데카르트 곱 전체를 0 으로 만든다 — 호출이 한 번도
-                # 일어나지 않고 빈 Bronze 가 성공으로 기록된다.
+                # One empty axis makes entire Cartesian product zero — no calls
+                # execute and empty Bronze records as success.
                 problems.append(
                     _p(
                         "empty_param_grid_axis",
@@ -722,7 +724,7 @@ def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
                     )
                 )
             if key in source.params:
-                # 같은 키를 양쪽에 두면 어느 쪽이 이기는지 선언만 봐서는 알 수 없다.
+                # Same key on both sides — can't tell which wins from declaration alone.
                 problems.append(
                     _p(
                         "param_grid_shadows_params",
@@ -734,7 +736,7 @@ def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
                 )
             for index, value in enumerate(values):
                 if isinstance(value, (dict, list)):
-                    # 요청 파라미터는 스칼라다. 중첩 값은 URL 로 나갈 수 없다.
+                    # Request parameters are scalar. Nested values can't go to URL.
                     problems.append(
                         _p(
                             "invalid_param_grid_value",
@@ -746,15 +748,11 @@ def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
 
 def _pii_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """PII 정책의 명백한 위반을 사전에 검증한다 (#441).
-
-    데이터 스캔 자체는 orchestrator 가 silver 이후에 수행한다. 여기서는 정책
-    선언 단계의 위반(publish=true + allow 등)만 잡는다.
-    """
+    """Validate explicit PII policy violations upfront (#441)."""
     problems: list[ValidationProblem] = []
     if spec.pii is None:
         return problems
-    # 공개 배포(publish=true) 스펙에서 allow 는 PII 미검출 통과 위험이 있어 금지.
+    # Public publish (publish=true) spec forbids allow due to PII detection bypass risk.
     if spec.publish and spec.pii.mode == "allow":
         problems.append(
             _p(
@@ -767,11 +765,11 @@ def _pii_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
 
 def _quality_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """quality 정책의 의미적 일관성을 검증한다 (#486).
+    """Validate semantic consistency of quality policy (#486).
 
-    구조/타입/severity 어휘/operator 어휘는 loader가 파싱 단계에서 이미 거부한다.
-    여기서는 loader가 검사하지 않는 관계형 제약(범위 비어있음, min>max, 존재하지
-    않는 컬럼을 겨냥한 severity override)만 다룬다.
+    Structure/type/severity vocabulary/operator vocabulary are already rejected by
+    loader at parse time. Here we handle only relational constraints loader doesn't
+    check (empty ranges, min>max, severity overrides for non-existent columns).
     """
     problems: list[ValidationProblem] = []
     quality = spec.quality
@@ -811,10 +809,11 @@ def _quality_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
 
 def _license_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """publish=true 인 빌드의 라이선스 누락을 사전에 검증한다 (#443).
+    """Validate license requirement for builds with publish=true upfront (#443).
 
-    kpubdata 가 라이선스 메타데이터를 제공하지 않으므로, 공개 배포 시 사용자
-    명시 선언(``license`` 필드)이 재배포 가능성의 유일한 출처이다.
+    kpubdata does not provide license metadata, so explicit user-declared
+    ``license`` field is the only source of redistributability for public
+    distribution.
     """
     problems: list[ValidationProblem] = []
     if spec.publish and not spec.license:
@@ -829,13 +828,12 @@ def _license_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
 
 def _composition_problems(spec: BuildSpec) -> list[ValidationProblem]:
-    """composition의 alias 참조/구조적 일관성을 검증한다 (#506).
+    """Validate composition alias references and structural consistency (#506).
 
-    composition이 None이면 아무 것도 검사하지 않는다 — composition 없는 기존
-    multi-source BuildSpec은 이 검증의 영향을 받지 않는다. join key 존재 여부와
-    dtype 호환성은 Silver 스키마가 나와야 알 수 있으므로(파싱/구조 검증 시점엔
-    미지) 여기서 다루지 않는다 — orchestrator의 빌드 파이프라인 검증 게이트가
-    런타임에 담당한다.
+    If composition is None, check nothing — existing multi-source BuildSpecs
+    without composition are unaffected. Join key existence and dtype compatibility
+    require Silver schema (unknown at parse/structure validation time) — handled by
+    orchestrator's build pipeline validation gate at runtime.
     """
     problems: list[ValidationProblem] = []
     composition = spec.composition

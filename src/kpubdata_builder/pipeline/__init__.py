@@ -1,17 +1,7 @@
-"""파이프라인 오케스트레이션 패키지 (#48).
+"""Pipeline orchestration package (#48).
 
-Bronze → Silver → Gold → (Export) → Manifest 흐름을 묶는 orchestrator와 실행
-컨텍스트를 노출한다. Export 단계 연결은 stage-aware exporter(#28/v0.2)에서 추가한다.
-
-주요 구성:
-    - BuildContext: 단일 실행 컨텍스트
-    - run_build: 파이프라인 진입점
-    - BuildResult / SourceBuildOutcome: 실행 결과 모델
-    - preview_build: 파일 미기록 미리보기 진입점
-    - PreviewResult / SourcePreview: 미리보기 결과 모델
-    - PreviewDiffItem / PreviewTransformSummary / SampleMode: Source↔Silver diff·sampling
-      결과 모델 (#497)
-    - CancellationProbe: 협력적 취소 probe 계약 (#481)
+Bundles the orchestrator for the Bronze → Silver → Gold → (Export) →
+Manifest flow and the execution context.
 """
 
 from __future__ import annotations

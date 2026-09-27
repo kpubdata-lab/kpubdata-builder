@@ -1,33 +1,33 @@
-"""빌드 미리보기 (#3).
+"""Build preview (#3).
 
-실제 빌드를 전부 돌리기 전에 각 소스의 스키마와 샘플 몇 행만 보여준다. Bronze
-fetch 후 Silver를 메모리에서 구성하되 **어떤 산출물 파일도 기록하지 않는다**
-(persist 호출 없음). build의 축소판이다.
+Before running the full build, show schema and few sample rows per source. After
+Bronze fetch, materialize Silver in memory only — **do not persist any output files**
+(no persist call). Miniature version of build.
 
-Quality/Schema 평가는 orchestrator.run_build와 동일한 공통 evaluator
-(``quality.evaluate_quality``)를 쓴다 (#486) — Preview와 Build가 같은 데이터/규칙에
-대해 다른 판정을 내리는 semantic drift를 만들지 않는다. drift 감지는 하지 않는다
-(persist된 이전 run과 비교해야 하는데 preview는 워크스페이스에 아무것도 쓰지 않는다).
+Quality/Schema evaluation uses the same common evaluator as orchestrator.run_build
+(``quality.evaluate_quality``) (#486) — Preview and Build make identical judgments
+on same data/rules, no semantic drift. Drift detection not performed (requires
+comparing with persisted prior run, but preview writes nothing to workspace).
 
-Source↔Silver diff와 sampling (#497): 같은 실행 안에서 Bronze 원본 sample과
-Silver 변환 sample을 같은 행 인덱스로 골라 셀 단위로 비교한다. Bronze→Silver
-경로(normalize/validate)가 행을 filter/reorder하지 않는 현재 구조에서만
-``diff_available=true``이며, 그 전제가 깨지면(행 수 불일치 등) 잘못된 index diff
-대신 ``diff_available=false``로 fail-closed한다.
+Source↔Silver diff and sampling (#497): within single execution, compare Bronze raw
+sample and Silver transformed sample by same row index, cell by cell. Only with
+current structure where Bronze→Silver path (normalize/validate) does not filter/reorder
+rows is ``diff_available=true``; when precondition breaks (row count mismatch etc.),
+``diff_available=false`` (fail-closed instead of incorrect index diff).
 
-sample 행 수는 limit(≤ MAX_PREVIEW_LIMIT, service/app.py)으로 제한되지만 컬럼
-수는 어디서도 제한되지 않으므로, wide dataset에서는 셀 단위 diff item 개수가
-여전히 무제한일 수 있다. 그래서 diffs 리스트 자체는 MAX_PREVIEW_DIFF_ITEMS로
-따로 자르고 그 사실을 ``diff_truncated``로 명시한다 — transform_summary의
-집계(changed_cells/changed_rows)는 잘린 뒤에도 정확한 합계를 유지한다.
+Preview row limit (≤ MAX_PREVIEW_LIMIT, service/app.py) bounds rows, but columns
+are unconstrained anywhere; on wide datasets cell-level diff item count can still be
+unlimited. diffs list itself is truncated at MAX_PREVIEW_DIFF_ITEMS and that fact
+recorded in ``diff_truncated`` — transform_summary aggregation (changed_cells/
+changed_rows) remains accurate even after truncation.
 
-주요 구성:
-    - SampleMode: "first" | "random" sampling 방식
-    - PreviewDiffItem: 셀 단위 변경 하나
-    - PreviewTransformSummary: 비교 가능한 sample 범위의 변경 요약
-    - SourcePreview: 소스별 미리보기 결과
-    - PreviewResult: 전체 미리보기 결과
-    - preview_build: 미리보기 진입점
+Main components:
+    - SampleMode: "first" | "random" sampling method
+    - PreviewDiffItem: One cell-level change
+    - PreviewTransformSummary: Change summary over comparable sample range
+    - SourcePreview: Per-source preview result
+    - PreviewResult: Full preview result
+    - preview_build: Preview entry point
 """
 
 from __future__ import annotations
@@ -51,32 +51,33 @@ from ..uploads import UploadRepository
 SampleMode = Literal["first", "random"]
 _SAMPLE_MODES: tuple[SampleMode, ...] = ("first", "random")
 
-# random sample_mode에서 seed가 생략됐을 때 쓰는 고정 기본값 — "random"이라는
-# 이름과 달리 재현 불가능한 wall-clock 기반 시드를 쓰지 않는다 (#497).
+# Fixed default seed for random sample_mode when seed is omitted — unlike "random"
+# name, does not use unreproducible wall-clock seed (#497).
 DEFAULT_PREVIEW_SEED = 0
 
-# diffs 응답의 방어적 상한 (#497). limit(≤ MAX_PREVIEW_LIMIT, service/app.py)은
-# 행 수만 제한하고 컬럼 수는 어디서도 제한하지 않으므로, 셀 단위 diff item 개수는
-# rows × changed_columns로 wide dataset에서는 여전히 무제한일 수 있다. 이 상한은
-# 실제로 materialize해 응답에 싣는 PreviewDiffItem 개수만 자르고, 상한과 같은
-# 값(MAX_PREVIEW_LIMIT)을 재사용해 새 매직넘버를 만들지 않는다 —
-# transform_summary.changed_cells/changed_rows는 잘리지 않은 실제 합계를 유지해
-# "diff 목록은 잘렸지만 집계는 정확하다"는 계약을 지킨다.
+# Defensive upper bound for diffs response (#497). limit (≤ MAX_PREVIEW_LIMIT,
+# service/app.py) bounds rows only, columns are unconstrained anywhere, so
+# cell-level diff item count can be rows × changed_columns unlimited on wide
+# datasets. This bound only truncates actually materialized PreviewDiffItem count
+# in response, reusing same value (MAX_PREVIEW_LIMIT) rather than creating new
+# magic number — transform_summary.changed_cells/changed_rows remain accurate even
+# after truncation, keeping "diffs list truncated but aggregation exact" contract.
 MAX_PREVIEW_DIFF_ITEMS = 1000
 
 
 @dataclass(frozen=True)
 class PreviewDiffItem:
-    """Source↔Silver 셀 단위 변경 하나 (#497).
+    """One cell-level change between Source and Silver (#497).
 
-    속성:
-        row: source_sample/sample 배열 내 0-based 위치. 전체 데이터셋의 절대 행
-            번호가 아니다(둘 다 diff_available=true일 때만 같은 대상을 가리킨다).
-        column: 컬럼명.
-        before: 변환 전(Bronze raw) 값.
-        after: 변환 후(Silver) 값.
-        transform: 컬럼에 선언된 캐스팅(schema.casts)이 있을 때만
-            ``"cast:{dtype}"`` 형태로 채운다. 그 외에는 추측하지 않고 None.
+    Attributes:
+        row: 0-based position within source_sample/sample arrays. Not absolute row
+            number in full dataset (both refer to same target only when
+            diff_available=true).
+        column: Column name.
+        before: Value before transformation (Bronze raw).
+        after: Value after transformation (Silver).
+        transform: When column has declared casting (schema.casts), filled as
+            ``"cast:{dtype}"``. Otherwise None; not guessed.
     """
 
     row: int
@@ -88,13 +89,13 @@ class PreviewDiffItem:
 
 @dataclass(frozen=True)
 class PreviewTransformSummary:
-    """비교 가능한 sample 범위에서 계산한 변경 요약 (#497).
+    """Change summary computed over comparable sample range (#497).
 
-    전체 dataset 변화량이 아니라 이번 preview 응답에 실린 sample 범위 기준이다.
+    Based on sample range in this preview response, not full dataset change.
 
-    속성:
-        changed_cells: 값이 달라진 셀 개수.
-        changed_rows: 하나 이상의 셀이 달라진 행 개수.
+    Attributes:
+        changed_cells: Count of cells with different values.
+        changed_rows: Count of rows with one or more cells changed.
     """
 
     changed_cells: int
@@ -103,32 +104,32 @@ class PreviewTransformSummary:
 
 @dataclass(frozen=True)
 class SourcePreview:
-    """단일 소스의 미리보기 결과.
+    """Single source preview result.
 
-    속성:
-        source_key: 소스 식별자.
-        status: "ok" 또는 "failed".
-        schema: 추론된 스키마 요약 (실패 시 빈 SchemaInfo).
-        preview: 상위 N행 미리보기 (실패 시 빈 PreviewSlice). sample_mode에 따라
-            상위 N행 또는 결정적 무작위 N행을 담는다.
-        statistics: 전체 테이블 기준 통계 (row_count/null_counts/duplicate_rate,
-            #440). 스키마 계약 초안(VAL-4)과 품질 게이트(QG-3)의 근거.
-        quality_results: 구조화된 Quality/Schema 평가 결과 (#486). Build와 동일한
-            evaluator 결과이며, PASS를 포함한 실제로 평가된 check만 담는다.
-        error: 실패 시 오류 메시지.
-        source_sample: 변환 전 Bronze 원본 sample (#497). diff_available=false여도
-            최선 노력으로 채워진다(실패 시에는 빈 튜플).
-        sample_mode: 이 응답에 실제로 적용된 sampling 방식.
-        diff_available: source_sample[i]와 preview.rows[i]가 같은 논리 행을
-            가리킨다고 보장할 수 있을 때만 true. 행 수 불일치·조회 실패 등에서는
-            false이며 diffs/transform_summary는 비운다.
-        diffs: diff_available=true일 때만 채워지는 셀 단위 변경 목록. 최대
-            MAX_PREVIEW_DIFF_ITEMS개까지만 담긴다(diff_truncated 참고).
-        transform_summary: diff_available=true일 때만 채워지는 변경 요약.
-            diffs가 잘려도 changed_cells/changed_rows는 잘리지 않은 실제 합계다.
-        diff_truncated: diffs가 MAX_PREVIEW_DIFF_ITEMS 상한에 걸려 실제 변경 셀
-            전부를 담지 못했으면 true. diff_available=false면 항상 false(애초에
-            diff를 시도하지 않았으므로 "잘림"이 아니다).
+    Attributes:
+        source_key: Source identifier.
+        status: "ok" or "failed".
+        schema: Inferred schema summary (empty SchemaInfo if failed).
+        preview: Top N row preview (empty PreviewSlice if failed). Contains top N
+            or deterministic random N rows per sample_mode.
+        statistics: Full table statistics (row_count/null_counts/duplicate_rate, #440).
+            Evidence for schema contract draft (VAL-4) and quality gate (QG-3).
+        quality_results: Structured Quality/Schema evaluation result (#486). Same
+            evaluator result as Build, contains only actually-evaluated checks including PASS.
+        error: Error message if failed.
+        source_sample: Bronze raw sample before transformation (#497). Filled best-effort
+            even when diff_available=false (empty tuple if failed).
+        sample_mode: Actual sampling method applied in this response.
+        diff_available: True only when source_sample[i] and preview.rows[i] guaranteed
+            to reference same logical row. False on row count mismatch, query failure,
+            etc.; diffs/transform_summary then empty.
+        diffs: Cell-level change list filled only when diff_available=true. Capped at
+            MAX_PREVIEW_DIFF_ITEMS (see diff_truncated).
+        transform_summary: Change summary filled only when diff_available=true.
+            changed_cells/changed_rows remain exact aggregate even if diffs truncated.
+        diff_truncated: True if diffs hit MAX_PREVIEW_DIFF_ITEMS ceiling and did not
+            capture all changed cells. Always false if diff_available=false (not "truncated",
+            diff was never attempted).
     """
 
     source_key: str
@@ -148,39 +149,39 @@ class SourcePreview:
 
 @dataclass(frozen=True)
 class PreviewResult:
-    """전체 미리보기 결과.
+    """Full preview result.
 
-    속성:
-        previews: 소스별 미리보기 결과.
+    Attributes:
+        previews: Per-source preview results.
     """
 
     previews: tuple[SourcePreview, ...]
 
 
 def _fetch_key(source: SourceRef) -> str:
-    """Bronze fetch identity 키를 반환한다 (kind별 canonical identity, #498)."""
+    """Return Bronze fetch identity (canonical per-kind identity, #498)."""
     provider, dataset = source_identity(source)
     return f"{provider}.{dataset}"
 
 
 def _output_key(source: SourceRef) -> str:
-    """미리보기 결과 표면에 노출할 키 — alias가 있으면 alias."""
+    """Key exposed on preview result surface — use alias if present."""
     return source.alias if source.alias else _fetch_key(source)
 
 
 def _select_indices(
     *, total_rows: int, limit: int, sample_mode: SampleMode, seed: int
 ) -> list[int]:
-    """전체 total_rows 중 최대 limit개의 행 인덱스를 오름차순으로 고른다.
+    """Select up to limit row indices from total_rows, in ascending order.
 
-    "first": 앞쪽 count개를 그대로 고른다(기존 top-N 동작과 동일).
-    "random": seed로 초기화한 전용 ``random.Random`` 인스턴스로 비복원 추출한다.
-        전역 random 상태를 건드리지 않고, ``range``를 직접 인덱싱하므로 전체
-        데이터셋을 리스트로 복사하거나 셔플하지 않는다(#497 메모리 상한 요건).
-        동일 total_rows/limit/seed면 항상 동일한 결과를 반환한다.
+    "first": Select top count rows as-is (matches existing top-N behavior).
+    "random": Non-replacement sampling via dedicated ``random.Random`` instance
+        initialized with seed. Does not touch global random state. Direct range
+        indexing avoids copying/shuffling entire dataset to list (#497 memory
+        bound). Same total_rows/limit/seed always returns same result.
 
-    Source/Silver가 이 함수의 결과를 그대로 공유해서 쓰는 것이 diff 정합성의
-    전제다 — 둘을 독립적으로 sampling하면 다른 행을 고를 수 있다.
+    Source/Silver must share this function's result for diff consistency — if
+    sampled independently, may select different rows.
     """
     count = min(limit, total_rows)
     if count <= 0:
@@ -199,18 +200,18 @@ def _diff_sample(
     casts: Mapping[str, str] | None,
     max_items: int,
 ) -> tuple[tuple[PreviewDiffItem, ...], PreviewTransformSummary, bool]:
-    """정렬됐다고 이미 보장된 두 행 시퀀스를 셀 단위로 비교한다.
+    """Compare two row sequences guaranteed to be sorted, cell by cell.
 
-    호출자가 ``source_rows[i]``와 ``transformed_rows[i]``가 같은 논리 행을
-    가리킨다고 (diff_available 판정으로) 이미 보장했을 때만 불러야 한다.
+    Call only when caller has already verified source_rows[i] and transformed_rows[i]
+    reference the same logical row (as determined by diff_available check).
 
-    ``columns``는 컬럼 수 제한이 없으므로(#497 sample/diff memory 상한) 실제
-    materialize해 반환하는 diff item은 ``max_items``개로 자르되, 잘린 뒤에도
-    비교 자체는 계속해 ``changed_cells``/``changed_rows``는 항상 전체 sample
-    범위의 정확한 합계를 유지한다 — 집계를 diffs 길이에 종속시키지 않는다.
+    columns has no count limit (#497 sample/diff memory bound) — actually materialized
+    diff items are capped at max_items, but comparison continues even after truncation
+    so changed_cells/changed_rows always reflect accurate totals over entire sample
+    range — aggregation is never dependent on diffs length.
 
-    반환값: (diffs, transform_summary, truncated). truncated는 실제 변경 셀
-    수가 max_items를 넘어 diffs가 전부를 담지 못했으면 true.
+    Returns: (diffs, transform_summary, truncated). truncated=true if actual changed
+    cell count exceeded max_items and diffs could not capture all changes.
     """
     diffs: list[PreviewDiffItem] = []
     changed_rows = 0
@@ -257,9 +258,9 @@ def _preview_source(
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
 ) -> SourcePreview:
-    """한 소스를 fetch → Silver(메모리)로 만들어 스키마/샘플/diff/quality 결과를 추출한다.
+    """Fetch one source → construct Silver in-memory, extract schema/sample/diff/quality results.
 
-    ``upload_repository``/``owner_id`` 는 ``kind="file"`` source에서만 쓰인다(#498).
+    upload_repository/owner_id are used only in kind="file" sources (#498).
     """
     out_key = _output_key(source)
     try:
@@ -273,9 +274,8 @@ def _preview_source(
         column_null_tokens = source.schema.column_null_tokens if source.schema else None
         coalesce = source.schema.coalesce if source.schema else None
         zfill = source.schema.zfill if source.schema else None
-        # kind(public_api/file/url)에 맞는 resolver로 원시 레코드를 가져온다
-        # (#498) — Build와 동일한 resolver를 공유해 preview와 build가 같은
-        # source에 대해 항상 같은 데이터를 본다.
+        # Fetch raw records by kind(public_api/file/url) resolver (#498) — shared
+        # with Build so preview and build always see same data from same source.
         bronze = build_bronze_artifact_for_source(
             source,
             client=client,
@@ -296,7 +296,7 @@ def _preview_source(
             zfill=zfill,
             column_dtypes=column_dtypes,
         )
-        # Build와 동일한 공통 evaluator (#486) — 파일 persist는 하지 않는다.
+        # Same shared evaluator as Build (#486) — no file persist.
         quality_results = evaluate_quality(
             silver,
             quality_policy,
@@ -306,24 +306,21 @@ def _preview_source(
         )
 
         total_rows = silver.statistics.row_count
-        # diff alignment의 진짜 근거는 count가 아니라 현재 Silver 정규화 경로의
-        # row-preserving invariant다: normalize_table()은 records_to_dataframe()
-        # (레코드 순서 그대로 pl.DataFrame 구성) 다음 컬럼 단위 연산만 호출한다 —
-        # null_tokens/coalesce/rename/zfill/cast_columns/derived는 모두 같은 행
-        # 수를 유지한 채 값이나 컬럼 구성만 바꾸고(#620의 coalesce는 후보 *컬럼*
-        # 을 지우지 행을 지우지 않는다), validate_table()은 테이블을 아예
-        # 건드리지 않는다 — 어느 단계도 행을 filter/dedup/reorder하지 않는다
-        # (test_silver.py::TestRowPreservingInvariant#497이 이 불변조건을 회귀
-        # 고정한다). 그 불변조건이 유지되는 한 bronze.raw_records[i]는 항상
-        # silver.table의 i번째 행과 같은 논리적 행이므로, 같은 index list를
-        # 그대로 양쪽에 재사용해도 안전하다.
+        # Diff alignment basis is NOT count but Bronze→Silver row-preserving invariant:
+        # normalize_table() calls records_to_dataframe() (construct pl.DataFrame in
+        # original record order) then only column-level operations. null_tokens/coalesce/
+        # rename/zfill/cast_columns/derived all preserve row count, changing only values/
+        # column structure (#620: coalesce removes candidate *columns*, not rows);
+        # validate_table() never touches table — no step filters/dedups/reorders rows
+        # (test_silver.py::TestRowPreservingInvariant #497 regression-locks invariant).
+        # While invariant holds, bronze.raw_records[i] always matches silver.table row i,
+        # so same index list safely reused for both.
         #
-        # 아래 count 비교는 그 불변조건이 "이번 실행에서" 실제로 지켜졌는지
-        # 확인하는 값싼 runtime guard일 뿐, alignment의 근거 자체가 아니다 —
-        # Silver가 향후 dedup/filter를 도입하면 이 코드 경로 자체가 바뀌어야
-        # 하고, 이 guard는 count가 바뀐 경우만 잡아낸다(같은 count로 reorder만
-        # 하는 가상의 미래 변경은 이 guard로 잡지 못하므로 그런 변경을 추가할
-        # 때는 반드시 이 판단을 재검토해야 한다).
+        # Below count check is cheap runtime guard only confirming invariant held "this
+        # execution", NOT the alignment basis itself — if Silver adds dedup/filter later,
+        # this code path itself must change; guard catches count change only (hypothetical
+        # future reorder-only change with same count escapes guard, so such change
+        # requires re-examining this logic).
         aligned = bronze.record_count == total_rows
         indices = _select_indices(
             total_rows=total_rows, limit=limit, sample_mode=sample_mode, seed=seed
@@ -362,7 +359,7 @@ def _preview_source(
             transform_summary=transform_summary,
             diff_truncated=diff_truncated,
         )
-    except Exception as exc:  # 미리보기 실패를 결과로 변환
+    except Exception as exc:  # Convert preview failure to result
         return SourcePreview(
             source_key=out_key,
             status="failed",
@@ -389,28 +386,27 @@ def preview_build(
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
 ) -> PreviewResult:
-    """각 소스의 스키마와 샘플 행, Source↔Silver diff를 산출한다 (파일 미기록).
+    """Produce schema and sample rows per source, Source↔Silver diff (no file write).
 
-    매개변수:
-        spec: 미리볼 빌드 명세.
-        client: Bronze fetch에 사용할 kpubdata 호환 클라이언트.
-        limit: 미리보기에 포함할 최대 행 수.
-        sample_mode: "first"(상위 N행, 기본값) 또는 "random"(결정적 무작위 N행).
-        seed: sample_mode="random"일 때 쓰는 시드. 동일 입력+동일 seed는 항상
-            동일 sample을 반환한다. sample_mode="first"에서는 쓰이지 않는다.
-        upload_repository: ``kind="file"`` source의 업로드 content를 조회할
-            저장소 (#498). None이면 file source가 있는 preview는 실패한다.
-        owner_id: 업로드 소유권 확인에 쓰이는 stable principal id (#498).
+    Args:
+        spec: BuildSpec to preview.
+        client: kpubdata-compatible client for Bronze fetch.
+        limit: Max rows per source.
+        sample_mode: "first" (top N rows, default) or "random" (deterministic random N).
+        seed: Seed when sample_mode="random". Same input+seed always returns same
+            sample. Unused when sample_mode="first".
+        upload_repository: Repository to fetch kind="file" source upload content
+            (#498). None causes preview to fail if file source present.
+        owner_id: Stable principal ID for upload ownership check (#498).
 
-    반환값:
-        PreviewResult: 소스별 스키마/샘플/diff.
+    Returns:
+        PreviewResult: Per-source schema/sample/diff.
 
-    예외:
-        ValueError: limit이 1보다 작거나 sample_mode가 "first"/"random"이 아닌 경우.
-        TypeError: seed가 bool을 포함해 int가 아닌 경우.
-        ValidationError: spec이 최소 실행 요건을 충족하지 못한 경우. 유효하지 않은
-            spec을 부분 실행하거나 빈 결과로 돌려보내지 않고 빠르게 실패시켜
-            서비스 레이어와 동일하게 동작하도록 한다 (#193).
+    Raises:
+        ValueError: If limit < 1 or sample_mode not "first"/"random".
+        TypeError: If seed not int (e.g., bool).
+        ValidationError: If spec fails minimum requirements. Invalid spec fails fast
+            without partial execution or empty result, matching service layer (#193).
     """
     if limit < 1:
         raise ValueError(f"limit must be >= 1, got {limit}")
