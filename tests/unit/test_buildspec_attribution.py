@@ -1,11 +1,12 @@
 """BuildSpec ``attribution`` field (ADR 0018).
 
-공공누리는 제1~4유형 모두 출처표시를 **의무**로 둔다. ``license`` 식별자만으로는
-그 의무를 채울 수 없다 — 기관명·유형·원문 URL 이 함께 있어야 성립하기 때문이다.
+Public Data Korea requires **mandatory** source attribution
+for all types 1-4. The ``license`` identifier alone cannot satisfy this
+obligation — institution name, license type, and original URL must all be present.
 
-레거시 publish config 는 ``card.attribution`` 으로 이걸 담고 있었지만 BuildSpec
-에는 대응 개념이 없었고, 그래서 정식 경로로 게시하면 출처표시가 통째로 빠졌다.
-20개 config 중 3개만 attribution 을 갖고 있다는 점도 함께 기록해 둔다.
+Legacy publish config stored this as ``card.attribution``, but BuildSpec had no
+corresponding concept, so official publication omitted attribution entirely.
+Of 20 existing configs, only 3 have attribution — also documented here.
 """
 
 from __future__ import annotations

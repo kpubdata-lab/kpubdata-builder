@@ -441,9 +441,9 @@ def test_serve_invokes_http_server(
 ) -> None:
     """serve command must call http.serve with correct host/port (#249).
 
-    이 테스트는 한동안 ``test_publish_kaggle_end_to_end`` 안에 중첩 정의돼 있어
-    pytest 가 수집하지 못했고(#595), 본문만 kaggle 테스트 꼬리에 붙어 실행됐다.
-    그래서 아래 ``delenv`` 가드(#374 review)는 한 번도 실행되지 않았다.
+    This test was nested inside ``test_publish_kaggle_end_to_end`` for a while
+    so pytest didn't collect it (#595); only its body ran as tail of kaggle test.
+    So the ``delenv`` guard below (#374 review) never executed.
     """
     # Block leak of external KPUBDATA_BUILDER_MAX_WORKERS env (#374 review).
     monkeypatch.delenv("KPUBDATA_BUILDER_MAX_WORKERS", raising=False)

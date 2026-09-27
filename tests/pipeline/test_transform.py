@@ -255,15 +255,15 @@ def test_build_variant_dataframes_multiple_variants_independent() -> None:
 
 
 class TestBuildSpecPathMatchesTheLegacyScript:
-    """두 변환 경로가 같은 Bronze에서 같은 값을 낸다 (#611).
+    """Both transform paths produce identical output from same Bronze (#611).
 
-    배포용 스크립트 경로(이 모듈)와 BuildSpec 경로(stages/silver/normalize.py)가
-    갈라진 채로 두면, 논문이 서술하는 파이프라인과 HF에 배포된 데이터셋을 만든
-    파이프라인이 달라진다. 승격한 세 규칙(rename / int_comma / date_parts)이
-    실제로 같은 결과를 내는지 고정한다.
+    If deploy script path (this module) and BuildSpec path (stages/silver/
+    normalize.py) diverge, the pipeline described in papers and the one that
+    produced HF datasets differ. We lock three promoted rules (rename /
+    int_comma / date_parts) to ensure they actually produce identical results.
 
-    ``deal_date``의 표현은 일부러 다르다 — 스크립트는 문자열, BuildSpec 경로는
-    Date다. 비교는 같은 날짜를 가리키는지로 한다.
+    ``deal_date`` representation intentionally differs — script produces string,
+    BuildSpec path produces Date. Comparison checks they reference same date.
     """
 
     def _records(self) -> list[dict[str, Any]]:

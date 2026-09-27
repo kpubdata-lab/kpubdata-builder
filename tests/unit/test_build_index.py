@@ -316,9 +316,9 @@ class TestBuildIndexOwnerId:
 class TestListRecentOwned:
     """``list_recent_owned`` (#527) — ownership filter in SQL before LIMIT
 
-    적용해, 다른 principal의 최신 run들이 LIMIT을 채워 요청자 본인의 recent
-    run이 잘리지 않게 한다. 정책은 ``service.auth.principal_owns()``(#505)와
-    정확히 동일해야 한다.
+    applies, so other principals' recent runs don't fill the LIMIT and cut off
+    the requester's own recent run. Policy must match exactly with
+    ``service.auth.principal_owns()`` (#505).
     """
 
     def test_owner_id_match_takes_priority(self, tmp_path: Path) -> None:
@@ -504,7 +504,7 @@ class TestRebuildIndex:
     def test_rebuild_reads_owner_id_from_manifest(self, tmp_path: Path) -> None:
         """rebuild_index reindexes owner_id from manifest.json as-is (#505).
 
-        legacy manifest(owner_id 필드 없음)는 None으로 재구축되어야 한다.
+        Legacy manifests without the owner_id field must be rebuilt as None.
         """
         (tmp_path / "run1").mkdir()
         (tmp_path / "run1" / "manifest.json").write_text(

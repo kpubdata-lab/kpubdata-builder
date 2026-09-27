@@ -1,8 +1,9 @@
 """``AesGcmCredentialCipher`` rejection path regression test (#593).
 
-이 모듈은 provider credential 을 감싸는 암호 경계다. 정상 왕복만 테스트돼 있으면
-거부 로직이 깨져도(잘못된 키를 받아들이거나 변조를 눈감아도) 스위트가 초록으로 남는다.
-여기서는 "무엇을 거부해야 하는가"만 검증한다.
+This module is a cryptographic boundary wrapping provider credentials.
+Only normal round-trip was tested; if rejection logic breaks (accepting
+wrong keys or overlooking tampering), the suite stays green. This tests
+only "what must be rejected".
 """
 
 from __future__ import annotations

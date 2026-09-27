@@ -43,9 +43,9 @@ Json = Any
 
 
 def resolve_ref(contract: Schema, ref: str) -> Schema:
-    """Resolves local $ref in form ``#/components/schemas/Name`` to actual schema.
+    """Resolve local $ref in form ``#/components/schemas/Name`` to actual schema.
 
-    외부/원격 참조는 이 계약에서 쓰지 않으므로 거부한다.
+    External and remote references are not used in this contract, so reject them.
     """
     if not ref.startswith("#/"):
         raise ValueError(f"unsupported $ref (only local '#/' allowed): {ref}")
@@ -88,10 +88,10 @@ def _type_names(schema: Schema) -> list[str]:
 
 
 def validate(value: Json, schema: Schema, contract: Schema, path: str = "$") -> list[str]:
-    """Validates ``value`` satisfies ``schema`` and returns list of violations.
+    """Validate ``value`` satisfies ``schema`` and return list of violations.
 
-    반환값이 빈 리스트면 유효하다. 각 위반은 사람이 읽을 수 있는 문자열이며,
-    ``path``(기본 ``$``)는 JSON 문서 내 위치를 가리킨다.
+    Empty list means valid. Each violation is human-readable string. ``path``
+    (default ``$``) indicates location in JSON document.
     """
     # If $ref present, not used with other keywords (OpenAPI spec), so interpret and delegate.
     ref = schema.get("$ref")
@@ -205,10 +205,10 @@ def _normalize_path(contract: Schema, path: str) -> str:
 
 
 def response_schema(contract: Schema, path: str, method: str, status_code: int) -> Schema | None:
-    """Returns response JSON schema for ``(path, method, status_code)``.
+    """Return response JSON schema for ``(path, method, status_code)``.
 
-    경로 템플릿 정규화와 ``content/application/json`` 추출을 담당한다.
-    해당 상태 코드가 계약에 선언되어 있지 않으면 ``None``을 반환한다.
+    Handles path template normalization and ``content/application/json``
+    extraction. Returns ``None`` if status code is not declared in contract.
     """
     paths = contract.get("paths")
     if not isinstance(paths, dict):

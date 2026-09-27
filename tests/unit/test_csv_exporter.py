@@ -1,8 +1,8 @@
 """Fix CsvExporter output rules via tests.
 
-CSV는 콤마/따옴표/개행이 포함된 값을 올바르게 인용해야 하고, 컬럼 순서가
-결정적이어야 한다. 헤더 구성·셀 포매팅·빈 데이터 정책·반환 메타데이터를
-회귀 테스트로 못 박는다.
+CSV must properly quote values containing comma, quote, and newline characters;
+column order must be deterministic. Regression tests lock header composition,
+cell formatting, empty data policy, and returned metadata.
 """
 
 from __future__ import annotations

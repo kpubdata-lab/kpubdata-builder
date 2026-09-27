@@ -1,7 +1,7 @@
 """Built Dataset Catalog/Detail API test (#488).
 
-동일 dataset_id의 run grouping, latest run 선정, legacy 제외, ownership 격리,
-multi-source row_count 보존을 검증한다.
+Validates run grouping for identical dataset_id, latest run selection,
+legacy exclusion, ownership isolation, and multi-source row_count preservation.
 """
 
 from __future__ import annotations
@@ -73,10 +73,11 @@ def _write_fixture_run(
 ) -> None:
     """Record only canonical snapshot + manifest without running actual pipeline.
 
-    row_count 집계처럼 오케스트레이터의 동시 소스 실행(ThreadPoolExecutor)과 무관한
-    로직을 검증할 때, 멀티소스 빌드의 실제 동시 실행에 의존하지 않기 위한 결정적
-    fixture다. snapshot은 실제 spec.serializer.write_buildspec_snapshot로 기록해
-    운영 코드와 동일한 canonical 포맷을 쓴다.
+    When verifying logic like row_count aggregation that is independent of
+    orchestrator's concurrent source execution (ThreadPoolExecutor), this
+    deterministic fixture avoids depending on actual concurrent multi-source
+    build execution. Snapshot is recorded with real spec.serializer
+    .write_buildspec_snapshot so operations code uses identical canonical format.
     """
     spec_yaml = _spec_yaml(dataset_id, title=title, sources=sources)
     spec = parse_spec(cast(dict[str, object], yaml.safe_load(spec_yaml)))
@@ -332,11 +333,13 @@ class TestDatasetGrouping:
     def test_get_dataset_falls_back_to_filesystem_when_index_never_populated(
         self, tmp_path: Path
     ) -> None:
-        """BuildIndex not yet populated (run not via index, only on filesystem
-        존재)에서도 GET /datasets/{id}가 정본(snapshot+manifest)에서 찾아내야 한다.
+        """BuildIndex not yet populated (run exists only on filesystem,
+        not yet indexed) — GET /datasets/{id} must find from canonical
+        (snapshot+manifest).
 
-        list_by_dataset()은 빈 테이블에 대해 예외 없이 빈 목록을 반환하므로, "아직 채워지지
-        않음"과 "정말 없음"을 구분하지 못하면 폴백 없이 조용히 404를 내는 회귀가 생긴다.
+        list_by_dataset() returns empty list for empty table without exception,
+        so not distinguishing "not yet populated" from "truly absent" causes
+        regression: fallback disabled, silent 404 returned.
         """
         _write_fixture_run(tmp_path, "r1", dataset_id="dataset.unindexed")
         resp = dispatch(_service(tmp_path), "GET", "/datasets/dataset.unindexed", None)
@@ -397,8 +400,8 @@ class TestDatasetGrouping:
 class TestDatasetTotal:
     """GET /datasets `total` (#488 follow-up, additive, API 1.22.0).
 
-    total = canonical grouping + ownership 이후, pagination 이전의 distinct
-    dataset_id 개수. items.length/limit을 total로 쓰지 않는다.
+    total = distinct dataset_id count after canonical grouping + ownership,
+    before pagination. items.length/limit is not used as total.
     """
 
     def test_total_is_zero_when_no_datasets(self, tmp_path: Path) -> None:
@@ -503,9 +506,9 @@ class TestDatasetTotal:
     ) -> None:
         """Even if datasets >> limit, expensive full summary only runs on page candidates.
 
-        #Post-488 review: counting total across entire catalog ``build_dataset_summary``
-        (snapshot+manifest 재파싱 + stage 산출물 probe)가 도는 regression 방지.
-        page 밖 dataset은 경량 ``dataset_summary_renderable``로만 센다.
+        Post-#488 review: prevent regression of counting total across entire catalog
+        via ``build_dataset_summary`` (re-parse snapshot+manifest + stage artifact probe).
+        Datasets outside page counted via lightweight ``dataset_summary_renderable`` only.
         """
         service = _service(tmp_path)
         for i in range(6):

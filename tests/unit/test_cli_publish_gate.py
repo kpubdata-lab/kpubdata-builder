@@ -1,9 +1,9 @@
 """Check if CLI publish follows same policy as service publish (#491 follow-up).
 
-두 가지가 갈려 있었다. CLI 는 ``validate_spec(spec)`` 만 불러서 게시 전용
-규칙(license 선언)을 건너뛰었고, ``rglob("*")`` 로 artifacts_dir 아래 **모든**
-파일을 올렸다 — artifacts_dir 에 run 루트를 넘기면 bronze 원본과 BuildSpec
-snapshot 까지 함께 게시됐다.
+Two issues existed. CLI called only ``validate_spec(spec)`` skipping
+publication-only rules (license declaration), and used ``rglob("*")`` to
+upload **all** files under artifacts_dir — passing run root as artifacts_dir
+would publish bronze originals and BuildSpec snapshot together.
 """
 
 from __future__ import annotations
