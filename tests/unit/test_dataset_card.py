@@ -1,4 +1,4 @@
-"""데이터셋 카드(#37) 계약과 Markdown 렌더링을 검증한다."""
+"""Verify dataset card (#37) contract and Markdown rendering."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _card() -> DatasetCard:
 
 
 def test_build_dataset_card_maps_primitive_fields() -> None:
-    # (name, type, nullable) 시퀀스가 CardField로 매핑되는지 확인한다.
+    # Check (name, type, nullable) sequence mapped to CardField.
     card = _card()
 
     assert [(f.name, f.type, f.nullable) for f in card.fields] == [
@@ -35,7 +35,7 @@ def test_build_dataset_card_maps_primitive_fields() -> None:
 
 
 def test_render_includes_all_contract_sections() -> None:
-    # 렌더링된 README가 계약의 모든 섹션을 포함하는지 확인한다.
+    # Confirm rendered README contains all contract sections.
     text = render_dataset_card(_card())
 
     assert text.startswith("# Apartment Trades\n")
@@ -49,19 +49,19 @@ def test_render_includes_all_contract_sections() -> None:
 
 
 def test_render_schema_and_sample_as_markdown_tables() -> None:
-    # 스키마/샘플이 Markdown 표로 렌더링되고 nullable 표기가 정확한지 확인한다.
+    # Confirm schema/sample rendered as Markdown table with accurate nullable notation.
     text = render_dataset_card(_card())
 
     assert "| Column | Type | Nullable |" in text
     assert "| id | String | no |" in text
     assert "| amount | Int64 | yes |" in text
-    # 샘플 표 헤더와 행.
+    # sample table header and rows.
     assert "| id | amount |" in text
     assert "| 1 | 1000 |" in text
 
 
 def test_render_escapes_pipe_and_newline_in_cells() -> None:
-    # 셀 값의 파이프/개행이 이스케이프되어 표가 깨지지 않는지 확인한다.
+    # Confirm cell pipe/newline escaped so table not broken.
     card = build_dataset_card(
         title="t",
         fields=[("v", "String", False)],
@@ -74,17 +74,17 @@ def test_render_escapes_pipe_and_newline_in_cells() -> None:
 
 
 def test_render_handles_empty_schema_and_sample() -> None:
-    # 스키마/샘플이 없을 때 안내 문구로 안전하게 렌더링되는지 확인한다.
+    # Confirm safe rendering with guidance text when schema/sample missing.
     text = render_dataset_card(build_dataset_card(title="empty"))
 
     assert "_No schema available._" in text
     assert "_No sample rows available._" in text
-    assert "N/A" in text  # license 기본값
-    assert "unversioned" in text  # version 기본값
+    assert "N/A" in text  # license default
+    assert "unversioned" in text  # version default
 
 
 def test_render_serializes_temporal_sample_values() -> None:
-    # 샘플 행에 date/datetime이 있어도 크래시 없이 ISO 문자열로 렌더링된다 (#195).
+    # Sample rows with date/datetime render as ISO strings without crash (#195).
     card = build_dataset_card(
         title="temporal",
         fields=[("d", "Date", False), ("ts", "Datetime", False)],

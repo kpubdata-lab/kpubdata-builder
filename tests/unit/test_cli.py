@@ -1,4 +1,4 @@
-"""CLI 진입점의 파서, 종료 코드, 오류 메시지를 검증한다."""
+"""Verify CLI entrypoint parser, exit codes, error messages."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from kpubdata_builder import __version__
 from kpubdata_builder.cli import build_parser, main
 from kpubdata_builder.publishers.base import PublishResult
 
-# license 를 선언해 둔다. publish 는 게시 전용 규칙으로 검증하므로(#443) 없으면
-# 게시 테스트가 전부 validation 단계에서 멈춘다 — 그게 이 게이트의 요점이다.
+# declare license. publish validates with publication-only rules so (#443) without it,
+# publish tests all stop at validation stage — that's this gate's point.
 VALID_SPEC_YAML = (
     """
 dataset_id: dataset.sample
@@ -48,7 +48,7 @@ exports:
 def test_direct_cli_client_keeps_environment_cache_behavior(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """service가 아닌 direct CLI client는 cache override를 강제하지 않는다."""
+    """Direct CLI client (not service) does not force cache override."""
     captured: list[dict[str, object]] = []
 
     def fake_from_env(**overrides: object) -> object:
@@ -59,19 +59,19 @@ def test_direct_cli_client_keeps_environment_cache_behavior(
 
     _ = cli_module._create_client()
 
-    # kpubdata #276 이후 from_env는 명시적 파라미터를 받는다 — 미지정값은
-    # None(환경 규칙 적용)으로 전달되고 cache를 강제하지 않는다.
+    # Since kpubdata #276, from_env takes explicit parameters — unspecified values
+    # None (environment rules apply) passed and cache not forced.
     assert captured == [{"provider_keys": None, "timeout": None, "cache": None}]
 
 
 def test_build_parser_uses_program_name() -> None:
-    # parser가 기대한 프로그램 이름을 노출하는지 확인한다.
+    # Confirm parser exposes expected program name.
     parser = build_parser()
     assert parser.prog == "kpubdata-builder"
 
 
 def test_help_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    # --help 호출이 성공 종료 코드와 도움말 본문을 반환하는지 검증한다.
+    # Verify --help call returns success exit code and help text.
     exit_code = main(["--help"])
     captured = capsys.readouterr()
 
@@ -81,7 +81,7 @@ def test_help_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_version_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    # --version 호출이 버전 문자열을 출력하는지 확인한다.
+    # Confirm --version call prints version string.
     exit_code = main(["--version"])
     captured = capsys.readouterr()
 
@@ -90,7 +90,7 @@ def test_version_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_no_subcommand_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
-    # 하위 명령이 없을 때 argparse 스타일 오류 코드 2를 반환하는지 검증한다.
+    # Verify argparse-style error code 2 returned when no subcommand.
     exit_code = main([])
     captured = capsys.readouterr()
 
@@ -99,7 +99,7 @@ def test_no_subcommand_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_unknown_command_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
-    # 알 수 없는 명령이 stderr와 함께 거부되는지 확인한다.
+    # Confirm unknown command rejected with stderr.
     exit_code = main(["does-not-exist"])
     captured = capsys.readouterr()
 
@@ -110,7 +110,7 @@ def test_unknown_command_returns_two(capsys: pytest.CaptureFixture[str]) -> None
 def test_validate_succeeds_for_valid_spec(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # 유효한 YAML 명세는 validate 명령에서 성공해야 한다.
+    # Valid YAML spec should succeed in validate command.
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(VALID_SPEC_YAML, encoding="utf-8")
 
@@ -125,7 +125,7 @@ def test_validate_succeeds_for_valid_spec(
 def test_validate_fails_for_missing_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # 파일이 없으면 로드 실패 메시지와 종료 코드 1을 반환해야 한다.
+    # If file missing, must return load failure message and exit code 1.
     missing = tmp_path / "missing.yaml"
 
     exit_code = main(["validate", str(missing)])
@@ -138,7 +138,7 @@ def test_validate_fails_for_missing_file(
 def test_validate_fails_for_invalid_spec(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # YAML 문법은 맞아도 필수 필드 검증에 실패하면 오류가 출력되는지 확인한다.
+    # Confirm error printed if YAML syntax OK but required field validation fails.
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(INVALID_SPEC_YAML_NO_SOURCES, encoding="utf-8")
 
@@ -153,7 +153,7 @@ def test_validate_fails_for_invalid_spec(
 def test_validate_fails_for_malformed_yaml(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # YAML 문법 자체가 깨진 경우 로드 실패로 처리되는지 확인한다.
+    # Confirm broken YAML syntax treated as load failure.
     spec_path = tmp_path / "bad.yaml"
     _ = spec_path.write_text("{{{{not: valid: yaml: [", encoding="utf-8")
 
@@ -165,12 +165,12 @@ def test_validate_fails_for_malformed_yaml(
 
 
 # ---------------------------------------------------------------------------
-# publish 명령 테스트
+# publish command test
 # ---------------------------------------------------------------------------
 
 
 def test_publish_local_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    # --target local end-to-end: 파일이 destination 으로 복사되고 요약이 출력된다.
+    # --target local end-to-end: file copied to destination and summary printed.
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(VALID_SPEC_YAML, encoding="utf-8")
 
@@ -206,7 +206,7 @@ def test_publish_local_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[
 def test_publish_missing_artifacts_dir_returns_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # artifacts-dir 가 존재하지 않으면 exit 1 과 오류 메시지를 반환해야 한다.
+    # If artifacts-dir doesn't exist, must return exit 1 and error message.
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(VALID_SPEC_YAML, encoding="utf-8")
 
@@ -231,7 +231,7 @@ def test_publish_missing_artifacts_dir_returns_one(
 def test_publish_empty_artifacts_dir_returns_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # artifacts-dir 가 비어 있으면 exit 1 과 오류 메시지를 반환해야 한다.
+    # If artifacts-dir empty, must return exit 1 and error message.
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(VALID_SPEC_YAML, encoding="utf-8")
 
@@ -284,8 +284,8 @@ def test_publish_unknown_target_rejected_by_argparse(
 def test_publish_huggingface_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # HuggingFace publisher 를 stub 으로 교체하여 publish 가 올바른 인자로
-    # 호출되고 exit 0 을 반환하는지 검증한다.
+    # Replace HuggingFace publisher with stub to check publish called with correct args
+    # and returns exit 0.
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(VALID_SPEC_YAML, encoding="utf-8")
 
@@ -300,7 +300,7 @@ def test_publish_huggingface_stub(
         artifact_count=1,
     )
     stub = MagicMock()
-    # 실제 HuggingFacePublisher는 파일 단위 입력을 받으므로 stub도 동일하게 맞춘다.
+    # Real HuggingFacePublisher takes per-file input, so stub matches similarly.
     stub.expects_directory = False
     stub.publish.return_value = fake_result
 
@@ -344,7 +344,7 @@ def test_publish_publish_error_returns_one(
     sub_b = artifacts_dir / "b"
     sub_a.mkdir(parents=True)
     sub_b.mkdir(parents=True)
-    # 서로 다른 하위 디렉터리에 같은 basename 파일 → LocalPublisher가 PublishError 발생
+    # Same basename file in different subdirs → LocalPublisher raises PublishError
     (sub_a / "data.parquet").write_bytes(b"1")
     (sub_b / "data.parquet").write_bytes(b"2")
 
@@ -371,8 +371,8 @@ def test_publish_publish_error_returns_one(
 def test_publish_kaggle_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # --target kaggle end-to-end: CLI가 dataset-metadata.json이 든 디렉터리 자체를
-    # KagglePublisher에 전달하고, fake API로 업로드가 호출되는지 검증한다 (#176, #181).
+    # --target kaggle end-to-end: CLI passes directory containing dataset-metadata.json
+    # to KagglePublisher and verifies upload called via fake API (#176, #181).
     import json
     import sys
     import types
@@ -430,7 +430,7 @@ def test_publish_kaggle_end_to_end(
 
     assert exit_code == 0, captured.err
     assert "authenticate" in calls
-    # public 플래그를 주지 않았으므로 비공개로 생성되어야 한다.
+    # Without public flag, must be created private.
     assert "create_new:public=False" in calls
     assert "publish: dataset.sample -> kaggle" in captured.out
     assert "artifacts: 1" in captured.out
@@ -439,13 +439,13 @@ def test_publish_kaggle_end_to_end(
 def test_serve_invokes_http_server(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """serve 명령이 http.serve를 올바른 host/port로 호출해야 한다 (#249).
+    """serve command must call http.serve with correct host/port (#249).
 
     이 테스트는 한동안 ``test_publish_kaggle_end_to_end`` 안에 중첩 정의돼 있어
     pytest 가 수집하지 못했고(#595), 본문만 kaggle 테스트 꼬리에 붙어 실행됐다.
     그래서 아래 ``delenv`` 가드(#374 review)는 한 번도 실행되지 않았다.
     """
-    # 외부 환경의 KPUBDATA_BUILDER_MAX_WORKERS 누출을 차단 (#374 review).
+    # Block leak of external KPUBDATA_BUILDER_MAX_WORKERS env (#374 review).
     monkeypatch.delenv("KPUBDATA_BUILDER_MAX_WORKERS", raising=False)
 
     import kpubdata_builder.service.http as http_module
@@ -457,7 +457,7 @@ def test_serve_invokes_http_server(
         captured_kwargs["host"] = host
         captured_kwargs["port"] = port
         captured_kwargs["max_workers"] = max_workers
-        # --output-dir가 BuilderService.output_root로 올바르게 전달되는지 확인한다 (#249 review).
+        # Verify --output-dir correctly passed to BuilderService.output_root (#249 review).
         assert isinstance(service, BuilderService)
         captured_kwargs["output_root"] = service._output_root
         captured_kwargs["async_max_workers"] = service._async_builds._executor._max_workers
@@ -478,7 +478,7 @@ def test_serve_invokes_http_server(
     out = capsys.readouterr().out
 
     assert exit_code == 0
-    # --max-workers 미지정 → 기본값(10)이 전달된다 (#374).
+    # --max-workers unspecified → default (10) is passed (#374).
     assert captured_kwargs == {
         "host": "0.0.0.0",
         "port": 9123,

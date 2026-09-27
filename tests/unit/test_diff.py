@@ -1,4 +1,4 @@
-"""Build diff/compare 도구(#16)를 검증한다."""
+"""Verify build diff/compare tool (#16)."""
 
 from __future__ import annotations
 

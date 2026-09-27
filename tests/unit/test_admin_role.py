@@ -1,4 +1,4 @@
-"""관리자 역할과 관리 엔드포인트 (#679).
+"""Admin role and admin endpoints (#679).
 
 여기서 가장 중요한 것은 **부정 테스트**다. 관리 기능의 위험은 동작하지 않는
 것이 아니라 필요 이상으로 동작하는 것이다 — 이 제품은 BYOK 이고, 관리자가
@@ -121,7 +121,7 @@ class TestAccessGate:
         assert response.status_code == 200
 
     def test_non_admin_response_does_not_leak_whether_data_exists(self) -> None:
-        """403 본문이 run 개수나 존재 여부를 알려주지 않는다."""
+        """403 response does not reveal run count or existence."""
         populated = _call(_service(), "/admin/runs", _USER)
         empty = _call(_service([]), "/admin/runs", _USER)
         assert populated.body == empty.body
@@ -139,7 +139,7 @@ class TestAccessGate:
 
 
 class TestMetadataOnly:
-    """(a) 메타데이터만 — #679 의 결정이 내려질 때까지 가장 좁은 범위."""
+    """(a) Metadata only — narrowest scope until #679 decision."""
 
     def test_runs_response_carries_no_artifact_bytes(self) -> None:
         response = _call(_service(), "/admin/runs", _ADMIN)
@@ -149,13 +149,13 @@ class TestMetadataOnly:
 
     @pytest.mark.parametrize("path", ["/admin/runs", "/admin/config"])
     def test_admin_routes_never_return_files(self, path: str) -> None:
-        """관리 경로는 파일을 돌려주지 않는다 — 산출물 다운로드 경로가 되면
-        메타데이터 전용이라는 성질이 조용히 사라진다."""
+        """Admin path does not serve files — if it becomes artifact download path
+        metadata-only property silently disappears."""
         assert not isinstance(_call(_service(), path, _ADMIN), FileResponse)
 
     def test_runs_response_omits_created_by(self) -> None:
-        """``created_by`` 는 표시용 라벨이라 사용자 신원이 드러날 수 있다.
-        소유자 구분은 되돌릴 수 없는 ``owner_id`` 해시로 충분하다."""
+        """``created_by`` is display label so user identity may be revealed.
+        Owner distinction is sufficient with irreversible ``owner_id`` hash."""
         response = _call(_service(), "/admin/runs", _ADMIN)
         for run in response.body["runs"]:
             assert "created_by" not in run
@@ -171,7 +171,7 @@ class TestMetadataOnly:
 
 
 class TestOwnershipIsNotWidened:
-    """OIDC 관리자는 ``ownership_allows`` 를 통과하지 않는다.
+    """OIDC admin does not pass ``ownership_allows``.
 
     통과시키면 관리자가 남의 run 산출물 바이트를 받을 수 있고, 그것은 #679 의
     (c) 를 결정 없이 확정하는 것이다.
@@ -194,8 +194,8 @@ class TestOwnershipIsNotWidened:
     def test_grandfathered_principals_keep_full_access(
         self, kind: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#679 이전부터 있던 권한이다. 빼면 단일 사용자 배포와 API 키 기반
-        Studio 배포가 깨진다."""
+        """#679 pre-existing permission. Removing breaks single-user deployment and API key-based
+        Studio deployment breaks."""
         monkeypatch.setenv("ENFORCE_OWNERSHIP", "true")
         principal = Principal(kind=kind, owner_id=f"{kind}:x", is_admin=True)
         assert (
@@ -305,8 +305,8 @@ class TestInFlightRuns:
 
 class TestIndexFailure:
     def test_index_failure_returns_503_not_a_partial_list(self) -> None:
-        """파일시스템 폴백으로 내려가지 않는다 — 폴백은 소유자 정보가 덜
-        정확한데, 관리자가 그것을 사실로 보면 잘못된 근거로 판단한다."""
+        """Does not fall back to filesystem — fallback has less owner info
+        It's accurate, but if admin treats it as fact, they judge based on wrong premise."""
         response = _call(_service(fail=True), "/admin/runs", _ADMIN)
         assert response.status_code == 503
         assert "runs" not in response.body
@@ -339,13 +339,13 @@ class TestAudit:
         assert "outcome=allowed" in caplog.text
 
     def test_denied_action_is_recorded(self, caplog: pytest.LogCaptureFixture) -> None:
-        """거부도 남는다 — 누가 관리 경로를 두드렸는지가 허용된 요청만큼 중요하다."""
+        """Denials also logged — who touched admin paths as important as allowed requests."""
         with caplog.at_level(logging.INFO, logger="kpubdata_builder.admin_audit"):
             _call(_service(), "/admin/config", _USER)
         assert "outcome=denied" in caplog.text
 
     def test_audit_line_shape_is_pinned(self, caplog: pytest.LogCaptureFixture) -> None:
-        """감사 한 줄에 무엇이 들어가는지를 고정한다.
+        """Fixes what goes into one audit line.
 
         ``Principal`` 에서 꺼내는 것은 ``label`` 과 ``owner_id`` 뿐이고 둘 다
         설계상 secret 을 담지 않는다. 나중에 누군가 "디버깅에 편하다" 며 필드를

@@ -1,4 +1,4 @@
-"""stages.bronze.resolve: source kind resolver가 동일한 BronzeArtifact를 만드는지 검증 (#498)."""
+"""stages.bronze.resolve: verify source kind resolver produces identical BronzeArtifact (#498)."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def test_source_identity_for_file_uses_upload_id_not_path() -> None:
 
 
 def test_source_identity_for_url_is_a_safe_path_segment() -> None:
-    """url identity는 :,/ 등을 포함할 수 없다 — 항상 path segment로 안전해야 한다.
+    """url identity cannot include :,/ etc — must always be safe as path segment.
 
     alias가 없으면 이 값이 그대로 bronze/silver/gold 출력 디렉터리 세그먼트로
     쓰이므로(orchestrator._fetch_source_key), colon/slash가 남으면
@@ -100,7 +100,7 @@ def test_sanitize_endpoint_identity_defaults_empty_path_to_slash() -> None:
     assert sanitize_endpoint_identity("https://example.org") == "https://example.org/"
 
 
-# --- build_bronze_artifact_for_source: public_api (기존 경로 그대로) --------------
+# --- build_bronze_artifact_for_source: public_api (existing path unchanged) --------------
 
 
 def test_public_api_source_delegates_to_existing_client_path() -> None:
@@ -115,7 +115,7 @@ def test_public_api_source_delegates_to_existing_client_path() -> None:
 
 
 def test_unknown_source_kind_is_rejected_fail_closed() -> None:
-    """알 수 없는 kind를 public_api처럼 암묵적으로 처리하지 않는다 (#538 review).
+    """Unknown kind not implicitly handled like public_api (#538 review).
 
     validate_spec이 loader를 거치지 않은 BuildSpec도 이미 거부하지만, resolver
     자신도 "그 외는 public_api" implicit fallback을 두지 않고 독립적으로
@@ -153,7 +153,7 @@ def test_file_source_reads_and_parses_upload(tmp_path: Path) -> None:
         "format": "csv",
         "encoding": "utf-8",
     }
-    # provenance에 파일시스템 경로가 전혀 남지 않는다.
+    # No filesystem paths left in provenance.
     assert artifact.provenance is not None
     assert "\\" not in str(artifact.provenance.fetch_params)
     assert "/" not in str(artifact.provenance.fetch_params.get("upload_id", ""))
@@ -189,7 +189,7 @@ def test_file_source_unknown_upload_id_raises_ingestion_error(tmp_path: Path) ->
 
 
 def test_file_source_owned_by_another_principal_raises_not_found(tmp_path: Path) -> None:
-    """다른 owner의 upload_id를 참조하면 존재 여부를 구분하지 않고 not found다."""
+    """Referencing another owner's upload_id appears as not found regardless of existence."""
     repo = _upload_repo(tmp_path)
     metadata = repo.put(
         "owner-1", content=b"id\n1\n", format="csv", encoding="utf-8", original_filename=None
@@ -207,7 +207,7 @@ def test_file_source_format_mismatch_with_stored_upload_raises(tmp_path: Path) -
     metadata = repo.put(
         "owner-1", content=b"id\n1\n", format="csv", encoding="utf-8", original_filename=None
     )
-    # BuildSpec은 json이라고 선언했지만 업로드는 csv로 저장됨.
+    # BuildSpec declares json but upload stored as csv.
     source = SourceRef(kind="file", upload_id=metadata.upload_id, format="json", encoding="utf-8")
 
     with pytest.raises(IngestionError, match="does not match"):
@@ -217,12 +217,12 @@ def test_file_source_format_mismatch_with_stored_upload_raises(tmp_path: Path) -
 
 
 def test_file_source_encoding_mismatch_with_stored_upload_raises(tmp_path: Path) -> None:
-    """format은 같아도 encoding만 다르면 조용히 재해석하지 않고 reject한다 (#498)."""
+    """If format matches but encoding differs, reject silently without reinterpreting (#498)."""
     repo = _upload_repo(tmp_path)
     metadata = repo.put(
         "owner-1", content=b"id\n1\n", format="csv", encoding="utf-8", original_filename=None
     )
-    # BuildSpec은 format=csv로 업로드와 같지만 encoding만 euc-kr로 선언함.
+    # BuildSpec matches upload with format=csv but declares encoding euc-kr.
     source = SourceRef(kind="file", upload_id=metadata.upload_id, format="csv", encoding="euc-kr")
 
     with pytest.raises(IngestionError, match="does not match"):

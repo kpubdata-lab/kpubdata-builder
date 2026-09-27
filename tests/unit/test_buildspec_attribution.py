@@ -1,4 +1,4 @@
-"""BuildSpec 의 ``attribution`` 필드 (ADR 0018).
+"""BuildSpec ``attribution`` field (ADR 0018).
 
 공공누리는 제1~4유형 모두 출처표시를 **의무**로 둔다. ``license`` 식별자만으로는
 그 의무를 채울 수 없다 — 기관명·유형·원문 URL 이 함께 있어야 성립하기 때문이다.
@@ -56,7 +56,7 @@ class TestParsing:
 
 
 class TestTheDigestStaysStable:
-    """``spec_digest`` 는 recipe 신원이다. 새 필드가 기존 spec 의 신원을 바꾸면 안 된다."""
+    """``spec_digest`` is recipe identity. New field must not change existing spec identity."""
 
     def test_a_spec_without_attribution_is_unchanged(self) -> None:
         first = compute_spec_digest(serialize_spec_bytes(_spec()))  # type: ignore[arg-type]
@@ -68,7 +68,7 @@ class TestTheDigestStaysStable:
         assert b"attribution" not in serialize_spec_bytes(_spec())  # type: ignore[arg-type]
 
     def test_declaring_it_changes_the_digest(self) -> None:
-        """선언하면 다른 recipe 다 — 게시물의 법적 표기가 달라지기 때문이다."""
+        """Declaring makes different recipe — publication legal notices change."""
         plain = compute_spec_digest(serialize_spec_bytes(_spec()))  # type: ignore[arg-type]
         attributed = compute_spec_digest(
             serialize_spec_bytes(_spec(f'attribution: "{_ATTRIBUTION}"\n'))  # type: ignore[arg-type]
@@ -78,7 +78,7 @@ class TestTheDigestStaysStable:
 
 
 class TestItReachesThePublishedCard:
-    """front matter 의 license 만으로는 출처표시 의무가 채워지지 않는다."""
+    """Front matter license alone does not fulfill attribution obligation."""
 
     def _card(self, metadata: dict[str, object]) -> str:
         artifact = ArtifactDataset(records=({"a": "1"},), schema={"a": "str"}, metadata=metadata)

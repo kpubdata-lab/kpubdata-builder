@@ -1,8 +1,8 @@
-"""협력적 취소와 partial manifest 검증 (#481, ADR 0008).
+"""Cooperative cancellation and partial manifest validation (#481, ADR 0008).
 
 이 파일은 네 층위를 각각 결정적으로 검증한다.
 
-1. **상태 머신**(``AsyncBuildJobRegistry``): queued/running 취소, 종단 상태
+1. **State machine**(``AsyncBuildJobRegistry``): queued/running 취소, 종단 상태
    불변성, 반복 취소 멱등성.
 2. **pipeline 안전 경계**: stub probe로 Bronze/Silver/Gold 경계를 정확히
    지정해 partial 산출물과 partial manifest를 확인한다.
@@ -88,7 +88,7 @@ def _service(tmp_path: Path) -> BuilderService:
 
 
 class _BoundaryProbe:
-    """정확히 ``cancel_after`` 번째 경계 점검에서 취소를 관찰하는 stub probe.
+    """Stub probe observing cancellation at exactly ``cancel_after``-th boundary check.
 
     sleep이나 타이밍에 의존하지 않고 "Bronze 직후", "Silver 직후"처럼 **어느
     경계에서** 취소가 관찰되는지를 결정적으로 지정한다. ``cancel_after=None``
@@ -109,10 +109,10 @@ class _BoundaryProbe:
             return self.probe_count > self._cancel_after
 
     def commit(self) -> bool:
-        # 마지막 안전 경계. 지금 ``cancel_requested()``를 한 번 더 불렀다면 True가
-        # 나올 시점(``probe_count >= cancel_after``)이면 취소가 이긴 것으로 본다 —
-        # 실제 ``RunCancellation``에서 "request가 commit보다 먼저 도착한" 상황과
-        # 동일하다.
+        # Last safety boundary. If ``cancel_requested()`` called once more now, True would
+        # appear (``probe_count >= cancel_after``) so cancellation is considered won —
+        # same as real ``RunCancellation`` situation of "request arrived before commit"
+        # .
         with self._lock:
             if self._cancel_after is not None and self.probe_count >= self._cancel_after:
                 return False
@@ -128,7 +128,7 @@ def _read_manifest(tmp_path: Path, run_id: str) -> dict[str, object]:
 
 
 class _RecordingRunner:
-    """호출 횟수를 세는 runner. 취소된 queued job이 절대 실행되지 않음을 증명한다."""
+    """Runner counting calls. Proves cancelled queued job never executes."""
 
     def __init__(self, *, entered: threading.Event | None = None) -> None:
         self.calls = 0
@@ -150,7 +150,7 @@ class _RecordingRunner:
 
 
 # ---------------------------------------------------------------------------
-# 1. 상태 머신
+# 1. State machine
 # ---------------------------------------------------------------------------
 
 
@@ -164,7 +164,7 @@ class TestCancellationStateMachine:
         assert outcome == "cancelled"
         assert snapshot is not None
         assert snapshot.status == "cancelled"
-        # 취소된 queued job은 worker가 절대 실행하지 않는다.
+        # Worker never executes cancelled queued job.
         assert registry.begin_run("run1") is False
         assert registry.get("run1") is not None
         assert registry.get("run1").status == "cancelled"  # type: ignore[union-attr]
@@ -179,7 +179,7 @@ class TestCancellationStateMachine:
         assert snapshot is not None
         assert snapshot.status == "cancelling"
 
-        # runner가 성공 응답을 돌려줘도, 취소가 확정된 job은 succeeded가 되지 않는다.
+        # Even if runner returns success, confirmed-cancelled job doesn't become succeeded.
         final = registry.finish("run1", failed=False, response={"status": "ok"})
         assert final is not None
         assert final.status == "cancelled"
@@ -218,12 +218,12 @@ class TestCancellationStateMachine:
         assert registry.request_cancel("run1")[0] == "cancelling"
         assert registry.request_cancel("run1")[0] == "already"
         registry.finish("run1", failed=False, response={"status": "ok"})
-        # 종결 이후 반복 요청도 항상 같은 답을 준다.
+        # Repeated requests after termination always give same answer.
         assert registry.request_cancel("run1")[0] == "already"
         assert registry.request_cancel("run1")[0] == "already"
 
     def test_commit_closes_the_cancellation_window(self) -> None:
-        """마지막 안전 경계를 지난 job은 cancelling으로 전이되지 않는다."""
+        """Job past last safety boundary does not transition to cancelling."""
         registry = AsyncBuildJobRegistry()
         registry.create(run_id="run1", created_by=None)
         registry.begin_run("run1")
@@ -236,7 +236,7 @@ class TestCancellationStateMachine:
         assert outcome == "terminal"
         assert snapshot is not None
         assert snapshot.status == "running"
-        # 그리고 실제로 succeeded로 끝난다 — cancelling -> succeeded 전이가 없다.
+        # and actually ends as succeeded — no cancelling -> succeeded transition.
         final = registry.finish("run1", failed=False, response={"status": "ok"})
         assert final is not None
         assert final.status == "succeeded"
@@ -298,7 +298,7 @@ class TestExecutorSkipsCancelledJobs:
         try:
             executor.submit(spec_yaml="spec", run_id="run-busy", created_by=None, runner=_blocker)
             assert blocker_entered.wait(timeout=5)
-            # 단일 worker가 점유돼 있어 이 job은 확실히 queued 상태다.
+            # Single worker is occupied so this job is definitely in queued state.
             executor.submit(
                 spec_yaml="spec", run_id="run-queued", created_by=None, runner=recording
             )
@@ -328,12 +328,12 @@ def _wait_for_status(
 
 
 # ---------------------------------------------------------------------------
-# 2. pipeline 안전 경계와 partial manifest
+# 2. Pipeline safety boundaries and partial manifest
 # ---------------------------------------------------------------------------
 
 
 class TestPipelineBoundaries:
-    """경계 index: 0=fetch 이전, 1=Bronze 이후, 2=Silver 이후, 3=Gold 이후."""
+    """Boundary index: 0=before fetch, 1=after Bronze, 2=after Silver, 3=after Gold."""
 
     def test_cancel_before_fetch_produces_no_stage_artifacts(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
@@ -346,7 +346,7 @@ class TestPipelineBoundaries:
         assert manifest["status"] == "cancelled"
         assert manifest["partial"] is True
         assert manifest["outputs"] == []
-        # 실행되지 않은 단계를 성공으로 기록하지 않는다.
+        # Does not record unexecuted stages as success.
         assert manifest["row_counts"] == {}
         assert not (tmp_path / "run1" / "bronze").exists()
 
@@ -393,20 +393,20 @@ class TestPipelineBoundaries:
         assert manifest["status"] == "cancelled"
         assert manifest["partial"] is True
         assert any("gold" in path for path in outputs)
-        # BuildSpec.exports 산출물은 만들어지지 않는다 — 취소 이후 새 단계를 시작하지 않는다.
+        # BuildSpec.exports artifacts not created — does not start new stage after cancellation.
         assert not (tmp_path / "run1" / "out").exists()
         assert not any(path.endswith("data.jsonl") for path in outputs)
 
     def test_cancel_at_the_final_boundary_still_lands_on_cancelled(self, tmp_path: Path) -> None:
-        """모든 stage가 끝난 뒤 finalize 직전에 도착한 취소도 cancelled로 확정된다.
+        """Cancellation arriving just before finalize after all stages also confirmed as cancelled.
 
         ``run_build``의 마지막 안전 경계(``commit()``) 분기다 — 이 경로가 없으면
         취소 요청이 조용히 무시되고 run이 succeeded로 끝나 job 상태(cancelling)와
         manifest가 모순된다.
         """
         service = _service(tmp_path)
-        # 단일 source의 경계는 4개(0~3)다. 전부 통과시킨 뒤 commit에서 취소가
-        # 이기게 한다.
+        # Single source has 4 boundaries (0~3). After passing all, cancellation wins at commit
+        # .
         probe = _BoundaryProbe(cancel_after=4)
 
         response = service.build(VALID_SPEC_YAML, run_id="run1", cancellation=probe)
@@ -416,22 +416,22 @@ class TestPipelineBoundaries:
         manifest = _read_manifest(tmp_path, "run1")
         assert manifest["status"] == "cancelled"
         assert manifest["partial"] is True
-        # 이 시점에는 산출물이 모두 만들어져 있지만, run은 정상 완료로 확정되지
-        # 않았으므로 성공으로 승격되지 않는다.
+        # At this point artifacts are all created, but run is not confirmed as normally completed
+        # so is not promoted to success.
         assert any("gold" in str(path) for path in manifest["outputs"])  # type: ignore[union-attr]
         assert service._build_index.get("run1") is not None
         assert service._build_index.get("run1").status == "cancelled"  # type: ignore[union-attr]
 
     def test_failed_source_reason_survives_a_later_cancellation(self, tmp_path: Path) -> None:
-        """취소가 실패를 삼키지 않는다 — 실패 사유는 manifest errors에 남는다."""
+        """Cancellation does not swallow failures — failure reason stays in manifest errors."""
         service = BuilderService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),  # source fetch가 실패한다
+            client_factory=lambda: _FakeClient({}),  # source fetch fails
             async_max_workers=1,
         )
 
-        # 경계 0을 통과시키면 fetch가 실패해 source outcome이 "failed"가 되고,
-        # 그 뒤 finalize 경계에서 취소가 이긴다.
+        # Passing boundary 0 makes fetch fail so source outcome becomes "failed",
+        # then cancellation wins at finalize boundary.
         service.build(VALID_SPEC_YAML, run_id="run1", cancellation=_BoundaryProbe(cancel_after=1))
 
         manifest = _read_manifest(tmp_path, "run1")
@@ -448,7 +448,7 @@ class TestPipelineBoundaries:
         assert manifest["status"] != "failed"
 
     def test_probe_without_cancellation_keeps_normal_success_path(self, tmp_path: Path) -> None:
-        """취소가 없으면 probe가 있어도 기존 성공 경로와 결과가 같다."""
+        """Without cancellation, even with probe, existing success path and result are same."""
         service = _service(tmp_path)
         probe = _BoundaryProbe(cancel_after=None)
 
@@ -461,7 +461,7 @@ class TestPipelineBoundaries:
         assert manifest["partial"] is False
 
     def test_synchronous_build_is_unaffected(self, tmp_path: Path) -> None:
-        """동기 ``POST /build``는 취소 개념 없이 기존 동작을 그대로 유지한다."""
+        """Sync ``POST /build`` maintains existing behavior without cancellation concept."""
         service = _service(tmp_path)
 
         response = dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML})
@@ -476,7 +476,7 @@ class TestPipelineBoundaries:
     def test_partial_manifest_carries_no_paths_beyond_the_run_workspace(
         self, tmp_path: Path
     ) -> None:
-        """취소 manifest에 raw exception/stack trace가 섞이지 않는다."""
+        """Cancellation manifest does not mix in raw exception/stack trace."""
         service = _service(tmp_path)
 
         service.build(VALID_SPEC_YAML, run_id="run1", cancellation=_BoundaryProbe(cancel_after=1))
@@ -502,7 +502,7 @@ class TestCancelledRunIndexSemantics:
         assert entry.status == "cancelled"
 
     def test_rebuild_index_preserves_cancelled_status_from_manifest(self, tmp_path: Path) -> None:
-        """파생 index를 잃어도 manifest만으로 cancelled를 복원한다."""
+        """Even if derived index is lost, cancelled is restored from manifest alone."""
         service = _service(tmp_path)
         service.build(VALID_SPEC_YAML, run_id="run1", cancellation=_BoundaryProbe(cancel_after=2))
         service._build_index.close()
@@ -518,7 +518,7 @@ class TestCancelledRunIndexSemantics:
             rebuilt.close()
 
     def test_cancelled_run_is_not_a_successful_artifact_write(self, tmp_path: Path) -> None:
-        """cancelled run은 '최근 성공 빌드' 근거로 승격되지 않는다."""
+        """Cancelled run is not promoted based on 'recent successful build'."""
         service = _service(tmp_path)
         service.build(VALID_SPEC_YAML, run_id="run1", cancellation=_BoundaryProbe(cancel_after=1))
 
@@ -536,7 +536,7 @@ class TestCancelledRunIndexSemantics:
         assert [b["status"] for b in builds] == ["cancelled"]  # type: ignore[index]
 
     def test_build_list_filesystem_fallback_reports_cancelled(self, tmp_path: Path) -> None:
-        """index가 비어 있어 파일시스템으로 폴백해도 cancelled를 ok로 오인하지 않는다."""
+        """Even if index is empty and falls back to filesystem, cancelled not mistaken as ok."""
         service = _service(tmp_path)
         service.build(VALID_SPEC_YAML, run_id="run1", cancellation=_BoundaryProbe(cancel_after=1))
         service._build_index.delete("run1")
@@ -549,7 +549,8 @@ class TestCancelledRunIndexSemantics:
         assert [b["status"] for b in builds] == ["cancelled"]  # type: ignore[index]
 
     def test_cancelled_run_without_gold_exposes_no_gold_stage(self, tmp_path: Path) -> None:
-        """Gold를 만들지 못한 취소 run이 완성된(=게시 가능한) 산출물로 보이지 않는다."""
+        """Cancelled run that didn't create Gold doesn't appear as complete
+        (=publishable) artifact."""
         service = _service(tmp_path)
         service.build(VALID_SPEC_YAML, run_id="run1", cancellation=_BoundaryProbe(cancel_after=1))
 
@@ -562,9 +563,9 @@ class TestCancelledRunIndexSemantics:
         assert sources, "취소된 run도 시도한 source는 노출한다"
         for source in sources:
             assert isinstance(source, dict)
-            # Bronze는 남아 있지만 Gold는 존재하지 않는다.
+            # Bronze remains but Gold does not exist.
             assert source["gold"] != "available"
-        # dataset 요약의 stage 표시도 같은 사실을 반영한다.
+        # Dataset summary stage indicator also reflects same fact.
         detail = dispatch(service, "GET", "/datasets/dataset.cancel", None)
         assert isinstance(detail, ServiceResponse)
         stage_map = detail.body["stages"]
@@ -585,12 +586,12 @@ class TestCancelledRunIndexSemantics:
 
 
 # ---------------------------------------------------------------------------
-# 4. HTTP 계약 / ownership
+# 4. HTTP contract / ownership
 # ---------------------------------------------------------------------------
 
 
 class _BlockingCancelService(BuilderService):
-    """worker를 ``release``까지 붙잡아 running 구간을 결정적으로 만든다."""
+    """Hold worker until ``release`` to make running window deterministic."""
 
     def __init__(
         self,
@@ -627,7 +628,7 @@ class _BlockingCancelService(BuilderService):
 def _await_event(
     service: BuilderService, run_id: str, event: str, *, timeout: float = 5.0
 ) -> list[str]:
-    """해당 run에 ``event``가 기록될 때까지 기다리고 event 이름 목록을 돌려준다.
+    """Wait until ``event`` is recorded for run, return list of event names.
 
     종결 event는 terminal 상태 전이 *직후*에 append되므로, 상태만 보고 event를
     읽으면 timing에 의존하게 된다.
@@ -644,7 +645,7 @@ def _await_event(
 def _await_job_status(
     service: BuilderService, run_id: str, status: str, *, timeout: float = 5.0
 ) -> None:
-    """job이 지정한 terminal 상태에 도달할 때까지 기다린다.
+    """Wait until job reaches specified terminal state.
 
     ``completed`` event는 runner가 **반환하는** 시점에 set되지만, terminal 전이와
     ``run_cancelled`` event append는 그 직후 executor(``_finish``)에서 일어난다 —
@@ -668,7 +669,7 @@ class TestCancelEndpoint:
         assert response.status_code == 400
 
     def test_nested_path_is_not_treated_as_a_run_id(self, tmp_path: Path) -> None:
-        """``/builds/a/b/cancel``이 run_id "a/b"로 해석되어 경로를 벗어나지 않는다."""
+        """``/builds/a/b/cancel`` parses as run_id "a/b" without escaping path."""
         service = _service(tmp_path)
 
         response = dispatch(service, "POST", "/builds/a/b/cancel", None)
@@ -712,7 +713,7 @@ class TestCancelEndpoint:
         assert response.status_code == 200
         assert response.body["status"] == "cancelled"
         assert response.body["run_id"] == "waiting"
-        # 취소된 queued job은 워크스페이스조차 만들지 않는다.
+        # Cancelled queued job doesn't even create workspace.
         assert not (tmp_path / "waiting").exists()
 
     def test_running_job_cancel_reaches_cancelled_terminal(self, tmp_path: Path) -> None:
@@ -738,7 +739,7 @@ class TestCancelEndpoint:
         status = dispatch(service, "GET", "/builds/run1", None)
         assert isinstance(status, ServiceResponse)
         assert status.body["status"] == "cancelled"
-        # 취소된 job에는 build 출력도 error 문자열도 실리지 않는다.
+        # Cancelled job carries neither build output nor error string.
         assert "response" not in status.body
         assert "error" not in status.body
         manifest = _read_manifest(tmp_path, "run1")
@@ -774,10 +775,11 @@ class TestCancelEndpoint:
     def test_resubmitting_a_cancelled_run_id_returns_the_existing_cancelled_job(
         self, tmp_path: Path
     ) -> None:
-        """취소된 run_id 재제출은 새 job을 만들지 않는다 (기존 "existing" 재제출 계약).
+        """Resubmitting cancelled run_id does not create new job
+        (existing "existing" resubmit contract).
 
-        재시도는 새 run_id로 하는 것이 ADR 0008의 정책이며(자동 in-place 재시도
-        없음), 이 경로가 새 job을 만들면 확정된 cancelled 상태가 조용히 덮어써진다.
+        Per ADR 0008 policy, retry uses new run_id (no automatic in-place retry).
+        If this path creates new job, confirmed cancelled state is silently overwritten.
         """
         entered = threading.Event()
         release = threading.Event()
@@ -853,7 +855,7 @@ class TestCancelOwnership:
             release.set()
 
         assert response.status_code == 403
-        # 실제 상태는 바뀌지 않았다.
+        # Actual state did not change.
         self._oidc(monkeypatch, "oidc:owner-a", label="a")
         assert completed.wait(timeout=5)
         _await_job_status(service, "run1", "succeeded")
@@ -876,7 +878,7 @@ class TestCancelOwnership:
             dispatch(service, "POST", "/builds", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
             assert entered.wait(timeout=5)
 
-            # display label은 동일하지만 stable owner_id가 다르다.
+            # Display label same but stable owner_id differs.
             self._oidc(monkeypatch, "oidc:owner-b", label="same-label")
             response = dispatch(service, "POST", "/builds/run1/cancel", None)
         finally:
@@ -911,7 +913,7 @@ class TestCancelOwnership:
 
 
 # ---------------------------------------------------------------------------
-# 5. structured events (#496 어휘 재사용)
+# 5. structured events (#496 vocabulary reuse)
 # ---------------------------------------------------------------------------
 
 
@@ -974,23 +976,23 @@ class TestCancellationEvents:
 
 
 # ---------------------------------------------------------------------------
-# 6. 경쟁 조건 (Barrier 기반, sleep 없음)
+# 6. Race conditions (Barrier-based, no sleep)
 # ---------------------------------------------------------------------------
 
 
 def _run_concurrently(*targets: Callable[[], None]) -> None:
-    """모든 target을 하나의 Barrier로 동시에 출발시킨다."""
+    """Start all targets simultaneously with one Barrier."""
     barrier = threading.Barrier(len(targets))
     errors: list[BaseException] = []
 
     def _wrap(fn: Callable[[], None]) -> Callable[[], None]:
         def _inner() -> None:
-            # barrier.wait도 try 안에 둔다 — BrokenBarrierError가 조용히 스레드를
-            # 죽이면 "동시에 실행됐다"는 전제가 깨진 채로 테스트가 통과할 수 있다.
+            # barrier.wait is also in try — if BrokenBarrierError silently kills thread,
+            # "executed simultaneously" premise breaks and test may pass.
             try:
                 barrier.wait(timeout=5)
                 fn()
-            except BaseException as exc:  # noqa: BLE001 - 스레드 예외를 본 스레드로 옮긴다
+            except BaseException as exc:  # noqa: BLE001 - move thread exception to main thread
                 errors.append(exc)
 
         return _inner
@@ -1008,7 +1010,8 @@ class TestCancellationRaces:
     ITERATIONS = 200
 
     def test_cancel_and_worker_start_yield_exactly_one_valid_path(self) -> None:
-        """A. queued 취소와 worker 시작이 동시에 일어나도 유효 경로는 정확히 하나다."""
+        """A. Even if queued cancel and worker start happen simultaneously,
+        exactly one valid path."""
         for index in range(self.ITERATIONS):
             registry = AsyncBuildJobRegistry()
             run_id = f"run-{index}"
@@ -1034,19 +1037,20 @@ class TestCancellationRaces:
             snapshot = registry.get(run_id)
             assert snapshot is not None
             if results["start"] is True:
-                # worker가 이겼다: queued -> running -> (cancelling) 경로만 가능하다.
+                # Worker wins: only queued -> running -> (cancelling) path possible.
                 assert results["cancel"] in ("cancelling", "cancelled")
                 assert snapshot.status in ("running", "cancelling")
-                # cancel이 "cancelled"를 반환했다면 그건 queued를 먼저 잡은 것이므로
-                # begin_run은 True일 수 없다 — 두 결과가 동시에 성립하지 않는다.
+                # If cancel returns "cancelled", it caught queued first, so
+                # begin_run cannot be True — two results cannot hold simultaneously.
                 assert results["cancel"] != "cancelled"
             else:
-                # 취소가 이겼다: runner는 절대 시작되지 않는다.
+                # Cancellation wins: runner never starts.
                 assert results["cancel"] == "cancelled"
                 assert snapshot.status == "cancelled"
 
     def test_two_concurrent_cancels_never_corrupt_state(self) -> None:
-        """D. 동시 취소 두 건: 상태는 하나로 수렴하고 응답도 결정적 조합이다."""
+        """D. Two simultaneous cancellations: state converges to one,
+        responses deterministic combination."""
         for index in range(self.ITERATIONS):
             registry = AsyncBuildJobRegistry()
             run_id = f"run-{index}"
@@ -1073,7 +1077,8 @@ class TestCancellationRaces:
             assert snapshot.status == "cancelling"
 
     def test_cancel_and_final_boundary_never_both_win(self) -> None:
-        """C. 마지막 경계(commit)와 취소가 동시에 일어나도 결과는 하나뿐이다."""
+        """C. Even if last boundary (commit) and cancellation happen
+        simultaneously, only one result."""
         for index in range(self.ITERATIONS):
             registry = AsyncBuildJobRegistry()
             run_id = f"run-{index}"
@@ -1101,17 +1106,17 @@ class TestCancellationRaces:
             assert final is not None
 
             if results["commit"] is True:
-                # pipeline이 이겼다: 취소는 거절되고 succeeded로 끝난다.
+                # Pipeline wins: cancellation rejected, ends as succeeded.
                 assert results["cancel"] == "terminal"
                 assert final.status == "succeeded"
             else:
-                # 취소가 이겼다: 성공으로 끝나지 않는다.
+                # Cancellation wins: doesn't end as success.
                 assert results["cancel"] == "cancelling"
                 assert final.status == "cancelled"
                 assert final.response is None
 
     def test_cancel_racing_a_build_failure_settles_on_one_terminal_state(self) -> None:
-        """E. 취소와 실패가 겹쳐도 종단 상태는 하나이고 서로 모순되지 않는다."""
+        """E. Even if cancellation and failure overlap, terminal state is one and consistent."""
         for index in range(self.ITERATIONS):
             registry = AsyncBuildJobRegistry()
             run_id = f"run-{index}"
@@ -1140,7 +1145,7 @@ class TestCancellationRaces:
             assert snapshot is not None
             assert snapshot.status in ("failed", "cancelled")
             if snapshot.status == "cancelled":
-                # 취소로 끝났다면 실패 사유를 error로 노출하지 않는다.
+                # If ended as cancelled, failure reason not exposed as error.
                 assert snapshot.error is None
             else:
                 assert snapshot.error == "boom"

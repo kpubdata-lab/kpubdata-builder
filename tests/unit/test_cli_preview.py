@@ -1,4 +1,4 @@
-"""CLI `preview` 명령(#3): 스키마+샘플 출력, 아티팩트 파일 미생성 검증."""
+"""CLI `preview` command (#3): schema+sample output, artifact file non-creation verification."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def test_preview_prints_schema_and_sample(
     assert exit_code == 0
     assert "datago.air_quality" in captured.out
     assert "id" in captured.out and "v" in captured.out
-    # 미리보기는 어떤 아티팩트 파일도 만들지 않는다 (spec.yaml만 존재)
+    # preview creates no artifact files ((only spec.yaml exists))
     assert list(tmp_path.iterdir()) == [spec_path]
 
 
@@ -101,9 +101,10 @@ def test_preview_exits_one_when_source_fetch_fails(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """소스 fetch 실패 시 CLI는 exit 1 + stderr 메시지로 알린다 (자동화 오판 방지)."""
+    """On source fetch failure, CLI alerts with exit 1 + stderr message
+    (prevent automation misinterpretation)."""
     spec_path = _write_spec(tmp_path)
-    # 소스 키가 없는 클라이언트 → bronze fetch 실패
+    # client without source key → bronze fetch failure
     client = _FakeClient({"datago.other": [{"id": "1"}]})
     monkeypatch.setattr(cli, "_create_client", lambda: client)
 
@@ -120,7 +121,7 @@ def test_preview_rejects_non_positive_limit(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """음수/0 limit은 Polars head()의 신기한 동작에 위임하지 않고 명시적으로 거부."""
+    """Negative/0 limit explicitly rejected, not delegated to Polars head() quirks."""
     spec_path = _write_spec(tmp_path)
     client = _FakeClient({"datago.air_quality": [{"id": "1"}]})
     monkeypatch.setattr(cli, "_create_client", lambda: client)

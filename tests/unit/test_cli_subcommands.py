@@ -1,4 +1,4 @@
-"""서브커맨드 단위 CLI 스모크 테스트 (#595).
+"""Subcommand-level CLI smoke test (#595).
 
 `tests/unit/test_cli.py` 는 파서/validate/publish 를 다루고, 여기서는 나머지
 서브커맨드(build/preview/serve/rebuild-index/prune-cancelled)의 **인자 파싱 →
@@ -29,8 +29,8 @@ exports:
     output_path: out/data.jsonl
 """
 
-# 로드는 통과하지만 validate_spec 에서 걸리는 명세 — SpecLoadError 가 아니라
-# ValidationError 경로(problems 를 한 줄씩 출력)를 타게 한다.
+# Spec that loads but fails validate_spec — not SpecLoadError but
+# ValidationError path (problems printed one per line) takes this path.
 _UNVALIDATABLE_SPEC = _VALID_SPEC.replace("kind: jsonl", "kind: not-a-real-exporter")
 
 _SUBCOMMANDS = (
@@ -60,14 +60,14 @@ def unvalidatable_spec_file(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _no_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CI 러너/개발 셸의 환경변수가 기본값 단언을 바꾸지 못하게 한다."""
+    """Prevent CI runner/dev shell environment vars from changing default asserts."""
     monkeypatch.delenv("KPUBDATA_BUILDER_MAX_WORKERS", raising=False)
     monkeypatch.delenv("KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS", raising=False)
 
 
 @pytest.fixture(autouse=True)
 def _no_real_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """어떤 테스트도 실제 kpubdata Client 를 만들지 않도록 막는다."""
+    """Block any test from creating real kpubdata Client."""
 
     def _forbidden(**_: object) -> object:
         raise AssertionError("CLI smoke test must not construct a real client")
@@ -75,12 +75,12 @@ def _no_real_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli_module, "_create_client", _forbidden)
 
 
-# --- 파서 계약 -------------------------------------------------------------
+# --- Parser contract -------------------------------------------------------------
 
 
 @pytest.mark.parametrize("command", _SUBCOMMANDS)
 def test_subcommand_help_exits_zero(command: str, capsys: pytest.CaptureFixture[str]) -> None:
-    """모든 서브커맨드의 --help 가 exit 0 이고 자기 이름을 출력한다."""
+    """All subcommands --help exit 0 and print their name."""
     assert main([command, "--help"]) == 0
     assert command in capsys.readouterr().out
 
@@ -107,7 +107,7 @@ def test_subcommand_help_exits_zero(command: str, capsys: pytest.CaptureFixture[
 def test_missing_required_argument_exits_two(
     argv: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """필수 인자 누락은 argparse 관례대로 exit 2 + 사용법 출력이다."""
+    """Missing required arg is argparse convention exit 2 + usage."""
     assert main(argv) == 2
     err = capsys.readouterr().err
     assert "usage:" in err
@@ -130,7 +130,7 @@ def test_non_numeric_option_exits_two(
 
 
 def test_parser_defaults_match_documented_values() -> None:
-    """문서·Dockerfile 이 기대하는 기본값을 파서가 그대로 들고 있어야 한다."""
+    """Parser must have defaults expected by docs and Dockerfile."""
     parser = build_parser()
     serve_args = parser.parse_args(["serve"])
     assert (serve_args.host, serve_args.port, serve_args.output_dir) == (
@@ -145,12 +145,12 @@ def test_parser_defaults_match_documented_values() -> None:
 
 
 def test_dispatch_returns_two_for_unknown_command() -> None:
-    """argparse 를 우회한 프로그래밍 호출도 조용히 성공하지 않는다."""
+    """Programmatic calls bypassing argparse also don't silently succeed."""
     assert dispatch(SimpleNamespace(command="nope")) == 2  # type: ignore[arg-type]
 
 
 def test_main_maps_string_systemexit_to_two(monkeypatch: pytest.MonkeyPatch) -> None:
-    """argparse 가 문자열 코드로 종료하면 2 로 정규화한다."""
+    """If argparse exits with string code, normalize to 2."""
 
     def fake_parse_args(_self: object, _argv: object = None) -> object:
         raise SystemExit("boom")
@@ -173,7 +173,7 @@ def test_main_maps_none_systemexit_to_zero(monkeypatch: pytest.MonkeyPatch) -> N
 def test_validate_reports_each_validation_problem(
     unvalidatable_spec_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """로드는 되지만 검증에 실패하는 명세는 problem 을 한 줄씩 출력한다."""
+    """Spec that loads but fails validation prints problem one per line."""
     assert main(["validate", str(unvalidatable_spec_file)]) == 1
     err = capsys.readouterr().err
     assert "spec validation failed" in err
@@ -227,7 +227,7 @@ def test_build_prints_run_summary_and_exits_zero(
 def test_build_reports_failed_sources_and_exits_one(
     spec_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """소스 하나라도 실패하면 stderr + exit 1 — CI 가 성공으로 오판하면 안 된다."""
+    """Any source failure → stderr + exit 1 — CI must not misinterpret as success."""
     monkeypatch.setattr(cli_module, "_create_client", lambda **_: object())
     monkeypatch.setattr(
         cli_module,
@@ -246,7 +246,7 @@ def test_build_reports_failed_sources_and_exits_one(
 def test_build_rejects_unvalidatable_spec_before_touching_network(
     unvalidatable_spec_file: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """검증 실패는 client 생성 전에 걸러야 한다 (_no_real_client 가 이를 강제한다)."""
+    """Validation failure must be caught before client creation (_no_real_client enforces this)."""
     assert main(["build", str(unvalidatable_spec_file)]) == 1
     assert "spec validation failed" in capsys.readouterr().err
 
@@ -336,7 +336,7 @@ def test_preview_failed_source_exits_one(
 def test_preview_invalid_limit_exits_one(
     spec_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """limit < 1 처럼 파서를 통과한 사용자 입력 오류는 ValueError → exit 1 이다."""
+    """User input error passing parser (like limit < 1) is ValueError → exit 1."""
     monkeypatch.setattr(cli_module, "_create_client", lambda **_: object())
 
     def raising_preview(spec: object, **kwargs: object) -> Any:
@@ -413,7 +413,7 @@ def test_publish_rejects_unvalidatable_spec(
 
 
 def test_serve_reads_max_workers_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """--max-workers 미지정이면 KPUBDATA_BUILDER_MAX_WORKERS 가 쓰인다 (#374)."""
+    """--max-workers unspecified uses KPUBDATA_BUILDER_MAX_WORKERS (#374)."""
     import kpubdata_builder.service.http as http_module
 
     monkeypatch.setenv("KPUBDATA_BUILDER_MAX_WORKERS", "3")
@@ -447,7 +447,7 @@ def test_serve_flag_overrides_env_max_workers(
 
 @pytest.mark.parametrize("workers", ["0", "-1"])
 def test_serve_rejects_non_positive_max_workers(workers: str, tmp_path: Path) -> None:
-    """0 이하 worker 로는 기동하지 않는다 — 조용히 1 로 올리지도 않는다."""
+    """Won't start with ≤0 workers — doesn't silently raise to 1."""
     with pytest.raises(SystemExit, match="max_workers must be >= 1"):
         main(["serve", "--output-dir", str(tmp_path), "--max-workers", workers])
 
@@ -455,7 +455,7 @@ def test_serve_rejects_non_positive_max_workers(workers: str, tmp_path: Path) ->
 def test_serve_handles_keyboard_interrupt_as_clean_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Ctrl-C 는 스택 트레이스가 아니라 종료 코드 0 이어야 한다."""
+    """Ctrl-C should be exit code 0, not stack trace."""
     import kpubdata_builder.service.http as http_module
 
     def interrupting_serve(service: object, **kwargs: object) -> None:
@@ -509,7 +509,7 @@ def test_rebuild_index_reports_failure_as_exit_one(
 def test_prune_cancelled_defaults_to_dry_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """--apply 없이는 삭제가 일어나지 않고, 출력이 그 사실을 분명히 말한다."""
+    """Without --apply, no deletion happens and output clearly says so."""
     import kpubdata_builder.retention as retention_module
 
     seen: dict[str, object] = {}
@@ -595,7 +595,7 @@ def test_prune_cancelled_flag_beats_env_ttl(
 def test_prune_cancelled_rejects_non_numeric_env_ttl(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """환경변수가 숫자가 아니면 삭제 판정을 시도하지 않고 exit 1 이다 (fail-closed)."""
+    """If env var not numeric, don't attempt delete judgment, exit 1 (fail-closed)."""
     import kpubdata_builder.retention as retention_module
 
     monkeypatch.setenv("KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS", "yesterday")
@@ -612,7 +612,8 @@ def test_prune_cancelled_rejects_non_numeric_env_ttl(
 def test_prune_cancelled_without_ttl_scans_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """TTL 미설정이면 실제 구현에서도 삭제 후보가 없다 — 빈 워크스페이스 실경로 확인."""
+    """Without TTL set, real implementation also has no delete candidates —
+    verify empty workspace path."""
     assert main(["prune-cancelled", "--output-dir", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "scanned 0 cancelled partial run(s), deleted 0" in out
