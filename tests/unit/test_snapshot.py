@@ -1,4 +1,4 @@
-"""Snapshot-aware build 지원(#15)을 검증한다."""
+"""Snapshot-aware build (#15) ."""
 
 from __future__ import annotations
 
@@ -25,12 +25,12 @@ def test_checksum_is_reproducible_and_order_independent() -> None:
 
 
 def test_checksum_is_record_order_independent() -> None:
-    """행(레코드) 순서가 달라도 같은 데이터면 동일 체크섬이어야 한다 (#165)."""
+    """()        (#165)."""
     records = [{"id": "1", "amount": 1000}, {"id": "2", "amount": 2000}]
     reversed_records = list(reversed(records))
 
     assert compute_records_checksum(records) == compute_records_checksum(reversed_records)
-    # 데이터 자체가 달라지면 여전히 달라야 한다.
+    #      .
     assert compute_records_checksum(records) != compute_records_checksum(
         [{"id": "1", "amount": 1000}, {"id": "3", "amount": 2000}]
     )
@@ -56,7 +56,7 @@ def test_load_missing_snapshot_returns_none(tmp_path: Path) -> None:
 
 
 def test_load_corrupt_snapshot_returns_none(tmp_path: Path) -> None:
-    # 잘린/비정상 JSON은 증분 빌드를 깨뜨리지 않고 "없음"으로 안전 저하 (#194).
+    # / JSON     ""   (#194).
     path = tmp_path / ".kpubdata-builder/snapshots/seoul_apt_trade/snapshot.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text('{"dataset_id": "seoul_apt_trade", trunc', encoding="utf-8")
@@ -65,7 +65,7 @@ def test_load_corrupt_snapshot_returns_none(tmp_path: Path) -> None:
 
 
 def test_load_snapshot_missing_required_keys_returns_none(tmp_path: Path) -> None:
-    # 형태가 어긋난(필수 키 누락) 스냅샷도 KeyError 대신 None으로 저하 (#194).
+    #  (  )  KeyError  None  (#194).
     path = tmp_path / ".kpubdata-builder/snapshots/seoul_apt_trade/snapshot.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text('{"dataset_id": "seoul_apt_trade"}', encoding="utf-8")

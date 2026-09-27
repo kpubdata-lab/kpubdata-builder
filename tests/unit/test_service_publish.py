@@ -1,8 +1,8 @@
-"""Build publish readiness/실행 HTTP API 검증 (#491).
+"""Build publish readiness/ HTTP API  (#491).
 
-새 Publisher를 만들지 않고 기존 publishers.PUBLISHER_REGISTRY(huggingface/
-kaggle)를 재사용하는 service 계약을 검증한다. 실제 HuggingFace/Kaggle
-네트워크 호출은 절대 하지 않는다 — 모든 publisher는 in-memory spy로 대체한다.
+ Publisher    publishers.PUBLISHER_REGISTRY(huggingface/
+kaggle)  service  .  HuggingFace/Kaggle
+     —  publisher in-memory spy .
 """
 
 from __future__ import annotations
@@ -51,9 +51,9 @@ license: CC-BY-4.0
 
 UNLICENSED_SPEC_YAML = LICENSED_SPEC_YAML.replace("license: CC-BY-4.0\n", "")
 
-# spec loader는 license가 문자열이기만 하면 통과시킨다(spec/loader.py) — 사람이
-# 아무것도 선언하지 않은 것과 같은 whitespace-only 값이 여기로 들어올 수 있다
-# (#491 지침 4). 새 SPDX allowlist를 만들지 않고 blank 판정만 확인한다.
+# spec loader license   (spec/loader.py) —
+#      whitespace-only
+# (#491  4).  SPDX allowlist   blank  .
 BLANK_LICENSE_SPEC_YAML = LICENSED_SPEC_YAML.replace("license: CC-BY-4.0\n", 'license: "   "\n')
 
 PII_ALLOW_SPEC_YAML = LICENSED_SPEC_YAML.replace(
@@ -64,7 +64,7 @@ FAILING_SPEC_YAML = LICENSED_SPEC_YAML.replace("dataset: air_quality\n", "datase
 
 
 class _SpyPublisher(BasePublisher):
-    """실제 네트워크를 호출하지 않는 fake publisher. 호출 인자를 기록한다."""
+    """fake publisher.   ."""
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class _SpyPublisher(BasePublisher):
 
 
 class _DeferredPublisher(_SpyPublisher):
-    """첫 remote call을 Event로 멈춰 pending receipt 동시성을 결정적으로 검증한다."""
+    """remote call Event  pending receipt   ."""
 
     def __init__(self) -> None:
         super().__init__("huggingface")
@@ -159,7 +159,7 @@ def _blocker_codes(resp: ServiceResponse) -> list[str]:
 
 @pytest.fixture(autouse=True)
 def _no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    """credential_unavailable을 기본으로 재현 가능하게, 명시적으로 unset한다."""
+    """credential_unavailable   ,  unset."""
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("KAGGLE_USERNAME", raising=False)
     monkeypatch.delenv("KAGGLE_KEY", raising=False)
@@ -268,9 +268,9 @@ class TestReadiness:
     def test_blank_license_is_not_recognized_as_declared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#491 지침 4: spec loader는 license가 문자열이기만 하면 통과시키므로
-        whitespace-only 값이 BuildSpec.license에 들어올 수 있다 — #443 정책은
-        바꾸지 않되, 그런 값을 "선언됨"으로 인정하지 않는지만 확인한다."""
+        """#491  4: spec loader license
+        whitespace-only  BuildSpec.license    — #443
+         ,   ""   ."""
         _with_credentials(monkeypatch, "huggingface")
         service = _service(tmp_path)
         _build(service, "run-blank-license", BLANK_LICENSE_SPEC_YAML)
@@ -290,8 +290,8 @@ class TestReadiness:
     def test_kaggle_target_readiness_reports_packaging_blocker(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # #550 이후 kaggle은 HTTP target이다 — packaging/credential 없으면
-        # readiness blocker로 보고된다(unsupported_target 400이 아님).
+        # #550  kaggle HTTP target — packaging/credential
+        # readiness blocker (unsupported_target 400 ).
         _with_credentials(monkeypatch, "kaggle")
         service = _service(tmp_path)
         _build(service, "run-kaggle-http-disabled", LICENSED_SPEC_YAML)
@@ -314,8 +314,8 @@ class TestReadiness:
         assert "pii_allow_with_publish" in _blocker_codes(resp)
 
     def test_local_target_without_root_reports_blocker(self, tmp_path: Path) -> None:
-        # #550 이후 local은 HTTP target이다 — publish-root 미설정은 400이 아니라
-        # readiness blocker다(fail-closed지만 원인이 사용자에게 설명된다).
+        # #550  local HTTP target — publish-root  400
+        # readiness blocker(fail-closed   ).
         service = _service(tmp_path)
         _build(service, "run-local", LICENSED_SPEC_YAML)
 
@@ -406,7 +406,7 @@ class TestPublish:
     def test_post_reverifies_independently_of_prior_get(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """GET을 아예 호출하지 않아도 POST 자체가 모든 검사를 한다."""
+        """GET    POST    ."""
         spy = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
         service = _service(tmp_path)
@@ -425,7 +425,7 @@ class TestPublish:
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
         service = _service(tmp_path)
         _build(service, "run-blocked", LICENSED_SPEC_YAML)
-        # HF_TOKEN 미설정 → credential_unavailable blocker.
+        # HF_TOKEN  → credential_unavailable blocker.
 
         resp = _publish(service, "run-blocked")
         assert resp.status_code == 409
@@ -597,8 +597,8 @@ class TestPublish:
 
         resp = _publish(service, "run-publish-error")
         assert resp.status_code == 502
-        # #491 blocker 1: PublishError도 "안전한 known exception"으로 취급해
-        # str(exc)를 그대로 돌려주지 않는다 — stable generic 메시지만 나간다.
+        # #491 blocker 1: PublishError " known exception"
+        # str(exc)    — stable generic  .
         assert resp.body["error"] == "publish failed due to an unexpected error"
         assert resp.body["code"] == "publish_failed"
         assert "remote rejected the upload" not in json.dumps(resp.body)
@@ -681,8 +681,8 @@ class TestPublish:
         caplog: pytest.LogCaptureFixture,
         secret_message: str,
     ) -> None:
-        """#491 blocker 1 필수 테스트: fake publisher가 secret/절대경로가 섞인
-        예외를 던져도 HTTP response와 서버 log 어디에도 원문이 남지 않는다."""
+        """#491 blocker 1  : fake publisher secret/
+        HTTP response  log    ."""
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface", error=PublishError(secret_message))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
@@ -719,8 +719,8 @@ class TestPublish:
         _build(service, "run-retry", LICENSED_SPEC_YAML)
 
         first = _publish(service, "run-retry")
-        # 성공 operation의 exact retry는 현재 credential/artifact 상태를 다시
-        # 요구하지 않고 durable 성공 응답을 재생한다.
+        #  operation exact retry  credential/artifact
+        #   durable   .
         monkeypatch.delenv("HF_TOKEN")
         next((tmp_path / "run-retry" / "gold").rglob("table.parquet")).unlink()
         second = _publish(service, "run-retry")
@@ -820,8 +820,8 @@ class TestPublish:
         _build(service, "run-kaggle-disabled-post", LICENSED_SPEC_YAML)
 
         resp = _publish(service, "run-kaggle-disabled-post", target="kaggle")
-        # #550 이후 kaggle은 HTTP target이다 — packaging/credential 없으면
-        # readiness blocker로 게시가 막힌다(unsupported_target 400이 아님).
+        # #550  kaggle HTTP target — packaging/credential
+        # readiness blocker  (unsupported_target 400 ).
         assert resp.status_code == 409
         assert "kaggle_metadata_missing" in _blocker_codes(resp)
         assert spy.calls == []
@@ -933,15 +933,15 @@ class TestArtifactScope:
         run_dir = tmp_path / "run-artifact-scope"
         for path in artifact_paths:
             assert path.is_relative_to(run_dir / "gold"), path
-        # BuildSpec snapshot과 manifest는 절대 섞이지 않는다.
+        # BuildSpec snapshot manifest   .
         assert not any(p.name == "manifest.json" for p in artifact_paths)
         assert not any("buildspec" in p.name.lower() for p in artifact_paths)
 
     def test_untracked_file_in_gold_dir_is_not_published(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """manifest.outputs에 없는 파일(파이프라인이 쓰지 않은 파일)은
-        gold 디렉터리 안에 있어도 절대 publish되지 않는다 — glob하지 않는다."""
+        """manifest.outputs  (   )
+        gold     publish  — glob ."""
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
@@ -960,11 +960,11 @@ class TestArtifactScope:
     def test_artifact_path_escape_blocks_publish_even_with_valid_artifacts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#491 blocker 2 필수 테스트: manifest.outputs에 유효한 gold artifact와
-        gold_dir 밖(``..``) artifact가 함께 있으면, 무효 artifact만 조용히
-        건너뛰고 나머지를 publish하는 것이 아니라 전체를 fail-closed로 막는다
-        — readiness가 false, artifact blocker가 있고, POST는 409, Publisher는
-        0회 호출된다."""
+        """#491 blocker 2  : manifest.outputs  gold artifact
+        gold_dir (``..``) artifact  ,  artifact
+          publish    fail-closed
+        — readiness false, artifact blocker , POST 409, Publisher
+        0 ."""
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
@@ -992,9 +992,9 @@ class TestArtifactScope:
     def test_symlink_escape_artifact_blocks_publish(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """gold_dir 안의 symlink가 gold root 밖을 가리키면(#46/#47 기존
-        path-safety 정책이 이미 다루는 범위, ``ensure_within``이 resolve 후
-        검사) 같은 fail-closed 경로를 탄다."""
+        """gold_dir  symlink gold root  (#46/#47
+        path-safety    , ``ensure_within`` resolve
+        )  fail-closed  ."""
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
@@ -1083,7 +1083,7 @@ class TestKaggleLocalTargets:
         )
         assert resp.status_code == 200
         assert resp.body["ready"] is False
-        # owner/name 패턴 위반이 우선이다(경로 횡단 문자열은 형태 검사에서 거부).
+        # owner/name   (     ).
         assert resp.body["blockers"]
 
     def test_local_publish_copies_into_root(
@@ -1100,7 +1100,7 @@ class TestKaggleLocalTargets:
         resp = _publish(service, "run-local-ok", target="local", destination="kpubdata/air-quality")
         assert resp.status_code == 200
         assert len(spy.calls) == 1
-        # Publisher가 받는 destination은 root 안의 절대 경로다.
+        # Publisher  destination root   .
         passed_destination = spy.calls[0][1]["destination"]
         assert str(root.resolve()) in str(passed_destination)
 
@@ -1130,7 +1130,7 @@ class TestKaggleLocalTargets:
         built = _build(service, "run-kaggle-match", KAGGLE_FULL_SPEC_YAML)
         assert built.status_code == 200
 
-        # exporter가 기록한 metadata id(dataset_id 기반)와 다른 destination은 blocker.
+        # exporter  metadata id(dataset_id )  destination blocker.
         resp = dispatch(
             service,
             "GET",
@@ -1141,7 +1141,7 @@ class TestKaggleLocalTargets:
         assert resp.status_code == 200
         assert "kaggle_destination_mismatch" in _blocker_codes(resp)
 
-        # packaging id와 일치하는 destination이면 publisher에 디렉터리가 전달된다.
+        # packaging id  destination publisher  .
         spy = _SpyPublisher("kaggle", expects_directory=True)
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "kaggle", spy)
         resp = dispatch(
@@ -1163,12 +1163,12 @@ class TestKaggleLocalTargets:
 
 
 class TestReceiptReconcile:
-    """unknown receipt의 조회/reconcile/reset 운영 경로 (#551)."""
+    """unknown receipt /reconcile/reset   (#551)."""
 
     def _unknown_receipt_service(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_id: str
     ) -> BuilderService:
-        """publish가 실패해 receipt가 unknown인 service를 만든다."""
+        """publish  receipt unknown service ."""
         _with_credentials(monkeypatch, "huggingface")
         failing = _SpyPublisher("huggingface", error=RuntimeError("remote blew up"))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
@@ -1223,7 +1223,7 @@ class TestReceiptReconcile:
         assert resp.body["state"] == "succeeded"
         assert resp.body["reconciled"] is True
 
-        # 이후 동일 publish 요청은 receipt 결과를 replay한다(중복 게시 없음).
+        #   publish  receipt  replay(  ).
         ok_publisher = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", ok_publisher)
         replay = _publish(service, "run-exists")
@@ -1248,7 +1248,7 @@ class TestReceiptReconcile:
         assert resp.body["state"] == "reset"
         assert resp.body["retry_allowed"] is True
 
-        # reset 이후 같은 operation을 다시 게시할 수 있다(새 claim).
+        # reset   operation    ( claim).
         ok_publisher = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", ok_publisher)
         retry = _publish(service, "run-absent")
@@ -1307,7 +1307,7 @@ class TestReceiptReconcile:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         service = self._unknown_receipt_service(tmp_path, monkeypatch, "run-manual")
-        # reset 전 receipt에서 fingerprint와 owner를 읽어 감사 로그를 결정적으로 검증한다.
+        # reset  receipt fingerprint owner     .
         receipts = service._publish_receipts
         import sqlite3
 
@@ -1356,7 +1356,7 @@ class TestReceiptReconcile:
 
         other = Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: other)
-        # publish/readiness 라우트와 동일하게 run 소유권 게이트가 403으로 차단한다.
+        # publish/readiness   run   403 .
         resp = dispatch(
             service,
             "GET",
@@ -1375,10 +1375,10 @@ class TestReceiptReconcile:
         assert reset_resp.status_code == 403
 
     def test_reset_audit_survives_and_audit_api_returns_history(self, tmp_path, monkeypatch):
-        """reset 후에도 감사 이력이 owner/run으로 조회되고 API가 이를 반환한다 (#563)."""
+        """reset    owner/run  API   (#563)."""
         service = self._unknown_receipt_service(tmp_path, monkeypatch, "run-audit")
 
-        # unknown → reset(감사: reconcile_absent_reset 아닌 manual_reset 경로 사용)
+        # unknown → reset(: reconcile_absent_reset  manual_reset  )
         reset = dispatch(
             service,
             "DELETE",
@@ -1388,7 +1388,7 @@ class TestReceiptReconcile:
         )
         assert reset.status_code == 200
 
-        # receipt는 사라졌지만 감사 이력은 살아 있다.
+        # receipt     .
         gone = dispatch(
             service,
             "GET",
@@ -1402,12 +1402,12 @@ class TestReceiptReconcile:
         assert audit.status_code == 200
         actions = [entry["action"] for entry in audit.body["entries"]]
         assert "manual_reset" in actions
-        # 감사 항목은 최소 필드만 담는다(credential/경로 원문 없음).
+        #     (credential/  ).
         for entry in audit.body["entries"]:
             assert set(entry) == {"fingerprint", "action", "actor", "recorded_at"}
 
     def test_audit_api_cross_owner_is_blocked(self, tmp_path, monkeypatch):
-        """감사 조회도 run 소유권 게이트를 통과한다 (#563)."""
+        """run    (#563)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         owner = Principal(kind="oidc", identifier="a", owner_id="oidc:owner-a")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: owner)
@@ -1419,7 +1419,7 @@ class TestReceiptReconcile:
         assert audit.status_code == 403
 
     def test_reconcile_succeeded_records_owner_run_audit(self, tmp_path, monkeypatch):
-        """reconcile 성공 감사 행도 owner/run을 스스로 들고 있다 (#563)."""
+        """reconcile    owner/run    (#563)."""
         service = self._unknown_receipt_service(tmp_path, monkeypatch, "run-rec-audit")
         monkeypatch.setattr(
             service._publish_api, "_probe_remote_publish_target", lambda *_args: True
@@ -1438,7 +1438,7 @@ class TestReceiptReconcile:
 
 
 class TestOpenApiConformance:
-    """실제 dispatch() wire 응답이 OpenAPI 스키마와 정확히 일치하는지 (ADR-0005 방식)."""
+    """dispatch() wire  OpenAPI    (ADR-0005 )."""
 
     def test_readiness_200_ready_conforms(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1513,12 +1513,12 @@ class TestOpenApiConformance:
 
 
 class TestRemotePublishProbe:
-    """`_probe_remote_publish_target`을 stub 없이 실제로 부른다 (#551).
+    """`_probe_remote_publish_target` stub    (#551).
 
-    reconcile 테스트들은 이 메서드를 통째로 monkeypatch 한다. 그래서 메서드 본문이
-    huggingface_hub를 어떻게 부르는지는 아무 테스트도 보지 않았고,
-    ``dataset_info(repo_type=...)`` 라는 존재하지 않는 인자가 TypeError를 내며
-    "판단 불가"로 삼켜지는 것을 잡지 못했다.
+    reconcile     monkeypatch .
+    huggingface_hub      ,
+    ``dataset_info(repo_type=...)``     TypeError
+    " "    .
     """
 
     @staticmethod
@@ -1557,7 +1557,7 @@ class TestRemotePublishProbe:
         )
 
         assert result is True
-        # dataset_info는 이미 dataset 전용이라 repo_type을 받지 않는다.
+        # dataset_info  dataset  repo_type  .
         assert calls == [{"repo_id": "kpubdata/air-quality"}]
 
     def test_probe_reports_a_missing_dataset(
@@ -1591,8 +1591,8 @@ class TestRemotePublishProbe:
     def test_a_signature_mismatch_is_not_reported_as_an_unreachable_remote(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 우리 쪽 호출이 틀린 것은 원격 상태가 아니다 — "판단 불가"로 숨기면
-        # reconcile이 영원히 확정하지 못하면서 아무도 이유를 모른다.
+        #         — " "
+        # reconcile      .
         def _raise(repo_id: str, **kwargs: object) -> object:
             raise TypeError("dataset_info() got an unexpected keyword argument")
 
@@ -1604,21 +1604,21 @@ class TestRemotePublishProbe:
 
 
 class TestCancelledRunIsNotPublishable:
-    """취소된 run의 partial 산출물은 게시되지 않는다 (#481, #491).
+    """run partial    (#481, #491).
 
-    publish 경로는 manifest의 ``errors`` 유무만으로 상태를 파생시켰다. 취소는
-    errors를 남기지 않으므로 취소된 run이 ``succeeded``로 읽혔고,
-    ``run_status_blocker``의 ``run_cancelled``는 이미 존재했는데도 이 경로에서는
-    닿지 않았다 — 중간에 끊긴 부분 산출물이 HF/Kaggle에 그대로 올라갈 수 있었다.
+    publish  manifest ``errors``   .
+    errors    run ``succeeded`` ,
+    ``run_status_blocker`` ``run_cancelled``
+      —     HF/Kaggle    .
     """
 
     @staticmethod
     def _cancel_manifest(tmp_path: Path, run_id: str) -> None:
-        """성공한 run의 manifest를 취소된 run의 모양으로 바꾼다."""
+        """run manifest  run  ."""
         manifest_path = tmp_path / run_id / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["status"] = "cancelled"
-        # 취소는 errors를 남기지 않는다 — 이것이 바로 놓치던 지점이다.
+        #  errors   —    .
         manifest.pop("errors", None)
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -1651,7 +1651,7 @@ class TestCancelledRunIsNotPublishable:
     def test_the_publisher_is_never_invoked_for_a_cancelled_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # blocker를 보고하면서도 원격을 건드리면 아무것도 막은 것이 아니다.
+        # blocker       .
         _with_credentials(monkeypatch, "huggingface")
         service = _service(tmp_path)
         _build(service, "run-cancelled", LICENSED_SPEC_YAML)

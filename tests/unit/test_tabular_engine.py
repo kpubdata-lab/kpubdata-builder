@@ -1,4 +1,4 @@
-"""Polars tabular 엔진(#49)의 스키마 추론·통계·미리보기·역변환을 검증한다."""
+"""Polars tabular engine (#49): schema inference, statistics, preview, and reverse conversion."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class TestComputeStatistics:
         df = records_to_dataframe(
             (
                 {"id": "1", "v": "x"},
-                {"id": "1", "v": "x"},  # row 0의 완전 중복
+                {"id": "1", "v": "x"},  # Full duplicate of row 0
                 {"id": "2", "v": None},
             )
         )
@@ -62,7 +62,7 @@ class TestComputeStatistics:
         assert isinstance(stats, TableStatistics)
         assert stats.row_count == 3
         assert stats.null_counts == {"id": 0, "v": 1}
-        # 3행 중 고유 행 2개 → 중복률 = 1 - 2/3
+        # 3 rows, 2 unique → duplicate rate = 1 - 2/3
         assert abs(stats.duplicate_rate - (1 / 3)) < 1e-9
 
     def test_empty_dataframe_yields_zeroed_statistics(self) -> None:

@@ -33,11 +33,11 @@ def _spec(*sources: SourceRef) -> BuildSpec:
     )
 
 
-# --- loader: kind 기본값/구조 -----------------------------------------------------
+# --- loader: kind / -----------------------------------------------------
 
 
 def test_source_without_kind_defaults_to_public_api() -> None:
-    """kind가 없는 기존 source는 항상 public_api로 해석된다(#498, 하위 호환)."""
+    """kind   source  public_api (#498,  )."""
     spec = parse_spec(_payload({"provider": "datago", "dataset": "air_quality"}))
 
     assert spec.sources[0].kind == "public_api"
@@ -118,7 +118,7 @@ def test_unknown_kind_is_rejected() -> None:
     ],
 )
 def test_foreign_kind_fields_are_rejected(source: dict[str, object]) -> None:
-    """다른 kind의 field가 섞이면 loader가 즉시 거부한다 (#498)."""
+    """kind field  loader   (#498)."""
     with pytest.raises(SpecLoadError, match="not valid for kind"):
         parse_spec(_payload(source))
 
@@ -139,7 +139,7 @@ def test_url_source_missing_endpoint_is_rejected() -> None:
 
 
 def test_alias_and_schema_are_common_across_kinds() -> None:
-    """alias/schema는 세 kind 모두 공통 필드다 (#498)."""
+    """alias/schema  kind    (#498)."""
     spec = parse_spec(
         _payload(
             {
@@ -158,7 +158,7 @@ def test_alias_and_schema_are_common_across_kinds() -> None:
     assert source.schema.required == ("id",)
 
 
-# --- validator: kind별 semantic 규칙 ----------------------------------------------
+# --- validator: kind semantic  ----------------------------------------------
 
 
 def test_validate_spec_accepts_valid_file_source() -> None:
@@ -174,12 +174,12 @@ def test_validate_spec_accepts_valid_url_source() -> None:
 
 
 def test_validate_spec_rejects_unknown_kind_from_directly_constructed_sourceref() -> None:
-    """loader를 거치지 않고 SourceRef를 직접 구성해도 unknown kind는 거부된다.
+    """loader   SourceRef   unknown kind .
 
-    loader(YAML 경로)는 이미 unknown kind를 거부하지만(``test_unknown_kind_is_rejected``),
-    ``SourceRef(kind="ftp", ...)``처럼 programmatic하게 BuildSpec을 구성하면
-    loader를 거치지 않는다 — validate_spec이 canonical kind 계약
-    (public_api|file|url)의 fail-closed 원칙을 지키는 유일한 방어선이다(#538 review).
+    loader(YAML )  unknown kind (``test_unknown_kind_is_rejected``),
+    ``SourceRef(kind="ftp", ...)`` programmatic BuildSpec
+    loader   — validate_spec canonical kind
+    (public_api|file|url) fail-closed    (#538 review).
     """
     spec = _spec(SourceRef(kind="ftp", provider="datago", dataset="air_quality"))
 
@@ -274,7 +274,7 @@ def test_validate_spec_rejects_unsupported_url_format() -> None:
 
 
 def test_validate_spec_does_not_require_provider_dataset_for_file_or_url() -> None:
-    """file/url kind는 provider/dataset이 없어도(빈 문자열) 통과해야 한다."""
+    """file/url kind provider/dataset ( )  ."""
     spec = _spec(
         SourceRef(kind="file", upload_id="upl_" + "a" * 32, format="csv"),
         SourceRef(kind="url", endpoint="https://example.org/data"),

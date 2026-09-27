@@ -1,4 +1,4 @@
-"""Split 지원(#38): 분할 로직·spec 로딩·검증을 확인한다."""
+"""Split (#38):  ·spec · ."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def test_ratio_split_allocates_exact_counts_and_partitions() -> None:
 
     assert len(result["train"]) == 8
     assert len(result["test"]) == 2
-    # 분할은 원본을 완전 분할(disjoint + 합집합 = 전체)해야 한다.
+    #    (disjoint +  = ) .
     train_ids = {row["id"] for row in result["train"]}
     test_ids = {row["id"] for row in result["test"]}
     assert train_ids.isdisjoint(test_ids)
@@ -116,35 +116,35 @@ def test_validate_spec_accepts_valid_ratio_splits() -> None:
     data = _base_spec_dict()
     data["splits"] = {"mode": "ratio", "ratios": {"train": 0.8, "test": 0.2}}
 
-    validate_spec(parse_spec(data))  # 예외가 없어야 한다.
+    validate_spec(parse_spec(data))  #   .
 
 
 def test_key_split_sentinel_values_collected_separately_before_merge() -> None:
-    # #225: 컬렉션 단계에서 센티널 객체를 사용해 "키 없음"/"None" 레코드와
-    # 리터럴 "__missing__"/"__null__" 문자열 값을 가진 레코드를 분리 수집한다.
-    # 출력은 동일한 이름 버킷에 병합되지만, 레코드는 손실되지 않는다.
+    # #225:      " "/"None"
+    #  "__missing__"/"__null__"      .
+    #     ,   .
     spec = SplitSpec(mode="key", key="cat")
     records: list[dict[str, JsonValue]] = [
-        {"id": "1", "cat": "__missing__"},  # 리터럴 문자열
-        {"id": "2", "cat": "__null__"},  # 리터럴 문자열
-        {"id": "3"},  # 키 없음 → __missing__ 버킷
-        {"id": "4", "cat": None},  # None → __null__ 버킷
+        {"id": "1", "cat": "__missing__"},  #
+        {"id": "2", "cat": "__null__"},  #
+        {"id": "3"},  #   → __missing__
+        {"id": "4", "cat": None},  # None → __null__
     ]
 
     result = apply_splits(records, spec)
 
-    # 출력은 2개 버킷 — 센티널과 리터럴 이름이 충돌하면 병합된다.
+    #  2  —     .
     assert set(result.keys()) == {"__missing__", "__null__"}
-    # __missing__ 버킷은 리터럴 "__missing__" 값과 키 없는 레코드 모두 포함
+    # __missing__   "__missing__"
     missing_ids = {row["id"] for row in result["__missing__"]}
     assert missing_ids == {"1", "3"}
-    # __null__ 버킷은 리터럴 "__null__" 값과 None 값 레코드 모두 포함
+    # __null__   "__null__"  None
     null_ids = {row["id"] for row in result["__null__"]}
     assert null_ids == {"2", "4"}
 
 
 def test_key_split_no_record_loss_with_sentinel_strings() -> None:
-    # 어떤 레코드도 손실되지 않아야 한다(#225).
+    #     (#225).
     spec = SplitSpec(mode="key", key="cat")
     records: list[dict[str, JsonValue]] = [
         {"id": "1", "cat": "__missing__"},
