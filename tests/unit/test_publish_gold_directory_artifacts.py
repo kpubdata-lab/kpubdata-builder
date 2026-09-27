@@ -1,14 +1,12 @@
-"""Gold artifact 가 디렉터리인 경우의 publish 준비 (#491 후속).
+"""Publish preparation when Gold artifact is directory (#491 follow-up).
 
-``kind: huggingface`` export 는 파일 하나가 아니라 레이아웃 디렉터리(README.md +
-data/)를 만들고, manifest 의 output path 도 그 디렉터리를 가리킨다. 그런데
-``resolve_gold_artifacts`` 가 ``is_file()`` 로만 검사해서 정상적으로 끝난 빌드가
-``artifact_missing`` 으로 막혔다 — Studio 의 "huggingface export → publish" 흐름이
-통째로 불가능했다.
+``kind: huggingface`` export creates layout directory (README.md + data/), not single file;
+manifest output_path points to that directory. But ``resolve_gold_artifacts`` checked only
+with ``is_file()``, so normally completed build was blocked as ``artifact_missing`` —
+Studio's "huggingface export → publish" flow entirely impossible.
 
-우회하면 더 나빠진다. gold 파일을 개별로 올리면 YAML front matter 가 없는 gold
-README 가 올라가서 HF 카드에 license 메타가 빠진다. 제대로 된 카드는 HF export
-레이아웃 안에만 있다.
+Workaround makes it worse: uploading gold files individually uploads gold README without
+YAML front matter, losing license meta in HF card. Proper card exists only inside HF export layout.
 """
 
 from __future__ import annotations
@@ -65,7 +63,7 @@ class TestDirectoryGoldArtifacts:
         assert set(resolved.paths) == {layout, single}
 
     def test_a_path_that_exists_as_neither_is_still_missing(self, tmp_path: Path) -> None:
-        """존재하지 않는 경로는 여전히 fail-closed 여야 한다."""
+        """Non-existent path must still fail-closed."""
         gold = _gold_dir(tmp_path)
         ghost = gold / "never-written"
 

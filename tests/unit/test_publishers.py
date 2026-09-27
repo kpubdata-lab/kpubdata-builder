@@ -1,4 +1,6 @@
-"""Publisher 경계(#28): PublishResult 계약과 LocalPublisher 등록 동작 검증."""
+"""Publisher boundary (#28): verify PublishResult contract and LocalPublisher registration
+behavior.
+"""
 
 from __future__ import annotations
 
@@ -60,7 +62,8 @@ def test_publish_result_is_immutable() -> None:
 
 class TestLocalPublisherFailurePolicy:
     def test_rejects_duplicate_basenames(self, tmp_path: Path) -> None:
-        # 서로 다른 디렉터리의 동일 이름 파일 두 개는 flat copy에서 한쪽을 덮어쓰므로 거부.
+        # Two same-named files in different directories are rejected in flat copy because one
+        # overwrites the other.
         d1 = tmp_path / "a"
         d2 = tmp_path / "b"
         d1.mkdir()
@@ -74,7 +77,7 @@ class TestLocalPublisherFailurePolicy:
             LocalPublisher().publish((f1, f2), destination=str(tmp_path / "registry"))
 
     def test_rejects_directory_artifacts(self, tmp_path: Path) -> None:
-        # 디렉터리는 shutil.copy2가 다룰 수 없으므로 명시적으로 거부.
+        # Directories are explicitly rejected because shutil.copy2 cannot handle them.
         dir_artifact = tmp_path / "hf_layout"
         dir_artifact.mkdir()
 
@@ -84,7 +87,7 @@ class TestLocalPublisherFailurePolicy:
     def test_wraps_copy_failures_in_publish_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # shutil.copy2가 OSError를 던지면 PublishError로 감싸 전파해야 한다.
+        # shutil.copy2 raising OSError must be wrapped in PublishError and propagated.
         artifact = tmp_path / "data.jsonl"
         _ = artifact.write_text("{}\n", encoding="utf-8")
 
@@ -98,7 +101,7 @@ class TestLocalPublisherFailurePolicy:
 
 
 def _install_fake_hf(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[dict[str, object]]]:
-    """huggingface_hub.HfApi를 가짜로 주입하고 업로드 호출을 기록한다."""
+    """Inject huggingface_hub.HfApi as fake and record upload calls."""
     calls: dict[str, list[dict[str, object]]] = {"repos": [], "files": [], "folders": []}
 
     class FakeHfApi:
@@ -158,7 +161,8 @@ class TestHuggingFacePublisher:
     def test_preserves_directory_layout_in_repo_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 중첩 디렉터리 shard가 bare filename으로 평탄화되지 않고 상대 경로를 유지해야 한다 (#170).
+        # Nested directory shards must not be flattened to bare filenames but preserve relative
+        # paths (#170).
         calls = _install_fake_hf(monkeypatch)
         (tmp_path / "data").mkdir()
         readme = tmp_path / "README.md"
@@ -208,8 +212,9 @@ class TestHuggingFacePublisher:
     def test_same_basename_different_dirs_do_not_collide(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 동명 파일이라도 디렉터리 구조를 보존하면 서로 다른 repo 경로로 분리되어
-        # 무경고 덮어쓰기가 일어나지 않는다 (#170).
+        # Even same-named files are separated into different repo paths when directory structure is
+        # preserved
+        # so silent overwrites do not occur (#170).
         calls = _install_fake_hf(monkeypatch)
         d1 = tmp_path / "a"
         d2 = tmp_path / "b"
@@ -243,8 +248,8 @@ class TestHuggingFacePublisher:
     def test_unrelated_absolute_paths_fall_back_to_basename(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 공통 루트가 "/"가 되는 무관한 절대경로는 호스트 경로를 누출하지 않고
-        # basename으로 폴백해야 한다 (#205).
+        # Unrelated absolute paths with common root "/" must not leak host paths and
+        # must fall back to basename (#205).
         calls = _install_fake_hf(monkeypatch)
 
         if sys.platform == "win32":
@@ -259,8 +264,9 @@ class TestHuggingFacePublisher:
         assert result.artifact_count == 2
 
     def test_relative_paths_preserve_layout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 상대 경로 아티팩트의 commonpath는 Path(".")이며, 이는 parent==self이지만
-        # 절대경로가 아니므로 basename 폴백 대상이 아니다. 디렉터리 레이아웃을 보존해야 한다 (#205).
+        # commonpath of relative-path artifacts is Path("."), which is parent==self but
+        # not absolute, so not a basename fallback candidate. Directory layout must be preserved
+        # (#205).
         calls = _install_fake_hf(monkeypatch)
 
         result = HuggingFacePublisher().publish(
@@ -273,7 +279,7 @@ class TestHuggingFacePublisher:
 
 
 class _FakeKaggleApi:
-    """Kaggle API 더블: 호출을 기록하고 dataset 존재 여부를 흉내낸다."""
+    """Kaggle API double: record calls and simulate dataset existence."""
 
     def __init__(self, existing: tuple[str, ...] = (), raise_on_create: bool = False) -> None:
         self._existing = existing
@@ -301,11 +307,7 @@ class _FakeKaggleApi:
 
 
 def _make_kaggle_dir(tmp_path: Path, dataset_id: str) -> Path:
-    """dataset-metadata.json과 데이터 파일이 있는 Kaggle 업로드 디렉터리를 만든다.
-
-    실제 Kaggle API는 dataset-metadata.json을 필수로 요구하므로, happy path
-    테스트도 빈 디렉터리가 아닌 실제 계약을 갖춘 디렉터리를 사용해야 한다 (#181).
-    """
+    """Create Kaggle upload directory with dataset-metadata.json and data files."""
     import json
 
     artifact_dir = tmp_path / "dataset"
@@ -319,7 +321,7 @@ def _make_kaggle_dir(tmp_path: Path, dataset_id: str) -> Path:
 
 
 def _inject_fake_kaggle(monkeypatch: pytest.MonkeyPatch, api: _FakeKaggleApi) -> None:
-    """`kaggle.api.kaggle_api_extended.KaggleApi`를 가짜 모듈로 주입한다."""
+    """Inject `kaggle.api.kaggle_api_extended.KaggleApi` as fake module."""
     extended = types.ModuleType("kaggle.api.kaggle_api_extended")
     extended.KaggleApi = lambda: api  # type: ignore[attr-defined]
     api_pkg = types.ModuleType("kaggle.api")
@@ -374,8 +376,9 @@ class TestKagglePublisher:
     def test_missing_kaggle_package_raises_runtime_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # kaggle import만 ImportError로 막는다. sys.modules monkeypatch는 kaggle이
-        # 설치된 환경에서 spurious하게 동작하므로, __import__를 직접 가로챈다 (#181).
+        # Only kaggle import is blocked with ImportError. sys.modules monkeypatch is spurious in
+        # environments
+        # where kaggle is installed, so __import__ is intercepted directly (#181).
         import builtins
 
         real_import = builtins.__import__
@@ -394,8 +397,8 @@ class TestKagglePublisher:
     def test_rejects_metadata_id_mismatch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dataset-metadata.json의 id가 destination과 다르면 잘못된 대상 업로드를
-        # 막기 위해 PublishError를 던진다 (#177).
+        # If dataset-metadata.json id differs from destination, prevent incorrect target upload by
+        # raising PublishError (#177).
         api = _FakeKaggleApi(existing=())
         _inject_fake_kaggle(monkeypatch, api)
         artifact_dir = _make_kaggle_dir(tmp_path, "kpub/declared")
@@ -407,7 +410,7 @@ class TestKagglePublisher:
     def test_rejects_missing_metadata_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dataset-metadata.json이 없는 디렉터리는 거부한다 (#181 happy path 회귀).
+        # Directory without dataset-metadata.json is rejected (#181 happy path regression).
         api = _FakeKaggleApi(existing=())
         _inject_fake_kaggle(monkeypatch, api)
         artifact_dir = tmp_path / "dataset"
@@ -419,7 +422,8 @@ class TestKagglePublisher:
     def test_authentication_failure_wrapped_in_publish_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # authenticate() 예외가 raw traceback 대신 PublishError로 변환되어야 한다 (#178).
+        # authenticate() exception must be converted to PublishError instead of raw traceback
+        # (#178).
         class _AuthFailApi(_FakeKaggleApi):
             def authenticate(self) -> None:
                 raise OSError("kaggle.json not found")
@@ -434,7 +438,8 @@ class TestKagglePublisher:
     def test_dataset_list_failure_wrapped_in_publish_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dataset_list 실패를 삼켜 신규(공개) 데이터셋을 만들지 않고 전파한다 (#177).
+        # dataset_list failure is swallowed and propagated without creating new (public) dataset
+        # (#177).
         class _ListFailApi(_FakeKaggleApi):
             def dataset_list(self, *, mine: bool, search: str) -> list[str]:
                 del mine, search
@@ -451,7 +456,7 @@ class TestKagglePublisher:
     def test_new_dataset_defaults_to_private(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # public 인자를 주지 않으면 신규 데이터셋은 비공개로 생성되어야 한다 (#177).
+        # If public argument is not given, new dataset must be created private (#177).
         class _RecordingApi(_FakeKaggleApi):
             def __init__(self) -> None:
                 super().__init__(existing=())

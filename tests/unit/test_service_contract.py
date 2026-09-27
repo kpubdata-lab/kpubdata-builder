@@ -1,18 +1,22 @@
-"""Builder Service Contract(#63, #226, #317, #319, #209) OpenAPI 스펙의 구조·런타임 검증.
+"""Builder Service Contract (#63, #226, #317, #319, #209) structure and runtime verification.
 
-설치된 OpenAPI validator가 없으므로, 계약이 OpenAPI 3.1이고 BuilderService
-(service/app.py)가 실제로 구현한 동기 라우트와 wire 형태를 모두 담는지 구조적으로
-검증한다. 계약은 이제 구현된 엔드포인트만 기술하며(#226), 한쪽만 바뀌는 조용한
-드리프트를 막기 위해 구현 라우트 ↔ 계약 operationId 매핑을 명시적으로 고정한다(#317).
-또한 YAML 계약과 실제 dispatch 구현 간의 양방향 일치성을 검증하며(#317),
-상태 코드와 응답 스키마 검증으로 범위를 확장한다(#319).
+No OpenAPI validator installed; structurally verify contract is OpenAPI 3.1 and covers both sync
+routes
+and wire form actually implemented by BuilderService (service/app.py).
+Verify. Contract now describes only implemented endpoints (#226); prevent silent drift
+where only one side changes by explicitly locking implementation route ↔ contract operationId
+mapping (#317).
+Also verify bidirectional consistency between YAML contract and actual dispatch implementation
+(#317);
+extend scope with status code and response schema verification (#319).
 
-구조 검증(위)은 YAML의 *선언*과 dispatch의 *라우팅 목록*이 일치하는지 본다(#317, #319).
-``TestResponseConformance``(#209, ADR-0005)는 한 단계 더 나아가 **실제 dispatch 응답
-본문이 선언된 스키마에 부합하는지**(wire-level conformance)를 순수 파이썬
-validator(``_openapi.py``)로 검증한다 — #319의 정적 스키마 검사가 "스키마가 required를
-선언했는가"만 보듯, app.py 응답에서 필수 필드가 빠지거나 타입이 바뀌어도 선언부가
-그대로면 정적 검사는 통과하지만 이 런타임 검사는 잡는다.
+Structural verification (above) checks if YAML *declaration* matches dispatch *routing list*
+(#317, #319).
+``TestResponseConformance`` (#209, ADR-0005) goes further: **actual dispatch response
+body conforms to declared schema **(wire-level conformance)** via pure Python
+validator (``_openapi.py``) — #319's static schema check only verifies "schema declares required
+it declares"; runtime check catches when app.py response has missing required fields or type
+changes even if declaration unchanged.
 """
 
 from __future__ import annotations
@@ -32,9 +36,9 @@ from ._openapi import response_schema, validate
 
 _CONTRACT_PATH = Path(__file__).parents[2] / "contract" / "builder-api.yaml"
 
-# dispatch에 구현된 (path, method, operationId) 매핑.
-# service/app.py:dispatch의 라우팅 규칙을 기계적으로 추출하기 어렵기 때문에
-# 명시적으로 선언하여 유지보수성을 높인다.
+# Mapping of (path, method, operationId) implemented in dispatch.
+# Mechanical extraction of routing rules from service/app.py:dispatch is difficult, so
+# explicit declaration improves maintainability.
 _DISPATCH_ROUTES: dict[tuple[str, str], str] = {
     ("/admin/runs", "GET"): "adminListRuns",
     ("/admin/config", "GET"): "adminGetConfig",
@@ -76,8 +80,8 @@ _DISPATCH_ROUTES: dict[tuple[str, str], str] = {
     ("/uploads/{upload_id}", "DELETE"): "deleteUpload",
 }
 
-# (path, method) 형태의 계약 필수 오퍼레이션. BuilderService.dispatch가 실제로
-# 라우팅하는 동기 엔드포인트와 1:1로 대응한다.
+# (path, method) form of mandatory contract operations. BuilderService.dispatch actually routes to
+# sync endpoints one-to-one.
 _REQUIRED_OPERATIONS = [
     ("/healthz", "get"),
     ("/version", "get"),
@@ -157,14 +161,14 @@ def test_operation_ids_are_unique() -> None:
 def test_defines_standard_error_schema() -> None:
     schemas = _load_contract()["components"]["schemas"]
 
-    # 실제 구현은 단순한 {"error": "<message>"} 형태를 사용한다(#226).
+    # Actual implementation uses simple {"error": "<message>"} form (#226).
     assert "Error" in schemas
     assert "error" in schemas["Error"]["properties"]
     assert schemas["Error"]["properties"]["error"]["type"] == "string"
 
 
 def test_service_api_version_matches_contract() -> None:
-    # 코드의 API_CONTRACT_VERSION이 계약 문서의 info.version과 어긋나지 않도록 고정 (#209).
+    # Lock to ensure code's API_CONTRACT_VERSION matches contract document's info.version (#209).
     from kpubdata_builder.service import API_CONTRACT_VERSION
 
     assert str(_load_contract()["info"]["version"]) == API_CONTRACT_VERSION
@@ -181,7 +185,7 @@ def test_query_response_requires_documented_nonnegative_timings() -> None:
 
 
 def test_main_contract_version_is_stable_semver() -> None:
-    """main 계약은 prerelease/build suffix 없는 식별 가능한 stable SemVer다 (#521)."""
+    """main contract is identifiable stable SemVer without prerelease/build suffix (#521)."""
     from kpubdata_builder.service import API_CONTRACT_VERSION
 
     parts = API_CONTRACT_VERSION.split(".")
@@ -190,14 +194,14 @@ def test_main_contract_version_is_stable_semver() -> None:
 
 
 def test_build_manifest_does_not_publish_internal_owner_id() -> None:
-    """persisted owner_id는 HTTP BuildManifest의 공개 property가 아니다 (#505)."""
+    """persisted owner_id is not a public property of HTTP BuildManifest (#505)."""
     manifest = _load_contract()["components"]["schemas"]["BuildManifest"]
 
     assert "owner_id" not in manifest["properties"]
 
 
 def test_credential_get_contract_exposes_only_frozen_metadata() -> None:
-    """#492 GET credential wire에는 provider/owner_id/raw secret이 없어야 한다."""
+    """#492 GET credential wire must not contain provider/owner_id/raw secret."""
     contract = _load_contract()
     operation = contract["paths"]["/providers/{provider}/credential"]["get"]
     schema_ref = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
@@ -257,7 +261,7 @@ def _complete_build_spec_payload() -> dict[str, Any]:
 
 
 def test_build_spec_schema_matches_current_domain_models() -> None:
-    """BuildSpec 선택 필드와 JSON-compatible 값 범위를 OpenAPI에 고정한다 (#485)."""
+    """Lock BuildSpec optional fields and JSON-compatible value ranges in OpenAPI (#485)."""
     contract = _load_contract()
     schemas = contract["components"]["schemas"]
     build_spec = schemas["BuildSpec"]
@@ -277,7 +281,7 @@ def test_build_spec_schema_matches_current_domain_models() -> None:
 
 
 def test_removed_build_spec_fields_are_not_declared() -> None:
-    """파서가 거부하는 stale 필드를 OpenAPI의 명명된 계약에서 제거한다 (#485)."""
+    """Remove stale fields rejected by parser from OpenAPI named contract (#485)."""
     schemas = _load_contract()["components"]["schemas"]
 
     assert "transforms" not in schemas["BuildSpec"]["properties"]
@@ -291,7 +295,7 @@ def test_removed_build_spec_fields_are_not_declared() -> None:
 
 @pytest.mark.parametrize("stale_field", ["transforms", "normalization_mode"])
 def test_build_spec_contract_rejects_top_level_stale_fields(stale_field: str) -> None:
-    """명명된 stale 필드가 실제 payload validation에서 거부되어야 한다 (#485)."""
+    """Named stale fields must be rejected in actual payload validation (#485)."""
     contract = _load_contract()
     payload = _complete_build_spec_payload()
     payload[stale_field] = "removed"
@@ -300,7 +304,7 @@ def test_build_spec_contract_rejects_top_level_stale_fields(stale_field: str) ->
 
 
 def test_build_spec_contract_rejects_source_normalization_mode() -> None:
-    """SourceRef의 제거된 normalization_mode도 실제 payload에서 거부한다 (#485)."""
+    """SourceRef's removed normalization_mode is also rejected in actual payload (#485)."""
     contract = _load_contract()
     payload = _complete_build_spec_payload()
     sources = cast(list[dict[str, Any]], payload["sources"])
@@ -311,7 +315,7 @@ def test_build_spec_contract_rejects_source_normalization_mode() -> None:
 
 @pytest.mark.parametrize("empty_field", ["sources", "exports"])
 def test_build_spec_contract_rejects_empty_required_collections(empty_field: str) -> None:
-    """sources/exports는 존재만 해서는 안 되고 한 개 이상의 항목이 필요하다 (#485)."""
+    """sources/exports must not just exist; they need one or more items (#485)."""
     contract = _load_contract()
     payload = deepcopy(_complete_build_spec_payload())
     payload[empty_field] = []
@@ -320,7 +324,7 @@ def test_build_spec_contract_rejects_empty_required_collections(empty_field: str
 
 
 def test_source_preview_schema_covers_success_and_failure_shape() -> None:
-    """preview가 항상 반환하는 error/statistics 필드와 status enum을 고정한다 (#485)."""
+    """Lock error/statistics fields and status enum that preview always returns (#485)."""
     schemas = _load_contract()["components"]["schemas"]
     preview = schemas["SourcePreview"]
 
@@ -335,9 +339,7 @@ def test_source_preview_schema_covers_success_and_failure_shape() -> None:
 
 
 def test_source_preview_schema_covers_diff_and_sampling_shape() -> None:
-    """#497: source_sample/sample_mode/diff_available/diffs/transform_summary가
-    항상 반환되는 필수 필드로 계약에 고정돼 있는지, PreviewDiffItem이 잘못된
-    index 비교를 만들지 않는다는 계약(transform nullable)을 지키는지 확인한다."""
+    """#497: source_sample/sample_mode/diff_available/diffs/transform_summary are"""
     schemas = _load_contract()["components"]["schemas"]
     preview = schemas["SourcePreview"]
 
@@ -363,7 +365,9 @@ def test_source_preview_schema_covers_diff_and_sampling_shape() -> None:
 
 
 def test_preview_request_schema_declares_bounded_limit_and_sample_mode() -> None:
-    """#497: limit 상한(1000, behavioral tightening)과 sample_mode/seed가 계약에 반영됐는지."""
+    """#497: limit ceiling (1000, behavioral tightening) and sample_mode/seed reflected in
+    contract.
+    """
     preview_request = _load_contract()["components"]["schemas"]["PreviewRequest"]
 
     assert preview_request["properties"]["limit"]["maximum"] == 1000
@@ -372,8 +376,9 @@ def test_preview_request_schema_declares_bounded_limit_and_sample_mode() -> None
     assert preview_request["properties"]["seed"]["type"] == "integer"
 
 
-# 계약이 기술하는 모든 오퍼레이션은 BuilderService에 실제로 구현돼 있어야 한다.
-# 구현 경로 이름은 계약과 1:1로 일치한다(#226: aspirational 비동기/publish 라우트 제거).
+# All operations described in the contract must actually be implemented in BuilderService.
+# Implementation path names match the contract one-to-one (#226: aspirational async/publish routes
+# removed).
 _IMPLEMENTED_OPERATIONS = {
     "adminListRuns",
     "adminGetConfig",
@@ -427,13 +432,15 @@ def _contract_operation_ids() -> set[str]:
 
 
 def test_contract_operations_match_implementation() -> None:
-    # 계약의 오퍼레이션 집합이 구현된 동기 라우트 집합과 정확히 일치해야 한다.
-    # 계약에 미구현 오퍼레이션이 추가되거나 라우트가 사라지면 이 테스트가 깨진다 (#226).
+    # Contract operation set must exactly match implemented sync route set.
+    # If unimplemented operations are added to contract or routes disappear, this test breaks
+    # (#226).
     assert _contract_operation_ids() == _IMPLEMENTED_OPERATIONS
 
 
 def test_build_responses_pin_wire_status_codes() -> None:
-    # POST /build의 실제 상태 코드(200 성공, 502 부분 실패)를 계약이 고정해야 한다 (#226).
+    # Contract must lock actual status codes for POST /build (200 success, 502 partial failure)
+    # (#226).
     build = _load_contract()["paths"]["/build"]["post"]["responses"]
     assert "200" in build
     assert "502" in build
@@ -441,7 +448,7 @@ def test_build_responses_pin_wire_status_codes() -> None:
 
 
 def test_build_failure_response_includes_error_summary() -> None:
-    # 502 응답이 human-readable error 요약을 포함하는 것을 계약 수준에서 고정 (#226).
+    # Lock at contract level that 502 response includes human-readable error summary (#226).
     schemas = _load_contract()["components"]["schemas"]
     failure = schemas["BuildFailureResponse"]
     assert "error" in failure["properties"]
@@ -449,7 +456,7 @@ def test_build_failure_response_includes_error_summary() -> None:
 
 
 def test_referenced_schemas_resolve() -> None:
-    # 모든 로컬 $ref("#/components/...")가 실제로 존재하는지 확인한다.
+    # Verify all local $ref("#/components/...") actually exist.
     contract = _load_contract()
 
     def _iter_refs(node: object) -> list[str]:
@@ -474,7 +481,7 @@ def test_referenced_schemas_resolve() -> None:
 
 
 def test_stage_detail_contract_has_explicit_wire_schemas() -> None:
-    """stage별 핵심 wire field가 additionalProperties 뒤에 숨지 않는다 (#488)."""
+    """Stage-specific key wire fields do not hide behind additionalProperties (#488)."""
     schemas = _load_contract()["components"]["schemas"]
     stage_detail = schemas["StageDetailResponse"]
     refs = {branch["$ref"].rsplit("/", 1)[-1] for branch in stage_detail["oneOf"]}
@@ -498,12 +505,12 @@ def test_stage_detail_contract_has_explicit_wire_schemas() -> None:
 
 
 # =============================================================================
-# 계약 커버리지 테스트 1단계: 경로/메서드 양방향 검증 (#317)
+# Contract coverage test stage 1: bidirectional path/method verification (#317).
 # =============================================================================
 
 
 def _extract_yaml_operations() -> dict[tuple[str, str], dict[str, Any]]:
-    """YAML에서 (path, method) -> operation 매핑을 추출한다."""
+    """Extract (path, method) → operation mapping from YAML."""
     contract = _load_contract()
     operations: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -519,15 +526,12 @@ def _extract_yaml_operations() -> dict[tuple[str, str], dict[str, Any]]:
 
 
 def _is_planned_operation(operation: dict[str, Any]) -> bool:
-    """operation이 x-planned: true로 표시되었는지 확인한다."""
+    """Verify operation is marked x-planned: true."""
     return operation.get("x-planned") is True
 
 
 def test_all_yaml_operations_implemented_in_dispatch() -> None:
-    """YAML 계약에 정의된 모든 operation이 dispatch에 구현되어 있는지 검증한다(#317).
-
-    x-planned: true로 표시된 operation은 아직 구현되지 않아도 되며, 검증에서 제외한다.
-    """
+    """Verify all operations defined in YAML contract are implemented in dispatch (#317)."""
     yaml_operations = _extract_yaml_operations()
 
     for (path, method), operation in yaml_operations.items():
@@ -548,10 +552,7 @@ def test_all_yaml_operations_implemented_in_dispatch() -> None:
 
 
 def test_all_dispatch_routes_declared_in_yaml() -> None:
-    """dispatch에 구현된 모든 경로가 YAML 계약에 선언되어 있는지 검증한다(#317).
-
-    실제 구현이 있는데 YAML에 누락된 경우를 탐지한다.
-    """
+    """Verify all paths implemented in dispatch are declared in YAML contract (#317)."""
     yaml_operations = _extract_yaml_operations()
 
     for (path, method), operation_id in _DISPATCH_ROUTES.items():
@@ -569,45 +570,41 @@ def test_all_dispatch_routes_declared_in_yaml() -> None:
 
 
 def test_planned_operations_excluded_from_implementation_check() -> None:
-    """x-planned: true operation이 구현 검증에서 제외되는지 확인한다(#317).
-
-    계약에는 planned operation이 포함될 수 있지만, 실제 dispatch에는
-    구현되지 않아도 된다. 이 규칙이 올바르게 동작하는지 검증한다.
-    """
+    """Verify x-planned: true operations are excluded from implementation verification (#317)."""
     yaml_operations = _extract_yaml_operations()
 
-    # 현재 계약에는 x-planned operation이 없으므로, 모든 operation이 구현되어야 한다
+    # Currently no x-planned operations in contract, so all operations must be implemented.
     planned_operations = [
         (path, method, op.get("operationId"))
         for (path, method), op in yaml_operations.items()
         if _is_planned_operation(op)
     ]
 
-    # 향후 planned operation이 추가되면 이 테스트가 그 존재를 검증한다
-    # 현재는 계약에 planned operation이 없음을 확인
+    # When planned operations are added in future, this test will verify their presence.
+    # Currently verify no planned operations in contract.
     for path, method, operation_id in planned_operations:
         assert operation_id, f"planned operation {method} {path}에 operationId가 없습니다"
 
-    # 모든 planned operation은 dispatch에 없어도 됨
+    # All planned operations may be absent from dispatch.
     for path, method, _operation_id in planned_operations:
         key = (path, method)
         if key in _DISPATCH_ROUTES:
-            # planned인데 구현되어 있어도 에러는 아님 (구현이 빠른 경우)
+            # No error if planned is implemented (early implementation).
             pass
         else:
-            # planned이고 구현되지 않아도 정상
+            # Planned and unimplemented is normal.
             pass
 
 
 # =============================================================================
-# 계약 커버리지 테스트 2단계: 상태 코드와 응답 스키마 검증 (#319)
+# Contract coverage test stage 2: status codes and response schema verification (#319).
 # =============================================================================
 
-# 각 operation이 YAML에 선언한 상태 코드와 실제 구현이 반환하는 상태 코드의
-# 매핑. service/app.py:dispatch와 각 service 메서드를 분석하여 작성한다.
+# Mapping of declared status codes in YAML for each operation to actual status codes
+# returned by implementation. Built by analyzing service/app.py:dispatch and each service method.
 _OPERATION_STATUS_CODES: dict[str, set[int]] = {
-    # 관리 엔드포인트(#679). 404가 없다 — 경로가 고정이고 run을 개별 조회하지
-    # 않는다. 400도 없다 — limit은 거부하지 않고 clamp한다.
+    # Management endpoint (#679). No 404 — path is fixed and run is not individually queried.
+    # No 400 either — limit is clamped, not rejected.
     "adminListRuns": {200, 403, 503},
     "adminGetConfig": {200, 403},
     "healthz": {200},
@@ -650,7 +647,7 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
 
 
 def _extract_declared_status_codes(operation: dict[str, Any]) -> set[int]:
-    """YAML operation에서 선언된 상태 코드들을 추출한다."""
+    """Extract declared status codes from YAML operation."""
     responses = operation.get("responses", {})
     declared_codes: set[int] = set()
 
@@ -660,17 +657,17 @@ def _extract_declared_status_codes(operation: dict[str, Any]) -> set[int]:
         try:
             declared_codes.add(int(status_code_str))
         except ValueError:
-            # "default" 또는 기타 비숫자 상태 코드는 무시
+            # "default" or other non-numeric status codes are ignored.
             continue
 
     return declared_codes
 
 
 def test_declared_status_codes_match_implementation() -> None:
-    """YAML에 선언된 상태 코드와 실제 구현이 일치하는지 검증한다(#319).
+    """Verify declared status codes in YAML match actual implementation (#319).
 
-    각 operation마다 YAML의 responses 키에 선언된 상태 코드와 실제 코드가
-    반환할 수 있는 상태 코드가 일치해야 한다.
+    For each operation, declared status codes in YAML responses key must match
+    what actual code can return.
     """
     yaml_operations = _extract_yaml_operations()
 
@@ -682,10 +679,10 @@ def test_declared_status_codes_match_implementation() -> None:
         if not operation_id:
             continue
 
-        # YAML에 선언된 상태 코드 추출
+        # Extract status codes declared in YAML.
         declared_codes = _extract_declared_status_codes(operation)
 
-        # 401은 인증 게이트 안의 엔드포인트에 공통. 단 security: [] (무인증, #372)는 제외.
+        # 401 is common to endpoints inside auth gate. Except security: [] (unauthenticated, #372).
         is_unauthenticated = operation.get("security") == []
         implemented_codes = _OPERATION_STATUS_CODES.get(operation_id, set())
         all_implemented_codes = implemented_codes | (set() if is_unauthenticated else {401})
@@ -699,7 +696,7 @@ def test_declared_status_codes_match_implementation() -> None:
 
 
 def test_publish_request_contract_matches_huggingface_runtime() -> None:
-    """#491 HTTP target/options와 실제 fail-closed runtime 계약을 고정한다."""
+    """Lock #491 HTTP target/options and actual fail-closed runtime contract."""
     contract = _load_contract()
     schemas = contract["components"]["schemas"]
     assert schemas["PublishTarget"]["enum"] == ["huggingface"]
@@ -731,8 +728,8 @@ def test_publish_request_contract_matches_huggingface_runtime() -> None:
 def _extract_response_schema_required_fields(
     contract: dict[str, Any], response_ref: str
 ) -> set[str]:
-    """YAML 응답 스키마에서 required 필드들을 추출한다."""
-    # $ref 형식: "#/components/schemas/SchemaName"
+    """Extract required fields from YAML response schema."""
+    # $ref format: "#/components/schemas/SchemaName".
     if not response_ref.startswith("#/components/schemas/"):
         return set()
 
@@ -746,11 +743,12 @@ def _extract_response_schema_required_fields(
 
 
 def test_response_schemas_have_required_fields() -> None:
-    """YAML 응답 스키마가 주요 엔드포인트의 200 응답에 대한 필수 필드를
-    정의하고 있는지 검증한다(#319).
+    """YAML response schema must declare required fields for 200 response of major endpoints,
+    it declares (#319).
 
-    이 테스트는 계약 자체의 완전성을 확인한다: 각 operation이 성공 응답(200)에
-    대한 스키마를 정의하고, 그 스키마에 required 필드들이 포함되어 있는지 확인.
+    This test verifies contract completeness: each operation defines schema for success response
+    (200)
+    and includes required fields.
     """
     contract = _load_contract()
     yaml_operations = _extract_yaml_operations()
@@ -763,7 +761,7 @@ def test_response_schemas_have_required_fields() -> None:
         if not operation_id:
             continue
 
-        # 200 응답 확인
+        # Verify 200 response.
         responses = operation.get("responses", {})
         if "200" not in responses:
             raise AssertionError(
@@ -775,7 +773,7 @@ def test_response_schemas_have_required_fields() -> None:
         json_content = content.get("application/json", {})
         schema_ref = json_content.get("schema", {}).get("$ref", "")
 
-        # $ref가 있으면 required 필드 확인
+        # If $ref exists, check required fields.
         if schema_ref:
             required_fields = _extract_response_schema_required_fields(contract, schema_ref)
 
@@ -784,7 +782,7 @@ def test_response_schemas_have_required_fields() -> None:
                 f"required 필드가 정의되어 있지 않습니다: {schema_ref}"
             )
 
-            # 주요 엔드포인트들은 최소한 몇 개의 필수 필드를 가져야 함
+            # Major endpoints must have at least some required fields.
             main_operations = {
                 "getVersion",
                 "validateSpec",
@@ -800,18 +798,21 @@ def test_response_schemas_have_required_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 런타임 wire-level conformance (#209, ADR-0005)
+# Runtime wire-level conformance (#209, ADR-0005).
 #
-# 정적 검증(위)은 계약 YAML과 dispatch 라우팅 목록이 일치하는지 본다. 아래 테스트들은
-# 실제 dispatch()를 호출해 반환된 JSON 본문이 선언된 응답 스키마에 부합하는지 검증한다.
-# 외부 의존 없이 순수 파이썬 validator(_openapi.py)를 쓰며, 이것이 ADR-0005 미해결 질문
-# #1(스키마 대조를 순수 파이썬 경량으로 할지)을 "순수 파이썬 경량" 방향으로 마무리한다.
+# Static validation (above) checks contract YAML matches dispatch routing list. Tests below
+# call actual dispatch() and verify returned JSON body conforms to declared response schema.
+# Use pure Python validator (_openapi.py) without external dependencies; this closes ADR-0005 open
+# question
+# #1 (whether schema validation should be pure-Python lightweight) toward "pure-Python lightweight".
 #
-# #319의 test_response_schemas_have_required_fields는 스키마가 required를 *선언했는지*만
-# 본다. app.py가 실제 응답에서 필수 필드를 빼거나 타입을 바꿔도 선언부가 그대로면 그 정적
-# 검사는 통과한다 — 이 런타임 검사가 그 wire 드리프트를 잡는다. 계약에 선언된 6개 오퍼레이션
-# 모두(/version, /validate, /preview, /build, /artifacts, /builds)를 성공+오류 상태 코드에
-# 걸쳐 검증한다.
+# 319's test_response_schemas_have_required_fields only checks if schema *declared* required
+# fields.
+# If app.py omits required fields or changes types in actual response but declaration stays same,
+# static check passes — this runtime check catches that wire drift. Test all 6 operations declared
+# in contract
+# (/version, /validate, /preview, /build, /artifacts, /builds) across success+error status codes.
+#
 # ---------------------------------------------------------------------------
 
 _CONFORM_SPEC_YAML = (
@@ -826,10 +827,10 @@ _CONFORM_SPEC_YAML = (
     "    output_path: out/data.jsonl\n"
 )
 
-# fetch를 실패시켜 502 경로를 만들기 위한 spec: fake client가 모르는 소스.
+# spec that forces 502 path by failing fetch: source unknown to fake client.
 _FAILING_SPEC_YAML = _CONFORM_SPEC_YAML.replace("dataset: air_quality\n", "dataset: missing\n")
 
-# 파싱은 통과하지만 validate_spec에서 미지원 exporter kind로 실패하는 spec.
+# spec that parses but fails in validate_spec due to unsupported exporter kind.
 _INVALID_SPEC_YAML = _CONFORM_SPEC_YAML.replace("kind: jsonl", "kind: unsupported_format")
 
 
@@ -866,7 +867,9 @@ def _conform_service(tmp_path: Path) -> BuilderService:
 
 
 def _assert_conforms(resp: ServiceResponse, path: str, method: str) -> None:
-    """실제 dispatch 응답이 계약 스키마에 부합하는지(상태 코드 선언 + 본문 형태) 검증."""
+    """Verify actual dispatch response conforms to contract schema (status code declaration +
+    body shape).
+    """
     contract = _load_contract()
     schema = response_schema(contract, path, method, resp.status_code)
     assert schema is not None, (
@@ -880,7 +883,7 @@ def _assert_conforms(resp: ServiceResponse, path: str, method: str) -> None:
 
 
 class TestResponseConformance:
-    """선언된 각 오퍼레이션의 실제 wire 응답이 OpenAPI 스키마에 부합하는지 고정."""
+    """Lock actual wire response of each declared operation conforms to OpenAPI schema."""
 
     def test_version_200(self, tmp_path: Path) -> None:
         resp = dispatch(_conform_service(tmp_path), "GET", "/version", None)
@@ -899,7 +902,7 @@ class TestResponseConformance:
             _conform_service(tmp_path), "POST", "/validate", {"spec": _INVALID_SPEC_YAML}
         )
         assert resp.status_code == 400
-        # 미지원 exporter → {"status": "invalid", "problems": [...]}
+        # Unsupported exporter → {"status": "invalid", "problems": [...]}.
         _assert_conforms(resp, "/validate", "POST")
 
     def test_preview_200(self, tmp_path: Path) -> None:
@@ -930,7 +933,7 @@ class TestResponseConformance:
         _assert_conforms(resp, "/preview", "POST")
 
     def test_preview_400_bad_limit(self, tmp_path: Path) -> None:
-        # 400 응답은 oneOf(Error | ValidationError) — limit 오류는 Error 형태.
+        # 400 response is oneOf(Error | ValidationError) — limit error is Error form.
         resp = dispatch(
             _conform_service(tmp_path), "POST", "/preview", {"spec": _CONFORM_SPEC_YAML, "limit": 0}
         )
@@ -938,7 +941,7 @@ class TestResponseConformance:
         _assert_conforms(resp, "/preview", "POST")
 
     def test_preview_400_limit_above_max(self, tmp_path: Path) -> None:
-        # #497: limit 상한(1000) 신규 도입 — behavioral tightening.
+        # #497: new limit ceiling (1000) — behavioral tightening.
         resp = dispatch(
             _conform_service(tmp_path),
             "POST",
@@ -949,7 +952,7 @@ class TestResponseConformance:
         _assert_conforms(resp, "/preview", "POST")
 
     def test_preview_200_random_sample_mode_with_diff(self, tmp_path: Path) -> None:
-        # #497: sample_mode=random + diff가 실제 발생하는 응답도 계약을 만족하는지.
+        # #497: sample_mode=random + diff actually occurring responses satisfy contract.
         resp = dispatch(
             _conform_service(tmp_path),
             "POST",
@@ -973,8 +976,9 @@ class TestResponseConformance:
         _assert_conforms(resp, "/preview", "POST")
 
     def test_preview_200_wide_dataset_diff_truncated(self, tmp_path: Path) -> None:
-        # #497 sample/diff memory 상한: diffs가 실제로 잘려도(diff_truncated=true)
-        # 응답이 여전히 계약을 만족하는지 wire-level로 확인한다.
+        # 497 sample/diff memory ceiling: even if diffs are actually truncated
+        # (diff_truncated=true),
+        # verify response still satisfies contract at wire-level.
         from kpubdata_builder.pipeline import MAX_PREVIEW_DIFF_ITEMS
 
         columns = [f"c{i}" for i in range(MAX_PREVIEW_DIFF_ITEMS + 10)]
@@ -1022,7 +1026,7 @@ class TestResponseConformance:
         _assert_conforms(resp, "/build", "POST")
 
     def test_build_400_bad_run_id(self, tmp_path: Path) -> None:
-        # 400 응답은 oneOf(Error | ValidationError) — run_id 타입 오류는 Error 형태.
+        # 400 response is oneOf(Error | ValidationError) — run_id type error is Error form.
         resp = dispatch(
             _conform_service(tmp_path),
             "POST",
@@ -1277,7 +1281,8 @@ class TestResponseConformance:
         _assert_conforms(resp, "/monitoring/summary", "GET")
 
     def test_monitoring_summary_200_after_build(self, tmp_path: Path) -> None:
-        # 요청 처리 후 latency 표본이 기록되어도 계약을 벗어나지 않는지 확인.
+        # Verify contract is not violated even if latency sample is recorded after request
+        # processing.
         service = _conform_service(tmp_path)
         dispatch(service, "POST", "/build", {"spec": _CONFORM_SPEC_YAML, "run_id": "conform-mon"})
         resp = dispatch(service, "GET", "/monitoring/summary", None)
@@ -1362,11 +1367,11 @@ class TestResponseConformance:
 
 
 class TestBuildSpecSchemaContractIsPublished:
-    """BuildSpec 선언 모델이 공개 OpenAPI 계약과 함께 움직인다 (#611).
+    """BuildSpec declared model moves together with public OpenAPI contract (#611).
 
-    ``contract/builder-api.yaml``은 Studio와 타입 생성기가 읽는 HTTP 계약이다.
-    파이썬 모델에만 필드를 더하면 손으로 쓴 YAML에서는 동작하지만 계약 소비자는
-    그 기능을 발견하지도, 타이핑하지도 못한다. 드리프트를 테스트로 고정한다.
+    ``contract/builder-api.yaml`` is HTTP contract read by Studio and type generator.
+    Adding field only to Python model works in hand-written YAML but contract consumers
+    never discover or type it. Fix drift with test.
     """
 
     @staticmethod

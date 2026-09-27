@@ -1,8 +1,8 @@
-"""Quality History/Detail API 테스트 (#486).
+"""Quality History/Detail API tests (#486).
 
-``GET /datasets/{dataset_id}/quality/history``와 ``GET /builds/{run_id}/quality``가
-#488 dataset→run 조회 helper/ownership semantics를 재사용해 올바르게 집계·노출하는지
-검증한다.
+``GET /datasets/{dataset_id}/quality/history`` and ``GET /builds/{run_id}/quality``
+#488 reuse dataset→run lookup helper/ownership semantics to correctly aggregate/expose.
+Verify.
 """
 
 from __future__ import annotations
@@ -51,11 +51,11 @@ def _write_fixture_run(
     include_quality_key: bool = True,
     inputs: tuple[str, ...] | None = None,
 ) -> None:
-    """실제 파이프라인 없이 canonical snapshot + manifest만 기록하는 결정적 fixture.
+    """Deterministic fixture that records canonical snapshot + manifest without actual pipeline.
 
-    test_dataset_api.py의 동일 패턴(_write_fixture_run)을 재사용한다 — #488의
-    dataset→run 조회가 파일시스템 정본(snapshot+manifest)만으로 동작함을
-    전제하므로, quality 집계 로직도 같은 최소 fixture로 검증할 수 있다.
+    Reuse the same pattern (_write_fixture_run) from test_dataset_api.py — #488's
+    dataset→run lookup works only with filesystem source of truth (snapshot+manifest),
+    so quality aggregation logic can verify with same minimal fixture.
     """
     spec_yaml = _SPEC_YAML.format(dataset_id=dataset_id)
     spec = parse_spec(cast(dict[str, object], yaml.safe_load(spec_yaml)))
@@ -160,7 +160,7 @@ class TestDatasetQualityHistoryAggregation:
         assert entry["rule_pass_rate"] is None
 
     def test_legacy_run_without_quality_results_field(self, tmp_path: Path) -> None:
-        """manifest.quality_results 필드 자체가 없는 legacy run은 0건/None으로 표현된다."""
+        """legacy run without manifest.quality_results field is represented as 0/None."""
         _write_fixture_run(tmp_path, "r1", dataset_id="d.a", include_quality_key=False)
 
         resp = dispatch(_service(tmp_path), "GET", "/datasets/d.a/quality/history", None)
@@ -214,8 +214,8 @@ class TestDatasetQualityHistoryAggregation:
     def test_validated_rows_uses_row_counts_total_not_evaluated_rows_sum(
         self, tmp_path: Path
     ) -> None:
-        """validated_rows는 row_counts 합계를 쓰며, evaluated_rows를 rule 수만큼
-        중복 합산하지 않는다(#486 #16)."""
+        """validated_rows uses sum of row_counts, evaluated_rows by number of rules
+        does not double-sum (#486 #16)."""
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -237,7 +237,7 @@ class TestDatasetQualityHistoryAggregation:
         assert entry["validated_rows"] == 150
 
     def test_validated_rows_ignores_boolean_row_count_values(self, tmp_path: Path) -> None:
-        """손상된 manifest의 bool row_count 값은 1/0으로 합산되지 않는다(#486)."""
+        """corrupted manifest's bool row_count value is not summed as 1/0 (#486)."""
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -467,16 +467,15 @@ class TestBuildQualityDetail:
 
 
 class TestBuildQualityAvailability:
-    """``availability``/``evaluated_checks``가 4가지 상태를 구분하는지 검증한다 (#514).
+    """Verify ``availability``/``evaluated_checks`` distinguish 4 states (#514).
 
-    빈 ``quality_results``만으로는 "0건 평가"와 "애초에 계산된 적 없음"을 구분할 수
-    없었다 — 이 클래스는 그 구분(available/partial/unavailable, evaluated_checks
-    0 vs >0)이 manifest.inputs(known source) 커버리지에 따라 올바르게 판정되는지
-    검증한다.
+    Empty ``quality_results`` alone cannot distinguish "0 evaluations" from "never computed" —
+    this class verifies that distinction (available/partial/unavailable, evaluated_checks
+    0 vs >0) is correctly judged per manifest.inputs (known source) coverage.
     """
 
     def test_available_with_zero_evaluated_checks(self, tmp_path: Path) -> None:
-        """모든 known source가 커버되지만, 평가된 check가 0건인 경우."""
+        """All known sources covered but zero checks evaluated."""
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -492,7 +491,7 @@ class TestBuildQualityAvailability:
         assert resp.body["evaluated_checks"] == 0
 
     def test_available_with_evaluated_checks(self, tmp_path: Path) -> None:
-        """모든 known source가 커버되고, 평가된 check가 1건 이상인 경우."""
+        """All known sources covered, at least one check evaluated."""
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -510,7 +509,7 @@ class TestBuildQualityAvailability:
     def test_partial_when_a_known_source_is_missing_from_quality_results(
         self, tmp_path: Path
     ) -> None:
-        """multi-source run에서 한 source의 quality 결과가 아예 빠진 경우(partial)."""
+        """One source's quality result completely absent in multi-source run (partial)."""
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -526,9 +525,7 @@ class TestBuildQualityAvailability:
         assert resp.body["evaluated_checks"] == 1
 
     def test_unavailable_when_no_known_source_has_quality_results(self, tmp_path: Path) -> None:
-        """새 manifest writer는 quality가 하나도 계산되지 않아도 quality_results={}를
-        항상 기록한다 — 모든 source가 quality 단계 진입 전에 실패한 run은 "일부만
-        커버"(partial)가 아니라 "결과가 전혀 없음"(unavailable)이어야 한다."""
+        """New manifest writer writes quality_results={} even if no quality computed,"""
         _write_fixture_run(
             tmp_path,
             "r1",
@@ -546,7 +543,7 @@ class TestBuildQualityAvailability:
     def test_unavailable_for_legacy_manifest_without_quality_results_field(
         self, tmp_path: Path
     ) -> None:
-        """quality_results 필드 자체가 없는 legacy run(#486 이전)."""
+        """legacy run without quality_results field (pre-#486)."""
         _write_fixture_run(
             tmp_path, "r1", dataset_id="d.a", include_quality_key=False, inputs=("air",)
         )
@@ -559,11 +556,12 @@ class TestBuildQualityAvailability:
 
 
 class TestQualitySummary:
-    """GET /quality/summary — 최근 24h cross-run quality aggregate (#486 후속, API 1.22.0).
+    """GET /quality/summary — last 24h cross-run quality aggregate (#486 follow-up, API 1.22.0).
 
-    WARN/PASS/FAIL run 수 집계, 24h 경계, 미평가 run 제외, ownership 필터링을 검증한다.
-    시간 기준은 서비스 내부 ``datetime.now``라서 fixture는 실제 현재 시각 기준
-    상대 timestamp를 쓴다.
+    Verify WARN/PASS/FAIL run count aggregation, 24h boundary, unevaluated run exclusion,
+    ownership filtering.
+    Time basis is service-internal ``datetime.now``, so fixture uses relative timestamp from
+    actual current time.
     """
 
     @staticmethod
@@ -645,7 +643,7 @@ class TestQualitySummary:
         assert resp.body["pass_runs"] == 0
 
     def test_unavailable_and_zero_check_runs_are_not_evaluated(self, tmp_path: Path) -> None:
-        # legacy: quality_results 필드 자체가 없음
+        # legacy: quality_results field itself absent.
         _write_fixture_run(
             tmp_path,
             "r-legacy",
@@ -653,7 +651,7 @@ class TestQualitySummary:
             finished_at=self._ago(1),
             include_quality_key=False,
         )
-        # available 하지만 평가된 check 0건
+        # available but zero checks evaluated.
         _write_fixture_run(
             tmp_path,
             "r-empty",
@@ -723,11 +721,11 @@ class TestQualitySummary:
     def test_healthy_index_does_not_read_historical_manifests(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """오래된 run 다수 + 최근 run 소수일 때 historical manifest를 다시 읽지 않는다.
+        """Do not re-read historical manifest when many old runs + few recent runs.
 
-        #486 후속 리뷰: nominally 24h endpoint가 매 요청 all-history manifest/
-        snapshot 재파싱을 하던 regression 방지. canonical manifest.json mtime으로
-        candidate를 좁힌 뒤 그 candidate만 정본으로 재검증한다.
+        #486 follow-up review: nominally 24h endpoint reads all-history manifest per request;
+        prevent snapshot re-parsing regression. Narrow candidates by canonical manifest.json mtime,
+        then re-verify only those candidates as source of truth.
         """
         from kpubdata_builder.store import rebuild_index
 
@@ -737,10 +735,10 @@ class TestQualitySummary:
                 tmp_path,
                 f"old-{i}",
                 dataset_id=f"d.old{i}",
-                # 기본 finished_at(2025-01-01)은 24h 창 밖 — historical run.
+                # Default finished_at (2025-01-01) is outside 24h window — historical run.
                 quality_results={"air": [_result("warn")]},
             )
-            # 실제 오래된 run처럼 manifest.json mtime도 과거로 돌려놓는다.
+            # Set manifest.json mtime to past like actual old run.
             aged = old_cutoff.timestamp()
             os.utime(tmp_path / f"old-{i}" / "manifest.json", (aged, aged))
         _write_fixture_run(
@@ -769,11 +767,11 @@ class TestQualitySummary:
         assert resp.body["availability"] == "available"
         assert resp.body["total_runs"] == 1
         assert resp.body["warn_runs"] == 1
-        # 요청 처리 중 historical run의 manifest는 한 번도 읽지 않는다.
+        # historical run's manifest is never read during request processing.
         assert not any(rid.startswith("old-") for rid in read_run_ids)
 
     def test_empty_index_falls_back_to_filesystem_scan(self, tmp_path: Path) -> None:
-        """BuildIndex가 비어 있으면(아직 미구축) 기존 filesystem 폴백을 유지한다."""
+        """If BuildIndex is empty (not yet built), maintain existing filesystem fallback."""
         _write_fixture_run(
             tmp_path,
             "recent",
@@ -782,7 +780,7 @@ class TestQualitySummary:
             started_at=self._ago(1),
             quality_results={"air": [_result("warn")]},
         )
-        # rebuild_index 호출 없음 — index는 비어 있다.
+        # rebuild_index not called — index is empty.
         resp = dispatch(_service(tmp_path), "GET", "/quality/summary", None)
         assert resp.status_code == 200
         assert resp.body["availability"] == "available"
@@ -790,14 +788,7 @@ class TestQualitySummary:
         assert resp.body["warn_runs"] == 1
 
     def test_stale_index_timestamp_does_not_drop_in_window_run(self, tmp_path: Path) -> None:
-        """BuildIndex row가 stale(window 밖)이어도 canonical manifest가 window 안이면
-        24h aggregate에 포함된다.
-
-        시나리오(리뷰 지정): filesystem canonical manifest.finished_at = now-1h(창 안),
-        같은 run의 BuildIndex finished_at = now-3d(stale, 창 밖), index는 비어있지 않고
-        정상 query 가능. index는 파생 검색 index일 뿐이라(ADR 0003: "권위 없음")
-        정본 manifest를 기준으로 판정되어야 하므로 이 run은 반드시 집계에 포함된다.
-        """
+        """Even if BuildIndex row is stale (outside window), if canonical manifest is inside"""
         _write_fixture_run(
             tmp_path,
             "r-fresh",
@@ -809,7 +800,7 @@ class TestQualitySummary:
         service = _service(tmp_path)
         stale = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
         older = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-        # 파생 index에 의도적으로 stale한 행 + window 밖 다른 행을 심는다.
+        # Deliberately seed derived index with stale rows + other rows outside window.
         service._build_index.insert_or_replace(
             run_id="r-fresh",
             status="ok",
@@ -831,8 +822,11 @@ class TestQualitySummary:
         assert resp.body["warn_runs"] == 1
 
     def test_run_absent_from_index_still_counted(self, tmp_path: Path) -> None:
-        """index write가 유실돼 특정 run이 index에 아예 없어도(다른 run은 있음)
-        canonical manifest가 window 안이면 24h aggregate에 포함된다 (ADR 0003 폴백)."""
+        """A run absent from the index is still counted when the canonical manifest is in window.
+
+        Even if index write is lost and a specific run is completely absent from
+        index (other runs present), if the canonical manifest is inside the
+        window it is included in the 24h aggregate (ADR 0003 fallback)."""
         _write_fixture_run(
             tmp_path,
             "r-unindexed",

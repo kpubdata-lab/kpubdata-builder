@@ -1,9 +1,8 @@
-"""Quality/Schema 구조화 evaluator 단위 테스트 (#486).
+"""Quality/Schema structured evaluator unit tests (#486).
 
-Preview/Build가 공유하는 ``quality.evaluate_quality``를 SilverDataset 수준에서
-직접 검증한다. Pipeline 통합(WARN 계속/FAIL 게이트/manifest 보존)은
-test_pipeline.py, drift 범위 한정은 test_drift.py, API 표면은
-test_dataset_api.py/test_stage_api.py가 각각 담당한다.
+Verify ``quality.evaluate_quality`` shared by Preview/Build at SilverDataset level.
+Pipeline integration (WARN continue/FAIL gate/manifest preserve) is test_pipeline.py,
+drift scope is test_drift.py, API surface is test_dataset_api.py/test_stage_api.py respectively.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ def _find(
 
 
 class TestLegacyCompatibility:
-    """기존 #446 syntax의 위반은 기본 WARN이며 evaluate_quality가 동일하게 판정한다."""
+    """Existing #446 syntax violations are default WARN and evaluate_quality judges identically."""
 
     def test_max_duplicate_rate_violation_is_warn_by_default(self) -> None:
         df = pl.DataFrame({"id": [1, 1, 2]})  # duplicate_rate = 1/3
@@ -51,7 +50,7 @@ class TestLegacyCompatibility:
         assert r.category == "duplicate"
         assert r.actual == pytest.approx(1 / 3)
         assert r.threshold == 0.1
-        assert r.affected_rows is None  # 정확한 중복 행 수는 현재 통계에 없다.
+        assert r.affected_rows is None  # Exact duplicate row count is not in current statistics.
         assert r.evaluated_rows == 3
 
     def test_max_duplicate_rate_equal_to_threshold_passes(self) -> None:
@@ -96,7 +95,7 @@ class TestLegacyCompatibility:
         assert _find(results, "min_rows").status == "pass"
 
     def test_buildspec_round_trip_preserves_legacy_semantics(self) -> None:
-        """기존 quality YAML(신규 필드 없음)이 여전히 동작한다."""
+        """Existing quality YAML (no new fields) still works."""
         from kpubdata_builder.spec.loader import parse_spec
 
         spec = parse_spec(
@@ -137,7 +136,7 @@ class TestExplicitSeverity:
         df = pl.DataFrame({"a": [1, None], "b": [1, None]})
         policy = QualityPolicy(
             max_null_ratio={"a": 0.0, "b": 0.0},
-            max_null_ratio_severity={"a": "fail"},  # b는 override 없음 -> 기본 warn
+            max_null_ratio_severity={"a": "fail"},  # b has no override → default warn.
         )
 
         results = evaluate_quality(_silver(df), policy, source_key="s")
@@ -159,7 +158,7 @@ class TestMultipleChecksMixed:
         df = pl.DataFrame({"id": [1, 2, 3], "price": [1, None, 3]})
         policy = QualityPolicy(
             max_duplicate_rate=0.5,  # duplicate_rate=0.0 -> pass
-            max_null_ratio={"price": 0.1},  # 1/3 -> violation -> warn(기본)
+            max_null_ratio={"price": 0.1},  # 1/3 → violation → warn (default).
             min_rows=5,
             min_rows_severity="fail",  # 3 < 5 -> fail
         )
@@ -196,7 +195,7 @@ class TestZeroAndUnevaluated:
         assert results == ()
 
     def test_min_rows_zero_rows_still_evaluated_and_fails(self) -> None:
-        """row_count 0은 min_rows 자체는 well-defined 위반이지 미평가가 아니다."""
+        """row_count 0 is a well-defined min_rows violation, not unevaluated."""
         df = pl.DataFrame({"id": []}, schema={"id": pl.Int64})
         policy = QualityPolicy(min_rows=1)
 
@@ -207,7 +206,7 @@ class TestZeroAndUnevaluated:
         assert r.actual == 0
 
     def test_unevaluated_never_produces_pass(self) -> None:
-        """평가되지 않은 rule은 결과 목록에서 아예 제외되며, 임의로 PASS를 만들지 않는다."""
+        """Unevaluated rules are completely excluded from result list, no arbitrary PASS created."""
         df = pl.DataFrame({"price": []}, schema={"price": pl.Float64})
         policy = QualityPolicy(max_null_ratio={"price": 0.9})
 
@@ -274,7 +273,7 @@ class TestRangeRule:
         results = evaluate_quality(_silver(df), policy, source_key="s")
 
         r = _find(results, "range", "price")
-        assert r.evaluated_rows == 1  # null 2건은 evaluated_rows에서 제외
+        assert r.evaluated_rows == 1  # 2 nulls excluded from evaluated_rows.
         assert r.affected_rows == 0
 
     def test_all_null_column_not_evaluated(self) -> None:
@@ -375,7 +374,7 @@ class TestCompareColumnsRule:
         results = evaluate_quality(_silver(df), policy, source_key="s")
 
         r = _find(results, "compare_columns", "left,right")
-        assert r.evaluated_rows == 1  # 두 컬럼 모두 non-null인 행만
+        assert r.evaluated_rows == 1  # Only rows with both columns non-null.
         assert r.affected_rows == 0
 
     def test_missing_column_not_evaluated(self) -> None:
@@ -499,9 +498,9 @@ class TestSchemaChecks:
         assert _find(results, "dtype", "amount").status == "fail"
 
     def test_missing_required_column_does_not_generate_dtype_pass(self) -> None:
-        """required column이 없어 dtype을 검사할 수 없으면 dtype PASS를 만들지 않는다.
+        """If required column is absent and dtype cannot be checked, no dtype PASS is created.
 
-        "required FAIL + dtype PASS" 같은 모순을 방지한다(#486).
+        prevent contradictions like "required FAIL + dtype PASS" (#486).
         """
         df = pl.DataFrame({"id": [1]})
 

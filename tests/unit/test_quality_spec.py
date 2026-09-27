@@ -1,4 +1,6 @@
-"""quality BuildSpec 확장(range/compare_columns/severity) 파싱·검증·직렬화 테스트 (#486)."""
+"""quality BuildSpec extension (range/compare_columns/severity)
+parsing/validation/serialization tests (#486).
+"""
 
 from __future__ import annotations
 

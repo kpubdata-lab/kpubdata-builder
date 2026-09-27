@@ -1,8 +1,8 @@
 """Query API routing and HTTP-worker starvation boundary tests.
 
-``resolve_query_context`` 는 query 도메인 서비스로 옮겨갔다 (#596) — monkeypatch 대상도
-``service.query_service_api`` 다. 모듈 속성 패치는 타입 검사에 안 걸리므로, 모듈이 옮겨가면
-여기도 같이 따라가야 한다.
+``resolve_query_context`` moved to query domain service (#596) — monkeypatch target also
+``service.query_service_api``. Module attribute patch evades type check, so if module moves,
+this must follow too.
 """
 
 from __future__ import annotations
@@ -183,9 +183,9 @@ def test_query_saturation_rejects_immediately_and_version_remains_available(
 class TestQueryOwnershipEnforcement:
     """ENFORCE_OWNERSHIP regression for POST /query (#504).
 
-    resolve_query_context를 몽키패치하지 않고 실제로 호출해, resolver의 기존
-    소유권 판정(``_ownership_allowed``)이 service 계층에서 403으로 이어지는지만
-    확인한다 — ownership 구현 자체는 건드리지 않는다.
+    Call resolve_query_context without monkeypatch, verify resolver's existing ownership
+    judgment (``_ownership_allowed``) leads to 403 at service layer — do not touch
+    ownership implementation itself.
     """
 
     def _prepare_run(
@@ -256,7 +256,7 @@ class TestQueryOwnershipEnforcement:
     def test_query_from_dev_principal_bypasses_ownership(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """dev/service principal은 소유권 검사를 우회한다 (기존 semantics)."""
+        """dev/service principal bypass ownership check (existing semantics)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         self._prepare_run(monkeypatch, tmp_path, created_by="oidc:userA")
         service = self._service(tmp_path)
@@ -268,7 +268,7 @@ class TestQueryOwnershipEnforcement:
     def test_query_owner_id_match_succeeds_despite_different_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """canonical owner_id가 일치하면 display label이 달라도 소유자로 인정된다 (#505)."""
+        """If canonical owner_id matches, display label difference does not deny owner (#505)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         self._prepare_run(
             monkeypatch,
@@ -288,7 +288,9 @@ class TestQueryOwnershipEnforcement:
     def test_query_owner_id_mismatch_denied_despite_matching_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id가 있는 신규 레코드는 label이 같아도 owner_id 불일치면 거부한다 (#505)."""
+        """New record with owner_id is rejected even if label matches but owner_id differs
+        (#505).
+        """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         self._prepare_run(
             monkeypatch, tmp_path, created_by="oidc:userA", owner_id="oidc:canonical-real-owner"
@@ -303,7 +305,7 @@ class TestQueryOwnershipEnforcement:
     def test_query_ambiguous_record_with_no_owner_info_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id도 created_by도 없는 레코드는 거부한다 — fail-closed(#505)."""
+        """Record with neither owner_id nor created_by is rejected — fail-closed (#505)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         self._prepare_run(monkeypatch, tmp_path, created_by=None, owner_id=None)
         service = self._service(tmp_path)

@@ -74,19 +74,13 @@ def test_canonical_sql_removes_comments() -> None:
     ],
 )
 def test_allows_set_operations_over_dataset(sql: str) -> None:
-    """집합 연산도 dataset에서 파생된 질의다 (#504).
-
-    scope walker가 집합 연산 분기를 못 읽으면 여기서 AttributeError로 터진다 —
-    sqlglot 30.19가 ``Scope.union_scopes``를 ``set_operation_scopes``로 바꿨고,
-    선언된 버전 범위(>=30.17,<31)는 양쪽을 모두 허용한다. 질의 허용 여부를 정하는
-    가드 안에서 나는 예외라 조용히 지나갈 수 없다.
-    """
+    """Set operations are also queries derived from dataset (#504)."""
     assert validate_read_only_sql(sql).canonical_sql
 
 
 def test_set_operation_branches_are_counted_not_skipped() -> None:
-    # 분기를 못 세면 "dataset을 참조해야 한다" 규칙이 통과할 수 없다 — 이 질의는
-    # 오직 분기 안에서만 dataset을 참조한다.
+    # If the branch cannot be traced, the "must reference dataset" rule cannot pass — this query
+    # references dataset only within the branch.
     assert validate_read_only_sql(
         "SELECT * FROM (SELECT city FROM dataset UNION SELECT city FROM dataset) AS u"
     ).canonical_sql

@@ -1,4 +1,4 @@
-"""취소된 run 부분 산출물 보존/정리 훅 단위 테스트 (#549)."""
+"""Cancelled run partial artifact preservation/cleanup hook unit tests (#549)."""
 
 from __future__ import annotations
 
