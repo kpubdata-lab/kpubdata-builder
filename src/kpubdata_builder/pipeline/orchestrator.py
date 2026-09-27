@@ -42,7 +42,12 @@ from ..manifest import (
     compute_inputs_fingerprint,
     manifest_writer,
 )
-from ..quality import QualityCheckResult, SchemaDriftFinding, evaluate_quality
+from ..quality import (
+    DriftEvaluation,
+    QualityCheckResult,
+    SchemaDriftFinding,
+    evaluate_quality,
+)
 from ..spec import BuildSpec, CompositionSpec, ExportTarget, SourceRef, write_buildspec_snapshot
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
@@ -54,7 +59,12 @@ from ..stages.gold.card import build_dataset_card, render_dataset_card
 from ..stages.gold.compose import CompositionError, build_composed_gold_package
 from ..stages.gold.persist import persist_gold_package
 from ..stages.silver.build import build_silver_dataset
-from ..stages.silver.drift import DriftFinding, detect_drift, find_previous_silver
+from ..stages.silver.drift import (
+    DriftFinding,
+    SilverBaseline,
+    detect_drift,
+    find_previous_silver,
+)
 from ..stages.silver.models import SilverDataset
 from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
@@ -286,6 +296,9 @@ class _SourcePipelineResult:
     quality_results: tuple[QualityCheckResult, ...] = ()
     quality_evaluated: bool = False
     schema_drift: tuple[SchemaDriftFinding, ...] = ()
+    # Whether drift was compared at all, separate from what it found (#700). An
+    # empty schema_drift alone cannot tell "nothing changed" from "no baseline".
+    drift_evaluation: tuple[DriftEvaluation, ...] = ()
     silver: SilverDataset | None = None
 
 
@@ -297,6 +310,7 @@ def _run_source_pipeline(
     recorder: BuildEventRecorder,
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
+    baseline_owner_id: str | None = None,
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
 ) -> _SourcePipelineResult:
@@ -337,6 +351,7 @@ def _run_source_pipeline(
     quality_results: tuple[QualityCheckResult, ...] = ()
     quality_evaluated = False
     schema_drift: tuple[SchemaDriftFinding, ...] = ()
+    drift_evaluation: tuple[DriftEvaluation, ...] = ()
     # completed 목록에 없는 export 단계 진행 여부를 별도로 추적한다(#496) —
     # export는 gold 완료 후 실행되지만 기존 outcome 모델(stages_completed)에는
     # 반영되지 않는다. fetch_completed는 "bronze" not in completed만으로는
@@ -471,19 +486,46 @@ def _run_source_pipeline(
                     r.threshold,
                 )
 
-        # 드리프트 감지 (#445, DRIFT-1). 동일 dataset_id·source_key의 직전 "성공" run과만
-        # 비교한다 — 다른 dataset/source의 silver와 비교해 가짜 drift를 만들지 않는다 (#486).
-        prev_silver = find_previous_silver(
+        # Drift detection (#445, DRIFT-1). Compared only against the previous
+        # successful run of the same dataset_id and source_key, so another
+        # dataset's silver cannot manufacture drift (#486). The baseline is also
+        # restricted to the same owner (#700): another user's run as the baseline
+        # turns row count and schema changes into a metadata side channel.
+        baseline = find_previous_silver(
             context.output_root,
             context.run_id,
             dataset_id=context.spec.dataset_id,
             source_key=output_key,
+            owner_id=baseline_owner_id,
         )
-        if prev_silver is not None:
-            drift_findings = detect_drift(silver.schema, silver.statistics, *prev_silver)
+        if isinstance(baseline, SilverBaseline):
+            drift_findings = detect_drift(
+                silver.schema, silver.statistics, baseline.schema, baseline.stats
+            )
             schema_drift = _to_schema_drift_findings(drift_findings)
             for f in drift_findings:
                 logger.warning("드리프트 감지: %s @ %s — %s (#445)", f.kind, f.column, f.detail)
+            drift_evaluation = (
+                DriftEvaluation(
+                    axis="schema",
+                    evaluated=True,
+                    baseline_snapshot_id=baseline.run_id,
+                    detail=f"compared against run {baseline.run_id}",
+                ),
+            )
+        else:
+            # Leaving schema_drift empty drops the key from the manifest, and then
+            # "there was no baseline" and "compared, nothing changed" are the same
+            # answer on the wire (#700). Record the failure to evaluate explicitly.
+            drift_evaluation = (
+                DriftEvaluation(
+                    axis="schema",
+                    evaluated=False,
+                    reason=baseline.reason,
+                    detail=baseline.detail,
+                ),
+            )
+            logger.info("드리프트 미평가: %s — %s (#700)", output_key, baseline.detail)
 
         silver_paths = persist_silver_dataset(
             silver, output_root=context.output_root, run_id=context.run_id
@@ -588,6 +630,7 @@ def _run_source_pipeline(
             quality_results=quality_results,
             quality_evaluated=quality_evaluated,
             schema_drift=schema_drift,
+            drift_evaluation=drift_evaluation,
             silver=captured_silver,
         )
     except BuildCancelled:
@@ -608,6 +651,7 @@ def _run_source_pipeline(
             quality_results=quality_results,
             quality_evaluated=quality_evaluated,
             schema_drift=schema_drift,
+            drift_evaluation=drift_evaluation,
             silver=captured_silver,
         )
     except Exception as exc:  # stage 실패를 결과로 변환하여 매니페스트에 기록
@@ -656,6 +700,7 @@ def _run_source_pipeline(
             quality_results=quality_results,
             quality_evaluated=quality_evaluated,
             schema_drift=schema_drift,
+            drift_evaluation=drift_evaluation,
             silver=captured_silver,
         )
 
@@ -879,6 +924,7 @@ def run_build(
             recorder=recorder,
             upload_repository=upload_repository,
             owner_id=owner_id,
+            baseline_owner_id=effective_manifest_owner_id,
             capture_silver=_output_source_key(source) in composition_aliases,
             cancellation=cancellation,
         )
@@ -900,6 +946,7 @@ def run_build(
     provenance: list[SourceProvenance] = []
     quality_results: dict[str, tuple[QualityCheckResult, ...]] = {}
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = {}
+    drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
     silver_by_key: dict[str, SilverDataset] = {}
     for result in results:
         outputs.extend(result.output_paths)
@@ -917,6 +964,11 @@ def run_build(
             quality_results[result.outcome.source_key] = result.quality_results
         if result.schema_drift:
             schema_drift[result.outcome.source_key] = result.schema_drift
+        # Recorded unconditionally, unlike schema_drift: "not evaluated" is the case
+        # that has to survive to the manifest, and dropping a falsy value is exactly
+        # how it used to disappear (#700).
+        if result.drift_evaluation:
+            drift_evaluation[result.outcome.source_key] = result.drift_evaluation
         if result.silver is not None:
             silver_by_key[result.outcome.source_key] = result.silver
 
@@ -1005,6 +1057,7 @@ def run_build(
         owner_id=effective_manifest_owner_id,
         quality_results=quality_results,
         schema_drift=schema_drift,
+        drift_evaluation=drift_evaluation,
         composition=composition_provenance,
     )
     manifest_path = context.output_root / context.run_id / "manifest.json"
