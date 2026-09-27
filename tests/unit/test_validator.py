@@ -70,14 +70,6 @@ _EXP = (ExportTarget(kind="markdown", output_path="README.md"),)
             _EXP,
             ["at least one source is required"],
         ),
-        (
-            "dataset.sample",
-            "Sample Dataset",
-            "Sample description",
-            _SRC,
-            (),
-            ["at least one export target is required"],
-        ),
     ],
 )
 def test_validate_spec_rejects_invalid_spec(
@@ -101,6 +93,25 @@ def test_validate_spec_rejects_invalid_spec(
         validate_spec(spec)
 
     assert exc_info.value.problems == expected_problems
+
+
+def test_validate_spec_accepts_a_spec_without_exports() -> None:
+    """A spec with no export target is valid (#703).
+
+    Where this used to be a validation problem, it is now the materialise-only end
+    state: the build finishes at a committed table and publishing is an explicit
+    follow-up. Requiring an export target made a local analysis declare where to
+    publish before it could finish.
+    """
+    spec = BuildSpec(
+        dataset_id="dataset.sample",
+        title="Sample Dataset",
+        description="Sample description",
+        sources=_SRC,
+        exports=(),
+    )
+
+    validate_spec(spec)  # does not raise
 
 
 def test_validate_spec_rejects_unsupported_export_kind() -> None:

@@ -136,17 +136,35 @@ def test_parse_spec_rejects_empty_sources() -> None:
         _ = parse_spec(payload)
 
 
-def test_parse_spec_rejects_missing_exports() -> None:
+def test_parse_spec_accepts_a_missing_exports_key() -> None:
+    """A spec without exports is valid (#703).
+
+    Requiring an export target made the common case pay for the rare one: a local
+    analysis had to declare where to publish before the build could finish. A
+    warehouse build that only materialises a table is a complete job.
+    """
     payload = _valid_payload()
     del payload["exports"]
 
-    with pytest.raises(SpecLoadError, match="exports"):
-        _ = parse_spec(payload)
+    spec = parse_spec(payload)
+
+    assert spec.exports == ()
 
 
-def test_parse_spec_rejects_empty_exports() -> None:
+def test_parse_spec_accepts_empty_exports() -> None:
+    """An explicit empty list means the same as omitting the key."""
     payload = _valid_payload()
     payload["exports"] = []
+
+    spec = parse_spec(payload)
+
+    assert spec.exports == ()
+
+
+def test_parse_spec_still_rejects_a_non_list_exports() -> None:
+    """Optional is not the same as untyped — a string is still a mistake."""
+    payload = _valid_payload()
+    payload["exports"] = "jsonl"
 
     with pytest.raises(SpecLoadError, match="exports"):
         _ = parse_spec(payload)
