@@ -1,0 +1,84 @@
+# PR 에 새 커밋이 올라오면 Codex 재리뷰를 요청한다.
+#
+# Codex 는 **PR 을 열 때와 draft 를 ready 로 바꿀 때만** 리뷰한다. 이후 푸시에는
+# 리뷰하지 않으므로, 리뷰 지적을 고쳐서 푸시하면 리뷰가 그 커밋을 본 적이 없는
+# 상태로 남는다. 그런데도 PR 에는 초록 리뷰가 붙어 있어 검토된 것처럼 보인다.
+#
+# 실측: 이 워크플로를 만든 시점에 열려 있던 PR 4건 중 3건이 stale 이었다.
+#
+# 따라서 이미 리뷰가 있고 그 리뷰가 현재 head 를 보지 않았을 때만 재요청한다.
+# 리뷰가 아예 없으면 요청하지 않는다 — Codex 가 아직 첫 리뷰를 돌리는 중일 수 있고,
+# 그때 요청하면 같은 커밋을 두 번 리뷰한다.
+name: Codex re-review on new commits
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  # 연속 푸시마다 요청하지 않는다. 마지막 것만 남긴다.
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    # fork PR 의 토큰은 읽기 전용이라 코멘트를 달 수 없다. 조용히 실패하는 대신
+    # 아예 돌지 않게 해서, 로그에 실패가 쌓이지 않게 한다.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Request a re-review when the existing one is stale
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # 연속 푸시 중 마지막 하나만 처리되도록 잠깐 기다린다. concurrency 가
+          # 앞선 실행을 취소하므로, 이 대기 중에 취소되면 요청이 한 번만 나간다.
+          sleep 45
+
+          bot='chatgpt-codex-connector[bot]'
+          reviews=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            -q "[.[] | select(.user.login==\"$bot\") | .body] | last // \"\"")
+
+          if [ -z "$reviews" ]; then
+            echo "no Codex review yet — leaving it alone, the first one may still be running"
+            exit 0
+          fi
+
+          # 리뷰 본문의 "Reviewed commit: `<sha>`" 에서 SHA 를 뽑는다.
+          reviewed=$(printf '%s' "$reviews" | grep -oE '`[0-9a-f]{7,40}`' | tail -1 | tr -d '`' || true)
+
+          if [ -z "$reviewed" ]; then
+            echo "could not read the reviewed commit from the review body — not guessing"
+            exit 0
+          fi
+
+          # 리뷰가 짧은 SHA 를 쓰므로 접두사로 비교한다.
+          case "$HEAD_SHA" in
+            "$reviewed"*)
+              echo "the latest Codex review already covers $HEAD_SHA"
+              exit 0
+              ;;
+          esac
+
+          # 이 head 에 대해 이미 요청했는지 확인한다. 재실행이나 경합으로 두 번
+          # 요청하면 Codex 가 같은 커밋을 두 번 리뷰한다.
+          marker="<!-- codex-rereview:${HEAD_SHA} -->"
+          if gh api "repos/$REPO/issues/$PR/comments" --paginate -q '.[].body' \
+              | grep -qF "$marker"; then
+            echo "already requested a re-review for $HEAD_SHA"
+            exit 0
+          fi
+
+          printf '%s\n\n@codex review\n\nThe last review covered `%s`; head is now `%s`.\n' \
+            "$marker" "$reviewed" "${HEAD_SHA:0:10}" \
+            | gh pr comment "$PR" --repo "$REPO" --body-file -
+          echo "requested a re-review for $HEAD_SHA (previous review: $reviewed)"
