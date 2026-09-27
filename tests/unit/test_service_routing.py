@@ -23,8 +23,8 @@ from kpubdata_builder.spec import JsonValue
 
 
 class _RoutingStub:
-    """dispatch() latency recording wrapper _latency_recorder  
-     _auth_throttle ,    dummy  ."""
+    """dispatch() latency recording wrapper _latency_recorder
+    _auth_throttle ,    dummy  ."""
 
     _latency_recorder = LatencyRecorder()
     _auth_throttle = AuthFailureThrottle()

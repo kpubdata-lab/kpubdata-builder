@@ -1,7 +1,7 @@
-"""  , CUBRID URL , serve   (ADR 0016).
+""", CUBRID URL , serve   (ADR 0016).
 
- SQLAlchemy  CUBRID    —   URL , 
-``validate_storage_config()``  **   **  
+ SQLAlchemy  CUBRID    —   URL ,
+``validate_storage_config()``  **   **
 .    ``tests/cubrid/test_cubrid_fail_closed.py``.
 """
 
@@ -48,8 +48,8 @@ class TestCubridUrlDriver:
     """URL   pycubrid    (ADR 0016).
 
     sqlalchemy-cubrid  `cubrid`/`cubrid.cubrid`/`cubrid.cubriddb`  legacy
-    C-extension(`CUBRIDdb`) dialect , `cubrid.pycubrid`    
-    . `[cubrid]` extra  pycubrid      
+    C-extension(`CUBRIDdb`) dialect , `cubrid.pycubrid`
+    . `[cubrid]` extra  pycubrid
     ImportError   —    .
     """
 
@@ -97,8 +97,8 @@ class TestCubridUrlFromEnv:
 class TestValidateStorageConfig:
     """``serve()``    (#587, ADR 0016).
 
-        **  **  —  dev 
-    (sqlalchemy  )  ,   
+        **  **  —  dev
+    (sqlalchemy  )  ,
     ``tests/cubrid/test_cubrid_fail_closed.py``  .
     """
 

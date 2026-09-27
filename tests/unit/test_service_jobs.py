@@ -1,4 +1,4 @@
-""" build job    (#482)."""
+"""build job    (#482)."""
 
 from __future__ import annotations
 
@@ -292,8 +292,8 @@ class TestAsyncBuildJobs:
 class TestRunSubmittedEventFailure:
     """``run_submitted`` event append  job    (#496).
 
-    job executor   ** event append, "event 
-    job   "  (  C).  
+    job executor   ** event append, "event
+    job   "  (  C).
      ``AsyncBuildExecutor.submit()`` ``on_accept`` hook event append
     job    —   job registry worker
     pool   .
@@ -317,14 +317,14 @@ class TestRunSubmittedEventFailure:
         # HTTP    — 202(accepted) .
         assert response.status_code != 202
         assert response.status_code >= 500
-        # job registry/worker pool    — " 
+        # job registry/worker pool    — "
         # "  .
         assert service.build_status("run1").status_code == 404
         #      — run   .
         assert not (tmp_path / "run1").exists()
 
     def test_unrelated_run_id_is_unaffected_by_a_prior_failure(self, tmp_path: Path) -> None:
-        """ run_id     run_id  submission  ."""
+        """run_id     run_id  submission  ."""
         completed = threading.Event()
         service = _ObservedBuildService(
             output_root=tmp_path,
@@ -341,16 +341,16 @@ class TestRunSubmittedEventFailure:
 
 
 class TestExecutorEnqueueFailure:
-    """``on_accept``(event append)   worker pool  
+    """``on_accept``(event append)   worker pool
          (#496 self-review).
 
     ``AsyncBuildExecutor.submit()`` ``registry.create()`` job "queued"
      ** ``self._executor.submit()``  worker pool .
-      event(``run_submitted``)   registry 
+      event(``run_submitted``)   registry
       ,    "queued"   phantom
     job  —       . event
-    append-only  (#496 ),  job    
-    ``registry.mark_failed()`` . #496 lifecycle  timeline 
+    append-only  (#496 ),  job
+    ``registry.mark_failed()`` . #496 lifecycle  timeline
        ,  ``run_failed`` vocabulary  run_id
      event   ( event type/state/API field ).
     """
@@ -372,14 +372,14 @@ class TestExecutorEnqueueFailure:
         assert response.status_code != 202
         assert response.status_code >= 500
 
-        # registry "queued" phantom   —  job  
+        # registry "queued" phantom   —  job
         #    terminal("failed")  . HTTP(500)
         #  (failed)   " "  —  .
         status = service.build_status("run1")
         assert status.status_code == 200
         assert status.body["status"] == "failed"
 
-        # timeline   : run_submitted(append-only 
+        # timeline   : run_submitted(append-only
         # )   run_failed vocabulary  event , event
         #  "  "   . chronological order
         # run_submitted -> run_failed .
@@ -398,8 +398,8 @@ class TestExecutorEnqueueFailure:
     def test_resubmission_after_enqueue_failure_reports_existing_failed_job(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """  job   accepted(202) phantom 
-         failed   ( "existing"  semantics ).
+        """job   accepted(202) phantom
+        failed   ( "existing"  semantics ).
         """
         client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
         service = BuilderService(output_root=tmp_path, client_factory=lambda: client)
@@ -513,9 +513,9 @@ class TestBuildJobStatusOwnership:
 class TestWorkerAlwaysReachesATerminalState:
     """runner   job  (#482).
 
-    worker ``RuntimeError``      thread 
+    worker ``RuntimeError``      thread
     . ``_finish``   job  ``running`` ,
-    polling    build , queue  
+    polling    build , queue
     .
     """
 
@@ -557,12 +557,12 @@ class TestWorkerAlwaysReachesATerminalState:
     def test_the_error_message_names_the_exception_type(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """      .
+        """.
 
-         error  ``GET /builds/{run_id}``   .  
-         " "         —
-         SQL  .     
-           ,   traceback  .
+        error  ``GET /builds/{run_id}``   .
+        " "         —
+        SQL  .
+          ,   traceback  .
         """
         import logging
 
@@ -608,7 +608,7 @@ class TestWorkerAlwaysReachesATerminalState:
 
 
 class TestMalformedSpecYaml:
-    """  YAML      ."""
+    """YAML      ."""
 
     MALFORMED = "dataset_id: [unclosed\n"
 
@@ -652,11 +652,11 @@ def _await_terminal(service: BuilderService, run_id: str, timeout: float = 5.0) 
 
 
 class TestSyncBuildRespectsRunOwnership:
-    """ POST /build   run    (#635).
+    """POST /build   run    (#635).
 
-     run_id     ,  run    
-     .  run_id    run     
-     .  POST /builds      
+     run_id     ,  run
+     .  run_id    run
+     .  POST /builds
     .
     """
 
@@ -701,7 +701,7 @@ class TestSyncBuildRespectsRunOwnership:
     def test_a_new_run_id_is_not_blocked(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        #  run_id  "    "   — 404 
+        #  run_id  "    "   — 404
         # .  route       .
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path, threading.Event())
@@ -724,10 +724,10 @@ class TestSyncBuildRespectsRunOwnership:
 
 
 class TestConcurrentSubmitOfTheSameRunId:
-    """ · ·  lock scope   (#482 ).
+    """· ·  lock scope   (#482 ).
 
-           .  run_id  
-    POST       ``on_accept``     event 
+           .  run_id
+    POST       ``on_accept``     event
       ,      .
     """
 
@@ -804,7 +804,7 @@ class TestAcceptHookFailureLeavesNoGhostJob:
 class TestTerminalJobsDoNotAccumulateForever:
     """terminal job          .
 
-    snapshot        ,  
+    snapshot        ,
     .
     """
 
@@ -825,7 +825,7 @@ class TestTerminalJobsDoNotAccumulateForever:
         assert registry.get("run3") is not None
 
     def test_eviction_follows_completion_order_not_submission_order(self) -> None:
-        """   ,   run   ."""
+        """,   run   ."""
         registry = AsyncBuildJobRegistry(max_terminal_jobs=1)
         registry.create(run_id="slow", created_by="a")
         registry.create(run_id="fast", created_by="a")
@@ -839,7 +839,7 @@ class TestTerminalJobsDoNotAccumulateForever:
         assert registry.get("slow") is not None
 
     def test_active_jobs_are_never_evicted(self) -> None:
-        """     job     ."""
+        """job     ."""
         registry = AsyncBuildJobRegistry(max_terminal_jobs=1)
         registry.create(run_id="running", created_by="a")
         registry.begin_run("running")
@@ -875,9 +875,9 @@ class TestTerminalJobsDoNotAccumulateForever:
 class TestEvictedJobsAreStillObservable:
     """registry  terminal job     run    (#666 ).
 
-    #666     ``GET /builds/{run_id}``   run  404 
-        .  manifest    
-    ,    run     " run"   
+    #666     ``GET /builds/{run_id}``   run  404
+        .  manifest
+    ,    run     " run"
     . manifest      .
     """
 
@@ -927,7 +927,7 @@ class TestEvictedJobsAreStillObservable:
         assert "error" not in body
 
     def test_the_live_registry_still_wins(self, tmp_path: Path) -> None:
-        """ registry   job  manifest   registry  ."""
+        """registry   job  manifest   registry  ."""
         service = self._service_with_manifest(tmp_path, "run-live", status="ok")
         service._async_builds.registry.create(run_id="run-live", created_by="tester")
 
@@ -944,7 +944,7 @@ class TestEvictedJobsAreStillObservable:
 class TestIndexFailuresAreLoggedNotSwallowed:
     """BuildIndex     ,   .
 
-    ``except Exception: pass`` . FS       
+    ``except Exception: pass`` . FS
     ,     index   ·    .
        run     .
     """

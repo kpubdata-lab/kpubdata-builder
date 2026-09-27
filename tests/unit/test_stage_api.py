@@ -1,7 +1,7 @@
 """Bronze/Silver/Gold stage summary/detail HTTP API  (#488).
 
  BuilderService.build()    run  ,
-ownership, path-safety, preview cap, secret  .   
+ownership, path-safety, preview cap, secret  .
 (partial/failed ) test_stage_reader.py  .
 """
 
@@ -258,7 +258,7 @@ class TestSilverDetail:
         assert capped.status_code == 200
         assert len(cast(list[object], capped.body["sample"])) == 2
 
-        # persist  DEFAULT_PREVIEW_LIMIT(5) , limit 
+        # persist  DEFAULT_PREVIEW_LIMIT(5) , limit
         #  5    (parquet   ).
         generous = dispatch(
             service, "GET", "/builds/r1/stages/silver", None, query="source=air&limit=100"
@@ -333,7 +333,7 @@ class TestStageOwnership:
         assert resp.status_code == 403
 
         # ownership   stage sidecar    . (manifest.json
-        # created_by  ownership    ,  ** 
+        # created_by  ownership    ,  **
         # stage summary    .)
         monkeypatch.setattr(
             stages_api_module.stages_service,

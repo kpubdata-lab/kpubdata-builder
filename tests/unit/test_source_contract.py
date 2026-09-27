@@ -118,7 +118,7 @@ def test_unknown_kind_is_rejected() -> None:
     ],
 )
 def test_foreign_kind_fields_are_rejected(source: dict[str, object]) -> None:
-    """ kind field  loader   (#498)."""
+    """kind field  loader   (#498)."""
     with pytest.raises(SpecLoadError, match="not valid for kind"):
         parse_spec(_payload(source))
 
@@ -177,8 +177,8 @@ def test_validate_spec_rejects_unknown_kind_from_directly_constructed_sourceref(
     """loader   SourceRef   unknown kind .
 
     loader(YAML )  unknown kind (``test_unknown_kind_is_rejected``),
-    ``SourceRef(kind="ftp", ...)`` programmatic BuildSpec 
-    loader   — validate_spec canonical kind 
+    ``SourceRef(kind="ftp", ...)`` programmatic BuildSpec
+    loader   — validate_spec canonical kind
     (public_api|file|url) fail-closed    (#538 review).
     """
     spec = _spec(SourceRef(kind="ftp", provider="datago", dataset="air_quality"))

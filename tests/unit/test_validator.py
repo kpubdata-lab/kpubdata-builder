@@ -18,7 +18,7 @@ from kpubdata_builder.spec.validator import validate_spec
 
 
 def test_validate_spec_accepts_valid_spec() -> None:
-    """ BuildSpec  validate_spec    ."""
+    """BuildSpec  validate_spec    ."""
     # sources exports      .
     spec = BuildSpec(
         dataset_id="dataset.sample",
@@ -239,7 +239,7 @@ def test_validate_spec_accepts_publish_with_license() -> None:
         publish=True,
         license="CC-BY-4.0",
     )
-    validate_spec(spec)  #  
+    validate_spec(spec)  #
 
 
 def test_validate_spec_skips_license_check_when_not_publishing() -> None:
@@ -252,7 +252,7 @@ def test_validate_spec_skips_license_check_when_not_publishing() -> None:
         exports=_EXP,
         publish=False,
     )
-    validate_spec(spec)  #  
+    validate_spec(spec)  #
 
 
 def test_validate_spec_warns_time_column_random_split() -> None:
@@ -281,7 +281,7 @@ def test_validate_spec_no_warning_for_key_mode_with_time_column() -> None:
         exports=_EXP,
         splits=SplitSpec(mode="key", key="date"),
     )
-    validate_spec(spec)  #  
+    validate_spec(spec)  #
 
 
 def test_validate_spec_no_warning_for_ratio_without_time_key() -> None:
@@ -294,7 +294,7 @@ def test_validate_spec_no_warning_for_ratio_without_time_key() -> None:
         exports=_EXP,
         splits=SplitSpec(mode="ratio", ratios={"train": 0.8, "test": 0.2}, key="region"),
     )
-    validate_spec(spec)  #  
+    validate_spec(spec)  #
 
 
 def _spec_with_schema(schema: SchemaContract) -> BuildSpec:
@@ -330,7 +330,7 @@ def test_validate_spec_rejects_unknown_derived_kind() -> None:
 
 
 def test_validate_spec_rejects_date_parts_without_three_columns() -> None:
-    # date_parts (year, month, day)  3 . 2 
+    # date_parts (year, month, day)  3 . 2
     # normalize_table unpack ValueError  —   .
     spec = _spec_with_schema(
         SchemaContract(
@@ -343,7 +343,7 @@ def test_validate_spec_rejects_date_parts_without_three_columns() -> None:
 
 
 def test_validate_spec_accepts_year_month_cast() -> None:
-    # #620 — year_month dtype  named cast. validator  
+    # #620 — year_month dtype  named cast. validator
     # validate   Silver   .
     spec = _spec_with_schema(SchemaContract(casts={"ym": "year_month"}))
 
@@ -351,7 +351,7 @@ def test_validate_spec_accepts_year_month_cast() -> None:
 
 
 def test_validate_spec_rejects_coalesce_without_candidates() -> None:
-    # #620 —   normalize  .    
+    # #620 —   normalize  .
     #     .
     spec = _spec_with_schema(SchemaContract(coalesce={"move_meter": ()}))
 
@@ -369,8 +369,8 @@ def test_validate_spec_rejects_repeated_coalesce_candidate() -> None:
 
 
 def test_validate_spec_rejects_chained_coalesce_groups() -> None:
-    # #620 —      {"a": ["x"], "b": ["a"]} 
-    #   . canonical_spec_mapping()    
+    # #620 —      {"a": ["x"], "b": ["a"]}
+    #   . canonical_spec_mapping()
     #   digest       .
     spec = _spec_with_schema(SchemaContract(coalesce={"a": ("x",), "b": ("a",)}))
 
@@ -440,7 +440,7 @@ def test_validate_spec_rejects_duplicate_rename_targets() -> None:
 @pytest.mark.parametrize(
     "schema",
     [
-        # rename  
+        # rename
         SchemaContract(
             rename={"dealYmd": "deal_date"},
             derived=(DerivedColumn(name="deal_date", kind="date_parts", columns=("y", "m", "d")),),
@@ -450,17 +450,17 @@ def test_validate_spec_rejects_duplicate_rename_targets() -> None:
             casts={"deal_date": "str"},
             derived=(DerivedColumn(name="deal_date", kind="date_parts", columns=("y", "m", "d")),),
         ),
-        # zfill  
+        # zfill
         SchemaContract(
             zfill={"key": 5},
             derived=(DerivedColumn(name="key", kind="join_key", columns=("a",)),),
         ),
-        # coalesce  
+        # coalesce
         SchemaContract(
             coalesce={"key": ("legacy_key",)},
             derived=(DerivedColumn(name="key", kind="join_key", columns=("a",)),),
         ),
-        #   
+        #
         SchemaContract(
             derived=(
                 DerivedColumn(name="key", kind="join_key", columns=("a",)),
@@ -470,7 +470,7 @@ def test_validate_spec_rejects_duplicate_rename_targets() -> None:
     ],
 )
 def test_validate_spec_rejects_derived_name_collision(schema: SchemaContract) -> None:
-    #    schema     with_columns  
+    #    schema     with_columns
     #    —     .
     with pytest.raises(ValidationError) as exc:
         validate_spec(_spec_with_schema(schema))
@@ -479,7 +479,7 @@ def test_validate_spec_rejects_derived_name_collision(schema: SchemaContract) ->
 
 
 def test_validate_spec_allows_declaring_a_derived_columns_expected_dtype() -> None:
-    # dtypes         —   dtype 
+    # dtypes         —   dtype
     #      .
     validate_spec(
         _spec_with_schema(
@@ -504,10 +504,10 @@ def _spec_with_sources(*sources: SourceRef) -> BuildSpec:
 
 
 def test_two_sources_resolving_to_the_same_output_key_are_rejected() -> None:
-    """ dataset params      (#630).
+    """dataset params      (#630).
 
-     outcome  "ok"  ,   run  
-       .
+    outcome  "ok"  ,   run
+      .
     """
     spec = _spec_with_sources(
         SourceRef(provider="datago", dataset="apt_trade", params={"LAWD_CD": "11110"}),

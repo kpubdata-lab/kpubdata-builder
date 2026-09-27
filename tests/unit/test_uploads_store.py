@@ -155,11 +155,11 @@ def test_repository_persists_across_reopen(tmp_path: Path) -> None:
 
 
 class TestLargePayloadsSpillToFiles:
-    """ payload  SQLite BLOB     (#622).
+    """payload  SQLite BLOB     (#622).
 
-    SQLite   ``SQLITE_MAX_LENGTH``   953 MiB .  945.6 MiB 
+    SQLite   ``SQLITE_MAX_LENGTH``   953 MiB .  945.6 MiB
      1,444 MiB  ``string or blob too big``    .
-        **  SQLite   value 
+        **  SQLite   value
        **  .
     """
 
@@ -232,7 +232,7 @@ class TestLargePayloadsSpillToFiles:
         assert list(self._blob_dir(tmp_path).glob("*.bin")) == []
 
     def test_a_tampered_payload_is_refused(self, tmp_path: Path) -> None:
-        #    ,   Bronze  
+        #    ,   Bronze
         #    .
         repo = self._repo(tmp_path)
         meta = repo.put(

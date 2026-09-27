@@ -6,7 +6,7 @@
     -   (``_validate_url_shape``/``_resolve_and_validate``) IP
        hostname       (IP
        DNS   ).
-    -  fetch (redirect ,  ,   ) 
+    -  fetch (redirect ,  ,   )
       ``http.server``  ``_resolve_and_validate``/``_PinnedHTTPSConnection``
        seam     monkeypatch  —  SSRF
        (redirect-loop,  )  .
@@ -136,10 +136,10 @@ def test_read_bounded_rejects_content_over_limit() -> None:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib 
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib
         return
 
-    def do_GET(self) -> None:  # noqa: N802 - stdlib 
+    def do_GET(self) -> None:  # noqa: N802 - stdlib
         if self.path == "/ok":
             body = b'[{"id": 1}]'
             self.send_response(200)
@@ -153,8 +153,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
         elif self.path == "/redirect-with-body":
-            # redirect(3xx) body    —  body amt 
-            # read() max_bytes cap  unbounded read 
+            # redirect(3xx) body    —  body amt
+            # read() max_bytes cap  unbounded read
             # BLOCKER(#538 review)   non-empty body.
             body = b"ignored redirect body " * 10
             self.send_response(302)
@@ -164,7 +164,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif self.path == "/redirect-to-private":
-            # redirect target private  hop  SSRF 
+            # redirect target private  hop  SSRF
             #   ( , #538 review).
             self.send_response(302)
             self.send_header("Location", "https://10.0.0.1/private")
@@ -206,10 +206,10 @@ def _raw_local_server() -> Iterator[HTTPServer]:
 class _LoopbackHTTPConnection:
     """``_PinnedHTTPSConnection``    HTTP    test double.
 
-       TLS ,  fixture   
-       HTTP  — url_fetch   connection
-      test double  redirect/ /   
-          .
+     TLS ,  fixture
+     HTTP  — url_fetch   connection
+    test double  redirect/ /
+        .
     """
 
     def __init__(
@@ -239,12 +239,12 @@ class _LoopbackHTTPConnection:
 def local_server(
     monkeypatch: pytest.MonkeyPatch, _raw_local_server: HTTPServer
 ) -> Iterator[HTTPServer]:
-    """ HTTP  ,  seam      .
+    """HTTP  ,  seam      .
 
-     SSRF (scheme/userinfo/redirect-loop / ) 
+     SSRF (scheme/userinfo/redirect-loop / )
     , "hostname →   "  (``_resolve_and_validate``,
-    ``_PinnedHTTPSConnection``)  loopback   . 
-    fixture     —    
+    ``_PinnedHTTPSConnection``)  loopback   .
+    fixture     —
      .
     """
     import kpubdata_builder.ingestion.url_fetch as url_fetch_module
@@ -323,7 +323,7 @@ def test_safe_fetch_get_does_not_perform_unbounded_read_on_redirect_body(
     result = safe_fetch_get("https://example.org/redirect-with-body")
 
     assert result.content == b'[{"id": 1}]'  #   redirect  .
-    # redirect hop   read()  amt=None() 
+    # redirect hop   read()  amt=None()
     #  —  200  _read_bounded()  chunk size .
     assert all(amt is not None for amt in calls)
 
@@ -334,9 +334,9 @@ def test_safe_fetch_get_rejects_redirect_to_private_address(
     """redirect target private  hop     .
 
     redirect body      SSRF (hop )
-       — ``local_server`` fixture  host 
-    127.0.0.1    hop(example.org)   
-    redirect target(10.0.0.1)  ``_resolve_and_validate`` 
+       — ``local_server`` fixture  host
+    127.0.0.1    hop(example.org)
+    redirect target(10.0.0.1)  ``_resolve_and_validate``
      .
     """
     import kpubdata_builder.ingestion.url_fetch as url_fetch_module

@@ -1,8 +1,8 @@
 """stages._stage_reader   (#488).
 
-Bronze/Silver/Gold stage    summary ,   
+Bronze/Silver/Gold stage    summary ,
     .   "Bronze  → Silver  →
-Gold "      partial 
+Gold "      partial
    .
 """
 
@@ -174,7 +174,7 @@ class TestStageStatus:
         assert result.gold == "failed"
 
     def test_source_fetch_failure_all_not_run_or_failed(self, tmp_path: Path) -> None:
-        """  fetch   bronze ,  not_run."""
+        """fetch   bronze ,  not_run."""
         run_id = "run1"
         source = "missing"
         #    .
@@ -195,7 +195,7 @@ class TestStageStatus:
         assert result.gold == "not_run"
 
     def test_partial_silver_sidecar_is_unavailable(self, tmp_path: Path) -> None:
-        """  sidecar  completed/failed  unavailable."""
+        """sidecar  completed/failed  unavailable."""
         run_id = "run1"
         source = "air"
         _write_bronze_artifact(tmp_path, run_id, source, "art1")

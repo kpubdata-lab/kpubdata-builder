@@ -120,25 +120,25 @@ def test_validate_spec_accepts_valid_ratio_splits() -> None:
 
 
 def test_key_split_sentinel_values_collected_separately_before_merge() -> None:
-    # #225:      " "/"None" 
+    # #225:      " "/"None"
     #  "__missing__"/"__null__"      .
     #     ,   .
     spec = SplitSpec(mode="key", key="cat")
     records: list[dict[str, JsonValue]] = [
-        {"id": "1", "cat": "__missing__"},  #  
-        {"id": "2", "cat": "__null__"},  #  
-        {"id": "3"},  #   → __missing__ 
-        {"id": "4", "cat": None},  # None → __null__ 
+        {"id": "1", "cat": "__missing__"},  #
+        {"id": "2", "cat": "__null__"},  #
+        {"id": "3"},  #   → __missing__
+        {"id": "4", "cat": None},  # None → __null__
     ]
 
     result = apply_splits(records, spec)
 
     #  2  —     .
     assert set(result.keys()) == {"__missing__", "__null__"}
-    # __missing__   "__missing__"      
+    # __missing__   "__missing__"
     missing_ids = {row["id"] for row in result["__missing__"]}
     assert missing_ids == {"1", "3"}
-    # __null__   "__null__"  None    
+    # __null__   "__null__"  None
     null_ids = {row["id"] for row in result["__null__"]}
     assert null_ids == {"2", "4"}
 

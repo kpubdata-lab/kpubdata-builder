@@ -51,8 +51,8 @@ license: CC-BY-4.0
 
 UNLICENSED_SPEC_YAML = LICENSED_SPEC_YAML.replace("license: CC-BY-4.0\n", "")
 
-# spec loader license   (spec/loader.py) — 
-#      whitespace-only     
+# spec loader license   (spec/loader.py) —
+#      whitespace-only
 # (#491  4).  SPDX allowlist   blank  .
 BLANK_LICENSE_SPEC_YAML = LICENSED_SPEC_YAML.replace("license: CC-BY-4.0\n", 'license: "   "\n')
 
@@ -64,7 +64,7 @@ FAILING_SPEC_YAML = LICENSED_SPEC_YAML.replace("dataset: air_quality\n", "datase
 
 
 class _SpyPublisher(BasePublisher):
-    """    fake publisher.   ."""
+    """fake publisher.   ."""
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class _SpyPublisher(BasePublisher):
 
 
 class _DeferredPublisher(_SpyPublisher):
-    """ remote call Event  pending receipt   ."""
+    """remote call Event  pending receipt   ."""
 
     def __init__(self) -> None:
         super().__init__("huggingface")
@@ -268,8 +268,8 @@ class TestReadiness:
     def test_blank_license_is_not_recognized_as_declared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#491  4: spec loader license   
-        whitespace-only  BuildSpec.license    — #443 
+        """#491  4: spec loader license
+        whitespace-only  BuildSpec.license    — #443
          ,   ""   ."""
         _with_credentials(monkeypatch, "huggingface")
         service = _service(tmp_path)
@@ -290,7 +290,7 @@ class TestReadiness:
     def test_kaggle_target_readiness_reports_packaging_blocker(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # #550  kaggle HTTP target — packaging/credential 
+        # #550  kaggle HTTP target — packaging/credential
         # readiness blocker (unsupported_target 400 ).
         _with_credentials(monkeypatch, "kaggle")
         service = _service(tmp_path)
@@ -314,7 +314,7 @@ class TestReadiness:
         assert "pii_allow_with_publish" in _blocker_codes(resp)
 
     def test_local_target_without_root_reports_blocker(self, tmp_path: Path) -> None:
-        # #550  local HTTP target — publish-root  400 
+        # #550  local HTTP target — publish-root  400
         # readiness blocker(fail-closed   ).
         service = _service(tmp_path)
         _build(service, "run-local", LICENSED_SPEC_YAML)
@@ -597,7 +597,7 @@ class TestPublish:
 
         resp = _publish(service, "run-publish-error")
         assert resp.status_code == 502
-        # #491 blocker 1: PublishError " known exception" 
+        # #491 blocker 1: PublishError " known exception"
         # str(exc)    — stable generic  .
         assert resp.body["error"] == "publish failed due to an unexpected error"
         assert resp.body["code"] == "publish_failed"
@@ -681,8 +681,8 @@ class TestPublish:
         caplog: pytest.LogCaptureFixture,
         secret_message: str,
     ) -> None:
-        """#491 blocker 1  : fake publisher secret/ 
-          HTTP response  log    ."""
+        """#491 blocker 1  : fake publisher secret/
+        HTTP response  log    ."""
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface", error=PublishError(secret_message))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
@@ -719,7 +719,7 @@ class TestPublish:
         _build(service, "run-retry", LICENSED_SPEC_YAML)
 
         first = _publish(service, "run-retry")
-        #  operation exact retry  credential/artifact  
+        #  operation exact retry  credential/artifact
         #   durable   .
         monkeypatch.delenv("HF_TOKEN")
         next((tmp_path / "run-retry" / "gold").rglob("table.parquet")).unlink()
@@ -820,7 +820,7 @@ class TestPublish:
         _build(service, "run-kaggle-disabled-post", LICENSED_SPEC_YAML)
 
         resp = _publish(service, "run-kaggle-disabled-post", target="kaggle")
-        # #550  kaggle HTTP target — packaging/credential 
+        # #550  kaggle HTTP target — packaging/credential
         # readiness blocker  (unsupported_target 400 ).
         assert resp.status_code == 409
         assert "kaggle_metadata_missing" in _blocker_codes(resp)
@@ -961,8 +961,8 @@ class TestArtifactScope:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """#491 blocker 2  : manifest.outputs  gold artifact
-        gold_dir (``..``) artifact  ,  artifact 
-          publish    fail-closed 
+        gold_dir (``..``) artifact  ,  artifact
+          publish    fail-closed
         — readiness false, artifact blocker , POST 409, Publisher
         0 ."""
         _with_credentials(monkeypatch, "huggingface")
@@ -992,8 +992,8 @@ class TestArtifactScope:
     def test_symlink_escape_artifact_blocks_publish(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """gold_dir  symlink gold root  (#46/#47 
-        path-safety    , ``ensure_within`` resolve 
+        """gold_dir  symlink gold root  (#46/#47
+        path-safety    , ``ensure_within`` resolve
         )  fail-closed  ."""
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface")
@@ -1407,7 +1407,7 @@ class TestReceiptReconcile:
             assert set(entry) == {"fingerprint", "action", "actor", "recorded_at"}
 
     def test_audit_api_cross_owner_is_blocked(self, tmp_path, monkeypatch):
-        """  run    (#563)."""
+        """run    (#563)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         owner = Principal(kind="oidc", identifier="a", owner_id="oidc:owner-a")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: owner)
@@ -1438,7 +1438,7 @@ class TestReceiptReconcile:
 
 
 class TestOpenApiConformance:
-    """ dispatch() wire  OpenAPI    (ADR-0005 )."""
+    """dispatch() wire  OpenAPI    (ADR-0005 )."""
 
     def test_readiness_200_ready_conforms(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1515,9 +1515,9 @@ class TestOpenApiConformance:
 class TestRemotePublishProbe:
     """`_probe_remote_publish_target` stub    (#551).
 
-    reconcile     monkeypatch .   
+    reconcile     monkeypatch .
     huggingface_hub      ,
-    ``dataset_info(repo_type=...)``     TypeError 
+    ``dataset_info(repo_type=...)``     TypeError
     " "    .
     """
 
@@ -1591,7 +1591,7 @@ class TestRemotePublishProbe:
     def test_a_signature_mismatch_is_not_reported_as_an_unreachable_remote(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        #         — " " 
+        #         — " "
         # reconcile      .
         def _raise(repo_id: str, **kwargs: object) -> object:
             raise TypeError("dataset_info() got an unexpected keyword argument")
@@ -1604,17 +1604,17 @@ class TestRemotePublishProbe:
 
 
 class TestCancelledRunIsNotPublishable:
-    """ run partial    (#481, #491).
+    """run partial    (#481, #491).
 
-    publish  manifest ``errors``   . 
+    publish  manifest ``errors``   .
     errors    run ``succeeded`` ,
-    ``run_status_blocker`` ``run_cancelled``    
+    ``run_status_blocker`` ``run_cancelled``
       —     HF/Kaggle    .
     """
 
     @staticmethod
     def _cancel_manifest(tmp_path: Path, run_id: str) -> None:
-        """ run manifest  run  ."""
+        """run manifest  run  ."""
         manifest_path = tmp_path / run_id / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["status"] = "cancelled"
