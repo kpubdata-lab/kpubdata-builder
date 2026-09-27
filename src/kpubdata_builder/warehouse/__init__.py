@@ -20,6 +20,9 @@ Three pieces:
   committed snapshots are separate directories, and promotion is a single rename.
 - :mod:`~kpubdata_builder.warehouse.gc` — reclaims orphaned staging directories
   and superseded snapshots, refusing anything current or under a lease.
+- :mod:`~kpubdata_builder.warehouse.baseline` — picks the committed snapshot drift
+  may compare against (#700), scoped by owner, coverage and schema contract, and
+  returning a stated reason rather than ``None`` when nothing qualifies.
 
 The order of a commit is the contract::
 
@@ -36,6 +39,14 @@ leaves the previous current snapshot readable, because nothing ever wrote over i
 
 from __future__ import annotations
 
+from .baseline import (
+    BaselineFound,
+    BaselineOutcome,
+    DriftAxis,
+    NotEvaluated,
+    NotEvaluatedReason,
+    select_baseline,
+)
 from .catalog import (
     CATALOG_FILENAME,
     DEFAULT_LEASE_SECONDS,
@@ -59,8 +70,13 @@ from .layout import MANIFEST_FILENAME, SnapshotLayout, SnapshotManifest
 
 __all__ = [
     "CATALOG_FILENAME",
+    "BaselineFound",
+    "BaselineOutcome",
     "DEFAULT_LEASE_SECONDS",
+    "DriftAxis",
     "MANIFEST_FILENAME",
+    "NotEvaluated",
+    "NotEvaluatedReason",
     "SCHEMA_VERSION",
     "ImmutableSnapshot",
     "PinnedSnapshot",
@@ -76,4 +92,5 @@ __all__ = [
     "TableNotFound",
     "TableRow",
     "WarehouseError",
+    "select_baseline",
 ]
