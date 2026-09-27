@@ -40,6 +40,9 @@ _MAX_LIMIT = 200
 #: 비공개라 여기서 다시 적는다.
 _TERMINAL_JOB_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
+#: 아직 실행이 시작되지 않은 job 상태. 상태 어휘를 한곳에 모아 둔다.
+_QUEUED_JOB_STATUS = "queued"
+
 
 def _forbidden(principal: Principal, action: str) -> ServiceResponse:
     """관리자가 아닌 요청. **거부도 기록한다** — 누가 관리 경로를 두드렸는지가
@@ -88,7 +91,7 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         # created_at 은 요청을 **접수한** 시각이다. 아직 실행 대기 중이라면
         # 시작 시각이 아니므로 비워 둔다 — 그대로 넣으면 아직 돌지도 않은 job 이
         # 이미 시작한 것으로 읽힌다.
-        started = None if job.status == "queued" else job.created_at
+        started = None if job.status == _QUEUED_JOB_STATUS else job.created_at
         rows[job.run_id] = {
             "run_id": job.run_id,
             "status": job.status,

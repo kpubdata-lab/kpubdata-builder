@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from .auth import Principal
 
@@ -39,6 +40,10 @@ _audit_logger.setLevel(logging.INFO)
 #: 여러 번 붙으면 같은 감사 기록이 여러 줄로 남아 개수를 셀 수 없게 된다.
 _fallback_handler: logging.Handler | None = None
 
+#: 첫 기록에서 판단하므로 두 요청이 동시에 들어올 수 있다. 잠그지 않으면 둘 다
+#: 검사를 통과해 handler 가 두 개 붙고, 같은 기록이 두 줄 남는다.
+_output_lock = threading.Lock()
+
 
 def _ensure_audit_output() -> None:
     """handler 가 아무 데도 없을 때만 stderr handler 를 하나 붙인다.
@@ -50,18 +55,21 @@ def _ensure_audit_output() -> None:
     global _fallback_handler
     if _fallback_handler is not None:
         return
-    logger: logging.Logger | None = _audit_logger
-    while logger is not None:
-        if logger.handlers:
+    with _output_lock:
+        if _fallback_handler is not None:
             return
-        if not logger.propagate:
-            break
-        logger = logger.parent
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
-    _audit_logger.addHandler(handler)
-    _fallback_handler = handler
+        logger: logging.Logger | None = _audit_logger
+        while logger is not None:
+            if logger.handlers:
+                return
+            if not logger.propagate:
+                break
+            logger = logger.parent
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+        _audit_logger.addHandler(handler)
+        _fallback_handler = handler
 
 
 def record_admin_action(
