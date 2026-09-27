@@ -1,13 +1,13 @@
-"""정적 데이터 카탈로그 페이지 생성기 (#42).
+"""Static data catalog page generator (#42).
 
-빌드 매니페스트를 기반으로 브랜드 배포용 정적 HTML 카탈로그 페이지를 만든다.
-각 데이터셋의 제목·설명·레코드 수·소스 수·산출물 목록을 카드로 나열한다.
-모든 동적 텍스트는 HTML 이스케이프되어 안전하게 삽입된다.
+Creates static HTML catalog pages for brand distribution based on build manifests.
+Lists each dataset's title, description, record count, source count, and artifact list as cards.
+All dynamic text is HTML-escaped for safe insertion.
 
-주요 구성:
-    - CatalogEntry: 카탈로그 한 항목
+Key components:
+    - CatalogEntry: Single catalog entry
     - catalog_entry_from_manifest: BuildManifest → CatalogEntry
-    - render_catalog_html: 항목 목록 → 완성된 HTML 문서
+    - render_catalog_html: Item list → completed HTML document
 """
 
 from __future__ import annotations
@@ -20,15 +20,15 @@ from .manifest import BuildManifest
 
 @dataclass(frozen=True)
 class CatalogEntry:
-    """카탈로그 페이지의 단일 데이터셋 항목.
+    """Single dataset entry on catalog page.
 
-    속성:
-        dataset_id: 데이터셋 식별자.
-        title: 표시 제목.
-        description: 설명.
-        record_count: 총 레코드 수.
-        source_count: 소스 수.
-        outputs: 산출물 경로 목록.
+    Attributes:
+        dataset_id: Dataset identifier.
+        title: Display title.
+        description: Description.
+        record_count: Total record count.
+        source_count: Number of sources.
+        outputs: List of artifact paths.
     """
 
     dataset_id: str
@@ -46,18 +46,18 @@ def catalog_entry_from_manifest(
     title: str,
     description: str = "",
 ) -> CatalogEntry:
-    """BuildManifest에서 카탈로그 항목을 파생한다.
+    """Derive catalog entry from BuildManifest.
 
-    레코드 수는 row_counts 합, 소스 수는 inputs 길이로 계산한다.
+    Record count is sum of row_counts, source count is inputs length.
 
-    매개변수:
-        manifest: 통계를 가져올 빌드 매니페스트.
-        dataset_id: 데이터셋 식별자.
-        title: 표시 제목.
-        description: 설명.
+    Args:
+        manifest: Build manifest to get statistics from.
+        dataset_id: Dataset identifier.
+        title: Display title.
+        description: Description.
 
-    반환값:
-        CatalogEntry: 렌더링 가능한 카탈로그 항목.
+    Returns:
+        CatalogEntry: Renderable catalog entry.
     """
     return CatalogEntry(
         dataset_id=dataset_id,
@@ -70,7 +70,7 @@ def catalog_entry_from_manifest(
 
 
 def _render_entry(entry: CatalogEntry) -> list[str]:
-    """단일 카탈로그 항목을 HTML 카드로 렌더링한다."""
+    """Render single catalog entry as HTML card."""
     lines = [
         '    <article class="dataset-card">',
         f"      <h2>{escape(entry.title)}</h2>",
@@ -94,14 +94,14 @@ def _render_entry(entry: CatalogEntry) -> list[str]:
 
 
 def render_catalog_html(entries: list[CatalogEntry], *, site_title: str = "Data Catalog") -> str:
-    """카탈로그 항목 목록을 완성된 정적 HTML 문서로 렌더링한다.
+    """Render list of catalog entries as complete static HTML document.
 
-    매개변수:
-        entries: 표시할 카탈로그 항목 (주어진 순서를 보존).
-        site_title: 페이지 제목.
+    Args:
+        entries: Catalog entries to display (preserve given order).
+        site_title: Page title.
 
-    반환값:
-        str: 마지막 줄바꿈을 포함한 HTML 문서.
+    Returns:
+        str: HTML document including final newline.
     """
     head = [
         "<!DOCTYPE html>",

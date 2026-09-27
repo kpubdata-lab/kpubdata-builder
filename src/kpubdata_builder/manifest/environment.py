@@ -1,11 +1,11 @@
-"""빌드 환경 메타데이터 (#211).
+"""Build environment metadata (#211).
 
-매니페스트에 빌드를 생성한 실행 환경(Python/kpubdata/builder 버전)을 기록해
-재현성과 디버깅을 돕는다. 패키지 메타데이터를 못 찾으면 "unknown"으로 폴백한다.
+Records execution environment (Python/kpubdata/builder versions) that generated build in manifest
+to aid reproducibility and debugging. If package metadata not found, "unknown" is used.
 
-주요 구성:
-    - BuildEnvironment: 실행 환경 스냅샷
-    - capture_build_environment: 현재 환경에서 스냅샷 생성
+Key components:
+    - BuildEnvironment: Execution environment snapshot
+    - capture_build_environment: Create snapshot from current environment
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from importlib import metadata
 
 @dataclass(frozen=True)
 class BuildEnvironment:
-    """빌드를 생성한 실행 환경 스냅샷.
+    """Snapshot of execution environment that generated build.
 
-    속성:
-        python_version: 빌드를 실행한 Python 버전 (예: "3.12.3").
-        kpubdata_version: 설치된 kpubdata 버전. 알 수 없으면 "unknown".
-        builder_version: 설치된 kpubdata-builder 버전. 알 수 없으면 "unknown".
+    Attributes:
+        python_version: Python version that ran build (e.g. "3.12.3").
+        kpubdata_version: Installed kpubdata version. "unknown" if unavailable.
+        builder_version: Installed kpubdata-builder version. "unknown" if unavailable.
     """
 
     python_version: str
@@ -31,7 +31,7 @@ class BuildEnvironment:
 
 
 def _package_version(name: str) -> str:
-    """설치된 패키지 버전을 반환하고, 없으면 "unknown"을 돌려준다."""
+    """Return installed package version, or "unknown" if not found."""
     try:
         return metadata.version(name)
     except metadata.PackageNotFoundError:
@@ -39,7 +39,7 @@ def _package_version(name: str) -> str:
 
 
 def capture_build_environment() -> BuildEnvironment:
-    """현재 실행 환경의 BuildEnvironment 스냅샷을 만든다."""
+    """Create BuildEnvironment snapshot of current execution environment."""
     return BuildEnvironment(
         python_version=platform.python_version(),
         kpubdata_version=_package_version("kpubdata"),

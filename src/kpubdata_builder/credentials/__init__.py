@@ -1,4 +1,4 @@
-"""사용자별 Provider credential 저장과 해석."""
+"""Per-user Provider credential storage and interpretation."""
 
 from .crypto import AesGcmCredentialCipher, CredentialCipher, CredentialCryptoError
 from .models import CredentialMetadata

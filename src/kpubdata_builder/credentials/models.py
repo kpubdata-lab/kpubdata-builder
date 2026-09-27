@@ -1,4 +1,4 @@
-"""Provider credential 도메인 모델."""
+"""Provider credential domain model."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class CredentialMetadata:
-    """원문 credential을 포함하지 않는 저장 메타데이터."""
+    """Storage metadata that does not include plaintext credential."""
 
     provider: str
     configured: bool

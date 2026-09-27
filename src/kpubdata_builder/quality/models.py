@@ -1,13 +1,13 @@
-"""Quality/Schema Drift 구조화 결과 모델 (#486).
+"""Quality/Schema Drift structured result model (#486).
 
-Silver 통계·테이블·schema 계약을 평가한 결과를 PASS/WARN/FAIL로 정규화한
-``QualityCheckResult``와, ``detect_drift()``(#445)의 결과를 API/manifest에 실을 수
-있게 옮긴 ``SchemaDriftFinding``을 정의한다.
+Define QualityCheckResult normalizing evaluation results of Silver statistics/table/
+schema contract to PASS/WARN/FAIL, and SchemaDriftFinding for results from
+``detect_drift()`` (#445).
 
-원칙:
-    - 임의 종합 Quality Score를 만들지 않는다 — 개별 check만 존재한다.
-    - rule 미설정/미평가는 결과 목록에서 아예 제외한다(PASS로 가장하지 않는다).
-    - affected_rows/evaluated_rows가 의미 없으면 0으로 위장하지 않고 None을 쓴다.
+Principles:
+    - Don't create arbitrary composite Quality Score — only individual checks exist.
+    - Rule unset/unevaluated excluded entirely from results (don't pretend PASS).
+    - If affected_rows/evaluated_rows meaningless, use None not fake 0.
 """
 
 from __future__ import annotations
@@ -22,22 +22,22 @@ QualityStatus = Literal["pass", "warn", "fail"]
 
 @dataclass(frozen=True)
 class QualityCheckResult:
-    """단일 quality/schema check의 구조화된 결과 (#486).
+    """Structured result of single quality/schema check (#486).
 
-    속성:
-        source_key: 소스 식별자 (output-facing key).
-        category: check 대분류 (예: "duplicate", "missing", "row_count", "schema",
+    Attributes:
+        source_key: Source identifier (output-facing key).
+        category: Check category (e.g., "duplicate", "missing", "row_count", "schema",
             "range", "compare_columns").
-        rule: 구체적 rule 이름 (예: "max_duplicate_rate", "max_null_ratio",
+        rule: Specific rule name (e.g., "max_duplicate_rate", "max_null_ratio",
             "min_rows", "required_column", "dtype", "range", "compare_columns").
-        column: 관련 컬럼명. 테이블 전체 규칙이거나 compare_columns처럼 컬럼 쌍인
-            경우(``"{left},{right}"`` 형식) 등 단일 컬럼이 아니면 None 또는 합성값.
+        column: Related column name. For table-wide rules or column pairs like
+            compare_columns (``"{left},{right}"`` format), None or composite value.
         status: "pass" | "warn" | "fail".
-        actual: 실제 관측값 (JSON 직렬화 가능한 스칼라).
-        threshold: 비교 대상 임계값 (JSON 직렬화 가능한 스칼라).
-        affected_rows: 위반한 행 수. 의미 없거나 정확히 셀 수 없으면 None(임의
-            정수 추정 금지).
-        evaluated_rows: 실제로 평가에 사용된 행 수. 의미 없으면 None.
+        actual: Actual observed value (JSON-serializable scalar).
+        threshold: Comparison threshold (JSON-serializable scalar).
+        affected_rows: Rows violating rule. None if meaningless or can't count exactly
+            (don't guess arbitrary integers).
+        evaluated_rows: Rows actually used in evaluation. None if meaningless.
     """
 
     source_key: str
@@ -54,16 +54,17 @@ class QualityCheckResult:
 
 @dataclass(frozen=True)
 class SchemaDriftFinding:
-    """API/manifest에 실을 구조화된 schema drift 관찰 (#445, #486).
+    """Structured schema drift observation for API/manifest (#445, #486).
 
-    ``stages.silver.drift.DriftFinding``과 필드가 같다 — deterministic 감지
-    결과를 그대로 옮긴 것이며, drift 자체는 PASS/WARN/FAIL 게이트에 관여하지
-    않는다(참고용). #448 AI 해석이 붙더라도 이 구조는 바뀌지 않는다.
+    Same fields as ``stages.silver.drift.DriftFinding`` — deterministic detection
+    result moved as-is; drift itself doesn't participate in PASS/WARN/FAIL gate
+    (for reference only). Even if AI interpretation added in #448, this structure
+    doesn't change.
 
-    속성:
+    Attributes:
         kind: column_added | column_removed | dtype_changed | row_count_jump.
-        column: 관련 컬럼명. 테이블 전체 문제면 None.
-        detail: 사람이 읽는 설명.
+        column: Related column name. None if table-wide issue.
+        detail: Human-readable explanation.
     """
 
     kind: str

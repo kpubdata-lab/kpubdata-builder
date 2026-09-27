@@ -1,8 +1,8 @@
-"""tabular 엔진의 내부 protocol (#49).
+"""Internal protocol for tabular engine (#49).
 
-Silver 단계가 의존하는 엔진 표면을 구조적 타입으로 명시한다. 공개 API가
-아니라 내부 계약 문서화/타입 체크용이며, 현재 구현체는 polars_engine 모듈의
-함수 집합이다. 단일 엔진(Polars) 원칙에 따라 dual-engine 추상화는 두지 않는다.
+Explicitly documents engine surface that Silver phase depends on as structural type. Not public API,
+for internal contract documentation/type checking; current implementation is polars_engine module
+function set. Per single-engine (Polars) principle, no dual-engine abstraction.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from .types import PreviewSlice, SchemaInfo, TableStatistics
 
 
 class TabularEngine(Protocol):
-    """tabular 엔진이 제공해야 하는 최소 연산 집합 (internal)."""
+    """Minimum operation set that tabular engine must provide (internal)."""
 
     def records_to_dataframe(self, records: Sequence[dict[str, JsonValue]]) -> pl.DataFrame: ...
 

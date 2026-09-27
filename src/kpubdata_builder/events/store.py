@@ -1,23 +1,24 @@
-"""Append-only SQLite 기반 run event store (#496).
+"""Append-only SQLite-based run event store (#496).
 
-``store.build_index.BuildIndex``(#309, ADR 0003)와 같은 SQLite 동시성 패턴
-(WAL 모드, busy_timeout, thread-local connection, 트랜잭션)을 재사용하지만
-failure policy는 다르다:
+Same SQLite concurrency pattern as ``store.build_index.BuildIndex`` (#309, ADR 0003)
+(WAL mode, busy_timeout, thread-local connection, transaction) reused but
+failure policy differs:
 
-- ``BuildIndex``는 ``manifest.json``의 **파생·재구축 가능한 인덱스**라서 쓰기
-  실패를 삼켜도 된다(ADR 0003) — 잃어도 파일시스템 스캔으로 다시 만들 수 있다.
-- 이 store는 run event timeline의 **유일한 정본**이다 — 다시 만들 수 있는
-  원본이 없다. 그래서 ``append()``는 실패를 삼키지 않고 그대로 전파한다
-  (#496 "lost event 없음"). 이 store를 감싸는 pipeline 쪽 호출부
-  (``events.recorder.BuildEventRecorder``)는 그 실패가 *다른* 정본(manifest,
-  소스 outcome)을 침범하지 않도록 흡수하되, ``BuildManifest.warnings``로
-  드러낸다 — store 자체는 절대 자기 실패를 조용히 숨기지 않는다.
+- ``BuildIndex`` is **derivative, rebuildable index** from ``manifest.json``, so write
+  Failures can be swallowed (ADR 0003) — even if lost, can be recreated by filesystem scan.
+- This store is **only canonical** for run event timeline — recreatable
+  no canonical original. So ``append()`` propagates failures without swallowing
+  (#496 "no lost events"). Callers in pipeline wrapping this store
+  (``events.recorder.BuildEventRecorder``) absorbs that failure so it doesn't
+  breach *other* canonicals (manifest,
+  source outcome), recording via ``BuildManifest.warnings``
+  exposes — store itself never silently hides its own failures.
 
-동시성: 여러 source가 ``ThreadPoolExecutor``(#247)로 병렬 실행되며 각자
-event를 append한다. ``AUTOINCREMENT`` 기본키는 SQLite가 커밋 순서대로 부여하는
-전역 monotonic sequence이므로, 이 값 하나로 서로 다른 스레드의 append 순서를
-손실 없이, causal ordering을 지어내지 않고 그대로 보존할 수 있다(#496 병렬
-ordering 정책).
+Concurrency: Multiple sources run in parallel via ``ThreadPoolExecutor`` (#247), each
+event appending. ``AUTOINCREMENT`` primary key assigned by SQLite in commit order
+global monotonic sequence; this single value preserves different threads' append order
+without loss, without imposing causal ordering (#496 parallel
+ordering policy).
 """
 
 from __future__ import annotations
@@ -57,11 +58,11 @@ _SELECT_COLUMNS = "seq, run_id, timestamp, event, status, source_key, stage, mes
 
 
 class BuildEventStore:
-    """단일 output_root의 모든 run에 대한 append-only event 저장소.
+    """Append-only event store for all runs under single output_root.
 
-    ``BuildIndex``와 동일하게 output_root 아래 별도 SQLite 파일
-    (``_build_events.sqlite``)을 쓴다 — manifest.json/BuildIndex와 독립적인
-    파일이라 이 store의 스키마 변경이 다른 정본에 영향을 주지 않는다.
+    Like ``BuildIndex``, separate SQLite file under output_root
+    (``_build_events.sqlite``) — independent file from manifest.json/BuildIndex,
+    so this store's schema changes don't affect other canonicals.
     """
 
     def __init__(self, output_root: Path, *, db_path: Path | None = None) -> None:
@@ -78,8 +79,10 @@ class BuildEventStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self._db_path), timeout=30.0)  # busy_timeout: 동시성 경합 대기
-        conn.execute("PRAGMA journal_mode=WAL")  # 동시 읽기 + 병렬 append 허용
+        conn = sqlite3.connect(
+            str(self._db_path), timeout=30.0
+        )  # busy_timeout: wait for concurrency contention
+        conn.execute("PRAGMA journal_mode=WAL")  # Allow concurrent reads + parallel appends
         return conn
 
     def _init_db(self) -> None:
@@ -94,10 +97,9 @@ class BuildEventStore:
             )
             cur = self._conn.execute("SELECT version FROM schema_version")
             if cur.fetchone() is None:
-                # v1은 첫 배포다 — 파괴적 마이그레이션(DROP)이 필요 없다. 이 store는
-                # append-only 정본이므로(BuildIndex와 달리) 스키마가 바뀌어도 절대
-                # 기존 event 행을 DROP하지 않는다 — 향후 버전은 ALTER/신규 컬럼
-                # 추가로만 마이그레이션해야 한다.
+                # v1 is first release — no destructive migration (DROP) needed. This store is
+                # append-only canonical (unlike BuildIndex), so schema change never DROPs existing
+                # event rows — future versions migrate only via ALTER/add new columns.
                 self._conn.execute(
                     f"INSERT INTO schema_version (version) VALUES ({SCHEMA_VERSION})"
                 )
@@ -116,14 +118,14 @@ class BuildEventStore:
             raise
 
     def append(self, event: BuildEvent) -> BuildEvent:
-        """event를 append하고, store가 부여한 ``seq``가 채워진 새 인스턴스를 반환한다.
+        """Append event and return new instance with ``seq`` assigned by store.
 
-        실패를 삼키지 않는다(#496) — 이 store는 event timeline의 유일한 정본이라
-        ``BuildIndex``(ADR 0003, 파생 인덱스)와 달리 쓰기 실패를 조용히
-        무시하면 event가 영구히 사라진다. 호출부가 실패 처리 정책을 정한다.
+        Does not swallow failures (#496) — this store is sole canonical of event timeline,
+        so unlike ``BuildIndex`` (ADR 0003, derived index), silently ignoring write failures
+        loses events permanently. Callers set failure handling policy.
 
-        예외:
-            sqlite3.Error: 기록에 실패한 경우 그대로 전파된다.
+        Raises:
+            sqlite3.Error: Propagated as-is if recording fails.
         """
         timestamp = event.timestamp
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
@@ -153,12 +155,13 @@ class BuildEventStore:
         return replace(event, seq=seq)
 
     def list_for_run(self, run_id: str, *, limit: int, tail: bool) -> tuple[BuildEvent, ...]:
-        """단일 run의 event를 chronological ascending 순서로 최대 ``limit``개 반환한다.
+        """Return up to ``limit`` events from single run in chronological ascending order.
 
-        ``tail=False``(기본)는 run 시작부터 ``limit``개, ``tail=True``는 가장 최근
-        ``limit``개를 고르되 반환 자체는 항상 오름차순이다(#496 timeline
-        rendering 정책) — 클라이언트가 매번 뒤집을 필요가 없다. bounded query다:
-        limit이 항상 SQL ``LIMIT``으로 전달되어 테이블 전체를 읽지 않는다.
+        ``tail=False`` (default) starts from run beginning to ``limit`` items,
+        ``tail=True`` picks most recent ``limit`` items, but return itself
+        always ascending (#496 timeline rendering policy) — client
+        doesn't need to flip each time. Bounded query: limit always passed as SQL ``LIMIT``,
+        never reads entire table.
         """
         if tail:
             cur = self._conn.execute(
@@ -178,10 +181,9 @@ class BuildEventStore:
         return tuple(_row_to_event(row) for row in rows)
 
     def close(self) -> None:
-        """연결을 닫는다 (WAL을 메인 DB 파일로 체크포인트한 뒤).
+        """Close connection (checkpoint WAL to main DB file first).
 
-        ``BuildIndex.close()``와 동일한 패턴 — 테스트/재배치에서 파일을
-        안전하게 옮길 수 있게 한다.
+        Same pattern as ``BuildIndex.close()`` — safely move file in tests/redeployment.
         """
         if hasattr(self._local, "conn"):
             self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

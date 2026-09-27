@@ -1,13 +1,13 @@
-"""두 빌드 매니페스트를 비교하는 diff 도구 (#16).
+"""Diff tool comparing two build manifests (#16).
 
-이 모듈은 두 BuildManifest를 받아 소스/레코드 수/산출물/오류·경고의 변화를
-구조화된 차이 목록으로 반환한다. 빌드 간 무엇이 추가·삭제·변경되었는지 한눈에
-파악할 수 있게 한다.
+Takes two BuildManifests and returns structured diff list of changes in
+sources/record count/artifacts/errors·warnings.
+Allows at-a-glance understanding of what was added/deleted/changed between builds.
 
-주요 구성:
-    - DiffItem: 단일 변경 항목
-    - BuildDiff: 비교 결과
-    - compare_manifests: 두 BuildManifest 비교
+Key components:
+    - DiffItem: Single change item
+    - BuildDiff: Comparison result
+    - compare_manifests: Compare two BuildManifests
 """
 
 from __future__ import annotations
@@ -23,12 +23,12 @@ MODIFIED = "modified"
 
 @dataclass(frozen=True)
 class DiffItem:
-    """두 빌드 사이의 단일 변경 항목.
+    """Single change item between two builds.
 
-    속성:
-        field: 변경된 항목 식별자 (예: "row_count:datago.apt_trade").
-        old_value: 이전 값 (추가된 경우 빈 문자열).
-        new_value: 새 값 (삭제된 경우 빈 문자열).
+    Attributes:
+        field: Changed item identifier (e.g. "row_count:datago.apt_trade").
+        old_value: Previous value (empty string if added).
+        new_value: New value (empty string if deleted).
         change_type: "added" | "removed" | "modified".
     """
 
@@ -40,13 +40,13 @@ class DiffItem:
 
 @dataclass(frozen=True)
 class BuildDiff:
-    """두 BuildManifest 비교 결과.
+    """Result of comparing two BuildManifests.
 
-    속성:
-        manifest_a: 기준(이전) 빌드 ID.
-        manifest_b: 비교(이후) 빌드 ID.
-        diffs: 변경 항목 목록 (결정적 순서).
-        summary: 사람이 읽는 한 줄 요약.
+    Attributes:
+        manifest_a: Base (previous) build ID.
+        manifest_b: Comparison (subsequent) build ID.
+        diffs: List of changes (deterministic order).
+        summary: Human-readable one-line summary.
     """
 
     manifest_a: str
@@ -56,12 +56,12 @@ class BuildDiff:
 
     @property
     def changed(self) -> bool:
-        """변경 항목이 하나라도 있으면 True."""
+        """True if there is at least one change item."""
         return bool(self.diffs)
 
 
 def _diff_set(field_prefix: str, before: tuple[str, ...], after: tuple[str, ...]) -> list[DiffItem]:
-    """집합 형태 필드(소스/산출물)의 추가·삭제를 비교한다."""
+    """Compare additions and deletions of set-type fields (sources/artifacts)."""
     before_set, after_set = set(before), set(after)
     items = [
         DiffItem(field=f"{field_prefix}:{value}", old_value="", new_value=value, change_type=ADDED)
@@ -77,7 +77,7 @@ def _diff_set(field_prefix: str, before: tuple[str, ...], after: tuple[str, ...]
 
 
 def _diff_row_counts(before: dict[str, int], after: dict[str, int]) -> list[DiffItem]:
-    """소스별 레코드 수의 추가·삭제·변경을 비교한다."""
+    """Compare additions, deletions, and changes in record count per source."""
     items: list[DiffItem] = []
     for key in sorted(set(before) | set(after)):
         in_before, in_after = key in before, key in after
@@ -113,14 +113,14 @@ def _diff_row_counts(before: dict[str, int], after: dict[str, int]) -> list[Diff
 
 
 def compare_manifests(a: BuildManifest, b: BuildManifest) -> BuildDiff:
-    """두 BuildManifest를 비교해 BuildDiff를 만든다.
+    """Compare two BuildManifests to create BuildDiff.
 
-    매개변수:
-        a: 기준(이전) 매니페스트.
-        b: 비교(이후) 매니페스트.
+    Args:
+        a: Base (previous) manifest.
+        b: Comparison (subsequent) manifest.
 
-    반환값:
-        BuildDiff: 결정적 순서의 변경 목록과 한 줄 요약.
+    Returns:
+        BuildDiff: Changes in deterministic order and one-line summary.
     """
     diffs: list[DiffItem] = []
     diffs += _diff_set("source", a.inputs, b.inputs)

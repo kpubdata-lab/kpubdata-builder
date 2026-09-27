@@ -1,13 +1,13 @@
-"""빌드 매니페스트 패키지 (Medallion 재구성).
+"""Build manifest package (Medallion reorganization).
 
-매니페스트 모델(models.py)과 기록기(writer.py)의 공개 표면을 re-export 한다.
+Re-exports public surface of manifest model (models.py) and recorder (writer.py).
 
-주요 구성:
-    - BuildManifest: 실행 요약 데이터 클래스
-    - FieldSummary / SchemaSummary / build_schema_summary: 스키마 요약 (#11)
-    - SourceProvenance / build_source_provenance / compute_data_checksum: 상세 출처 (#12)
-    - manifest_writer / write_manifest: 디스크 기록 함수
-    - status_from_manifest: 기록된 manifest에서 run 종단 상태를 읽는 단일 규칙 (#481)
+Key components:
+    - BuildManifest: Execution summary dataclass
+    - FieldSummary / SchemaSummary / build_schema_summary: Schema summary (#11)
+    - SourceProvenance / build_source_provenance / compute_data_checksum: Detailed provenance (#12)
+    - manifest_writer / write_manifest: Disk recording functions
+    - status_from_manifest: Single rule for reading run terminal state from recorded manifest (#481)
 """
 
 from __future__ import annotations

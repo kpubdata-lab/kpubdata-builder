@@ -1,8 +1,8 @@
-"""LocalArtifactStore — 로컬 파일시스템 기반 산출물/manifest 저장소 (기본).
+"""LocalArtifactStore — local filesystem-based artifact/manifest store (default).
 
-현행 동작을 바이트 동일하게 래핑한다. manifest 정본은 ``output_root/<run_id>/manifest.json``
-파일이며, ``get_manifest`` 는 기존 ``datasets_service.read_manifest`` 와 동일한 경로 안전
-검사를 수행한다. 무외부의존 기본값(AGENTS.md).
+Wrap current behavior byte-identical. Manifest canonical is ``output_root/<run_id>/manifest.json``
+file; ``get_manifest`` uses same path safety as existing ``datasets_service.read_manifest``
+validation performed. No-external-deps default (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ _MANIFEST_FILENAME = "manifest.json"
 
 
 class LocalArtifactStore:
-    """파일시스템 기반 ArtifactStore 구현체."""
+    """Filesystem-based ArtifactStore implementation."""
 
     def __init__(self, output_root: Path) -> None:
         self._output_root = output_root
@@ -43,7 +43,7 @@ class LocalArtifactStore:
         manifest_path = run_dir / _MANIFEST_FILENAME
         ensure_within(self._output_root, manifest_path, label="manifest file")
         run_dir.mkdir(parents=True, exist_ok=True)
-        # manifest_writer 와 동일한 결정적 직렬화(정렬 키, UTF-8, indent=2).
+        # Same deterministic serialization as manifest_writer (sorted keys, UTF-8, indent=2).
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
