@@ -58,36 +58,33 @@ freezes the current per-file count and fails only when a count grows, or when a
 file absent from the baseline has any. Write new code in English; the existing
 debt is paid down separately (#710).
 
-## Labels — what to apply
+## Labels — what an agent applies
 
-POLICY sections 2.1, 2.1.1 and 2.1.2 are canonical. **Do not create a label that
-is not in the table below.** Adding one goes through `epic:governance`.
+**[POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) sections 2.1, 2.1.1 and 2.1.2 are the label reference.**
+This file deliberately does not copy the table: a second copy goes stale, and the
+first draft of this section already dropped the Severity axis that POLICY defines.
 
-| Axis | Labels | Who |
-|---|---|---|
-| Epic | `epic:trust` `epic:warehouse` `epic:governance` `epic:byok` `epic:policy` `epic:datasets` `epic:distribution` `epic:brand` `epic:onboarding` | Anyone may apply an existing label. **Only a person creates a new `epic:*`** |
-| Priority | `priority:critical` `priority:high` `priority:medium` `priority:low` | **Only a person promotes to High or above** (POLICY 8) |
-| Review Level | `review:R0` – `review:R3` | Assigned by path. **Only a person lowers one** |
-| Type | `type:feat` `type:bug` `type:docs` `type:chore` `type:test` `type:refactor` | Anyone |
-| Area | `area:*` | Anyone |
+What is specific to agents:
 
-A new issue carries **at least `epic:*` and `type:*`**. Leave Priority off when
-there is no evidence for it — POLICY 8 requires `Impact:`, `Blocks:` and
-`Evidence:` for High and above, and a rating without evidence is a wrong rating.
+- A new issue carries **at least one `epic:*` and one `type:*`**.
+- Leave Priority off when there is no evidence for it. POLICY 8 requires
+  `Impact:`, `Blocks:` and `Evidence:` for High and above, and a rating without
+  evidence is a wrong rating.
+- `type:feature` is the feature label, matching
+  `.github/ISSUE_TEMPLATE/feature_request.yml`. `type:feat` is retired.
+- Do not prefix a title with `GOV-01:` or `WH-03:`. Those are serial numbers from
+  a backlog document, not the issue's name. Labels do the classifying.
 
 What an agent does not do:
 
-- Promote to `priority:high` or `priority:critical` — that is a person's judgement.
-- Create a new `epic:*` label.
+- Promote to `priority:high` or `priority:critical` — that is a person's judgement
+  (POLICY 8, 14).
+- Create a label that POLICY's table does not list. Adding one goes through
+  `epic:governance`.
 - Lower a `review:*` level.
 - Create an Epic issue. Epic is a label (POLICY 4.1).
-
-`P0` / `P1` / `P2` are **retired.** Do not substitute them mechanically for
-`priority:*` — POLICY 8 requires a re-rating from zero, so that a wrong priority
-does not survive under a new name.
-
-Do not prefix a title with `GOV-01:` or `WH-03:`. Those are serial numbers from a
-backlog document, not the issue's name. Labels do the classifying.
+- Substitute `P0`/`P1`/`P2` mechanically for `priority:*`. POLICY 8 requires a
+  re-rating from zero, so that a wrong priority does not survive under a new name.
 
 ## Branch rules
 
