@@ -400,6 +400,16 @@ class AsyncBuildJobRegistry:
         """
         return self._replace(run_id, status="failed", response=response, error=error)
 
+    def list_all(self) -> list[BuildJobSnapshot]:
+        """Every job the registry still holds, in-flight ones included (#679).
+
+        The administrator view needs these. ``BuildIndex`` is only written once a
+        build has produced a manifest, so a queued or running job does not appear
+        there at all -- and a stuck run is exactly what an operator looks for.
+        """
+        with self._lock:
+            return list(self._jobs.values())
+
     def get(self, run_id: str) -> BuildJobSnapshot | None:
         with self._lock:
             return self._jobs.get(run_id)
@@ -612,6 +622,9 @@ class AsyncBuildExecutor:
                 on_enqueue_failure()
             raise
         return BuildJobSubmitResult(status="accepted", snapshot=snapshot)
+
+    def list_all(self) -> list[BuildJobSnapshot]:
+        return self.registry.list_all()
 
     def get(self, run_id: str) -> BuildJobSnapshot | None:
         return self.registry.get(run_id)

@@ -144,10 +144,10 @@ class TestAdminRole:
         assert isinstance(result, Principal)
         assert result.is_admin is False
 
-    def test_listed_subject_becomes_admin(
+    def test_listed_identity_becomes_admin(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "user-1234567890")
+        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", f"{_ISSUER}|user-1234567890")
         token = _make_token(oidc_env)
         result = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(result, Principal)
@@ -156,11 +156,37 @@ class TestAdminRole:
     def test_unlisted_subject_stays_non_admin(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "someone-else")
+        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", f"{_ISSUER}|someone-else")
         token = _make_token(oidc_env)
         result = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(result, Principal)
         assert result.is_admin is False
+
+    def test_the_same_subject_from_another_issuer_is_not_admin(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OIDC ``sub`` is only unique within its issuer, and OIDC_ISSUER
+        accepts a comma-separated list. Comparing the subject alone would let an
+        account from issuer B match an entry meant for issuer A -- which is why
+        ``owner_id`` binds issuer and subject together."""
+        monkeypatch.setenv(
+            "KPUBDATA_BUILDER_ADMIN_SUBJECTS", "https://other-idp.example|user-1234567890"
+        )
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
+        assert isinstance(result, Principal)
+        assert result.is_admin is False
+
+    def test_a_bare_subject_entry_grants_nothing(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An entry without an issuer is dropped with a warning, not honoured.
+        Granting administrator rights must not happen by typo."""
+        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "user-1234567890")
+        with caplog.at_level(logging.WARNING):
+            result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
+        assert isinstance(result, Principal)
+        assert result.is_admin is False
+        assert "<issuer>|<subject>" in caplog.text
 
     def test_match_uses_the_full_subject_not_the_truncated_identifier(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
@@ -174,11 +200,12 @@ class TestAdminRole:
         assert result.identifier == "user-123"
         assert result.is_admin is False
 
-    def test_admin_list_accepts_comma_and_space_separators(
+    def test_admin_list_accepts_several_comma_separated_identities(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(
-            "KPUBDATA_BUILDER_ADMIN_SUBJECTS", "first-admin, user-1234567890 second-admin"
+            "KPUBDATA_BUILDER_ADMIN_SUBJECTS",
+            f"https://other.example|someone, {_ISSUER}|user-1234567890",
         )
         result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
         assert isinstance(result, Principal)

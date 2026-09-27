@@ -18,7 +18,7 @@ import kpubdata_builder.service.query_service_api as query_module
 from kpubdata_builder.query.models import QueryResult
 from kpubdata_builder.query.resolver import ResolvedQueryContext
 from kpubdata_builder.query.service import QueryService
-from kpubdata_builder.service import BuilderService
+from kpubdata_builder.service import API_CONTRACT_VERSION, BuilderService
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.datasets import RunRecord
 from kpubdata_builder.service.quality import summarize_run_quality
@@ -183,7 +183,9 @@ def test_extraction_script_emits_documented_json_shape() -> None:
     )
     payload = json.loads(completed.stdout)
     assert "—" in completed.stdout
-    assert payload["contract_version"] == "1.27.0"
+    # 정본에서 가져온다. 리터럴로 적어 두면 계약 버전을 올릴 때마다 여기가
+    # 뒤처지고, 실패가 "버전을 올렸다" 는 사실만 알려 준다 — 그건 이미 안다.
+    assert payload["contract_version"] == API_CONTRACT_VERSION
     assert len(payload["examples"]) >= 50
     assert set(payload["examples"][0]) == {
         "path",
