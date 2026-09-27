@@ -1,9 +1,10 @@
 """Subcommand-level CLI smoke test (#595).
 
-`tests/unit/test_cli.py` 는 파서/validate/publish 를 다루고, 여기서는 나머지
-서브커맨드(build/preview/serve/rebuild-index/prune-cancelled)의 **인자 파싱 →
-종료 코드 → 출력 계약**을 고정한다. 네트워크가 필요한 지점(run_build/preview_build/
-serve)은 경계에서 대체하므로 여기서 실제 fetch 는 일어나지 않는다.
+``tests/unit/test_cli.py`` covers parser/validate/publish; this covers
+remaining subcommands (build/preview/serve/rebuild-index/prune-cancelled)
+**argument parsing → exit code → output contract**. Network-dependent points
+(run_build/preview_build/serve) are stubbed at boundaries, so actual fetch
+does not occur here.
 """
 
 from __future__ import annotations

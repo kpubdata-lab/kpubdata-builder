@@ -137,8 +137,8 @@ class TestPipelineCLI:
 class TestPipelineDoesNotInterpolateIntoSource:
     """dataset_id not interpolated into `python -c` source string.
 
-    따옴표 하나만 들어와도 임의 코드가 되고, 이 값은 CLI 인자와 HTTP 경로에서
-    온다.
+    Even a single quote becomes arbitrary code, and this value comes from
+    CLI args and HTTP paths.
     """
 
     def test_the_dataset_id_is_passed_as_an_argument(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,7 +164,7 @@ class TestPipelineDoesNotInterpolateIntoSource:
 class TestPipelineCommitsOnlyWhatItMade:
     """`git add -A` also stages others' changes and tool logs.
 
-    kpubdata 저장소에 `.omx/` 가 커밋된 것이 그 결과로 보인다.
+    The .omx/ committed to kpubdata repo is evidence of that outcome.
     """
 
     @staticmethod

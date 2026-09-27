@@ -1,7 +1,8 @@
 """Authentication failure throttle test.
 
-슬라이딩 윈도 카운터 자체(AuthFailureThrottle)와, dispatch 인증 게이트에 붙었을 때의
-동작(401 누적 → 429, 성공 시 초기화)을 함께 확인한다.
+Verify both the sliding window counter itself (AuthFailureThrottle) and
+behavior when attached to dispatch auth gate (401 accumulation → 429,
+reset on success).
 """
 
 from __future__ import annotations
@@ -222,10 +223,10 @@ class TestHttpAuthThrottle:
 class TestUnknownSigningKeyIsNotAnOutage:
     """kid not in JWKS is invalid credential, not infrastructure failure.
 
-    503 으로 돌려주면 두 가지가 동시에 깨진다. 스로틀은 503 을 세지 않으므로
-    (클라이언트 잘못이 아니라고 보기 때문이다) 무제한으로 시도할 수 있고,
-    PyJWKClient 는 캐시 미스마다 JWKS 를 새로 받으므로 임의의 kid 를 단 토큰을
-    반복해 보내면 **요청마다 IdP 로 아웃바운드 한 건**이 나간다.
+    Returning 503 breaks both. Throttle doesn't count 503 (sees it as not
+    client error), allowing unlimited retries. PyJWKClient fetches JWKS on
+    every cache miss, so repeating tokens with arbitrary kid produces
+    **one outbound per request to IdP**.
     """
 
     def test_a_missing_signing_key_is_classified_as_a_bad_token(self) -> None:
@@ -249,9 +250,9 @@ class TestUnknownSigningKeyIsNotAnOutage:
 class TestApiKeyComparisonAcceptsNonAscii:
     """Non-ASCII API key header must not become 500.
 
-    ``hmac.compare_digest`` 는 str 두 개일 때 ASCII 만 받는다. ``X-API-Key: clé``
-    하나가 TypeError 로 500 을 만들었고, 그 경로는 인증 실패로 기록되지도 않아
-    스로틀을 그냥 지나쳤다.
+    `hmac.compare_digest` accepts only ASCII with two str args. One
+    `X-API-Key: clé` made TypeError into 500, and that path was not recorded
+    as auth failure, so throttle passed through.
     """
 
     def test_a_non_ascii_key_is_an_ordinary_mismatch(self, monkeypatch: pytest.MonkeyPatch) -> None:

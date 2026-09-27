@@ -1,8 +1,8 @@
 """Admin role and admin endpoints (#679).
 
-여기서 가장 중요한 것은 **부정 테스트**다. 관리 기능의 위험은 동작하지 않는
-것이 아니라 필요 이상으로 동작하는 것이다 — 이 제품은 BYOK 이고, 관리자가
-사용자 데이터를 열 수 있는지는 아직 결정되지 않았다.
+Most important here are **negative tests**. Admin risk is not failure to work
+but working beyond necessity — this product is BYOK, and whether admins can
+access user data is still undecided.
 """
 
 from __future__ import annotations
@@ -173,8 +173,8 @@ class TestMetadataOnly:
 class TestOwnershipIsNotWidened:
     """OIDC admin does not pass ``ownership_allows``.
 
-    통과시키면 관리자가 남의 run 산출물 바이트를 받을 수 있고, 그것은 #679 의
-    (c) 를 결정 없이 확정하는 것이다.
+    Passing it allows admin to receive bytes of others' run outputs, which
+    would settle #679(c) without decision.
     """
 
     def test_oidc_admin_does_not_gain_blanket_run_access(
@@ -347,9 +347,9 @@ class TestAudit:
     def test_audit_line_shape_is_pinned(self, caplog: pytest.LogCaptureFixture) -> None:
         """Fixes what goes into one audit line.
 
-        ``Principal`` 에서 꺼내는 것은 ``label`` 과 ``owner_id`` 뿐이고 둘 다
-        설계상 secret 을 담지 않는다. 나중에 누군가 "디버깅에 편하다" 며 필드를
-        더할 때 이 테스트가 걸린다 — 그 필드가 credential 을 실어 나를 수 있다.
+        Only ``label`` and ``owner_id`` extracted from ``Principal``, both by
+        design contain no secrets. When someone later adds a field for "debug
+        convenience", this test catches it — that field might carry credentials.
         """
         principal = Principal(
             kind="service", identifier="apikey:ci", owner_id="service:abcd", is_admin=True

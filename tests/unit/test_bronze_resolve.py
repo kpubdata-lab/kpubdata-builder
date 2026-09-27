@@ -65,9 +65,9 @@ def test_source_identity_for_file_uses_upload_id_not_path() -> None:
 def test_source_identity_for_url_is_a_safe_path_segment() -> None:
     """url identity cannot include :,/ etc — must always be safe as path segment.
 
-    alias가 없으면 이 값이 그대로 bronze/silver/gold 출력 디렉터리 세그먼트로
-    쓰이므로(orchestrator._fetch_source_key), colon/slash가 남으면
-    validate_path_segment가 거부한다(#498).
+    Without an alias, this value is used directly as a bronze/silver/gold
+    output directory segment (orchestrator._fetch_source_key), so colons/slashes
+    are rejected by validate_path_segment (#498).
     """
     source = SourceRef(kind="url", endpoint="https://example.org:8443/data?token=secret&x=1#frag")
 
@@ -117,10 +117,10 @@ def test_public_api_source_delegates_to_existing_client_path() -> None:
 def test_unknown_source_kind_is_rejected_fail_closed() -> None:
     """Unknown kind not implicitly handled like public_api (#538 review).
 
-    validate_spec이 loader를 거치지 않은 BuildSpec도 이미 거부하지만, resolver
-    자신도 "그 외는 public_api" implicit fallback을 두지 않고 독립적으로
-    fail-closed해야 한다 — resolver를 직접 호출하는 다른 경로(테스트, 향후
-    호출자)가 validate_spec을 우회해도 안전하도록.
+    validate_spec already rejects BuildSpec that skipped loader, but resolver
+    itself must also fail-closed without "everything else is public_api" implicit
+    fallback — other direct resolver call paths (tests, future callers) that
+    bypass validate_spec remain safe.
     """
     source = SourceRef(kind="ftp", provider="datago", dataset="air_quality")
 

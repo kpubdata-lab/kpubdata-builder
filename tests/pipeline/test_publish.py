@@ -114,13 +114,14 @@ def test_upload_to_hf_live_calls_create_and_upload(tmp_path: Path) -> None:
 
     upload_to_hf(staging, "kpubdata/test-live", dry_run=False)
 
-    # private 를 명시한다 — 생략하면 설치된 huggingface_hub 의 기본값에 공개
-    # 여부를 맡기게 되고, 그 값은 릴리스에 따라 달라질 수 있다.
+    # Explicitly set private. Omitting it delegates to huggingface_hub defaults,
+    # which may vary by version.
     mock_api_instance.create_repo.assert_called_once_with(
         repo_id="kpubdata/test-live", repo_type="dataset", exist_ok=True, private=False
     )
     mock_api_instance.upload_folder.assert_called_once()
-    # 이전 리비전에만 있던 파일을 지운다. 없으면 이름이 바뀐 옛 파일이 영원히 남는다.
+    # Delete files that existed only in prior revisions. Otherwise renamed
+    # old files persist forever.
     assert mock_api_instance.upload_folder.call_args.kwargs["delete_patterns"] == [
         "data/*",
         "README.md",
@@ -259,10 +260,10 @@ def test_map_kaggle_license(hf_license: str, expected: str) -> None:
 
 
 def test_kaggle_create_is_private_unless_public_is_requested(tmp_path: Path) -> None:
-    """공개 게시는 명시적 선택이다.
+    """Public publication is an explicit choice.
 
-    CLI publish 는 --public opt-in 인데 이 경로만 public=True 가 하드코딩돼
-    있었다. 같은 데이터셋이 어느 경로로 올라갔느냐에 따라 공개 정책이 달랐다.
+    CLI publish requires --public opt-in, but this path had public=True
+    hardcoded. Visibility policy differed depending on which path uploaded.
     """
     staging = _staging_dir(tmp_path)
     api = MagicMock()
@@ -286,10 +287,10 @@ def test_kaggle_create_can_be_made_public_explicitly(tmp_path: Path) -> None:
 
 
 def test_a_failed_kaggle_lookup_does_not_become_create(tmp_path: Path) -> None:
-    """조회 실패는 "없다" 가 아니라 "모른다" 다.
+    """Query failure means "unknown", not "absent".
 
-    False 로 떨어뜨리면 이미 있는 데이터셋에 create_new 를 시도하거나, 최악의
-    경우 의도 밖의 새 데이터셋을 만든다.
+    Treating it as absent risks calling create_new on existing datasets,
+    or worse, creating unintended new datasets.
     """
     staging = _staging_dir(tmp_path)
     api = MagicMock()

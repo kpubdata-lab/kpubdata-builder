@@ -1,14 +1,14 @@
 """Cooperative cancellation and partial manifest validation (#481, ADR 0008).
 
-이 파일은 네 층위를 각각 결정적으로 검증한다.
+This file validates four layers deterministically.
 
-1. **State machine**(``AsyncBuildJobRegistry``): queued/running 취소, 종단 상태
-   불변성, 반복 취소 멱등성.
-2. **pipeline 안전 경계**: stub probe로 Bronze/Silver/Gold 경계를 정확히
-   지정해 partial 산출물과 partial manifest를 확인한다.
-3. **HTTP 계약**: route/ownership/상태 코드.
-4. **경쟁 조건**: sleep이 아니라 ``threading.Barrier``와 명시적 lock 순서로
-   재현한다.
+1. **State machine** (``AsyncBuildJobRegistry``): cancellation of queued/running,
+   terminal state immutability, idempotent repeated cancellation.
+2. **pipeline safety boundary**: use stub probe to mark Bronze/Silver/Gold
+   boundaries exactly and verify partial artifacts and partial manifest.
+3. **HTTP contract**: route/ownership/status code.
+4. **race conditions**: deterministically reproduce with ``threading.Barrier``
+   and explicit lock order instead of sleep.
 """
 
 from __future__ import annotations
@@ -90,9 +90,10 @@ def _service(tmp_path: Path) -> BuilderService:
 class _BoundaryProbe:
     """Stub probe observing cancellation at exactly ``cancel_after``-th boundary check.
 
-    sleep이나 타이밍에 의존하지 않고 "Bronze 직후", "Silver 직후"처럼 **어느
-    경계에서** 취소가 관찰되는지를 결정적으로 지정한다. ``cancel_after=None``
-    이면 취소를 전혀 요청하지 않는다(정상 경로 회귀 확인용).
+    Deterministically specifies at which **boundary** (e.g., "after Bronze",
+    "after Silver") cancellation is observed without depending on sleep or
+    timing. If ``cancel_after=None``, no cancellation is requested at all
+    (for normal path regression).
     """
 
     def __init__(self, *, cancel_after: int | None) -> None:
@@ -111,8 +112,7 @@ class _BoundaryProbe:
     def commit(self) -> bool:
         # Last safety boundary. If ``cancel_requested()`` called once more now, True would
         # appear (``probe_count >= cancel_after``) so cancellation is considered won —
-        # same as real ``RunCancellation`` situation of "request arrived before commit"
-        # .
+        # same as real ``RunCancellation`` situation of "request arrived before commit".
         with self._lock:
             if self._cancel_after is not None and self.probe_count >= self._cancel_after:
                 return False
@@ -400,9 +400,9 @@ class TestPipelineBoundaries:
     def test_cancel_at_the_final_boundary_still_lands_on_cancelled(self, tmp_path: Path) -> None:
         """Cancellation arriving just before finalize after all stages also confirmed as cancelled.
 
-        ``run_build``의 마지막 안전 경계(``commit()``) 분기다 — 이 경로가 없으면
-        취소 요청이 조용히 무시되고 run이 succeeded로 끝나 job 상태(cancelling)와
-        manifest가 모순된다.
+        Last safe boundary in ``run_build`` is the ``commit()`` branch — without this path,
+        cancellation request silently ignored, run ends as succeeded, job status (cancelling)
+        contradicts manifest.
         """
         service = _service(tmp_path)
         # Single source has 4 boundaries (0~3). After passing all, cancellation wins at commit
@@ -630,8 +630,8 @@ def _await_event(
 ) -> list[str]:
     """Wait until ``event`` is recorded for run, return list of event names.
 
-    종결 event는 terminal 상태 전이 *직후*에 append되므로, 상태만 보고 event를
-    읽으면 timing에 의존하게 된다.
+    Terminal events are appended **immediately after** terminal state transition,
+    so reading events based on status alone creates timing dependency.
     """
     waiter = threading.Event()
     for _ in range(int(timeout * 200)):
@@ -647,9 +647,9 @@ def _await_job_status(
 ) -> None:
     """Wait until job reaches specified terminal state.
 
-    ``completed`` event는 runner가 **반환하는** 시점에 set되지만, terminal 전이와
-    ``run_cancelled`` event append는 그 직후 executor(``_finish``)에서 일어난다 —
-    두 시점을 혼동하면 테스트가 timing에 의존하게 된다.
+    The ``completed`` event is set when runner **returns**, but terminal transition
+    and ``run_cancelled`` event append happen **after that** in executor (``_finish``) —
+    confusing these two points creates test timing dependency.
     """
     waiter = threading.Event()
     for _ in range(int(timeout * 200)):

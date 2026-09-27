@@ -1,11 +1,12 @@
 """Lock CLI help and usage guide so they don't diverge.
 
-`docs/guides/cli-usage.md` 는 한때 서브커맨드 4개만 적고 "별도 serve 명령은
-없습니다" 라고 단언했는데, 그 시점에 파서에는 11개가 있었고 `serve` 도 그중
-하나였다. 사람이 손으로 맞추는 목록은 반드시 낡는다 — 테스트가 대조한다.
+``docs/guides/cli-usage.md`` once listed only 4 subcommands and stated
+"there is no separate serve command", but at that time the parser had 11,
+including ``serve``. Manually maintained lists always go stale — tests
+should verify them.
 
-`test_env_var_contract.py`(환경변수)와 `test_version.py`(버전 SSOT)가 이미 쓰는
-패턴을 문서에까지 넓힌 것이다.
+The same pattern from ``test_env_var_contract.py`` (environment variables)
+and ``test_version.py`` (version SSOT) is now extended to documentation.
 """
 
 from __future__ import annotations

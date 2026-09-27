@@ -51,10 +51,10 @@ jobs:
       - name: mypy (type check)
         run: uv run --no-sources mypy src
 
-      # ADR 0003 puts comments and docstrings in English. A ratchet, not a wall:
-      # the baseline freezes today's debt and this fails only when it grows (#710).
-      - name: Korean comment ratchet
-        run: uv run --no-sources python scripts/check_korean_comments.py
+      # ADR 0003 puts comments and docstrings in English. The debt is paid down
+      # to zero (#710): any Korean comment or docstring now fails the build.
+      - name: Korean comment gate
+        run: uv run --no-sources python scripts/check_english_comments.py src tests scripts
 
   test:
     name: Tests (py${{ matrix.python-version }})

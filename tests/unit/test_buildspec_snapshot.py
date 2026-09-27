@@ -211,9 +211,9 @@ def test_snapshot_rejects_unsafe_run_id(tmp_path: Path) -> None:
 def test_spec_digest_changes_when_transform_rules_change() -> None:
     """Transform rules reflected in spec digest (#611).
 
-    R1은 "같은 recipe는 같은 output을 낸다"를 주장한다. rename/derived가 digest에
-    들어가지 않으면 변환 규칙을 바꿔도 같은 digest가 나와, 그 주장에서 정작
-    Silver를 만든 규칙이 recipe 밖에 있게 된다.
+    R1 asserts "same recipe produces same output". If rename/derived are not
+    included in digest, changing transform rules produces the same digest,
+    putting the actual Silver-generating rules outside the recipe.
     """
     from kpubdata_builder.spec.models import DerivedColumn
 
@@ -247,7 +247,7 @@ def test_spec_digest_changes_when_transform_rules_change() -> None:
 def _spec_with_secret_named_columns() -> BuildSpec:
     """spec where column name overlaps credential key (#623).
 
-    공공 데이터에는 ``token``/``password`` 같은 이름의 컬럼이 실제로 있다.
+    Public datasets actually contain columns named like ``token`` or ``password``.
     """
     from kpubdata_builder.spec.models import ColumnNullTokens
 
@@ -328,10 +328,11 @@ def test_credential_params_are_still_redacted_alongside_column_names() -> None:
 class TestDigestStabilityForUnusedFields:
     """recipe identity doesn't change due to unused features (#611 follow-up).
 
-    spec_digest는 manifest·BuildIndex·``GET /datasets``에 노출되는 recipe
-    identity다. Silver 변환 선언이 추가될 때마다 빈 키가 canonical mapping에
-    실리면, 그 기능을 쓰지 않는 기존 spec의 digest까지 전부 바뀐다 — 업그레이드
-    시점에 "같은 recipe인가" 비교가 끊긴다.
+    spec_digest is recipe identity exposed in manifest, BuildIndex, and
+    ``GET /datasets``. If empty keys land in canonical mapping each time Silver
+    transform declarations are added, existing specs that don't use that feature
+    have their digests change entirely — upgrade time "is it same recipe"
+    comparisons break.
     """
 
     OPTIONAL_KEYS = (
