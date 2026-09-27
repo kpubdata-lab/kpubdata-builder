@@ -110,13 +110,13 @@ def test_cell_with_pipe_is_escaped(tmp_path: Path) -> None:
 
 
 def test_cell_with_carriage_return_is_escaped(tmp_path: Path) -> None:
-    # #225: \r는 마크다운 테이블을 깨트리므로 공백으로 대체해야 한다.
+    # #225: \r breaks markdown tables, must be replaced with space.
     artifact = ArtifactDataset(
         records=({"note": "line1\rline2"},),
         schema={"note": "string"},
     )
     content = _export(artifact, tmp_path)
-    # \r이 제거/공백 치환되어 raw CR이 출력에 없어야 한다.
+    # \r is removed/space-substituted so raw CR must not be in output.
     assert "\r" not in content
-    # 셀 내용은 공백으로 연결된다.
+    # Cell contents joined by space.
     assert "line1 line2" in content

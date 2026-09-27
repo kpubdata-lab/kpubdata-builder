@@ -1,4 +1,4 @@
-"""Preview(#3, #497): preview_build가 스키마+샘플+diff를 만들고 파일은 쓰지 않는지 검증."""
+"""Preview (#3, #497): verify preview_build creates schema+sample+diff and does not write files."""
 
 from __future__ import annotations
 
@@ -80,9 +80,10 @@ def test_preview_build_returns_schema_and_sample() -> None:
 
 
 def test_preview_build_writes_no_files(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 이전 테스트는 preview_build에 전달되지도 않는 temp 디렉터리가 비었음을 확인해
-    # 사실상 항상 통과했다(#196). 실제 파일시스템 쓰기 경로를 가로채 preview_build가
-    # 어떤 쓰기도 하지 않음을 보장한다.
+    # Previous test verified that temp directory not passed to preview_build was empty,
+    # effectively always passing (#196). We intercept actual filesystem write calls to verify
+    # preview_build
+    # guarantees no writes.
     spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
     client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
 
@@ -101,14 +102,14 @@ def test_preview_build_writes_no_files(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "write_bytes", _boom)
     monkeypatch.setattr(Path, "mkdir", _boom)
 
-    # 쓰기 경로가 호출되면 AssertionError로 실패한다.
+    # If a write path is called, it fails with AssertionError.
     result = preview_build(spec, client=client, limit=5)
 
     assert isinstance(result, PreviewResult)
 
 
 def test_preview_build_validates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 유효하지 않은 spec은 부분 실행/빈 결과 대신 빠르게 실패해야 한다 (#193).
+    # Invalid spec must fail fast instead of partial execution/empty results (#193).
     spec = BuildSpec(
         dataset_id="apt_trade",
         title="Apartment Trades",
@@ -134,7 +135,9 @@ def test_preview_build_records_failure_for_missing_source() -> None:
 
 
 def test_preview_build_fetches_by_provider_dataset_and_reports_alias() -> None:
-    """alias가 있어도 fetch는 provider.dataset 키로, 표면 키는 alias로 (#98 review와 동일 회귀)."""
+    """Even with alias, fetch uses provider.dataset key, surface key is alias (#98 review
+    same regression).
+    """
     spec = _spec(SourceRef(provider="datago", dataset="apt_trade", alias="trades"))
     client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
 
@@ -200,8 +203,8 @@ class TestSampling:
         assert seed_a.previews[0].source_sample != seed_b.previews[0].source_sample
 
     def test_random_mode_matches_select_indices_algorithm(self) -> None:
-        # 구현이 실제로 random.Random(seed).sample(range(n), k)에 위임하는지,
-        # 전역 random 상태가 아니라 seed에만 의존하는지 화이트박스로 고정한다.
+        # Verify the implementation actually delegates to random.Random(seed).sample(range(n), k),
+        # not global random state—whitebox lock that it depends only on seed.
         spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
         records = [{"id": str(i)} for i in range(50)]
         client = _FakeClient({"datago.apt_trade": records})
@@ -239,7 +242,7 @@ class TestSampling:
             preview_build(spec, client=client, sample_mode="random", seed="7")  # type: ignore[arg-type]
 
     def test_rejects_bool_seed(self) -> None:
-        # bool은 int의 하위 타입이지만 seed 의미가 없다.
+        # bool is a subtype of int, but seed makes no sense.
         spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
         client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
 
@@ -252,7 +255,7 @@ class TestSampling:
 
         result = preview_build(spec, client=client, limit=10, sample_mode="random", seed=0)
 
-        # total_rows(3)보다 큰 limit(10)을 요청해도 실제 존재하는 행만 반환한다.
+        # Requesting limit(10) > total_rows(3) returns only actually-existing rows.
         assert len(result.previews[0].source_sample) == 3
         assert len(result.previews[0].preview.rows) == 3
 
@@ -307,10 +310,13 @@ class TestDiff:
         assert preview.diff_truncated is False
 
     def test_wide_dataset_truncates_diffs_but_keeps_accurate_summary_end_to_end(self) -> None:
-        # #497 sample/diff memory 상한: limit(행 수)만으로는 wide dataset(컬럼 수多)의
-        # diff item 개수를 막지 못한다 — MAX_PREVIEW_DIFF_ITEMS가 실제로 응답에
-        # 담기는 PreviewDiffItem 개수를 자르고, diff_truncated로 명시하는지 end-to-end로
-        # 확인한다. 1행 × (MAX_PREVIEW_DIFF_ITEMS + 100)컬럼 모두 cast로 변경한다.
+        # 497 sample/diff memory ceiling: limit (row count) alone cannot cap the number of diff
+        # items in wide datasets
+        # (high column count) — MAX_PREVIEW_DIFF_ITEMS actually caps the number of PreviewDiffItems
+        # in the response
+        # and marks it explicitly with diff_truncated; end-to-end test with 1 row ×
+        # (MAX_PREVIEW_DIFF_ITEMS + 100) columns all cast.
+        #
         max_items = preview_module.MAX_PREVIEW_DIFF_ITEMS
         column_count = max_items + 100
         columns = [f"c{i}" for i in range(column_count)]
@@ -336,10 +342,11 @@ class TestDiff:
         assert preview.transform_summary.changed_rows == 1
 
     def test_columns_without_declared_cast_never_produce_a_diff_end_to_end(self) -> None:
-        # 현재 normalize_table()은 casts에 없는 컬럼의 값을 절대 바꾸지 않으므로
-        # (records_to_dataframe()이 원본 값을 그대로 옮긴다), casts에 없는 컬럼은
-        # end-to-end로 diff 자체가 생기지 않는다 — "transform=None" 분기는
-        # _diff_sample() 자체를 직접 검증한다(아래 TestDiffSampleHelper).
+        # Currently normalize_table() never changes values of columns not in casts
+        # (records_to_dataframe() carries original values as-is), so columns not in casts produce
+        # no diff end-to-end — the "transform=None" branch here verifies _diff_sample() directly
+        # (TestDiffSampleHelper below).
+        #
         source = SourceRef(
             provider="datago",
             dataset="apt_trade",
@@ -357,9 +364,9 @@ class TestDiff:
 
 
 class TestDiffSampleHelper:
-    """``_diff_sample``을 직접 검증한다 — casts에 없는 컬럼이 바뀌는 상황은 현재
-    Silver 파이프라인(값이 바뀌려면 반드시 declared cast를 거친다)에서는 end-to-end로
-    재현할 수 없으므로, transform=None 분기는 이 pure 함수 레벨에서 고정한다.
+    """Verify ``_diff_sample`` directly — situation where columns not in casts change is currently
+    Silver pipeline (values must pass declared cast to change) cannot reproduce end-to-end, so
+    transform=None branch fixed at this pure function level.
     """
 
     def test_transform_is_null_when_column_has_no_declared_cast(self) -> None:
@@ -405,9 +412,11 @@ class TestDiffSampleHelper:
         assert truncated is False
 
     def test_max_items_caps_materialized_diffs_but_keeps_accurate_summary(self) -> None:
-        # #497 sample/diff memory 상한: limit은 행 수만 제한하므로 wide dataset에서
-        # diffs 리스트 자체가 무제한 커질 수 있다 — max_items로 리스트만 자르고,
-        # changed_cells/changed_rows는 잘리지 않은 실제 합계를 유지해야 한다.
+        # 497 sample/diff memory ceiling: limit only restricts row count, so in wide datasets the
+        # diffs list itself can grow unbounded
+        # — max_items truncates only the list, but changed_cells/changed_rows must hold the actual
+        # untruncated sums.
+        #
         columns = tuple(f"c{i}" for i in range(10))
         source_rows = [dict.fromkeys(columns, "before")]
         transformed_rows = [dict.fromkeys(columns, "after")]
@@ -422,7 +431,9 @@ class TestDiffSampleHelper:
 
         assert len(diffs) == 4
         assert truncated is True
-        assert summary.changed_cells == 10  # 잘렸어도 실제 변경 셀 수는 정확하다.
+        assert (
+            summary.changed_cells == 10
+        )  # Even if truncated, actual changed cell count is accurate.
         assert summary.changed_rows == 1
 
     def test_max_items_not_exceeded_leaves_truncated_false(self) -> None:
@@ -460,7 +471,7 @@ class TestDiffSampleHelper:
 
         preview = result.previews[0]
         assert preview.diff_available is True
-        # 3행 x 2컬럼(amount, active) 모두 문자열 -> 캐스팅된 값으로 바뀐다.
+        # All 3 rows × 2 columns (amount, active) change from strings to cast values.
         assert preview.transform_summary is not None
         assert preview.transform_summary.changed_cells == 6
         assert preview.transform_summary.changed_rows == 3
@@ -473,7 +484,7 @@ class TestDiffSampleHelper:
             schema=SchemaContract(casts={"amount": "int"}),
         )
         spec = _spec(source)
-        # limit=2이므로 sample에는 0/1번 행만 담기고, diff의 row는 그 배열 내 위치다.
+        # limit=2 so sample holds only rows 0/1; diff row is the position within that array.
         client = _FakeClient(
             {
                 "datago.apt_trade": [
@@ -490,9 +501,9 @@ class TestDiffSampleHelper:
         assert rows == {0, 1}
 
     def test_diff_unavailable_when_cast_introduces_nulls(self) -> None:
-        # #188 data-loss guard: 캐스팅이 값을 null로 떨어뜨리면 전체 preview가
-        # 실패 처리되며(#188), diff가 절반만 성공한 것처럼 보이지 않는다 — 이것이
-        # 이 코드베이스에서 "null 변화"가 diff item으로 새는 것을 막는 실제 안전장치다.
+        # #188 data-loss guard: if casting drops a value to null, the entire preview fails (#188),
+        # and diff does not appear half-successful — this is the actual safety mechanism
+        # in this codebase that prevents "null changes" from leaking as diff items.
         source = SourceRef(
             provider="datago",
             dataset="apt_trade",
@@ -530,9 +541,10 @@ class TestDiffSampleHelper:
     def test_diff_unavailable_when_row_count_is_not_preserved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 오늘의 Silver 경로는 행을 filter/reorder하지 않지만(test_silver.py의
-        # TestRowPreservingInvariant), 그 전제가 깨진 가상의 미래를 시뮬레이션해
-        # count guard가 fail-closed로 동작하는지 검증한다.
+        # Today's Silver path does not filter/reorder rows (see test_silver.py
+        # TestRowPreservingInvariant),
+        # but simulate a hypothetical future where that assumption breaks to verify the count guard
+        # operates fail-closed.
         real_build_silver_dataset = build_silver_dataset
 
         def _dropping_build_silver_dataset(bronze, **kwargs):  # type: ignore[no-untyped-def]
@@ -558,18 +570,18 @@ class TestDiffSampleHelper:
         result = preview_build(spec, client=client, limit=5)
 
         preview = result.previews[0]
-        assert preview.status == "ok"  # 실패가 아니라 diff만 안전하게 무효화된다.
+        assert preview.status == "ok"  # Only diff is safely invalidated, not failure.
         assert preview.diff_available is False
         assert preview.diffs == ()
         assert preview.transform_summary is None
         assert preview.source_sample == ()
         assert preview.diff_truncated is False
-        # sample(transformed) 자체는 여전히 채워진다 — diff만 신뢰할 수 없을 뿐.
+        # sample(transformed) itself is still populated — only diff is not trustworthy.
         assert len(preview.preview.rows) == 4
 
 
 # ---------------------------------------------------------------------------
-# Regression (#497) — 기존 필드/동작이 보존되는지.
+# Regression (#497) — verify existing fields/behavior are preserved.
 # ---------------------------------------------------------------------------
 
 
@@ -590,7 +602,7 @@ class TestRegression:
 
 
 # ---------------------------------------------------------------------------
-# Canonical source contract(#498) — file/url kind가 public_api와 동일하게 preview된다.
+# Canonical source contract (#498) — file/url kind previewed identically to public_api.
 # ---------------------------------------------------------------------------
 
 
@@ -628,7 +640,7 @@ class TestSourceKinds:
             SourceRef(kind="file", upload_id="upl_" + "a" * 32, format="csv", alias="uploaded")
         )
 
-        # upload_repository는 있지만 owner_id가 없다 — 인증되지 않은 preview 요청.
+        # upload_repository present but owner_id absent — unauthenticated preview request.
         result = preview_build(spec, client=_FakeClient({}), upload_repository=repo)
 
         preview = result.previews[0]
@@ -669,11 +681,11 @@ class TestSourceKinds:
 
 
 def test_preview_applies_the_same_transform_rules_as_build() -> None:
-    """Preview와 Build가 같은 선언에 같은 컬럼을 보여준다 (#611).
+    """Preview and Build show same columns in same declaration (#611).
 
-    Preview는 사용자가 Build 전에 결과를 확인하는 경로다. rename/derived가
-    Preview에만 빠지면 "미리보기에는 없던 컬럼이 빌드 산출물에는 있는" 상태가
-    되어, #486이 세운 Preview↔Build 동일 판정 원칙이 깨진다.
+    Preview is user's path to check results before Build. If rename/derived missing only in
+    Preview, state is "column absent in preview but present in build output"
+    breaking the Preview↔Build identical judgment principle #486 established.
     """
     from kpubdata_builder.spec.models import DerivedColumn
 
@@ -709,9 +721,9 @@ def test_preview_applies_the_same_transform_rules_as_build() -> None:
 
 
 class TestPreviewAppliesSilverDeclarations:
-    """preview와 build가 같은 선언을 본다 (#620).
+    """preview and build see the same declaration (#620).
 
-    둘이 다른 데이터를 보면 preview로 확인한 결과가 빌드를 보장하지 못한다.
+    if both see different data, preview confirmation does not guarantee build.
     """
 
     def _records(self) -> list[dict[str, JsonValue]]:
@@ -756,7 +768,7 @@ class TestPreviewAppliesSilverDeclarations:
         assert [row["성별"] for row in preview.preview.rows] == [None, "M"]
 
     def test_preview_surfaces_the_same_failure_as_build(self) -> None:
-        """zfill 폭 초과는 preview에서도 drift 신호로 드러나야 한다."""
+        """zfill width overflow must appear as drift signal in preview too."""
         source = SourceRef(provider="datago", dataset="apt_trade", schema=self._schema())
         records = self._records()
         records[0]["대여소번호"] = "1234567"

@@ -1,4 +1,4 @@
-"""HTTP 전송과 독립적인 서비스 응답 모델."""
+"""Service response model independent of HTTP transport."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ..spec import JsonValue
 
 @dataclass(frozen=True)
 class ServiceResponse:
-    """상태 코드와 JSON 직렬화 가능한 응답 본문."""
+    """Status code and JSON-serializable response body."""
 
     status_code: int
     body: dict[str, JsonValue]
@@ -18,7 +18,7 @@ class ServiceResponse:
 
 @dataclass(frozen=True)
 class FileResponse:
-    """파일 서빙 응답."""
+    """File serving response."""
 
     status_code: int
     file_path: Path

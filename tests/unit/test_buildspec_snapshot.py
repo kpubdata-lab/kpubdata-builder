@@ -1,4 +1,4 @@
-"""Run별 canonical BuildSpec snapshot 계약 검증 (#487)."""
+"""Per-run canonical BuildSpec snapshot contract verification (#487)."""
 
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def test_secret_redaction_is_exact_and_recursive() -> None:
     assert "keep-me" in text
     assert "business-key" in text
     assert "token_count: 3" in text
-    # credential-bearing snapshot은 의도적으로 원본과 동일한 round-trip을 제공하지 않는다.
+    # credential-bearing snapshot intentionally does not provide identical round-trip with original.
     assert _parse_yaml(text) != redacted
 
 
@@ -209,7 +209,7 @@ def test_snapshot_rejects_unsafe_run_id(tmp_path: Path) -> None:
 
 
 def test_spec_digest_changes_when_transform_rules_change() -> None:
-    """변환 규칙이 spec digest에 반영된다 (#611).
+    """Transform rules reflected in spec digest (#611).
 
     R1은 "같은 recipe는 같은 output을 낸다"를 주장한다. rename/derived가 digest에
     들어가지 않으면 변환 규칙을 바꿔도 같은 digest가 나와, 그 주장에서 정작
@@ -245,7 +245,7 @@ def test_spec_digest_changes_when_transform_rules_change() -> None:
 
 
 def _spec_with_secret_named_columns() -> BuildSpec:
-    """컬럼 이름이 credential 키와 겹치는 spec (#623).
+    """spec where column name overlaps credential key (#623).
 
     공공 데이터에는 ``token``/``password`` 같은 이름의 컬럼이 실제로 있다.
     """
@@ -275,8 +275,8 @@ def _spec_with_secret_named_columns() -> BuildSpec:
 
 
 def test_column_names_that_look_like_credentials_are_not_redacted() -> None:
-    # 컬럼명은 credential이 아니다. redaction을 걸면 스냅샷이 loader가 기대하는
-    # 타입 대신 "<redacted>" 문자열을 담게 되어 다시 파싱되지 않는다.
+    # Column name is not credential. If redaction applied, snapshot expects
+    # type receives "<redacted>" string instead so cannot be parsed again.
     spec = _spec_with_secret_named_columns()
 
     parsed = _parse_yaml(serialize_spec(spec))
@@ -285,8 +285,8 @@ def test_column_names_that_look_like_credentials_are_not_redacted() -> None:
 
 
 def test_specs_differing_only_by_column_null_tokens_get_different_digests() -> None:
-    # redaction이 토큰 목록을 통째로 "<redacted>"로 만들면 서로 다른 결측 표기를
-    # 선언한 두 spec이 같은 digest를 갖는다 — recipe 동일성이 무너진다.
+    # If redaction makes entire token list "<redacted>",
+    # two specs declaring different null markers have same digest — recipe identity breaks.
     from kpubdata_builder.spec.models import ColumnNullTokens
 
     first = _spec_with_secret_named_columns()
@@ -313,8 +313,8 @@ def test_specs_differing_only_by_column_null_tokens_get_different_digests() -> N
 
 
 def test_credential_params_are_still_redacted_alongside_column_names() -> None:
-    # 구조적 매핑에서 redaction을 뺀 것이 자유 형식 params의 redaction을 약화시켜서는
-    # 안 된다.
+    # Removing redaction from structural mapping must not weaken redaction of free-form params
+    # .
     spec = _spec_with_secret_named_columns()
     source = spec.sources[0]
     with_secret = replace(spec, sources=(replace(source, params={"serviceKey": "plain-secret"}),))
@@ -326,7 +326,7 @@ def test_credential_params_are_still_redacted_alongside_column_names() -> None:
 
 
 class TestDigestStabilityForUnusedFields:
-    """쓰지 않는 기능 때문에 recipe identity가 바뀌지 않는다 (#611 후속).
+    """recipe identity doesn't change due to unused features (#611 follow-up).
 
     spec_digest는 manifest·BuildIndex·``GET /datasets``에 노출되는 recipe
     identity다. Silver 변환 선언이 추가될 때마다 빈 키가 canonical mapping에
@@ -369,8 +369,8 @@ class TestDigestStabilityForUnusedFields:
         assert set(emitted) == {"required", "dtypes", "casts"}
 
     def test_a_declared_transform_field_is_emitted(self) -> None:
-        # 선언된 값은 반드시 recipe에 남아야 한다 — 그러지 않으면 변환 규칙을
-        # 바꿔도 digest가 그대로다.
+        # Declared values must remain in recipe — else transform rules
+        # change but digest stays same.
         spec = replace(
             _complete_spec(),
             sources=(

@@ -1,16 +1,17 @@
-"""Dataset 도메인 서비스 (#596, 네 번째 조각).
+"""Dataset domain service (#596, fourth piece).
 
-``dataset_id`` 로 묶인 built dataset 의 조회 표면(#488/#486)을 담는다. 앞선 조각들과
-같은 규칙이다 — **자기 의존성만 받고**, wire 계약은 건드리지 않는다.
+Holds the query surface (``dataset_id``-grouped built datasets, #488/#486).
+Same rules as previous pieces — **self-dependency only**; does not touch wire
+contract.
 
-이 도메인은 **run record 수집 헬퍼를 quality 도메인과 공유한다**. 그래서 헬퍼를
-private 으로 숨기지 않고 공개 메서드로 둔다 — quality 조각이 옮겨올 때
-``DatasetsApiService`` 를 의존성으로 받아 쓰면 되고, 같은 수집 로직이 두 벌로
-복제되지 않는다.
+This domain **shares run record collection helpers with the quality domain.** So
+helpers are public methods, not private — when the quality piece is moved, it can
+import ``DatasetsApiService`` as a dependency and reuse the same collection
+logic, with no code duplication.
 
-ownership 필터를 **grouping/latest 선정보다 먼저** 적용하는 규칙(#488 semantics D)이
-이 파일의 핵심이다. 순서가 뒤집히면 같은 ``dataset_id`` 를 쓰는 타 사용자의 run 이
-latest 후보에 섞여 들어간다.
+The core of this file is applying ownership filter **before** grouping/latest
+selection (#488 semantics D). If the order is reversed, other users' runs with
+the same ``dataset_id`` mix into latest candidates.
 """
 
 from __future__ import annotations
@@ -28,16 +29,17 @@ from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.store.artifacts import ArtifactStore
 from kpubdata_builder.store.build_index import BuildIndex
 
-# BuildIndex 의 window 조회를 보강하는 mtime 여유분. mtime 은 완료 시점에 만들어지는
-# 정본 파일의 것이라 항상 finished_at 이상이지만, 완료 후 재기록(예: secret
-# redaction)·시계 오차·파일시스템 mtime 해상도를 흡수하려 window 하한을 이만큼 더
-# 내려 잡는다. 정확한 경계는 quality.aggregate_quality_window 가 canonical timestamp
-# 로 다시 적용한다.
+# BuildIndex window query is enhanced by manifest mtime margin. mtime is from the
+# source-of-truth file created at completion, so it's always >= finished_at, but
+# we absorb post-completion re-recording (e.g., secret redaction), clock skew,
+# and filesystem mtime resolution by lowering the window lower bound by this amount.
+# Exact boundary is re-applied by quality.aggregate_quality_window using canonical
+# timestamp.
 QUALITY_WINDOW_MTIME_MARGIN_SECONDS = 3600
 
 
 class DatasetsApiService:
-    """built dataset 목록·상세·run history·quality 이력 (#488/#486)."""
+    """Built dataset list/detail/run history/quality history (#488/#486)."""
 
     def __init__(
         self,
@@ -50,8 +52,8 @@ class DatasetsApiService:
         self._output_root = output_root
         self._build_index = build_index
         self._store = store
-        # None 이면 호출 시점에 환경을 다시 읽는다 — 테스트가 env 로 토글하는 방식을
-        # 그대로 유지한다(#389).
+        # If None, re-read environment at call time — preserving test pattern of
+        # toggling via env (#389).
         self._enforce_ownership_override = enforce_ownership
 
     def _enforce_ownership(self) -> bool:
@@ -61,13 +63,14 @@ class DatasetsApiService:
 
         return ownership_module.enforce_ownership()
 
-    # --- run record 수집 (quality 도메인과 공유) ----------------------------
+    # --- Run record collection (shared with quality domain) ---
 
     def dataset_records(self, principal: Principal | None) -> list[datasets_service.RunRecord]:
-        """dataset_id가 있는 접근 가능한 모든 run을 얻는다 (인덱스 우선, 파일시스템 폴백).
+        """Get all accessible runs with dataset_id (index-first, filesystem fallback).
 
-        ownership 필터를 grouping/latest 선정보다 먼저 적용한다 — 동일 dataset_id의
-        타 사용자 run이 latest 후보에 섞이지 않게 한다 (#488 semantics D).
+        Apply ownership filter before grouping/latest selection — ensure other
+        users' runs with the same dataset_id do not mix into latest candidates
+        (#488 semantics D).
         """
         index_records = datasets_service.collect_run_records_from_index(self._build_index) or []
         filesystem_records = datasets_service.collect_run_records_from_filesystem(self._output_root)
@@ -80,7 +83,7 @@ class DatasetsApiService:
     def dataset_records_for(
         self, dataset_id: str, principal: Principal | None
     ) -> list[datasets_service.RunRecord]:
-        """특정 dataset_id의 접근 가능한 canonical run을 모두 얻는다."""
+        """Get all accessible canonical runs for a specific dataset_id."""
         return [
             record for record in self.dataset_records(principal) if record.dataset_id == dataset_id
         ]
@@ -88,15 +91,16 @@ class DatasetsApiService:
     def recent_canonical_records(
         self, principal: Principal | None, *, now: datetime, window_seconds: int
     ) -> list[datasets_service.RunRecord]:
-        """최근 ``window_seconds`` 안 candidate run을 canonical 정본으로 확정한다 (#488 후속 리뷰).
+        """Confirm candidate runs within window as canonical source-of-truth (#488 follow-up).
 
-        candidate run_id는 두 신호의 합집합이다:
-          - canonical ``manifest.json``의 mtime이 window 안(margin 포함)인 run.
-          - ``BuildIndex.list_between``의 window 안 run (파생 index fast lookup).
+        Candidate run_id is the union of two signals:
+          - Canonical ``manifest.json`` mtime within window (margin included).
+          - ``BuildIndex.list_between`` runs within window (derived index fast lookup).
 
-        BuildIndex는 파생 검색 index이고 write는 best-effort다 (ADR 0003) — 누락되거나
-        stale한 row가 정본 24h aggregate를 바꾸면 안 되므로, index 단독으로 좁히지 않고
-        위 mtime 후보로 보강한다. index 조회가 실패해도 mtime 후보가 전체를 커버한다.
+        BuildIndex is a derived search index with best-effort writes (ADR 0003) —
+        if omissions or stale rows change the 24h aggregate, that's wrong, so we
+        don't narrow by index alone; we enhance with mtime candidates. Index
+        query failure is fully covered by mtime candidates.
         """
         margin_seconds = window_seconds + QUALITY_WINDOW_MTIME_MARGIN_SECONDS
         mtime_cutoff = now.timestamp() - margin_seconds
@@ -108,12 +112,12 @@ class DatasetsApiService:
                 try:
                     manifest_mtime = (run_dir / "manifest.json").stat().st_mtime
                 except OSError:
-                    continue  # manifest 부재/접근 불가 — 완료된 run 아님
+                    continue  # Manifest missing/unreachable — not a completed run
                 if manifest_mtime >= mtime_cutoff:
                     candidate_run_ids.add(run_dir.name)
         lower = (now - timedelta(seconds=margin_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
         upper = (now + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # 파생 index 조회가 실패해도 mtime 후보가 이미 전체 run을 커버한다.
+        # Derived index query failure is fully covered by mtime candidates.
         with suppress(Exception):
             candidate_run_ids.update(
                 entry.run_id for entry in self._build_index.list_between(lower, upper)
@@ -125,17 +129,19 @@ class DatasetsApiService:
             canonical, principal, enforce=self._enforce_ownership()
         )
 
-    # --- 공개 엔드포인트 ---------------------------------------------------
+    # --- Public endpoints ---
 
     def list_datasets(
         self, *, limit: int = 50, principal: Principal | None = None
     ) -> ServiceResponse:
-        """동일 dataset_id의 여러 run을 하나의 built dataset으로 묶어 목록을 반환한다 (#488).
+        """Return list of built datasets, grouping multiple runs of same dataset_id into one (#488).
 
-        `total`은 canonical grouping + ownership 필터 이후, pagination(limit) 이전의
-        distinct dataset 개수다. expensive full summary 는 응답 page 후보에만 수행하고,
-        page를 채운 뒤로는 경량 renderability 검증만 한다 — limit=1 + 대량 dataset에서
-        catalog 전체에 full summary가 도는 regression 을 막는다(#488 후속 리뷰).
+        ``total`` is the count of distinct datasets after canonical grouping +
+        ownership filter, before pagination (limit). Expensive full summary is
+        only performed on response page candidates; after page is filled, only
+        lightweight renderability check is done — preventing regression where
+        full summary runs on entire catalog with limit=1 + large dataset count
+        (#488 follow-up review).
         """
         records = self.dataset_records(principal)
         latest_by_dataset = datasets_service.group_latest_by_dataset(records)
@@ -160,10 +166,10 @@ class DatasetsApiService:
     def get_dataset(
         self, dataset_id: str, *, principal: Principal | None = None
     ) -> ServiceResponse:
-        """단일 built dataset의 canonical 요약을 반환한다 (#488).
+        """Return canonical summary of a single built dataset (#488).
 
-        접근 가능한 run이 하나도 없으면(dataset_id가 실제로 없거나, 있어도 전부
-        타 사용자 소유이면) 404 — 어느 경우인지는 구분해 노출하지 않는다.
+        Return 404 if no accessible run exists (dataset_id truly missing, or all
+        runs are owned by other users) — do not distinguish between the two cases.
         """
         records = self.dataset_records_for(dataset_id, principal)
         if not records:
@@ -178,7 +184,7 @@ class DatasetsApiService:
     def list_dataset_runs(
         self, dataset_id: str, *, limit: int = 50, principal: Principal | None = None
     ) -> ServiceResponse:
-        """dataset_id의 접근 가능한 run history를 최신순으로 반환한다 (#488)."""
+        """Return accessible run history for dataset_id in most-recent order (#488)."""
         records = self.dataset_records_for(dataset_id, principal)
         if not records:
             return ServiceResponse(404, {"error": f"dataset not found: {dataset_id}"})
@@ -199,11 +205,11 @@ class DatasetsApiService:
     def get_dataset_quality_history(
         self, dataset_id: str, *, limit: int = 30, principal: Principal | None = None
     ) -> ServiceResponse:
-        """dataset_id의 접근 가능한 run들에 대한 quality PASS/WARN/FAIL 집계 이력 (#486).
+        """Return quality PASS/WARN/FAIL aggregate history for accessible runs of dataset_id (#486).
 
-        dataset→run 조회는 ``dataset_records_for``(ownership 포함)를 재사용한다 — 새
-        grouping/index 를 만들지 않는다. 존재/ownership 판정은 다른 dataset 엔드포인트와
-        같다.
+        Dataset→run queries reuse ``dataset_records_for`` (ownership included) —
+        no new grouping/index. Existence/ownership judgment is same as other
+        dataset endpoints.
         """
         records = self.dataset_records_for(dataset_id, principal)
         if not records:

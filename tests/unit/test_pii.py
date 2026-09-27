@@ -1,7 +1,7 @@
-"""PII 스캐너 단위 테스트 (#441, QG-1).
+"""PII scanner unit tests (#441, QG-1).
 
-패턴(주민번호/휴대전화/이메일/사업자번호), 컬럼명 휴리스틱, 그리고 보안 원칙
-(원본 값 미노출)을 검증한다.
+Verify patterns (resident ID/mobile/email/business ID), column name heuristics, and security
+principle (no raw value exposure).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from kpubdata_builder.stages.silver.pii import scan_pii
 
 
 class TestScanPiiPatterns:
-    """패턴 기반 PII 검출."""
+    """Pattern-based PII detection."""
 
     def test_detects_rrn(self) -> None:
         table = pl.DataFrame({"text": ["900101-1234567", "no pii here"]})
@@ -43,13 +43,13 @@ class TestScanPiiPatterns:
         assert scan_pii(table) == []
 
     def test_non_string_columns_skip_pattern_scan(self) -> None:
-        """비문자열 컬럼은 패턴 스캔을 건너뛴다 (컬럼명 휴리스틱만 적용)."""
+        """Non-string columns skip pattern scan (column name heuristic only)."""
         table = pl.DataFrame({"value": [1, 2, 3]})
         assert scan_pii(table) == []
 
 
 class TestScanPiiColumnNameHeuristics:
-    """컬럼명 휴리스틱 — 공공데이터 축약형(NM/TELNO/ADRES 등)."""
+    """Column name heuristics — public data abbreviations (NM/TELNO/ADRES, etc.)."""
 
     def test_name_column_flagged(self) -> None:
         table = pl.DataFrame({"OPNR_NM": ["홍길동", "김철수"]})
@@ -65,12 +65,12 @@ class TestScanPiiColumnNameHeuristics:
 
 
 class TestScanPiiSecurityPrinciple:
-    """검출 결과에 원본 값이 새어나가지 않아야 한다 (#441 보안 원칙)."""
+    """Detection results must not leak original values (#441 security principle)."""
 
     def test_no_original_values_in_findings(self) -> None:
         secret = "900101-1234567"
         table = pl.DataFrame({"x": [secret, "clean"]})
         findings = scan_pii(table)
-        # findings의 모든 필드(column/kind/count) 직렬화에 원본 값이 없어야
+        # Serialization of all findings fields (column/kind/count) must not include original values.
         serialized = " ".join(f"{f.column}|{f.kind}|{f.count}" for f in findings)
         assert secret not in serialized

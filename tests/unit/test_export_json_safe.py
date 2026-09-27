@@ -1,8 +1,8 @@
-"""Export 공용 JSON 안전 변환 (#629 후속).
+"""Export common JSON safe conversion (#629 follow-up).
 
-``casts: {deal_date: date}``를 선언하면 Gold 레코드에 ``datetime.date``가 담기고,
-``json.dumps``는 그것을 직렬화하지 못한다. 그 ``TypeError``는 서비스 경계에서
-마스킹되므로 사용자는 원인을 알 수 없는 빌드 실패를 본다.
+Declaring ``casts: {deal_date: date}`` puts ``datetime.date`` in Gold records,
+but ``json.dumps`` cannot serialize it. That ``TypeError`` is masked at service boundary,
+so users see a build failure without knowing the cause.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ class TestJsonSafe:
         assert json_safe(datetime.time(1, 2, 3)) == "01:02:03"
 
     def test_decimal_keeps_its_scale(self) -> None:
-        # float으로 바꾸면 소수 자릿수가 조용히 달라진다 — 금액 컬럼에서 그것은
-        # 데이터 변경이다.
+        # Changing to float silently alters decimal places — for amount columns that is
+        # data change.
         assert json_safe(Decimal("1.50")) == "1.50"
 
     def test_nested_structures_are_converted(self) -> None:
@@ -39,8 +39,8 @@ class TestJsonSafe:
         assert json_safe(value) == {"rows": [{"d": "2026-01-01"}], "n": ["2.0"]}
 
     def test_an_unserializable_value_is_left_for_json_dumps_to_reject(self) -> None:
-        # set을 리스트로 펴 주면 데이터가 조용히 바뀐다. 어떤 표현을 고를지는
-        # 계약이므로 이 계층이 말없이 정하지 않는다 — 그대로 TypeError가 나야 한다.
+        # Expanding set to list silently changes data. Choosing representation is
+        # contract, so this layer doesn't silently decide — TypeError must occur.
         assert json_safe({"bad": {1, 2}}) == {"bad": {1, 2}}
         with pytest.raises(TypeError):
             json.dumps(json_safe({"bad": {1, 2}}))
@@ -51,7 +51,7 @@ class TestJsonSafe:
         assert json_safe(value) == value
 
     def test_binary_is_left_for_json_dumps_to_reject(self) -> None:
-        # 임의 인코딩을 고르는 것도 계약이다 — 여기서 조용히 정하지 않는다.
+        # Choosing arbitrary encoding is also a contract — don't silently decide here.
         with pytest.raises(TypeError):
             json.dumps(json_safe(b"\x00\x01"))
 

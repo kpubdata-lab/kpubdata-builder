@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(not _HAS_AGENT, reason="agent module not availab
 
 class TestDiscoverIntegration:
     def test_generates_valid_spec_yaml(self) -> None:
-        """DiscoveryResult.to_spec_yaml이 유효한 YAML을 생성한다."""
+        """DiscoveryResult.to_spec_yaml generates valid YAML."""
         import yaml
 
         result = DiscoveryResult(
@@ -50,7 +50,7 @@ class TestDiscoverIntegration:
 
 class TestMonitorIntegration:
     def test_state_roundtrip(self, tmp_path: Path) -> None:
-        """상태 저장 → 로드 → 수정 → 저장이 무결하다."""
+        """Save state → load → modify → save integrity check."""
         state_file = tmp_path / "monitor.yaml"
         state = MonitorState()
         state.add("datago.apt_trade", status="HEALTHY")
@@ -67,7 +67,7 @@ class TestMonitorIntegration:
         assert rh.status == "HEALTHY"
 
     def test_cli_add_and_list(self, tmp_path: Path) -> None:
-        """CLI monitor --add → 목록 확인 흐름."""
+        """CLI monitor --add → list check workflow."""
         state_file = str(tmp_path / "state.yaml")
         assert main(["monitor", "--state-file", state_file, "--add", "datago.test1"]) == 0
         assert main(["monitor", "--state-file", state_file, "--add", "datago.test2"]) == 0
@@ -75,7 +75,7 @@ class TestMonitorIntegration:
         assert len(state.pending) == 2
 
     def test_check_nonexistent_spec(self) -> None:
-        """존재하지 않는 spec → SPEC_NOT_FOUND."""
+        """Nonexistent spec → SPEC_NOT_FOUND."""
         assert check_approval("nonexistent.dataset_xyz") == "SPEC_NOT_FOUND"
 
 
@@ -87,10 +87,10 @@ class TestPipelineIntegration:
 
 
 class TestCrossRepoIntegration:
-    """Builder ↔ kpubdata spec 시스템 통합."""
+    """Builder ↔ kpubdata spec system integration."""
 
     def test_all_specs_have_verify_required_fields(self) -> None:
-        """모든 번들 spec이 verify에 필요한 필수 필드를 갖추고 있다."""
+        """All bundled specs have required fields for verify."""
         from kpubdata.core.spec import discover_specs
 
         for spec in discover_specs():
@@ -109,8 +109,8 @@ class TestCrossRepoIntegration:
         assert any(p.name == "obsCode" for p in spec.params)
 
     def test_license_field_accessible(self) -> None:
-        # license는 kpubdata의 후행 추가분이다. floor 버전의 SpecDefinition에는
-        # 없으므로, 필드 자체의 존재를 이 테스트의 전제로 삼지 않는다.
+        # license is a kpubdata post-release addition. Floor version's SpecDefinition
+        # has no such field, so the field's existence itself is not a premise of this test.
         spec = find_spec("datago.apt_trade")
         assert spec is not None
         license_spec = getattr(spec, "license", None)

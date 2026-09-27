@@ -1,8 +1,8 @@
-"""Quality WARN/FAIL gate — orchestrator/preview 통합 테스트 (#486).
+"""Quality WARN/FAIL gate — orchestrator/preview integration tests (#486).
 
-WARN이 Build를 계속 진행시키는지, FAIL이 Gold 진입을 막으면서도 quality_results를
-manifest에 보존하는지, multi-source에서 source별 결과가 분리되는지, Preview와
-Build가 동일 데이터/규칙에 동일 판정을 내리는지를 검증한다.
+Verify WARN continues Build, FAIL blocks Gold entry while preserving quality_results in manifest,
+multi-source splits per-source results, Preview and Build give identical judgment on identical
+data/rules.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ class TestWarnAllowsProgress:
     def test_warn_violation_lets_gold_run(self, tmp_path: Path) -> None:
         spec = _spec(
             SourceRef(provider="datago", dataset="apt_trade"),
-            quality=QualityPolicy(min_rows=100),  # warn 기본, row_count=1 < 100
+            quality=QualityPolicy(min_rows=100),  # warn default, row_count=1 < 100.
         )
         client = _FakeClient({"datago.apt_trade": [{"id": "1"}]})
 
@@ -106,8 +106,8 @@ class TestFailBlocksGold:
         assert outcome.status == "failed"
         assert "gold" not in outcome.stages_completed
         assert not (tmp_path / "run1" / "gold" / "datago.apt_trade").exists()
-        # Bronze/Silver는 성공적으로 끝났다 — Quality FAIL만이 이유다.
-        assert "silver" not in outcome.stages_completed  # persist는 gate 이후이므로 아직 안 됨
+        # Bronze/Silver completed successfully — Quality FAIL is the only reason.
+        assert "silver" not in outcome.stages_completed  # persist is after gate, so not yet.
         assert (tmp_path / "run1" / "bronze" / "datago.apt_trade").is_dir()
 
     def test_fail_preserves_quality_results_in_manifest(self, tmp_path: Path) -> None:
@@ -204,7 +204,9 @@ class TestEvaluationErrorGate:
 
 
 class TestSchemaValidationFailurePreservesQualityResults:
-    """기존 #189 legacy schema gate가 실패해도 quality_results는 manifest에 남는다 (#486)."""
+    """Even if existing #189 legacy schema gate fails, quality_results remains in manifest
+    (#486).
+    """
 
     def test_missing_required_column_preserves_schema_check_results(self, tmp_path: Path) -> None:
         spec = BuildSpec(
@@ -265,7 +267,7 @@ class TestPartialMultiSource:
             "datago.a": 1,
             "datago.b": 10,
         }
-        # b는 성공했으니 gold까지 완주한다.
+        # b succeeded, so completes to gold.
         assert (tmp_path / "run1" / "gold" / "datago.b").is_dir()
         assert not (tmp_path / "run1" / "gold" / "datago.a").exists()
 
@@ -302,12 +304,14 @@ class TestPreviewBuildParity:
 
 
 class TestDriftIntegration:
-    """orchestrator가 실제로 dataset/source 범위 한정 drift를 manifest에 기록하는지 (#486)."""
+    """Verify orchestrator actually records dataset/source-scoped drift in manifest (#486)."""
 
     def test_schema_drift_recorded_in_manifest_for_same_dataset(self, tmp_path: Path) -> None:
         spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
         client_v1 = _FakeClient({"datago.apt_trade": [{"id": "1", "amount": 1000}]})
-        client_v2 = _FakeClient({"datago.apt_trade": [{"id": "1", "amount": "1000"}]})  # dtype 변경
+        client_v2 = _FakeClient(
+            {"datago.apt_trade": [{"id": "1", "amount": "1000"}]}
+        )  # dtype change.
 
         first = run_build(spec, client=client_v1, output_root=tmp_path, run_id="run1")
         assert first.status == "ok"
@@ -321,8 +325,8 @@ class TestDriftIntegration:
         assert any(f["kind"] == "dtype_changed" and f["column"] == "amount" for f in findings)
 
     def test_no_drift_comparison_across_different_datasets(self, tmp_path: Path) -> None:
-        """dataset A run, dataset B run(다른 스키마), dataset A new run 순서에서
-        A new run이 B와 비교되어 가짜 drift가 나면 안 된다."""
+        """In sequence: dataset A run, dataset B run (different schema), dataset A new run,
+        A new run must not generate false drift when compared with B."""
         spec_a = _spec(SourceRef(provider="datago", dataset="apt_trade"), dataset_id="dataset.a")
         spec_b = _spec(SourceRef(provider="datago", dataset="apt_trade"), dataset_id="dataset.b")
         client_a = _FakeClient({"datago.apt_trade": [{"id": "1", "amount": 1000}]})
@@ -337,6 +341,6 @@ class TestDriftIntegration:
 
         manifest = _manifest(tmp_path, "a-run2")
         schema_drift = cast(dict[str, object], manifest.get("schema_drift", {}))
-        # a-run1과 a-run2는 동일 스키마이므로 drift가 없어야 한다(dataset.b와 비교되면
-        # totally_different_column 관련 가짜 drift가 생긴다).
+        # a-run1 and a-run2 are same schema so must have no drift (if compared with dataset.b,
+        # false drift appears related to totally_different_column).
         assert schema_drift.get("datago.apt_trade", []) == []

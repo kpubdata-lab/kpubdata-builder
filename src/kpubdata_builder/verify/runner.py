@@ -113,12 +113,12 @@ def verify_dataset(
     Returns:
         VerifyResult with all check outcomes and final status.
     """
-    # 아래 여덟 개는 kpubdata 의 **공개 API 가 아니다** (``kpubdata.__all__`` 에 없다).
-    # verify 가 kpubdata 의 ``make verify`` 를 재구현하기 때문에 생긴 결합이고,
-    # kpubdata 는 minor 릴리스에서 이것들을 옮겨도 파괴적 변경이 아니다.
-    # ``tests/unit/test_kpubdata_internal_surface.py`` 가 이 목록을 고정하므로,
-    # 업그레이드가 실행 중이 아니라 CI 에서 깨진다. 새 내부 심볼을 쓰기 시작하면
-    # 그 목록에도 함께 넣어야 한다.
+    # Below eight are NOT kpubdata public API (not in ``kpubdata.__all__``).
+    # coupling from verify re-implementing kpubdata's ``make verify``, and
+    # kpubdata can move these in minor release without breaking change.
+    # ``tests/unit/test_kpubdata_internal_surface.py`` pins this list,
+    # so upgrade breaks in CI, not at runtime. When starting to use new internal symbols,
+    # add them to that list too.
     from kpubdata.config import KPubDataConfig
     from kpubdata.core.executor import (
         SpecExecutor,

@@ -1,11 +1,11 @@
-"""Builder HTTP 서비스 façade 패키지 (#36).
+"""Builder HTTP service façade package (#36).
 
-Studio 등 외부 UI가 Builder를 호출할 수 있도록 validate/preview/build/artifacts
-엔드포인트를 제공한다. 로직(app)과 stdlib HTTP 전송(http)을 분리한다.
+Provides validate/preview/build/artifacts endpoints so external UIs like Studio
+can call Builder. Separates logic (app) from stdlib HTTP transport (http).
 
-주요 구성:
-    - BuilderService / ServiceResponse / dispatch: 전송 무관 서비스 로직
-    - serve / make_handler: stdlib http.server 어댑터
+Key components:
+    - BuilderService / ServiceResponse / dispatch: transport-agnostic service logic
+    - serve / make_handler: stdlib http.server adapter
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    """facade export를 lazy하게 로드해 query/jobs 의존성이 순환하지 않게 한다."""
+    """Lazily load facade exports to prevent circular dependencies in query/jobs."""
     if name in {
         "API_CONTRACT_VERSION",
         "BuilderService",

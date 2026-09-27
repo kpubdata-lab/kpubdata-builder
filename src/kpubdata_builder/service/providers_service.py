@@ -1,15 +1,15 @@
-"""Provider 도메인 서비스 (#596 첫 조각).
+"""Provider domain service (#596 first piece).
 
-``BuilderService`` 가 providers/uploads/query/builds/datasets/quality 를 한 클래스에
-전부 들고 있던 구조를 도메인별로 나누는 작업의 첫 단계다. 여기서 확립하는 형태를
-나머지 도메인이 그대로 따르면 된다.
+This is the first step of dividing the structure where ``BuilderService`` held all of
+providers/uploads/query/builds/datasets/quality in one class into domain-separated modules.
+The patterns established here are followed by remaining domains.
 
-핵심 규칙 두 가지:
-    - **자기 의존성만 받는다.** ``BuilderService`` 전체를 주입받지 않는다 — 그러면
-      클래스만 늘고 결합은 그대로다. provider 도메인이 실제로 쓰는 것은 credential
-      resolver, client 팩토리, provider test 설정 세 가지뿐이다.
-    - **wire 계약은 그대로다.** 반환 타입(``ServiceResponse``)·상태 코드·본문 키가
-      바뀌지 않는다. 라우팅과 인증 게이트는 손대지 않는다.
+Two core rules:
+    - **Only receive self-owned dependencies.** Do not inject the entire ``BuilderService`` —
+      that only adds classes without reducing coupling. The provider domain actually uses
+      only three things: credential resolver, client factory, provider test configuration.
+    - **Wire contract is unchanged.** Return types (``ServiceResponse``), status codes, and
+      body keys do not change. Routing and auth gates are not touched.
 """
 
 from __future__ import annotations
@@ -30,20 +30,20 @@ from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages.bronze.build import SourceClient
 
-# principal/providers/timeout 을 받아 요청 단위 client 를 만드는 팩토리.
-# BuilderService._create_client 의 시그니처를 그대로 따른다.
+# Factory that receives principal/providers/timeout to create per-request clients.
+# Signature follows BuilderService._create_client directly.
 CreateClient = Callable[..., SourceClient]
 CloseClient = Callable[[SourceClient | None], None]
 
 
 def _raise_provider_test_error(client: SourceClient, provider: str) -> None:
-    """client 생성 자체가 실패한 경우에도 원문 예외를 노출하지 않는다."""
+    """Do not expose raw exceptions even if Client creation itself fails."""
     del client, provider
     raise RuntimeError("provider test unavailable")
 
 
 class ProvidersService:
-    """Provider 목록·연결 테스트·credential CRUD."""
+    """Provider list, connection test, credential CRUD."""
 
     def __init__(
         self,
@@ -60,17 +60,17 @@ class ProvidersService:
         self._provider_test_operation = provider_test_operation
         self._provider_test_timeout = provider_test_timeout
 
-    # --- 내부 조회 ---------------------------------------------------------
+    # --- Internal queries -------------------------------------------------
 
     def runtime_providers(self) -> tuple[ProviderDescriptor, ...] | ServiceResponse:
-        """런타임 provider 카탈로그. 조회 실패는 502 로 변환한다."""
+        """Runtime provider catalog. Query failure converts to 502."""
         client = self._create_client()
         try:
             return provider_descriptors(client)
         except Exception:
-            # upstream 클라이언트의 예외 문자열에는 요청 URL 이 섞여 나올 수 있고,
-            # data.go.kr 계열은 API 키를 쿼리 파라미터로 실어 보낸다 — 그대로
-            # 응답에 넣으면 남의 키가 에러 메시지로 새어 나간다.
+            # upstream client exception strings may contain request URLs, and
+            # data.go.kr variants ship API keys as query parameters — returning
+            # them as-is in responses leaks others' keys in error messages.
             _logger_exception("provider catalog unavailable")
             return ServiceResponse(502, {"error": "catalog unavailable"})
         finally:
@@ -85,10 +85,10 @@ class ProvidersService:
             return ServiceResponse(404, {"error": "provider not found"})
         return match
 
-    # --- 공개 엔드포인트 ---------------------------------------------------
+    # --- Public endpoints ---------------------------------------------------
 
     def providers(self, *, principal: Principal) -> ServiceResponse:
-        """런타임 Provider 목록과 현재 principal의 configured 상태를 반환한다."""
+        """Return runtime Provider list and current principal's configured status."""
         descriptors = self.runtime_providers()
         if isinstance(descriptors, ServiceResponse):
             return descriptors
@@ -108,7 +108,7 @@ class ProvidersService:
         return ServiceResponse(200, {"providers": items})
 
     def provider_status(self, provider: str, *, principal: Principal) -> ServiceResponse:
-        """현재 principal credential로 lightweight connection test를 수행한다."""
+        """Perform lightweight connection test with current principal credential."""
         descriptor = self.known_provider(provider)
         if isinstance(descriptor, ServiceResponse):
             return descriptor
@@ -130,7 +130,7 @@ class ProvidersService:
             )
             return ServiceResponse(200, cast(dict[str, JsonValue], test_result_body(result)))
         except Exception:
-            # Client 생성 실패도 원문 예외를 로그/응답하지 않고 unknown으로 제한한다.
+            # Even if Client creation fails, don't expose raw exceptions - limit to unknown.
             result = run_provider_test(
                 provider=provider,
                 configured=True,
@@ -143,7 +143,7 @@ class ProvidersService:
                 self._close_client(client)
 
     def provider_credential(self, provider: str, *, principal: Principal) -> ServiceResponse:
-        """원문 없이 현재 principal의 저장 credential 메타데이터를 반환한다."""
+        """Return current principal's stored credential metadata without raw value."""
         known = self.known_provider(provider)
         if isinstance(known, ServiceResponse):
             return known
@@ -169,7 +169,7 @@ class ProvidersService:
         *,
         principal: Principal,
     ) -> ServiceResponse:
-        """현재 principal의 Provider credential을 생성 또는 교체한다."""
+        """Create or replace current principal's Provider credential."""
         known = self.known_provider(provider)
         if isinstance(known, ServiceResponse):
             return known
@@ -195,7 +195,7 @@ class ProvidersService:
         )
 
     def delete_provider_credential(self, provider: str, *, principal: Principal) -> ServiceResponse:
-        """현재 principal의 Provider credential만 삭제한다."""
+        """Delete only current principal's Provider credential."""
         known = self.known_provider(provider)
         if isinstance(known, ServiceResponse):
             return known
@@ -211,7 +211,7 @@ class ProvidersService:
         )
 
     def provider_keys(self, owner_id: str | None, providers: Iterable[str]) -> Mapping[str, str]:
-        """빌드 실행이 쓰는 principal별 provider key 해석 (얇은 위임)."""
+        """Resolve per-principal provider keys used by build execution (thin delegation)."""
         return self._credential_resolver.provider_keys(owner_id, tuple(providers))
 
 

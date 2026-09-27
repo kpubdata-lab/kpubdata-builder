@@ -1,20 +1,19 @@
-"""Bronze/Silver/Gold stage 산출물을 안전하게 조회하기 위한 공용 reader (#488).
+"""shared reader for Bronze/Silver/Gold stage artifacts safely (#488).
 
-Studio 같은 소비자가 Bronze/Silver/Gold의 실제 파일 배치(``{run}/bronze/{source_key}/
-{artifact_id}/raw_records.jsonl`` 등)를 알아야 stage 상태나 미리보기를 얻을 수 있으면
-Builder 저장 구조에 결합된다. 이 모듈이 그 지식을 캡슐화해서, 서비스 레이어는
-source_key와 stage 이름만으로 상태/요약을 얻을 수 있게 한다.
+consumers like Studio must know actual file layouts (e.g., `{run}/bronze/{source_key}/
+{artifact_id}/raw_records.jsonl`) to query stage state or preview. builder storage is
+tightly coupled. this module encapsulates that knowledge so service layer gets state/summary
+from only source_key and stage name.
 
-파일시스템 존재만으로 성공을 추측하지 않는다 — 완전한 sidecar 파일 집합이 있을 때만
-"completed"로 판정하고, 디렉터리는 있지만 일부만 있으면 "unavailable"(손상/legacy),
-상위 단계가 끝나지 못해 아예 시도되지 않았으면 "not_run", manifest에 실패로 기록된
-소스인데 완전한 산출물이 없으면 "failed"로 구분한다.
+does not infer success from filesystem existence alone—only when complete sidecar file set
+exists considers it "completed"; partial directory presence = "unavailable" (corrupted/legacy),
+prior stage incomplete = "not_run", manifest shows failure but complete output missing = "failed".
 
-주요 구성:
+main components:
     - StageStatus: completed/failed/not_run/unavailable
-    - SourceStageSummary: 소스 하나의 3단계 상태 요약
-    - compute_run_stage_summary: run의 모든 소스에 대한 stage 상태 계산
-    - read_bronze_summary / read_silver_summary / read_gold_summary: 안전한 상세 조회
+    - SourceStageSummary: one source's 3-stage status summary
+    - compute_run_stage_summary: compute stage status for all sources in run
+    - read_bronze_summary / read_silver_summary / read_gold_summary: safe detailed reads
 """
 
 from __future__ import annotations
@@ -34,13 +33,13 @@ _SILVER_SIDECAR_FILES = ("schema.json", "stats.json", "preview.json", "validatio
 
 
 def sanitize_source_segment(source_key: str) -> str:
-    """Bronze/Silver persist가 쓰는 것과 동일한 source_key 파일명 정리 규칙 (bronze/persist.py,
-    silver/persist.py 참조). Gold는 source_key를 그대로 dataset_name으로 쓴다."""
+    """same source_key filename normalization rules as Bronze/Silver persist
+    (see bronze/persist.py, silver/persist.py). Gold uses source_key as-is for dataset_name."""
     return source_key.replace("/", "_")
 
 
 def bronze_source_dir(output_root: Path, run_id: str, source_key: str) -> Path:
-    """{output_root}/{run_id}/bronze/{sanitized source_key} 경로. 안전하지 않으면 ValueError."""
+    """path to {output_root}/{run_id}/bronze/{sanitized source_key}. raises ValueError if unsafe."""
     segment = sanitize_source_segment(source_key)
     validate_path_segment(segment, field_name="source_key")
     run_dir = output_root / run_id
@@ -51,7 +50,7 @@ def bronze_source_dir(output_root: Path, run_id: str, source_key: str) -> Path:
 
 
 def silver_source_dir(output_root: Path, run_id: str, source_key: str) -> Path:
-    """{output_root}/{run_id}/silver/{sanitized source_key} 경로. 안전하지 않으면 ValueError."""
+    """Path to {output_root}/{run_id}/silver/{sanitized source_key}. Raises ValueError if unsafe."""
     segment = sanitize_source_segment(source_key)
     validate_path_segment(segment, field_name="source_key")
     run_dir = output_root / run_id
@@ -62,9 +61,9 @@ def silver_source_dir(output_root: Path, run_id: str, source_key: str) -> Path:
 
 
 def gold_source_dir(output_root: Path, run_id: str, source_key: str) -> Path:
-    """{output_root}/{run_id}/gold/{source_key} 경로. gold persist는 slash를 치환하지 않고
-    source_key(=dataset_name)를 그대로 쓰므로(gold/persist.py) 여기도 그대로 쓴다.
-    안전하지 않으면 ValueError."""
+    """Path to {output_root}/{run_id}/gold/{source_key}. Gold persist does not replace slashes,
+    using source_key(=dataset_name) as-is (see gold/persist.py), so we do the same.
+    Raises ValueError if unsafe."""
     validate_path_segment(source_key, field_name="source_key")
     run_dir = output_root / run_id
     ensure_within(output_root, run_dir, label="run directory")
@@ -74,7 +73,7 @@ def gold_source_dir(output_root: Path, run_id: str, source_key: str) -> Path:
 
 
 def _read_json(path: Path) -> JsonValue | None:
-    """JSON 파일을 안전하게 읽는다. 없거나 손상되면 None (crash 대신 unavailable로 표현)."""
+    """Safely read JSON file. Returns None if missing or corrupt (unavailable vs crash)."""
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -86,12 +85,13 @@ def _read_json(path: Path) -> JsonValue | None:
 
 
 def _select_latest_bronze_artifact(candidate_dirs: Sequence[Path]) -> Path | None:
-    """동일 source 아래 여러 artifact_id 후보가 있을 때 결정적으로 하나를 선택한다 (#488).
+    """Deterministically select one artifact when multiple artifact_id candidates exist
+    under the same source (#488).
 
-    각 후보의 metadata.json에서 fetched_at을 읽어 가장 최근인 것을 고른다(ISO 8601
-    문자열은 사전식 정렬이 시간 순서와 일치한다). 동일 fetched_at이면 artifact_id
-    (디렉터리 이름) 내림차순으로 타이브레이크한다. metadata.json을 읽을 수 없는
-    후보는 후보군에서 제외한다 — 임의로 하나를 고르지 않는다.
+    Reads fetched_at from each candidate's metadata.json and selects the most recent (ISO 8601
+    strings sort lexicographically in time order). On tie, break by artifact_id (directory name)
+    descending. Candidates missing readable metadata.json are excluded from consideration—no
+    arbitrary selection.
     """
     scored: list[tuple[str, str, Path]] = []
     for candidate in candidate_dirs:
@@ -121,7 +121,7 @@ def _bronze_artifact_dir(output_root: Path, run_id: str, source_key: str) -> Pat
 
 
 def _silver_complete(output_root: Path, run_id: str, source_key: str) -> tuple[bool, bool]:
-    """(완전 여부, 디렉터리 존재 여부)를 반환한다."""
+    """Return (is_complete, directory_exists)."""
     try:
         d = silver_source_dir(output_root, run_id, source_key)
     except ValueError:
@@ -135,7 +135,7 @@ def _silver_complete(output_root: Path, run_id: str, source_key: str) -> tuple[b
 
 
 def _gold_complete(output_root: Path, run_id: str, source_key: str) -> tuple[bool, bool]:
-    """(완전 여부, 디렉터리 존재 여부)를 반환한다."""
+    """Return (is_complete, directory_exists)."""
     try:
         d = gold_source_dir(output_root, run_id, source_key)
     except ValueError:
@@ -154,12 +154,12 @@ def _gold_complete(output_root: Path, run_id: str, source_key: str) -> tuple[boo
 def _stage_status(
     *, complete: bool, dir_exists: bool, upstream_completed: bool, source_failed: bool
 ) -> StageStatus:
-    """단일 stage의 상태를 결정한다.
+    """Determine single stage status.
 
-    우선순위: 완전한 산출물이 있으면 completed. 디렉터리는 있는데 불완전하면
-    unavailable(손상/legacy 형식). 상위 단계가 끝나지 못했으면 이 단계는 시도조차
-    되지 않았으므로 not_run. manifest가 이 소스를 실패로 기록했으면 failed.
-    그 외(알 수 없는 상태)는 not_run으로 보수적으로 표시한다.
+    Priority: if complete outputs exist → completed. If directory exists but incomplete →
+    unavailable (corrupted/legacy format). If upstream stage did not complete → not_run
+    (this stage was never attempted). If manifest records this source as failed → failed.
+    Otherwise (unknown state) conservatively mark as not_run.
     """
     if complete:
         return "completed"
@@ -174,7 +174,7 @@ def _stage_status(
 
 @dataclass(frozen=True)
 class SourceStageSummary:
-    """소스 하나의 Bronze/Silver/Gold 상태 요약."""
+    """Bronze/Silver/Gold status summary for a single source."""
 
     source_key: str
     bronze: StageStatus
@@ -188,7 +188,7 @@ def compute_run_stage_summary(
     source_keys: Sequence[str],
     failed_source_keys: frozenset[str],
 ) -> list[SourceStageSummary]:
-    """run에 알려진 각 소스에 대해 Bronze/Silver/Gold 상태를 계산한다."""
+    """Compute Bronze/Silver/Gold status for each source known to run."""
     results: list[SourceStageSummary] = []
     for source_key in source_keys:
         source_failed = source_key in failed_source_keys
@@ -231,17 +231,17 @@ def compute_run_stage_summary(
 
 @dataclass(frozen=True)
 class BronzeSummary:
-    """안전하게 노출 가능한 Bronze 요약. fetch_params/provenance 원문은 담지 않는다."""
+    """Safely exposable Bronze summary. Does not include fetch_params or provenance raw text."""
 
     fetched_at: str | None
     record_count: int | None
 
 
 def read_bronze_summary(output_root: Path, run_id: str, source_key: str) -> BronzeSummary | None:
-    """선택된 Bronze artifact의 안전한 summary만 읽는다.
+    """Read safe summary of selected Bronze artifact only.
 
-    fetch_params, provenance.fetch_params(secret 가능성), artifact_paths(내부 파일
-    배치)는 절대 반환하지 않는다.
+    Never returns fetch_params, provenance.fetch_params (secret possible), or artifact_paths
+    (internal file layout).
     """
     artifact_dir = _bronze_artifact_dir(output_root, run_id, source_key)
     if artifact_dir is None:
@@ -259,7 +259,7 @@ def read_bronze_summary(output_root: Path, run_id: str, source_key: str) -> Bron
 
 @dataclass(frozen=True)
 class SilverSummary:
-    """안전하게 노출 가능한 Silver 요약. sample은 호출자가 넘긴 상한으로 이미 잘려 있다."""
+    """Safely exposable Silver summary. Sample already capped by limit passed by caller."""
 
     row_count: int | None
     schema: list[JsonValue]
@@ -272,10 +272,10 @@ class SilverSummary:
 def read_silver_summary(
     output_root: Path, run_id: str, source_key: str, *, sample_limit: int
 ) -> SilverSummary | None:
-    """schema.json/stats.json/validation.json/preview.json에서 안전한 요약을 읽는다.
+    """Read safe summary from schema.json/stats.json/validation.json/preview.json.
 
-    parquet 전체는 읽지 않는다 — sample은 항상 preview.json에 이미 persist 시점에
-    저장된 상한 내(build_silver_dataset의 preview_limit)에서만 나온다.
+    Does not read the full Parquet file—sample always comes from preview.json, already
+    persisted at persist time within the limit (build_silver_dataset's preview_limit).
     """
     try:
         d = silver_source_dir(output_root, run_id, source_key)
@@ -309,7 +309,8 @@ def read_silver_summary(
 
 @dataclass(frozen=True)
 class GoldSummary:
-    """안전하게 노출 가능한 Gold 요약. export options/output_path/credential은 담지 않는다."""
+    """Safely exposable Gold summary. Does not include export options, output_path, or
+    credentials."""
 
     row_count: int | None
     columns: list[str]
@@ -318,11 +319,11 @@ class GoldSummary:
 
 
 def read_gold_summary(output_root: Path, run_id: str, source_key: str) -> GoldSummary | None:
-    """package.json에서 안전한 요약만 읽는다.
+    """Read safe summary from package.json only.
 
-    export_plan.targets[].options(credential 가능성)와 output_path는 반환하지
-    않는다 — kind만 노출한다. Gold sample sidecar는 아직 없으므로 만들어내지
-    않는다(호출자가 sample_available=false로 표현).
+    Does not return export_plan.targets[].options (credential possible) or output_path—only
+    kind is exposed. No Gold sample sidecar yet, so no sample is generated (caller expresses
+    sample_available=false).
     """
     try:
         d = gold_source_dir(output_root, run_id, source_key)

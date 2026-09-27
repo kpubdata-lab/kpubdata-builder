@@ -1,13 +1,13 @@
-"""PII 오탐 문맥 판정 보조 (AI-2, #447).
+"""PII false positive context judgment assistant (AI-2, #447).
 
-QG-1(scan_pii)이 검출한 PII 후보 컬럼에 대해 LLM이 오탐 여부 의견을 제시한다.
-LLM은 게이트가 아니다 — 정규식이 차단 권한을 갖고, LLM은 "오탐으로 보인다"는
-의견만 낸다. 최종 해제는 사람이 allow_columns 에 명시한다.
+LLM provides opinion on whether PII candidates detected by QG-1(scan_pii) are false positives.
+LLM is not a gate — regex holds blocking authority; LLM only offers "appears to be false
+positive" opinion. human makes final exception by explicitly listing in allow_columns.
 
-**절대 금지**: LLM이 "괜찮다"고 해서 통과시키는 것. 놓치면 개인정보가 공개된다.
+**ABSOLUTELY FORBIDDEN**: allowing just because LLM says "OK". if missed, personal data leaks.
 
-원본 데이터 값은 프롬프트에 포함하지 않는다 — 컬럼명과 종류(kind)만.
-데이터 샘플이 외부로 나가는 것이 아니므로 스크러빙이 불필요하다 (#447).
+original data values not included in prompt — only column names and kind.
+data samples do not leave system, so scrubbing unnecessary (#447).
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ from .pii import PiiFinding
 
 @dataclass(frozen=True)
 class PiiAdvisoryResult:
-    """LLM 오탐 판정 결과.
+    """LLM false positive judgment result.
 
-    속성:
-        likely_false_positives: 오탐으로 의심되는 컬럼명 목록 (LLM 의견).
-        raw_response: LLM 원본 응답 (UI 힌트용).
+    attributes:
+        likely_false_positives: list of column names suspected as false positives (LLM opinion).
+        raw_response: LLM raw response (for UI hints).
     """
 
     likely_false_positives: tuple[str, ...]
@@ -31,10 +31,11 @@ class PiiAdvisoryResult:
 
 
 def build_pii_advisory_prompt(findings: list[PiiFinding]) -> str:
-    """PII 검출 후보를 LLM에 전달해 오탐 여부를 묻는 프롬프트를 구성한다 (#447).
+    """constructs prompt passing PII detection candidates to LLM asking about false
+    positives (#447).
 
-    원본 값은 포함하지 않는다 — 컬럼명과 종류(kind)만. 정규식은 과탐지한다
-    (담당부서명이 인명으로 잡히는 식) — LLM이 문맥으로 오탐을 줄여준다.
+    excludes original values — only column names and kind. regex over-detects
+    (e.g., department name caught as person name) — LLM reduces false positives with context.
     """
     if not findings:
         return ""

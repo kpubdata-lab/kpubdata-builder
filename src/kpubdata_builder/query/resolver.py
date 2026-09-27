@@ -32,7 +32,7 @@ class ResolvedQueryContext:
 
 
 def _ownership_allowed(manifest: dict[str, object], principal: Principal) -> bool:
-    """#504 query ownership 게이트 — ``ownership_allows``(#505 canonical) 공용 predicate."""
+    """#504 query ownership gate — ``ownership_allows`` (#505 canonical) shared predicate."""
     created_by = manifest.get("created_by")
     owner_id = manifest.get("owner_id")
     return ownership_allows(
@@ -86,8 +86,8 @@ def resolve_query_context(
     except ValueError as exc:
         raise QueryContextError(str(exc)) from exc
     table_path = source_dir / "table.parquet"
-    # path-safety 실패는 경로 정보를 노출하지 않고 artifact unavailable로
-    # fail-closed 처리한다(예: symlink가 workspace 밖을 가리키는 경우).
+    # path-safety failure does not expose path info, treated as artifact unavailable
+    # fail-closed (e.g. symlink pointing outside workspace).
     try:
         ensure_within(run_dir, table_path, label="query table")
     except ValueError as exc:

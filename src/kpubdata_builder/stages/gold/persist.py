@@ -1,12 +1,4 @@
-"""Gold 단계 산출물을 실행 워크스페이스에 저장한다 (#47).
-
-GoldPackage를 output_root/{run_id}/gold/{dataset_name}/ 아래에 저장한다. 테이블은
-parquet으로, 패키지 메타데이터는 결정적 JSON으로 기록한다.
-
-주요 구성:
-    - GoldPersistResult: 저장 경로 결과 객체
-    - persist_gold_package: Gold 산출물 파일 기록 함수
-"""
+"""persists Gold stage artifacts to the execution workspace (#47)."""
 
 from __future__ import annotations
 
@@ -22,13 +14,7 @@ from .models import GoldPackage
 
 @dataclass(frozen=True)
 class GoldPersistResult:
-    """Gold 산출물을 위해 기록된 파일시스템 경로.
-
-    속성:
-        gold_dir: 산출물이 저장된 Gold 디렉터리.
-        table_path: 최종 테이블 parquet 파일 경로.
-        package_path: 패키지 메타데이터 JSON 경로.
-    """
+    """filesystem path recorded for Gold artifacts."""
 
     gold_dir: Path
     table_path: Path
@@ -37,7 +23,7 @@ class GoldPersistResult:
 
 
 def _package_metadata(package: GoldPackage) -> dict[str, JsonValue]:
-    """GoldPackage의 JSON 직렬화 가능한 메타데이터를 구성한다."""
+    """constructs JSON-serializable metadata for GoldPackage."""
     return {
         "dataset_name": package.dataset_name,
         "source_silver": package.source_silver,
@@ -73,19 +59,7 @@ def persist_gold_package(
     output_root: Path,
     run_id: str,
 ) -> GoldPersistResult:
-    """Gold 산출물을 output_root/{run_id}/gold/{dataset_name}/ 아래에 기록한다.
-
-    run_id 또는 dataset_name에 안전하지 않은 경로 문자가 포함되면 ValueError를
-    발생시킨다.
-
-    매개변수:
-        package: 저장할 Gold 패키지.
-        output_root: 실행 워크스페이스 루트.
-        run_id: 빌드 실행 식별자.
-
-    반환값:
-        GoldPersistResult: 기록된 파일 경로 모음.
-    """
+    """records Gold artifacts under output_root/{run_id}/gold/{dataset_name}/."""
     validate_path_segment(run_id, field_name="run_id")
     validate_path_segment(package.dataset_name, field_name="dataset_name")
 
@@ -106,8 +80,8 @@ def persist_gold_package(
     tmp_dir = Path(tempfile.mkdtemp(dir=gold_dir.parent, prefix=".gold_tmp_"))
     try:
         package.table.write_parquet(tmp_dir / "table.parquet")
-        # allow_nan=False: NaN/Infinity는 비표준 JSON 토큰이 되므로 조용히 기록하지 않고
-        # ValueError로 실패시킨다 (#217).
+        # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail with
+        # ValueError (#217).
         (tmp_dir / "package.json").write_text(
             json.dumps(
                 _package_metadata(package),
@@ -120,20 +94,20 @@ def persist_gold_package(
             encoding="utf-8",
         )
 
-        # splits 처리: package.splits가 있으면 splits/ 서브디렉토리에 각 분할을 parquet로 기록
+        # splits handling: if package.splits exists, write each split as parquet in splits/
         if package.splits is not None:
             (tmp_dir / "splits").mkdir(exist_ok=True)
             for split_name, split_df in package.splits.items():
                 validate_path_segment(split_name, field_name="split_name")
                 split_df.write_parquet(tmp_dir / "splits" / f"{split_name}.parquet")
 
-        # Atomic swap: 기존 디렉터리가 있어도 데이터 유실 없이 교체한다 (#180).
+        # Atomic swap: replaces existing directory without data loss (#180).
         atomic_replace_dir(tmp_dir, gold_dir)
     except BaseException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
-    # splits_paths 결과 구성
+    # construct splits_paths result
     splits_paths: dict[str, Path] = {}
     if package.splits is not None:
         for split_name in package.splits:

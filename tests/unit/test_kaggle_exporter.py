@@ -1,8 +1,8 @@
-"""KaggleExporter의 출력 규칙을 테스트로 고정한다.
+"""Lock down KaggleExporter output rules via test.
 
-CSV 본문은 CsvExporter와 동일하게 schema 우선 컬럼 순서를 따라야 하고,
-dataset-metadata.json은 title/id/licenses/resources를 담아야 한다. 라이선스
-오버라이드, 기존 메타데이터 병합, I/O 실패 정책을 회귀 테스트로 못 박는다.
+CSV body must follow schema-first column order like CsvExporter, and
+dataset-metadata.json must contain title/id/licenses/resources. License
+override, existing metadata merge, and I/O failure policy are locked by regression tests.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _read_metadata(directory: Path) -> dict[str, object]:
 
 
 def test_writes_csv_following_schema_and_valid_metadata(tmp_path: Path) -> None:
-    # CSV 헤더는 schema 순서를 따르고, 메타데이터 json은 유효해야 한다.
+    # CSV header follows schema order; metadata json must be valid.
     artifact = ArtifactDataset(
         records=({"b": "2", "a": "1"}, {"a": "3", "b": "4"}),
         schema={"a": "str", "b": "str"},
@@ -50,7 +50,7 @@ def test_writes_csv_following_schema_and_valid_metadata(tmp_path: Path) -> None:
 
 
 def test_empty_records_with_schema_writes_header_only(tmp_path: Path) -> None:
-    # schema는 있고 records가 없으면 헤더 한 줄만 기록한다.
+    # If schema exists but records absent, write header line only.
     artifact = ArtifactDataset(
         records=(), schema={"id": "str", "name": "str"}, metadata={"license": "CC-BY-4.0"}
     )
@@ -62,7 +62,7 @@ def test_empty_records_with_schema_writes_header_only(tmp_path: Path) -> None:
 
 
 def test_license_override_from_metadata(tmp_path: Path) -> None:
-    # metadata.license가 있으면 그 값이 licenses name으로 반영된다.
+    # If metadata.license exists, its value is reflected in licenses name.
     artifact = ArtifactDataset(
         records=({"id": "1"},),
         schema={"id": "str"},
@@ -77,7 +77,7 @@ def test_license_override_from_metadata(tmp_path: Path) -> None:
 
 
 def test_formula_injection_trigger_chars_prefixed_in_kaggle(tmp_path: Path) -> None:
-    # KaggleExporter도 _format_cell을 공유하므로 수식 트리거 값에 접두사가 붙어야 한다.
+    # KaggleExporter shares _format_cell, so formula-trigger values must have prefix.
     artifact = ArtifactDataset(
         records=({"cmd": '=HYPERLINK("evil.com")'},),
         schema={"cmd": "str"},
@@ -92,12 +92,12 @@ def test_formula_injection_trigger_chars_prefixed_in_kaggle(tmp_path: Path) -> N
 
 
 def test_registry_exposes_kaggle_exporter() -> None:
-    # Kaggle exporter가 kind 문자열 "kaggle"로 레지스트리에 등록되어 있는지 확인한다.
+    # Verify Kaggle exporter is registered with kind string "kaggle" in registry.
     assert isinstance(EXPORTER_REGISTRY["kaggle"], KaggleExporter)
 
 
 def test_merges_resource_into_existing_metadata(tmp_path: Path) -> None:
-    # 같은 디렉터리에 두 번 내보내면 resources에 두 경로가 모두 누적된다.
+    # Exporting twice to same directory accumulates both paths in resources.
     target_one = ExportTarget(kind="kaggle", output_path="out/first.csv")
     target_two = ExportTarget(kind="kaggle", output_path="out/second.csv")
     artifact = ArtifactDataset(
@@ -118,7 +118,7 @@ def test_merges_resource_into_existing_metadata(tmp_path: Path) -> None:
     )
 
     metadata = _read_metadata(first.output_path.parent)
-    # 권한적 필드(title/id/licenses)는 최신 export 값으로 갱신되고, resources는 누적된다 (#202).
+    # Authoritative fields (title/id/licenses) update to latest export; resources accumulate (#202).
     assert metadata["title"] == "Second"
     assert metadata["id"] == "kpub/second"
     paths = {entry["path"] for entry in metadata["resources"]}  # type: ignore[index, union-attr]
@@ -126,7 +126,7 @@ def test_merges_resource_into_existing_metadata(tmp_path: Path) -> None:
 
 
 def test_reexport_refreshes_stale_top_level_metadata(tmp_path: Path) -> None:
-    # 설정 변경 후 같은 파일로 재실행하면 stale id/title/licenses가 갱신되어야 한다 (#202).
+    # After config change, re-running to same file must update stale id/title/licenses (#202).
     target = ExportTarget(kind="kaggle", output_path="out/data.csv")
 
     KaggleExporter().export(
@@ -155,9 +155,9 @@ def test_reexport_refreshes_stale_top_level_metadata(tmp_path: Path) -> None:
 
 
 def test_wraps_io_failure_in_export_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 파일 쓰기 실패가 ExportError로 래핑되는지 확인한다.
-    # license 를 선언해 둔다 — 없으면 IO 를 건드리기도 전에 license 검사에서
-    # ExportError 가 나서, 이 테스트가 이름과 다른 이유로 통과한다.
+    # Verify file write failures are wrapped as ExportError.
+    # Declare license — without it, license check fails before I/O is even touched,
+    # so ExportError is raised, test passes for different reason than name suggests.
     artifact = ArtifactDataset(
         records=({"id": "1"},), schema={"id": "str"}, metadata={"license": "CC-BY-4.0"}
     )
@@ -173,11 +173,11 @@ def test_wraps_io_failure_in_export_error(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 class TestTheLicenseIsNeverGuessed:
-    """``dataset-metadata.json`` 은 Kaggle 이 정본으로 읽는 파일이다.
+    """``dataset-metadata.json`` is the file Kaggle reads as canonical.
 
-    선언이 없을 때 조용히 ``CC-BY-4.0`` 을 적던 시절에는, 남의 데이터에 대해
-    사실이 아닌 주장을 대신 해 주고 있었다. 공공누리 제2~4유형처럼 상업적
-    이용이나 변형이 제한된 데이터라면 명백한 오표기다.
+    Without declaration, silently applying ``CC-BY-4.0`` was making false claims on others' data.
+    For data like Korean Copyright Act Type 2-4 with commercial/derivative restrictions, that's
+    clear mislabeling.
     """
 
     def _artifact(self, **metadata: object) -> ArtifactDataset:

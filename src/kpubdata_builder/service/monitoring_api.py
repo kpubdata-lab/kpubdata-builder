@@ -1,12 +1,13 @@
-"""시스템 observability 서비스 (#596 후속, #637).
+"""System observability service (#596 follow-up, #637).
 
-``/monitoring`` 표면이다 — 큐 상태, 최근 build 추이, 요청 지연.
+The ``/monitoring`` surface — queue status, recent build trends, request latency.
 
-**도메인 quality 와 섞지 않는다.** 그 경계는 #606 이 세운 것이고, 여기서도 같다:
-`/quality` 는 데이터가 어떤가를 말하고 `/monitoring` 은 시스템이 어떤가를 말한다.
-한 응답에 섞으면 둘 중 하나를 읽는 쪽이 다른 하나의 변화에 끌려다닌다.
+**Does not mix with quality domain.** That boundary was established in #606 and
+applies here too: ``/quality`` describes data characteristics, ``/monitoring``
+describes system state. Mixing them in one response causes consumers reading one
+to be dragged along by changes in the other.
 
-**wire 계약은 바뀌지 않는다.** ``BuilderService`` 가 같은 시그니처로 위임한다.
+**Wire contract is stable.** ``BuilderService`` delegates with the same signature.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from kpubdata_builder.store.build_index import BuildIndex
 
 
 class MonitoringApiService:
-    """큐/build/지연 observability (#516)."""
+    """Queue/build/latency observability (#516)."""
 
     def __init__(
         self,
@@ -41,11 +42,12 @@ class MonitoringApiService:
         self._latency_recorder = latency_recorder
 
     def monitoring_summary(self) -> ServiceResponse:
-        """Builder API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516).
+        """Builder API/Queue/Worker/Artifact Store system status summary (#516).
 
-        시스템 aggregate만 담으며 개별 run의 dataset/owner/credential 정보는
-        포함하지 않는다 — ownership 필터링이 필요 없다. Provider status(#492)는
-        요청마다 실제 네트워크 프로브를 유발하므로 이번 PR에서는 포함하지 않는다.
+        Contains only system aggregate; does not include individual run dataset/
+        owner/credential information — no ownership filtering needed. Provider
+        status (#492) would require actual network probe on each request, so it is
+        not included in this PR.
         """
         api = monitoring_service.api_status(self._latency_recorder)
         queue = monitoring_service.queue_status(self._async_builds)
@@ -89,11 +91,11 @@ class MonitoringApiService:
     def monitoring_builds(
         self, *, window: str, bucket: str, principal: Principal | None = None
     ) -> ServiceResponse:
-        """window/bucket별 build 통계와 recent runs를 반환한다 (#516).
+        """Return build statistics and recent runs by window/bucket (#516).
 
-        ENFORCE_OWNERSHIP+oidc principal일 때는 본인이 접근 가능한 run만
-        집계·노출한다(#505) — 다른 principal의 run metadata가 새는 side
-        channel이 되지 않는다.
+        When ENFORCE_OWNERSHIP+oidc principal, aggregate and expose only runs
+        accessible by this principal (#505) — prevent other principals' run
+        metadata from leaking as a side channel.
         """
         validated_window = monitoring_service.validate_window(window)
         if validated_window is None:
@@ -114,8 +116,8 @@ class MonitoringApiService:
                 "bucket_start": b.bucket_start,
                 "bucket_end": b.bucket_end,
                 "total": b.total,
-                # wire 계약은 success/failed/cancelled다(#527) — 내부 BuildIndex
-                # status 값 "ok"는 그대로 두고 외부 필드 이름만 매핑한다.
+                # Wire contract is success/failed/cancelled (#527) — keep internal BuildIndex
+                # status value "ok" as-is, only map the external field name to match contract.
                 "success": b.success,
                 "failed": b.failed,
                 "cancelled": b.cancelled,

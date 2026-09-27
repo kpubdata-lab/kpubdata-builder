@@ -1,12 +1,12 @@
-"""내부 예외 문자열이 HTTP 응답으로 새지 않는지 검증한다.
+"""Verify that internal exception strings do not leak into HTTP responses.
 
-예외를 그대로 응답에 넣으면 호출자가 알 필요 없는 것들이 따라 나간다 —
-OSError 는 서버의 절대 경로를, upstream 클라이언트의 예외는 요청 URL 을
-싣는다. data.go.kr 계열은 API 키를 쿼리 파라미터로 보내므로 그 URL 에는
-남의 자격증명이 들어 있다.
+Returning exceptions directly in responses exposes information callers don't need —
+OSError carries server absolute paths, upstream client exceptions carry request URLs.
+data.go.kr variants send API keys as query parameters, so those URLs contain
+others' credentials.
 
-진단 정보를 없애자는 게 아니라 **어디로 보낼지**를 정하는 문제다 —
-traceback 은 로그로, 응답에는 안정적인 문구만.
+The issue is not eliminating diagnostic information but **where to send it** —
+tracebacks go to logs, responses contain only stable messages.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class TestSnapshotReadFailure:
         assert response.status_code == 500
         assert response.body == {"error": "failed to read BuildSpec snapshot"}
         assert _SECRET_PATH not in str(response.body)
-        # 사라지는 게 아니라 로그로 간다.
+        # It doesn't disappear; it goes to the log.
         assert _SECRET_PATH in caplog.text
 
 
@@ -84,11 +84,10 @@ class TestUnhandledJobFailure:
     def test_an_unexpected_exception_reports_its_type_not_its_message(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """``GET /builds/{run_id}`` 가 이 error 를 그대로 싣는다.
+        """``GET /builds/{run_id}`` carries this error directly.
 
-        예상하지 못한 예외라 내용이 무엇일지 보장할 수 없으므로, 타입 이름까지만
-        내보낸다 — 어느 계층에서 터졌는지는 알려주면서 임의의 내부 문자열을
-        노출하지는 않는 선이다.
+        Unexpected exception content is unpredictable, so only type name is exposed —
+        reveals which layer failed while avoiding arbitrary internal strings.
         """
         executor = AsyncBuildExecutor(max_workers=1)
 

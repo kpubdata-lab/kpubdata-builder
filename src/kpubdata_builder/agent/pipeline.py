@@ -41,7 +41,7 @@ def _run(
 
 
 def _agent_output_paths(*, provider: str, key: str) -> tuple[str, ...]:
-    """이 파이프라인이 만드는 파일들. 이것만 커밋한다."""
+    """Files created by this pipeline. Commit only these."""
     return (
         f"src/kpubdata/providers/{provider}/specs/{key}.yaml",
         f"tests/fixtures/{provider}/{key}",
@@ -74,9 +74,9 @@ def run_pipeline(
         skip_pr: If True, stop before creating a PR
     """
     # Step 1: Check spec exists
-    # dataset_id 를 소스 문자열에 끼워 넣지 않는다. 따옴표 하나만 들어와도
-    # 임의 코드가 되고, 이 함수는 CLI 인자와 HTTP 경로에서 값을 받는다.
-    # argv 로 넘기면 문자열은 어디까지나 데이터다.
+    # Do not embed dataset_id in the source string. Even a single quote can become
+    # arbitrary code, and this function receives values from CLI arguments and HTTP paths.
+    # Passed via argv, strings remain data.
     result = _run(
         [
             sys.executable,
@@ -142,9 +142,9 @@ def run_pipeline(
     provider, key = dataset_id.split(".", 1)
     branch = f"agent/{dataset_id}"
 
-    # 더럽혀진 작업 트리 위에서 커밋하지 않는다. `git add -A` 로 남의 변경과
-    # 도구가 남긴 파일까지 함께 올린 적이 있다(kpubdata 저장소의 .omx/ 가 그렇게
-    # 들어갔다). 이 파이프라인이 만든 것만 올린다.
+    # Do not commit on dirty working tree. `git add -A` has caused other changes and
+    # tool-generated files to be committed together (kpubdata repo .omx/ was committed this way).
+    # Commit only what this pipeline creates.
     dirty = _run(["git", "status", "--porcelain"], cwd=kpubdata_root)
     unrelated = [
         line

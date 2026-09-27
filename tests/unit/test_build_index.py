@@ -1,4 +1,4 @@
-"""SQLite 빌드 인덱스 테스트 (#309, ADR 0003)."""
+"""SQLite build index test (#309, ADR 0003)."""
 
 from __future__ import annotations
 
@@ -14,25 +14,25 @@ from .conftest import requires_symlinks
 
 
 class TestBuildIndex:
-    """BuildIndex 단위 테스트."""
+    """BuildIndex unit test."""
 
     def test_init_creates_database(self, tmp_path: Path) -> None:
-        """초기화 시 데이터베이스와 스키마가 생성된다."""
+        """Database and schema created on initialization."""
         index = SqliteBuildIndex(tmp_path)
         assert (tmp_path / "_builds.sqlite").exists()
 
-        # 스키마 버전 확인
+        # Check schema version
         cur = index._conn.execute("SELECT version FROM schema_version")
         assert cur.fetchone()[0] == SCHEMA_VERSION
 
-        # builds 테이블 확인
+        # Check builds table
         cur = index._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='builds'"
         )
         assert cur.fetchone() is not None
 
     def test_insert_and_retrieve(self, tmp_path: Path) -> None:
-        """엔트리 삽입 후 조회가 가능하다."""
+        """Can retrieve entry after insertion."""
         index = SqliteBuildIndex(tmp_path)
 
         index.insert_or_replace(
@@ -50,7 +50,7 @@ class TestBuildIndex:
         assert entry.finished_at == "2025-01-01T10:05:00Z"
 
     def test_insert_or_replace_updates_existing(self, tmp_path: Path) -> None:
-        """insert_or_replace는 기존 엔트리를 갱신한다."""
+        """insert_or_replace updates existing entry."""
         index = SqliteBuildIndex(tmp_path)
 
         index.insert_or_replace(
@@ -60,7 +60,7 @@ class TestBuildIndex:
             finished_at="2025-01-01T10:05:00Z",
         )
 
-        # 상태 변경 후 재삽입
+        # Reinsert after state change
         index.insert_or_replace(
             run_id="test1",
             status="failed",
@@ -75,7 +75,7 @@ class TestBuildIndex:
         assert entry.error == "test error"
 
     def test_list_builds_orders_by_finished_at_desc(self, tmp_path: Path) -> None:
-        """list_builds는 finished_at 기준 내림차순으로 반환한다."""
+        """list_builds returns in descending order by finished_at."""
         index = SqliteBuildIndex(tmp_path)
 
         index.insert_or_replace(
@@ -104,7 +104,7 @@ class TestBuildIndex:
         assert builds[2].run_id == "old"
 
     def test_list_builds_respects_limit(self, tmp_path: Path) -> None:
-        """list_builds는 limit 매개변수를 존중한다."""
+        """list_builds respects limit parameter."""
         index = SqliteBuildIndex(tmp_path)
 
         for i in range(5):
@@ -119,7 +119,7 @@ class TestBuildIndex:
         assert len(builds) == 3
 
     def test_delete_removes_entry(self, tmp_path: Path) -> None:
-        """delete는 엔트리를 삭제한다."""
+        """delete removes entry."""
         index = SqliteBuildIndex(tmp_path)
 
         index.insert_or_replace(
@@ -133,13 +133,13 @@ class TestBuildIndex:
         assert index.get("test1") is None
 
     def test_get_returns_none_for_missing(self, tmp_path: Path) -> None:
-        """get는 미존재 엔트리에 대해 None을 반환한다."""
+        """get returns None for non-existent entry."""
         index = SqliteBuildIndex(tmp_path)
         assert index.get("nonexistent") is None
 
     def test_schema_version_upgrade_recreates_table(self, tmp_path: Path) -> None:
-        """스키마 버전이 변경되면 테이블이 재생성된다."""
-        # 첫 번째 인덱스 생성
+        """Table is recreated if schema version changes."""
+        # First index creation
         index1 = SqliteBuildIndex(tmp_path)
         index1.insert_or_replace(
             run_id="old",
@@ -149,7 +149,7 @@ class TestBuildIndex:
         )
         index1.close()
 
-        # 스키마 버전을 조작하여 업그레이드 시뮬레이션
+        # Simulate upgrade by manipulating schema version
         import sqlite3
 
         conn = sqlite3.connect(tmp_path / "_builds.sqlite")
@@ -157,19 +157,19 @@ class TestBuildIndex:
         conn.commit()
         conn.close()
 
-        # 새 인덱스 (스키마 재생성)
+        # New index (schema recreated)
         index2 = SqliteBuildIndex(tmp_path)
 
-        # 이전 데이터는 삭제되어야 함
+        # Old data must be deleted
         assert index2.get("old") is None
 
-        # 새 버전 확인
+        # Confirm new version
         cur = index2._conn.execute("SELECT version FROM schema_version")
         assert cur.fetchone()[0] == SCHEMA_VERSION
 
 
 class TestBuildIndexDatasetId:
-    """dataset_id 파생 컬럼과 조회 (#488)."""
+    """dataset_id derived column and query (#488)."""
 
     def test_insert_and_retrieve_dataset_id(self, tmp_path: Path) -> None:
         index = SqliteBuildIndex(tmp_path)
@@ -265,7 +265,8 @@ class TestBuildIndexDatasetId:
 
 
 class TestBuildIndexOwnerId:
-    """owner_id 파생 컬럼 (#505). 정본은 manifest.json — 이 컬럼은 파생 검색 값."""
+    """owner_id derived column (#505). Source of truth is manifest.json —
+    this column is derived search value."""
 
     def test_insert_and_retrieve_owner_id(self, tmp_path: Path) -> None:
         index = SqliteBuildIndex(tmp_path)
@@ -283,7 +284,8 @@ class TestBuildIndexOwnerId:
         assert entry.created_by == "oidc:userA"
 
     def test_owner_id_defaults_to_none(self, tmp_path: Path) -> None:
-        """owner_id 미지정 삽입(#505 이전 호출부와 동일한 형태)은 None으로 남는다."""
+        """Unspecified owner_id insertion (same form as earlier callers
+        before #505) remains as None."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="legacy",
@@ -312,7 +314,7 @@ class TestBuildIndexOwnerId:
 
 
 class TestListRecentOwned:
-    """``list_recent_owned`` (#527) — ownership 필터를 LIMIT 이전에 SQL에서
+    """``list_recent_owned`` (#527) — ownership filter in SQL before LIMIT
 
     적용해, 다른 principal의 최신 run들이 LIMIT을 채워 요청자 본인의 recent
     run이 잘리지 않게 한다. 정책은 ``service.auth.principal_owns()``(#505)와
@@ -326,7 +328,7 @@ class TestListRecentOwned:
             status="ok",
             started_at=None,
             finished_at="2025-01-01T10:00:00Z",
-            created_by="oidc:otherLabel",  # label은 다르지만 owner_id가 일치.
+            created_by="oidc:otherLabel",  # label differs but owner_id matches.
             owner_id="oidc:deadbeef",
         )
         entries = index.list_recent_owned(
@@ -335,7 +337,7 @@ class TestListRecentOwned:
         assert [e.run_id for e in entries] == ["mine"]
 
     def test_legacy_created_by_fallback_when_record_owner_id_missing(self, tmp_path: Path) -> None:
-        """레코드에 owner_id가 없는 legacy run은 created_by로 폴백해 매치한다."""
+        """Legacy run without owner_id in record falls back to created_by for matching."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="legacy-mine",
@@ -353,7 +355,7 @@ class TestListRecentOwned:
     def test_principal_without_owner_id_always_falls_back_to_created_by(
         self, tmp_path: Path
     ) -> None:
-        """principal에 owner_id가 없으면 레코드 owner_id 유무와 무관하게 created_by로 비교한다."""
+        """If principal has no owner_id, compare by created_by regardless of record owner_id."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="has-owner-id",
@@ -361,7 +363,7 @@ class TestListRecentOwned:
             started_at=None,
             finished_at="2025-01-01T10:00:00Z",
             created_by="oidc:userA",
-            owner_id="oidc:deadbeef",  # 레코드엔 owner_id가 있지만 principal엔 없다.
+            owner_id="oidc:deadbeef",  # record has owner_id but principal doesn't.
         )
         entries = index.list_recent_owned(
             limit=10, principal_owner_id=None, principal_label="oidc:userA"
@@ -384,7 +386,7 @@ class TestListRecentOwned:
         assert entries == []
 
     def test_no_created_by_no_owner_id_is_excluded(self, tmp_path: Path) -> None:
-        """created_by/owner_id 둘 다 없는 레코드는 어떤 principal과도 매치하지 않는다."""
+        """Record without both created_by/owner_id matches no principal."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="anonymous",
@@ -402,13 +404,13 @@ class TestListRecentOwned:
     def test_filter_applied_before_limit_so_own_older_run_is_not_crowded_out(
         self, tmp_path: Path
     ) -> None:
-        """다른 사용자의 최신 run 10건보다 내 run이 오래돼도 LIMIT에 밀려 잘리지 않는다 (#527)."""
+        """My run won't be cut off by LIMIT even if older than another user's top 10 runs (#527)."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="mine-old",
             status="ok",
             started_at=None,
-            finished_at="2025-01-01T00:00:00Z",  # 다른 사용자 run 10건보다 모두 오래됨.
+            finished_at="2025-01-01T00:00:00Z",  # all older than another user's top 10 runs.
             created_by="oidc:userA",
             owner_id="oidc:deadbeef",
         )
@@ -417,7 +419,7 @@ class TestListRecentOwned:
                 run_id=f"theirs-{i:02d}",
                 status="ok",
                 started_at=None,
-                finished_at=f"2025-01-02T{i:02d}:00:00Z",  # 전부 내 run보다 최신.
+                finished_at=f"2025-01-02T{i:02d}:00:00Z",  # all newer than my run.
                 created_by="oidc:userB",
                 owner_id="oidc:otherhash",
             )
@@ -441,16 +443,16 @@ class TestListRecentOwned:
             limit=10, principal_owner_id="oidc:deadbeef", principal_label="oidc:userA"
         )
         assert len(entries) == 10
-        # finished_at 내림차순 — 가장 최근 10건(09~14가 아니라 05~14)이어야 한다.
+        # descending by finished_at — most recent 10 (05~14 not 09~14).
         assert entries[0].run_id == "mine-14"
         assert entries[-1].run_id == "mine-05"
 
 
 class TestRebuildIndex:
-    """rebuild_index 함수 테스트."""
+    """rebuild_index function test."""
 
     def test_rebuild_from_empty_directory(self, tmp_path: Path) -> None:
-        """빈 디렉터리에서는 빈 인덱스가 생성된다."""
+        """Empty index created from empty directory."""
         count = rebuild_index(tmp_path)
         assert count == 0
 
@@ -458,8 +460,8 @@ class TestRebuildIndex:
         assert index.list_builds() == []
 
     def test_rebuild_scans_manifest_files(self, tmp_path: Path) -> None:
-        """파일시스템의 manifest.json을 스캔하여 인덱스를 재구축한다."""
-        # 가짜 manifest 파일들 생성
+        """Rebuild index by scanning manifest.json in filesystem."""
+        # Create fake manifest files
         (tmp_path / "run1").mkdir()
         (tmp_path / "run1" / "manifest.json").write_text(
             json.dumps(
@@ -485,7 +487,7 @@ class TestRebuildIndex:
             )
         )
 
-        # manifest 없는 디렉터리
+        # Directory without manifest
         (tmp_path / "no-manifest").mkdir()
 
         count = rebuild_index(tmp_path)
@@ -495,12 +497,12 @@ class TestRebuildIndex:
         builds = index.list_builds()
         assert len(builds) == 2
 
-        # run_id로 정렬 확인 (finished_at DESC)
+        # Confirm sorting by run_id (finished_at DESC)
         assert builds[0].run_id == "run2"
         assert builds[1].run_id == "run1"
 
     def test_rebuild_reads_owner_id_from_manifest(self, tmp_path: Path) -> None:
-        """rebuild_index는 manifest.json의 owner_id를 그대로 재인덱싱한다 (#505).
+        """rebuild_index reindexes owner_id from manifest.json as-is (#505).
 
         legacy manifest(owner_id 필드 없음)는 None으로 재구축되어야 한다.
         """
@@ -563,7 +565,7 @@ class TestRebuildIndex:
         assert entry.spec_digest is None
 
     def test_rebuild_restores_dataset_id_from_snapshot(self, tmp_path: Path) -> None:
-        """rebuild_index가 buildspec.yaml에서 dataset_id를 안전하게 복원한다 (#488)."""
+        """rebuild_index safely restores dataset_id from buildspec.yaml (#488)."""
         run_dir = tmp_path / "run1"
         run_dir.mkdir()
         (run_dir / "manifest.json").write_text(
@@ -577,7 +579,7 @@ class TestRebuildIndex:
         assert entry.dataset_id == "dataset.restored"
 
     def test_rebuild_leaves_dataset_id_null_for_legacy_run(self, tmp_path: Path) -> None:
-        """snapshot이 없는 legacy run의 dataset_id는 추측하지 않는다 (#488)."""
+        """dataset_id of legacy run without snapshot is not guessed (#488)."""
         run_dir = tmp_path / "legacy"
         run_dir.mkdir()
         (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
@@ -588,7 +590,7 @@ class TestRebuildIndex:
         assert entry.dataset_id is None
 
     def test_rebuild_leaves_dataset_id_null_for_corrupt_snapshot(self, tmp_path: Path) -> None:
-        """snapshot이 있어도 dataset_id를 읽거나 파싱할 수 없으면 None으로 남긴다 (#488)."""
+        """Even with snapshot, if dataset_id cannot be read or parsed, remains as None (#488)."""
         run_dir = tmp_path / "corrupt"
         run_dir.mkdir()
         (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
@@ -661,8 +663,8 @@ class TestRebuildIndex:
         assert unreadable.spec_digest is None
 
     def test_rebuild_replaces_existing_index(self, tmp_path: Path) -> None:
-        """rebuild는 기존 인덱스를 삭제하고 다시 생성한다."""
-        # 먼저 인덱스 생성
+        """rebuild deletes existing index and recreates it."""
+        # First create index
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="old",
@@ -672,7 +674,7 @@ class TestRebuildIndex:
         )
         index.close()
 
-        # manifest 파일 생성
+        # Create manifest files
         (tmp_path / "new").mkdir()
         (tmp_path / "new" / "manifest.json").write_text(
             json.dumps(
@@ -695,7 +697,7 @@ class TestRebuildIndex:
         assert index.get("old") is None
 
     def test_rebuild_skips_malformed_manifest(self, tmp_path: Path) -> None:
-        """손상된 manifest는 건너뛴다."""
+        """Corrupt manifest is skipped."""
         (tmp_path / "good").mkdir()
         (tmp_path / "good" / "manifest.json").write_text(
             json.dumps(
@@ -721,7 +723,7 @@ class TestRebuildIndex:
         assert builds[0].run_id == "good"
 
     def test_rebuild_leaves_no_tmp_or_bak_after_success(self, tmp_path: Path) -> None:
-        """정상 재구축 후에는 .tmp/.bak 잔여 파일이 남지 않는다 (#366)."""
+        """After normal rebuild, no .tmp/.bak residual files remain (#366)."""
         index = SqliteBuildIndex(tmp_path)
         index.close()
 
@@ -732,7 +734,7 @@ class TestRebuildIndex:
         assert not (tmp_path / "_builds.sqlite.bak").exists()
 
     def test_rebuild_cleans_up_stale_tmp_file(self, tmp_path: Path) -> None:
-        """이전 실행이 중단되어 남은 .tmp 파일이 있어도 재구축은 정상 동작한다 (#366)."""
+        """Rebuild works normally even if .tmp files remain from interrupted prior run (#366)."""
         stale_tmp = tmp_path / "_builds.sqlite.tmp"
         stale_tmp.write_text("stale garbage")
 
@@ -744,7 +746,7 @@ class TestRebuildIndex:
     def test_rebuild_restores_backup_when_swap_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """.tmp -> 원본 교체가 실패하면 기존 인덱스를 백업에서 복원한다 (#366)."""
+        """If .tmp -> original replace fails, restore existing index from backup (#366)."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="old",

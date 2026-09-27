@@ -1,12 +1,12 @@
-"""Polars 기반 tabular 엔진 패키지.
+"""Polars-based tabular engine package.
 
-스키마/통계/미리보기 산출(polars_engine), 타입 캐스팅 도우미
-(polars_helpers), 공개 값 객체(types)를 한곳에 노출한다.
+Expose schema/statistics/preview generation (polars_engine), type casting helpers
+(polars_helpers), and public value objects (types) in one place.
 
-원칙:
-    - Polars 단일 엔진 (dual-engine 금지)
-    - 공개 루트 API에는 Polars 반환 타입을 직접 다시 노출하지 않는다
-    - records ↔ DataFrame 변환은 내부/서브모듈(convert)에서만 사용한다
+Principles:
+    - Single Polars engine (no dual-engine)
+    - Public root API doesn't re-expose Polars return types directly
+    - records ↔ DataFrame conversion used only internally/submodules (convert)
 """
 
 from __future__ import annotations

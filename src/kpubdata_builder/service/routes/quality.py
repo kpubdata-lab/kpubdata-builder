@@ -26,9 +26,9 @@ def route(
     principal: Principal,
 ) -> RouteResponse | None:
     del body
-    # 최근 24h cross-run quality aggregate (#486 후속, API 1.22.0). per-run
-    # /builds/{id}/quality와 같은 quality 계열이라 같은 adapter에서 처리한다 —
-    # run_id 경로가 아니라 고정 경로이고 ownership은 service가 principal로 판정한다.
+    # Recent 24h cross-run quality aggregate (#486 follow-up, API 1.22.0). Treated
+    # as same quality family as per-run /builds/{id}/quality so handled in same adapter —
+    # fixed path not run_id path, and ownership determined by service per principal.
     if method == "GET" and path == "/quality/summary":
         window = parse_qs(query).get("window", ["24h"])[-1]
         return service.quality_summary(window=window, principal=principal)

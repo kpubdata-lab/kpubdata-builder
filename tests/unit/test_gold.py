@@ -1,4 +1,4 @@
-"""Gold 단계(#47): SilverDataset → export-ready GoldPackage + persist 검증."""
+"""Gold stage (#47): SilverDataset → export-ready GoldPackage + persist verification."""
 
 from __future__ import annotations
 
@@ -76,8 +76,8 @@ class TestPersistGoldPackage:
         assert meta["source_silver"] == "datago.apt_trade"
 
     def test_rejects_non_finite_float_in_metadata(self, tmp_path: Path) -> None:
-        # export option에 실린 NaN/Infinity는 비표준 JSON 토큰이 되므로 조용히 기록하지
-        # 않고 ValueError로 실패시킨다 (bronze guard와 동일 계약) (#217).
+        # NaN/Infinity in export options become non-standard JSON tokens, so don't quietly record
+        # them; fail with ValueError (same contract as bronze guard) (#217).
         package = build_gold_package(
             _silver(({"id": "1"},)),
             dataset_name="apt_trade",
@@ -153,7 +153,7 @@ class TestPersistGoldPackageWithSplits:
         assert result.splits_paths["2024"].exists()
         assert result.splits_paths["2025"].exists()
 
-        # 분할 파일을 읽어 내용 확인
+        # Read split files to verify content.
         split_2024 = pl.read_parquet(result.splits_paths["2024"])
         assert len(split_2024) == 1
         assert split_2024["year"][0] == "2024"

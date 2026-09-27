@@ -1,18 +1,18 @@
-"""CUBRID 기반 빌드 인덱스 (ADR 0016).
+"""CUBRID-based build index (ADR 0016).
 
-``SqliteBuildIndex`` 와 동일한 ``BuildIndex`` Protocol 을 SQLAlchemy Core 로 구현한다
-(ORM 아님 — 기존 raw-SQL 스타일 유지). manifest.json 정본 원칙과 SCHEMA_VERSION,
-"인덱스 쓰기 실패가 빌드를 실패시키지 않는다"(ADR 0003 규칙4)는 그대로 지킨다.
+Implement same ``BuildIndex`` Protocol as ``SqliteBuildIndex`` using SQLAlchemy Core
+(not ORM — maintain existing raw-SQL style). Preserve manifest.json canonical principle
+and SCHEMA_VERSION, and ADR 0003 rule 4: "index write failure must not cause build failure".
 
-이 모듈은 ``make_build_index()`` 의 cubrid 분기에서만 import 된다 — ``sqlalchemy`` 를
-import 하므로 기본(sqlite) 경로에 optional 의존성을 끌어들이지 않는다.
+This module imported only in cubrid branch of ``make_build_index()`` — importing
+``sqlalchemy`` so default (sqlite) path doesn't pull optional dependency.
 
-동시성: 프로세스 전역 단일 Engine(``backend.get_engine()``, 커넥션 풀 + pool_pre_ping)을
-받아 연산마다 ``with engine.begin()`` 으로 짧은 커넥션을 빌린다. 스레드 간 raw
-connection 을 재사용하지 않는다(#334 async job ThreadPoolExecutor 대비).
+Concurrency: Receive process-global single Engine (``backend.get_engine()``, connection
+pool + pool_pre_ping), borrow short connection per operation via ``with engine.begin()``.
+Don't reuse connection across threads (#334 async job ThreadPoolExecutor notes).
 
-upsert 는 dialect 독립적으로 단일 트랜잭션 내 delete+insert 로 처리한다 — CUBRID
-dialect 의 MERGE/ON DUPLICATE 지원 여부에 의존하지 않는다.
+Upsert handled dialect-independently as delete+insert in single transaction within
+``with engine.begin()`` — don't depend on CUBRID dialect MERGE/ON DUPLICATE support.
 """
 
 from __future__ import annotations
@@ -45,13 +45,13 @@ _SCHEMA_VERSION_TABLE = "build_schema_version"
 
 
 class CubridBuildIndex:
-    """CUBRID 기반 빌드 인덱스 (ADR 0016). ``BuildIndex`` Protocol 구현체."""
+    """CUBRID-based build index (ADR 0016). Implements ``BuildIndex`` Protocol."""
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
         self._metadata = MetaData()
-        # 파생 인덱스 스키마. 정본은 manifest.json — 스키마 버전이 바뀌면 DROP 후
-        # 재생성한다(데이터는 rebuild_index 로 복원 가능).
+        # Derived index schema. Canonical is manifest.json — if schema version changes,
+        # DROP and recreate (data can be restored via rebuild_index).
         self._builds = Table(
             "builds",
             self._metadata,
@@ -73,10 +73,10 @@ class CubridBuildIndex:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """스키마 버전을 확인하고, 불일치 시 builds 테이블을 재생성한다.
+        """Check schema version, recreate builds table if mismatch.
 
-        인덱스는 파생물이므로 스키마 변경 시 DROP + recreate 가 안전하다(정본
-        manifest.json 에서 rebuild_index 로 재구축 가능).
+        Index is derivative, so DROP + recreate is safe on schema change
+        (rebuild from canonical manifest.json via rebuild_index possible).
         """
         with self._engine.begin() as conn:
             existing = set(inspect(conn).get_table_names())
@@ -86,7 +86,7 @@ class CubridBuildIndex:
                 version = int(row[0]) if row is not None else None
             if version == SCHEMA_VERSION:
                 return
-            # 버전 불일치(또는 최초 생성): 파생 테이블을 재생성한다.
+            # Version mismatch (or first creation): recreate derived table.
             self._builds.drop(conn, checkfirst=True)
             self._schema_version.drop(conn, checkfirst=True)
             self._schema_version.create(conn, checkfirst=True)
@@ -131,12 +131,12 @@ class CubridBuildIndex:
             "owner_id": owner_id,
         }
         try:
-            # 단일 트랜잭션 내 delete+insert — dialect upsert 에 의존하지 않는다.
+            # delete+insert within single transaction — doesn't depend on dialect upsert.
             with self._engine.begin() as conn:
                 conn.execute(delete(self._builds).where(self._builds.c.run_id == run_id))
                 conn.execute(insert(self._builds).values(**values))
         except Exception:
-            # ADR 0003 규칙4: 인덱스 쓰기 실패가 빌드 실패의 원인이 되어서는 안 됨.
+            # ADR 0003 rule 4: index write failure must not cause build failure.
             pass
 
     def list_builds(self, limit: int | None = 50) -> list[BuildEntry]:
@@ -162,8 +162,8 @@ class CubridBuildIndex:
     def list_recent_owned(
         self, *, limit: int, principal_owner_id: str | None, principal_label: str
     ) -> list[BuildEntry]:
-        # ownership 필터를 LIMIT 보다 먼저 WHERE 로 적용한다(#527) — service.auth.
-        # principal_owns()와 동일 정책. NULL 비교는 자연히 fail-closed.
+        # Apply ownership filter in WHERE before LIMIT (#527) — same policy as service.auth.
+        # principal_owns(). NULL comparison naturally fail-closed.
         b = self._builds.c
         if principal_owner_id is not None:
             cond = or_(
@@ -178,7 +178,7 @@ class CubridBuildIndex:
         return [self._row_to_entry(r) for r in rows]
 
     def list_between(self, start_iso: str, end_iso: str) -> list[BuildEntry]:
-        # [start, end) 구간 + finished_at NULL(판정 불가 → 호출자에게 넘김, #516).
+        # [start, end) range + finished_at NULL (can't determine → pass to caller, #516).
         b = self._builds.c
         stmt = (
             select(self._builds)
@@ -195,7 +195,7 @@ class CubridBuildIndex:
         return [self._row_to_entry(r) for r in rows]
 
     def latest_successful_finished_at(self) -> str | None:
-        # 가장 최근 성공 빌드의 finished_at (#516). 성공 기록 없으면 None.
+        # finished_at of most recent successful build (#516). None if no success record.
         b = self._builds.c
         stmt = (
             select(b.finished_at)
@@ -218,14 +218,15 @@ class CubridBuildIndex:
             with self._engine.begin() as conn:
                 conn.execute(delete(self._builds).where(self._builds.c.run_id == run_id))
         except Exception:
-            # 인덱스 실패는 무시 (ADR 0003 규칙4).
+            # Ignore index failure (ADR 0003 rule 4).
             pass
 
     def rebuild(self, entries: Iterable[BuildEntry]) -> int:
-        """builds 테이블을 truncate 후 스캔 엔트리로 재삽입한다(단일 트랜잭션).
+        """Truncate builds table, reinsert from scan entries (single transaction).
 
-        재구축은 명시적 관리 작업이라 ``insert_or_replace`` 와 달리 예외를 삼키지
-        않는다 — 실패하면 전체가 롤백되어 이전 인덱스가 보존된다.
+        Rebuild is explicit management operation, unlike ``insert_or_replace``, so
+        don't swallow exceptions — failure rolls back entire transaction, preserving
+        previous index.
         """
         count = 0
         with self._engine.begin() as conn:
@@ -248,9 +249,9 @@ class CubridBuildIndex:
         return count
 
     def close(self) -> None:
-        """no-op. 전역 Engine 은 공유 자원이라 여기서 dispose 하지 않는다.
+        """no-op. Global Engine is shared resource, don't dispose here.
 
-        (프로세스 종료 시 ``backend.dispose_engine()`` 이 정리한다.)
+        (``backend.dispose_engine()`` cleans up on process exit.)
         """
 
 

@@ -135,7 +135,7 @@ class TestPipelineCLI:
 
 
 class TestPipelineDoesNotInterpolateIntoSource:
-    """dataset_id 를 `python -c` 소스 문자열에 끼워 넣지 않는다.
+    """dataset_id not interpolated into `python -c` source string.
 
     따옴표 하나만 들어와도 임의 코드가 되고, 이 값은 CLI 인자와 HTTP 경로에서
     온다.
@@ -162,14 +162,14 @@ class TestPipelineDoesNotInterpolateIntoSource:
 
 
 class TestPipelineCommitsOnlyWhatItMade:
-    """`git add -A` 는 남의 변경과 도구 로그까지 함께 올린다.
+    """`git add -A` also stages others' changes and tool logs.
 
     kpubdata 저장소에 `.omx/` 가 커밋된 것이 그 결과로 보인다.
     """
 
     @staticmethod
     def _runner(monkeypatch: pytest.MonkeyPatch, status: str) -> list[list[str]]:
-        """spec 은 있고 첫 verify 는 실패해, record 이후 커밋 단계까지 흘러가게 한다."""
+        """spec exists and first verify fails, flows through record to commit phase."""
         from kpubdata_builder.agent import pipeline as pipeline_module
 
         seen: list[list[str]] = []
@@ -181,7 +181,7 @@ class TestPipelineCommitsOnlyWhatItMade:
                 return type("R", (), {"returncode": 0, "stdout": status, "stderr": ""})()
             if cmd[:2] == ["make", "verify"]:
                 verifies["n"] += 1
-                # 첫 verify 는 실패시켜 record 경로로 보내고, 재검증은 통과시킨다.
+                # First verify fails to send record path, recheck passes.
                 code = 1 if verifies["n"] == 1 else 0
                 return type("R", (), {"returncode": code, "stdout": "", "stderr": ""})()
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()

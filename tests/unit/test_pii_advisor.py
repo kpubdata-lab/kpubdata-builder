@@ -1,4 +1,4 @@
-"""PII 오탐 보조 테스트 (AI-2, #447)."""
+"""PII false positive advisor test (AI-2, #447)."""
 
 from __future__ import annotations
 
@@ -32,5 +32,5 @@ class TestBuildPiiAdvisoryPrompt:
     def test_none_column_filtered(self) -> None:
         findings = [PiiFinding(column=None, kind="rrn", count=5)]
         prompt = build_pii_advisory_prompt(findings)
-        # column이 None인 항목은 프롬프트에서 제외
+        # Items with column=None are excluded from the prompt.
         assert prompt.strip() != ""

@@ -1,8 +1,9 @@
-"""Kaggle 호환 데이터셋 디렉터리를 생성하는 exporter.
+"""Kaggle-compatible dataset directory exporter.
 
-출력 구조::
-    {output_dir}/{output_path}       ← CSV 데이터 파일
-    {output_dir}/dataset-metadata.json  ← Kaggle 메타데이터
+Output structure::
+
+    {output_dir}/{output_path}         ← CSV data file
+    {output_dir}/dataset-metadata.json ← Kaggle metadata
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from .csv import _format_cell, _resolve_columns
 
 
 class KaggleExporter(BaseExporter):
-    """Kaggle 형식(CSV + dataset-metadata.json)으로 내보내는 exporter."""
+    """Exporter that outputs in Kaggle format (CSV + dataset-metadata.json)."""
 
     @property
     def name(self) -> str:
@@ -81,15 +82,15 @@ class KaggleExporter(BaseExporter):
         else:
             metadata = {"resources": [resource]}
 
-        # id/title/licenses는 권한적(authoritative) 필드이므로 매 export 시 현재 artifact
-        # 값으로 갱신한다. 기존 파일에서 stale 값이 그대로 남으면 publisher 검증 실패나
-        # 잘못된 Kaggle 데이터셋 업로드로 이어질 수 있다 (#202). 그 외 키는 보존한다.
+        # id/title/licenses are authoritative fields; each export updates with current
+        # artifact values. stale values in existing file may cause publisher verification
+        # failure or incorrect Kaggle dataset upload (#202). preserve other keys.
         metadata["title"] = artifact.metadata.get("title", "Dataset")
         metadata["id"] = artifact.metadata.get("dataset_id", "unknown/dataset")
-        # 라이선스를 추측하지 않는다. 예전에는 선언이 없으면 조용히 CC-BY-4.0 을
-        # 적었는데, 이 파일은 Kaggle 이 그대로 읽는 정본이므로 그건 남의 데이터에
-        # 대해 사실이 아닌 주장을 대신 해 주는 것이다. 공공누리 제2~4유형처럼
-        # 상업적 이용이나 변형이 제한된 데이터라면 명백한 오표기다.
+        # do not guess license. previously silently assigned CC-BY-4.0 if not declared,
+        # but this file is authoritative for Kaggle, so assigning it to others' data makes
+        # false claims on their behalf. Public License types 2-4 restrict commercial use or
+        # modification; guessing would clearly misclassify such data.
         declared_license = artifact.metadata.get("license")
         if not isinstance(declared_license, str) or not declared_license.strip():
             raise ExportError(

@@ -1,4 +1,4 @@
-"""Service metadata와 동기 build route adapters."""
+"""Service metadata and sync build route adapters."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from ._types import RouteResponse
 if TYPE_CHECKING:
     from ..app import BuilderService
 
-# dataset을 메모리에 올린 뒤 slice하므로 limit 자체가 fetch량을 줄이지는 않지만,
-# 응답에 실리는 sample/diff 크기는 이 값으로 명확히 bound한다. 값은 stage
-# preview의 기존 상한(MAX_STAGE_PREVIEW_LIMIT, service/stages.py)과 맞췄다.
+# Dataset is loaded into memory then sliced, so limit itself does not reduce fetch amount,
+# but sample/diff size in response is clearly bounded by this value. Matches existing
+# stage preview upper bound (MAX_STAGE_PREVIEW_LIMIT, service/stages.py).
 MAX_PREVIEW_LIMIT = 1000
 
 
@@ -43,11 +43,11 @@ def route(
         spec = spec_from_body(body)
         if isinstance(spec, ServiceResponse):
             return spec
-        # limit이 명시되면 양의 정수여야 한다 — 잘못된 값을 조용히 기본값으로
-        # 떨어뜨리지 않는다. 상한(MAX_PREVIEW_LIMIT) 초과는 service.preview()가 400으로 거부한다.
+        # If limit is specified, must be positive int - do not fall back to default
+        # on bad value. Exceeding MAX_PREVIEW_LIMIT rejected as 400 by service.preview().
         if body is not None and "limit" in body:
             limit_value = body["limit"]
-            # bool은 int의 하위 타입이지만 limit 의미가 없으므로 거부.
+            # bool is int subtype, but limit makes no sense for bool, so reject.
             if (
                 not isinstance(limit_value, int)
                 or isinstance(limit_value, bool)
@@ -61,7 +61,7 @@ def route(
             limit = limit_value
         else:
             limit = DEFAULT_PREVIEW_LIMIT
-        # sample_mode/seed도 같은 원칙: 잘못된 값을 조용히 기본값으로 떨어뜨리지 않는다 (#497).
+        # sample_mode/seed follow same principle: do not fall back to default on bad (#497).
         sample_mode = "first"
         if body is not None and "sample_mode" in body:
             sample_mode_value = body["sample_mode"]
@@ -87,10 +87,9 @@ def route(
         run_id = optional_run_id(body)
         if isinstance(run_id, ServiceResponse):
             return run_id
-        # 호출자가 run_id 를 직접 줄 수 있는데, 그 run 이 누구 것인지 확인하지
-        # 않고 있었다 (#635). 남의 run_id 를 주면 그 run 의 산출물을 덮어쓰고
-        # 응답으로 결과까지 돌려받는다. 비동기 POST /builds 에는 게이트가 있고
-        # 동기 경로만 빠져 있었다 — 같은 규칙을 적용한다.
+        # Caller could supply run_id directly without checking who it belongs to (#635).
+        # Passing someone else's run_id would overwrite that run's output and return results
+        # in response. Async POST /builds has gate but sync path was missing — apply same rule.
         if run_id is not None:
             denied = check_existing_run_access(service, run_id, principal)
             if denied is not None:

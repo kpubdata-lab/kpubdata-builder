@@ -1,18 +1,18 @@
-"""내보내기 도구 레지스트리와 플러그인 등록 API (#13, #325).
+"""exporter registry and plugin registration API (#13, #325).
 
-이 모듈은 kind 문자열 → exporter 팩토리/인스턴스 매핑을 보관하고, 제3자 exporter를
-세 가지 방식으로 등록할 수 있게 한다.
+This module maintains kind string → exporter factory/instance mapping and allows
+third-party exporters to register via three approaches.
 
-방식 A (factory 등록, ADR 0004 권고):
+Approach A (factory registration, ADR 0004 recommended):
     register_exporter_factory("csv", CsvExporter)
 
-방식 B (인스턴스 등록, 레거시 호환):
+Approach B (instance registration, legacy compatible):
     register_exporter_instance(CsvExporter())
 
-방식 C (entry points 자동 발견):
-    외부 패키지가 pyproject.toml에 entry point를 선언하면, 명시적으로
-    load_entry_point_exporters()를 호출해 발견·등록한다 (import 시 임의의
-    서드파티 코드를 실행하지 않도록 자동 로드는 하지 않는다).
+Approach C (entry points auto-discovery):
+    if external package declares entry point in pyproject.toml, explicitly call
+    load_entry_point_exporters() to discover and register (auto-loading is avoided
+    to not execute arbitrary third-party code at import).
 
         [project.entry-points."kpubdata_builder.exporters"]
         csv = "my_package:CsvExporter"
@@ -27,32 +27,32 @@ from .base import BaseExporter
 
 EXPORTER_ENTRY_POINT_GROUP = "kpubdata_builder.exporters"
 
-# kind -> (factory 함수, 인스턴스 캐시)
-# factory는 호출할 때마다 새 인스턴스를 반환해야 한다.
+# kind -> (factory function, instance cache)
+# factory must return a new instance on each invocation.
 ExporterFactory = Callable[[], BaseExporter]
 _EXPORTER_FACTORIES: dict[str, ExporterFactory] = {}
 
-# 레거시 호환을 위한 인스턴스 레지스트리 (ADR 0004 이전 방식)
+# instance registry for legacy compatibility (pre-ADR 0004 style)
 EXPORTER_REGISTRY: dict[str, BaseExporter] = {}
 
 
 def register_exporter_factory(
     kind: str, factory: ExporterFactory, *, override: bool = False
 ) -> None:
-    """exporter 팩토리를 kind 문자열로 레지스트리에 등록한다 (#325).
+    """registers exporter factory with kind string to registry (#325).
 
-    팩토리는 호출할 때마다 새 exporter 인스턴스를 반환해야 한다.
-    이 방식은 ADR 0004의 권고안을 따르며, 중복 등록은 기본적으로 거부된다.
+    Factory must return new exporter instance on each call. This approach follows
+    ADR 0004 recommendation; duplicate registration is rejected by default.
 
-    매개변수:
-        kind: exporter 식별자 (예: "csv", "parquet").
-        factory: 인자 없이 BaseExporter 인스턴스를 반환하는 callable.
-        override: 같은 kind가 이미 있을 때 덮어쓸지 여부.
+    Args:
+        kind: exporter identifier (e.g., "csv", "parquet").
+        factory: callable returning BaseExporter instance without args.
+        override: whether to overwrite if same kind already exists.
 
-    예외:
-        ValueError: 같은 kind가 이미 등록되어 있고 override가 False인 경우.
+    Raises:
+        ValueError: if same kind already registered and override is False.
 
-    예시:
+    Example:
         >>> register_exporter_factory("csv", CsvExporter)
         >>> exporter = get_exporter("csv")
     """
@@ -62,18 +62,18 @@ def register_exporter_factory(
 
 
 def register_exporter_instance(exporter: BaseExporter, *, override: bool = False) -> None:
-    """exporter 인스턴스를 그 name으로 레지스트리에 등록한다.
+    """registers exporter instance by its name to registry.
 
     .. deprecated::
-        ADR 0004에 따라 register_exporter_factory 사용을 권장한다.
-        이 함수는 하위 호환성을 위해 유지된다.
+        ADR 0004 recommends using register_exporter_factory. This function is maintained
+        for backward compatibility.
 
-    매개변수:
-        exporter: 등록할 BaseExporter 인스턴스.
-        override: 같은 이름이 이미 있을 때 덮어쓸지 여부.
+    Args:
+        exporter: BaseExporter instance to register.
+        override: whether to overwrite if same name already exists.
 
-    예외:
-        ValueError: 같은 이름이 이미 등록되어 있고 override가 False인 경우.
+    Raises:
+        ValueError: if same name already registered and override is False.
     """
     name = exporter.name
     if name in EXPORTER_REGISTRY and not override:
@@ -81,29 +81,16 @@ def register_exporter_instance(exporter: BaseExporter, *, override: bool = False
     EXPORTER_REGISTRY[name] = exporter
 
 
-# 하위 호환성을 위한 별칭
+# alias for backward compatibility
 register_exporter = register_exporter_instance
 
 
 def get_exporter(name: str) -> BaseExporter:
-    """등록된 exporter를 kind 이름으로 조회한다.
-
-    factory 레지스트리를 우선 조회하고, 없으면 인스턴스 레지스트리(레거시)를
-    조회한다.
-
-    매개변수:
-        name: exporter kind 문자열.
-
-    반환값:
-        BaseExporter: 등록된 인스턴스 (factory에서 새로 생성하거나 캐스된 인스턴스).
-
-    예외:
-        KeyError: 등록되지 않은 이름인 경우.
-    """
-    # factory 레지스트리 우선 (ADR 0004)
+    """looks up registered exporter by kind name."""
+    # factory registry takes precedence (ADR 0004)
     if name in _EXPORTER_FACTORIES:
         return _EXPORTER_FACTORIES[name]()
-    # 레거시 인스턴스 레지스트리 fallback
+    # legacy instance registry fallback
     if name in EXPORTER_REGISTRY:
         return EXPORTER_REGISTRY[name]
     registered = sorted(set(_EXPORTER_FACTORIES) | set(EXPORTER_REGISTRY))
@@ -111,23 +98,22 @@ def get_exporter(name: str) -> BaseExporter:
 
 
 def load_entry_point_exporters(*, override: bool = False) -> list[str]:
-    """entry point 그룹에서 외부 exporter 플러그인을 발견·등록한다.
+    """discovers and registers external exporter plugins from entry point group.
 
-    각 entry point는 BaseExporter 인스턴스 또는 인자 없이 생성 가능한 클래스를
-    가리켜야 한다. 클래스면 factory로 등록하고, 인스턴스면 인스턴스 레지스트리에
-    등록한다.
+    Each entry point must point to BaseExporter instance or class creatable without args.
+    If class, register as factory; if instance, register to instance registry.
 
-    매개변수:
-        override: 기존 등록을 덮어쓸지 여부.
+    Args:
+        override: whether to overwrite existing registration.
 
-    반환값:
-        list[str]: 등록된 exporter 이름 목록(이름 순).
+    Returns:
+        list[str]: list of registered exporter names (sorted by name).
     """
     registered: list[str] = []
     for entry_point in entry_points(group=EXPORTER_ENTRY_POINT_GROUP):
         loaded = entry_point.load()
         if isinstance(loaded, type):
-            # 클래스: factory로 등록 (ADR 0004 권고)
+            # class: register as factory (ADR 0004 recommendation)
             if not issubclass(loaded, BaseExporter):
                 raise TypeError(
                     f"entry point {entry_point.name!r} did not resolve to a BaseExporter subclass"
@@ -135,7 +121,7 @@ def load_entry_point_exporters(*, override: bool = False) -> list[str]:
             register_exporter_factory(entry_point.name, loaded, override=override)
             registered.append(entry_point.name)
         else:
-            # 인스턴스: 레거시 방식으로 등록
+            # instance: register using legacy method
             exporter = loaded
             if not isinstance(exporter, BaseExporter):
                 raise TypeError(
@@ -147,10 +133,10 @@ def load_entry_point_exporters(*, override: bool = False) -> list[str]:
 
 
 def clear_exporter_registry() -> None:
-    """모든 exporter 등록을 초기화한다 (#325, #326).
+    """initializes all exporter registrations (#325, #326).
 
-    주로 테스트에서 사용한다. 테스트 간 exporter 등록 누수를 방지하기 위해
-    factory와 인스턴스 레지스트를 모두 비운다.
+    Primarily used in tests. Clears both factory and instance registries to prevent
+    exporter registration leaks between tests.
     """
     _EXPORTER_FACTORIES.clear()
     EXPORTER_REGISTRY.clear()

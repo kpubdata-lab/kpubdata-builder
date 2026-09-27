@@ -1,8 +1,8 @@
-"""ParquetExporter의 출력 규칙을 테스트로 고정한다.
+"""Lock ParquetExporter output rules via tests.
 
-Parquet은 바이너리 columnar 포맷이므로, polars로 다시 읽었을 때 레코드가
-보존되는지·컬럼 타입이 유지되는지·빈 데이터 정책·반환 메타데이터를 회귀
-테스트로 못 박는다.
+Parquet is a binary columnar format, so when re-read with polars, records
+are preserved, column types are maintained, empty data policy, and returned metadata are locked via
+regression tests.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from kpubdata_builder.spec import ExportTarget
 
 
 def test_records_round_trip_through_parquet(tmp_path: Path) -> None:
-    # 레코드 2개를 기록한 뒤 read_parquet로 되읽어 원본과 일치하는지 검증한다.
+    # Record 2 records, re-read with read_parquet, and verify they match the originals.
     records = ({"id": "1", "amount": 1000}, {"id": "2", "amount": 2500})
     artifact = ArtifactDataset(records=records)
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
@@ -30,7 +30,7 @@ def test_records_round_trip_through_parquet(tmp_path: Path) -> None:
 
 
 def test_column_types_are_preserved(tmp_path: Path) -> None:
-    # int 컬럼이 round-trip 후에도 정수 타입으로 유지되는지 확인한다.
+    # Verify that int columns remain as integer type after round-trip.
     artifact = ArtifactDataset(records=({"id": "1", "amount": 1000},))
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
@@ -42,7 +42,7 @@ def test_column_types_are_preserved(tmp_path: Path) -> None:
 
 
 def test_preserves_unicode(tmp_path: Path) -> None:
-    # 한글 값이 round-trip 후에도 보존되는지 확인한다.
+    # Verify that Korean values are preserved after round-trip.
     artifact = ArtifactDataset(records=({"district": "강남구"},))
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
@@ -52,7 +52,7 @@ def test_preserves_unicode(tmp_path: Path) -> None:
 
 
 def test_empty_records_with_schema_keeps_columns(tmp_path: Path) -> None:
-    # 빈 데이터라도 schema가 있으면 0행이지만 컬럼 이름을 보존한다.
+    # Empty data with schema yields 0 rows but preserves column names.
     artifact = ArtifactDataset(records=(), schema={"id": "str", "amount": "int"})
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
@@ -64,7 +64,7 @@ def test_empty_records_with_schema_keeps_columns(tmp_path: Path) -> None:
 
 
 def test_empty_records_without_schema_writes_readable_empty_file(tmp_path: Path) -> None:
-    # schema도 records도 없으면 0행·0열의 읽을 수 있는 Parquet 파일이 된다.
+    # No schema and no records result in a readable Parquet file with 0 rows and 0 columns.
     artifact = ArtifactDataset(records=())
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
@@ -75,7 +75,7 @@ def test_empty_records_without_schema_writes_readable_empty_file(tmp_path: Path)
 
 
 def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
-    # 반환된 Path가 실제 생성된 파일을 가리키고 메타데이터가 정확한지 확인한다.
+    # Verify that returned Path points to the actually-created file and metadata is accurate.
     artifact = ArtifactDataset(records=({"id": "1"},))
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
@@ -88,14 +88,14 @@ def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
 
 
 def test_registry_exposes_parquet_exporter() -> None:
-    # Parquet exporter가 kind 문자열 "parquet"로 레지스트리에 등록되어 있는지 확인한다.
+    # Verify Parquet exporter is registered in the registry with kind string "parquet".
     assert isinstance(EXPORTER_REGISTRY["parquet"], ParquetExporter)
 
 
 def test_wraps_write_failure_in_export_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Parquet 쓰기 실패가 ExportError로 래핑되는지 확인한다.
+    # Verify Parquet write failure is wrapped in ExportError.
     artifact = ArtifactDataset(records=({"id": "1"},))
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 

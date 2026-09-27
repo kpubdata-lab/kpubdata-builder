@@ -1,19 +1,20 @@
-"""Built Dataset 조회 로직 (#488).
+"""Built Dataset query logic (#488).
 
-``BuildSpec.dataset_id``를 built dataset identity로 사용해, 같은 dataset_id를
-공유하는 여러 run을 하나의 dataset으로 묶는다.
+Uses ``BuildSpec.dataset_id`` as the built dataset identity, grouping multiple
+runs sharing the same dataset_id into one dataset.
 
-정본은 BuildSpec snapshot(#487)과 manifest.json이다. BuildIndex는 dataset→run
-조회 성능을 위한 파생 검색 index일 뿐이며, 인덱스가 비어 있거나 손상돼도(또는
-아예 없어도) 이 모듈은 파일시스템에서 직접 정본을 다시 읽어 폴백한다 — ADR 0003이
-``/builds``에 적용한 것과 같은 원칙이다. 최종적으로 응답에 실리는 dataset_id는
-항상 latest run의 snapshot을 다시 읽어 재검증한 값이다(``build_dataset_summary``) —
-인덱스의 캐시된 dataset_id는 후보를 좁히는 용도로만 쓰이고, 손상되거나 오래됐어도
-정본을 바꾸지 않는다.
+The source of truth is the BuildSpec snapshot (#487) and manifest.json. BuildIndex
+is only a derived search index for dataset→run query performance; even if the index
+is empty or corrupted (or missing entirely), this module falls back by reading the
+source of truth directly from the filesystem — same principle as ADR 0003 applied
+to ``/builds``. The dataset_id returned in the response is always re-validated by
+re-reading the latest run's snapshot (``build_dataset_summary``) — the cached
+dataset_id in the index is used only to narrow candidates, and even if stale or
+corrupted, does not change the source of truth.
 
-legacy run(#487 이전에 만들어져 buildspec.yaml snapshot이 없는 run)의 dataset_id는
-추측하지 않는다 — dataset grouping에서 조용히 제외된다. ``GET /builds``에는 계속
-나타난다.
+Legacy runs (#487 era, created before buildspec.yaml snapshot existed) have their
+dataset_id guessed — they are silently excluded from dataset grouping. They still
+appear in ``GET /builds``.
 """
 
 from __future__ import annotations
@@ -38,13 +39,13 @@ from .stages import list_run_stages
 
 @dataclass(frozen=True)
 class RunRecord:
-    """dataset grouping에 필요한 run 단위 경량 요약(sidecar 미포함).
+    """Lightweight run-level summary for dataset grouping (excludes sidecar).
 
-    ``owner_id``는 canonical stable owner identity다(#505, additive). legacy
-    run은 이 필드가 없어 None이 되고, ``filter_ownership``이 ``created_by``
-    기반 legacy 비교로 폴백한다. 응답 직렬화 코드는 필드를 명시적으로 골라
-    담으므로(예: ``build_dataset_summary``, dispatch의 runs 목록) owner_id는
-    wire 응답에 자동으로 노출되지 않는다.
+    ``owner_id`` is canonical stable owner identity (#505, additive). Legacy
+    runs lack this field and have None; ``filter_ownership`` falls back to
+    ``created_by`` based legacy comparison. Response serialization code
+    explicitly selects fields (e.g., ``build_dataset_summary``, dispatch runs
+    list), so owner_id is not automatically exposed in wire responses.
     """
 
     run_id: str
@@ -58,23 +59,24 @@ class RunRecord:
 
 
 def sort_key(record: RunRecord) -> tuple[bool, str, str]:
-    """latest 판정 정렬 키 (#488 semantics C).
+    """Latest determination sort key (#488 semantics C).
 
-    (finished_at 존재 여부, finished_at, run_id) 오름차순 비교 — finished_at이
-    있는 run이 없는 run보다 항상 최신으로 취급되고, 동일 finished_at은 run_id
-    문자열 내림차순으로 결정적으로 타이브레이크한다(정렬 키 자체는 오름차순이므로
-    "더 최신"은 이 키가 더 큰 쪽).
+    Ascending comparison of (finished_at exists, finished_at, run_id) —
+    runs with finished_at are always treated as newer than runs without it;
+    when finished_at matches, deterministic tiebreak by run_id string
+    descending (the sort key itself is ascending, so "more recent" means
+    larger key value).
     """
     return (record.finished_at is not None, record.finished_at or "", record.run_id)
 
 
 def is_more_recent(candidate: RunRecord, current: RunRecord) -> bool:
-    """candidate가 current보다 최신 run으로 판정되는지."""
+    """Determine if candidate is judged as a more recent run than current."""
     return sort_key(candidate) > sort_key(current)
 
 
 def pick_latest(records: Sequence[RunRecord]) -> RunRecord:
-    """records 중 latest run을 결정적으로 선택한다. records는 비어있지 않아야 한다."""
+    """Deterministically select the latest run from records. Records must not be empty."""
     latest = records[0]
     for candidate in records[1:]:
         if is_more_recent(candidate, latest):
@@ -83,7 +85,7 @@ def pick_latest(records: Sequence[RunRecord]) -> RunRecord:
 
 
 def group_latest_by_dataset(records: Sequence[RunRecord]) -> dict[str, RunRecord]:
-    """dataset_id별로 latest run을 결정적으로 선택한다."""
+    """Deterministically select the latest run by dataset_id."""
     latest: dict[str, RunRecord] = {}
     for record in records:
         current = latest.get(record.dataset_id)
@@ -95,17 +97,17 @@ def group_latest_by_dataset(records: Sequence[RunRecord]) -> dict[str, RunRecord
 def filter_ownership(
     records: Sequence[RunRecord], principal: Principal | None, *, enforce: bool
 ) -> list[RunRecord]:
-    """list_builds의 _apply_ownership과 동일한 정책으로 접근 가능한 run만 남긴다.
+    """Keep only runs accessible by the same policy as list_builds._apply_ownership.
 
-    판정은 ``service.ownership.ownership_allows`` 공용 predicate를 쓴다
-    (#504 review) — ``query.resolver``/``app._check_ownership``과 같은
-    semantics를 공유하며, 비교는 ``principal_owns``(#505: canonical owner_id
-    우선, legacy created_by/label 폴백)를 따른다. ENFORCE_OWNERSHIP + oidc
-    principal일 때만 필터링한다. dev/service principal과 principal=None은
-    통과(관리자 권한 + 하위 호환). 동일 dataset_id라도 타 사용자의 run은
-    grouping/latest 선정에서 완전히 제외된다(#488 semantics D) — 여기서
-    걸러진 뒤에야 grouping/latest 선택이 일어나므로, 다른 사용자의 run이
-    latest로 뽑히거나 metadata에 섞이는 일이 없다.
+    Uses ``service.ownership.ownership_allows`` shared predicate (#504 review) —
+    shares semantics with ``query.resolver``/``app._check_ownership``, and
+    comparison follows ``principal_owns`` (#505: canonical owner_id prioritized,
+    legacy created_by/label fallback). Filter only when ENFORCE_OWNERSHIP + oidc
+    principal. dev/service principal and principal=None pass (admin privilege +
+    backward compatibility). Even for the same dataset_id, runs from other users
+    are completely excluded from grouping/latest selection (#488 semantics D) —
+    filtering happens before grouping/latest selection, so other users' runs
+    never become latest or mix into metadata.
     """
     if not (enforce and principal is not None and principal.kind == "oidc"):
         return list(records)
@@ -119,10 +121,10 @@ def filter_ownership(
 
 
 def read_snapshot_dataset_id(output_root: Path, run_id: str) -> str | None:
-    """run의 canonical BuildSpec snapshot에서 dataset_id만 읽는다.
+    """Read only dataset_id from the run's canonical BuildSpec snapshot.
 
-    snapshot이 없거나 읽거나 파싱할 수 없으면 None을 반환한다 — legacy run의
-    dataset_id를 추측하지 않는다(#488 semantics B).
+    Return None if snapshot is missing, unreadable, or unparseable — do not
+    guess dataset_id for legacy runs (#488 semantics B).
     """
     doc = _read_snapshot_yaml(output_root, run_id)
     if doc is None:
@@ -132,16 +134,16 @@ def read_snapshot_dataset_id(output_root: Path, run_id: str) -> str | None:
 
 
 def read_snapshot_spec(output_root: Path, run_id: str) -> BuildSpec | None:
-    """run의 canonical BuildSpec snapshot 전체를 파싱한다. 없거나 실패하면 None."""
+    """Parse the entire run's canonical BuildSpec snapshot. Return None if missing or fails."""
     doc = _read_snapshot_yaml(output_root, run_id)
     if doc is None:
         return None
     try:
         return parse_spec(doc)
     except Exception:
-        # canonical snapshot이 현재 파서 기대와 어긋나는 극단적 상황을 방어한다
-        # (예: 파서 스키마가 바뀐 뒤 예전 snapshot을 읽는 경우). 추측해서 복원하지
-        # 않고 조회 불가로 취급한다.
+        # Defensive against extreme cases where canonical snapshot does not match
+        # current parser expectations (e.g., parser schema changed after an old
+        # snapshot was written). Do not guess; treat as query unavailable.
         return None
 
 
@@ -163,7 +165,7 @@ def _read_snapshot_yaml(output_root: Path, run_id: str) -> dict[str, object] | N
 
 
 def read_manifest(output_root: Path, run_id: str) -> dict[str, object] | None:
-    """manifest.json을 안전하게 읽는다. run_dir 밖이거나 없거나 손상되면 None."""
+    """Safely read manifest.json. Return None if outside run_dir, missing, or corrupted."""
     manifest_path = output_root / run_id / "manifest.json"
     try:
         ensure_within(output_root, manifest_path, label="manifest file")
@@ -194,12 +196,12 @@ def _entry_to_record(entry: BuildEntry) -> RunRecord | None:
 
 
 def collect_run_records_from_index(build_index: BuildIndex) -> list[RunRecord] | None:
-    """BuildIndex에서 dataset_id가 있는 모든 run을 가져온다.
+    """Get all runs with dataset_id from BuildIndex.
 
-    인덱스가 비어 있으면(ADR 0003과 동일하게 "아직 채워지지 않았을 수 있다"로
-    해석) None을 반환해 호출자가 파일시스템 폴백으로 넘어가게 한다. 인덱스 조회가
-    예외를 던져도 마찬가지로 폴백한다 — 인덱스는 파생물이므로 조회 실패가 조회
-    자체의 실패가 되어서는 안 된다.
+    Return None if index is empty (interpreted per ADR 0003 as "may not yet be
+    populated"), signaling the caller to fall back to filesystem. Similarly, if
+    index query raises an exception, return None for fallback — index is derived,
+    so query failure must not become query failure itself.
     """
     try:
         entries = build_index.list_builds(limit=None)
@@ -213,14 +215,15 @@ def collect_run_records_from_index(build_index: BuildIndex) -> list[RunRecord] |
 def collect_run_records_from_index_for_dataset(
     build_index: BuildIndex, dataset_id: str
 ) -> list[RunRecord] | None:
-    """BuildIndex에서 특정 dataset_id의 run만 가져온다.
+    """Get only runs for a specific dataset_id from BuildIndex.
 
-    이 dataset_id에 대한 결과가 비어 있으면, 인덱스 자체가 아직 채워지지 않았을
-    가능성과(ADR 0003) 이 dataset_id가 정말로 없는 경우를 구분해야 한다 — 후자만
-    신뢰할 수 있는 "없음"이다. 인덱스에 다른 run이라도 하나 있으면 채워져 있다고
-    보고 빈 결과를 그대로 신뢰하고, 인덱스 자체가 완전히 비어 있으면 아직 채워지지
-    않았을 수 있으므로 None을 반환해 호출자가 파일시스템 폴백으로 넘어가게 한다.
-    조회 자체가 예외를 던져도 마찬가지로 None(폴백 신호).
+    If the result for this dataset_id is empty, we must distinguish whether the
+    index itself is not yet populated (ADR 0003) or this dataset_id truly does
+    not exist — only the latter is trustworthy "not found". If the index contains
+    any other run, it is populated, so trust the empty result; if the index is
+    completely empty, it may not be populated yet, so return None for the caller
+    to fall back to filesystem. Similarly, if query itself raises an exception,
+    return None (fallback signal).
     """
     try:
         entries = build_index.list_by_dataset(dataset_id, limit=None)
@@ -234,11 +237,12 @@ def collect_run_records_from_index_for_dataset(
 def merge_run_records(
     index_records: Sequence[RunRecord], filesystem_records: Sequence[RunRecord]
 ) -> list[RunRecord]:
-    """파생 index와 filesystem 정본 후보를 run_id 기준으로 결정적으로 병합한다.
+    """Deterministically merge derived index and filesystem source-of-truth candidates by run_id.
 
-    같은 run_id가 양쪽에 있으면 snapshot/manifest에서 만든 filesystem record를
-    우선하되, filesystem scan만으로 복원할 수 없는 spec_digest는 index 값을
-    보존한다. 결과는 입력 순서와 무관하도록 run_id로 정렬한다.
+    When the same run_id exists in both, prioritize the filesystem record built
+    from snapshot/manifest, but preserve spec_digest from the index (which
+    filesystem scan alone cannot recover). Results are sorted by run_id
+    regardless of input order.
     """
     merged = {record.run_id: record for record in index_records}
     for record in filesystem_records:
@@ -271,11 +275,11 @@ def _canonical_record_from_run_id(
     fallback_status: str | None = None,
     spec_digest: str | None = None,
 ) -> RunRecord | None:
-    """단일 run_id를 snapshot+manifest 정본으로 재구성한다. 재확인 불가면 None.
+    """Reconstruct run_id from snapshot+manifest. Return None if re-verification fails.
 
-    ``retain_canonical_run_records``(입력이 ``RunRecord``)와
-    ``canonical_records_for_run_ids``(입력이 run_id 집합)가 공유하는 판정 —
-    같은 manifest가 경로에 따라 다르게 읽히는 드리프트를 없앤다.
+    Shared judgment between ``retain_canonical_run_records`` (input is ``RunRecord``)
+    and ``canonical_records_for_run_ids`` (input is run_id set) — eliminates drift
+    where the same manifest reads differently depending on path.
     """
     manifest = read_manifest(output_root, run_id)
     dataset_id = read_snapshot_dataset_id(output_root, run_id)
@@ -300,7 +304,7 @@ def _canonical_record_from_run_id(
 def retain_canonical_run_records(
     output_root: Path, records: Sequence[RunRecord]
 ) -> list[RunRecord]:
-    """snapshot+manifest로 다시 확인되는 run만 남기고 정본 metadata를 적용한다."""
+    """Keep only runs re-verified by snapshot+manifest, applying source-of-truth metadata."""
     canonical: list[RunRecord] = []
     for record in records:
         rebuilt = _canonical_record_from_run_id(
@@ -315,13 +319,14 @@ def retain_canonical_run_records(
 
 
 def canonical_records_for_run_ids(output_root: Path, run_ids: Iterable[str]) -> list[RunRecord]:
-    """run_id 집합만 snapshot+manifest 정본으로 확정한다 (재확인 불가한 id는 제외).
+    """Confirm run_id set as canonical snapshot+manifest (exclude ids failing re-verification).
 
-    ``retain_canonical_run_records``와 같은 재검증이지만 입력이 이미 만들어진
-    ``RunRecord``가 아니라 run_id다 — BuildIndex 시간창·filesystem mtime 등
-    파생 신호로 후보를 좁힌 뒤 그 subset만 정본으로 굳히는 호출자를 위한 것이다.
-    파생 신호는 정본을 바꾸지 않으므로 timestamp/ownership/status는 여기서 다시
-    manifest에서 읽는다.
+    Same re-verification as ``retain_canonical_run_records``, but input is run_id,
+    not already-built ``RunRecord`` — for callers that narrowed candidates using
+    derived signals (BuildIndex time window, filesystem mtime, etc.) before
+    confirming only that subset as source-of-truth. Derived signals don't change
+    the source of truth, so timestamp/ownership/status are re-read from manifest
+    here.
     """
     canonical: list[RunRecord] = []
     for run_id in run_ids:
@@ -332,11 +337,12 @@ def canonical_records_for_run_ids(output_root: Path, run_ids: Iterable[str]) -> 
 
 
 def collect_run_records_from_filesystem(output_root: Path) -> list[RunRecord]:
-    """파일시스템을 직접 스캔해 dataset_id가 있는 run만 RunRecord로 만든다(인덱스 폴백).
+    """Scan filesystem directly, building RunRecord for runs with dataset_id (index fallback).
 
-    manifest.json이 없거나 buildspec.yaml snapshot에서 dataset_id를 읽을 수 없는
-    run(=legacy 또는 손상)은 결과에서 제외한다(#488 semantics B) — 이 run들은
-    ``GET /builds``에서는 계속 보이지만 dataset grouping 대상은 아니다.
+    Runs missing manifest.json or unable to read dataset_id from buildspec.yaml
+    snapshot (legacy or corrupted) are excluded from results (#488 semantics B) —
+    these runs still appear in ``GET /builds`` but are not dataset grouping
+    targets.
     """
     if not output_root.exists():
         return []
@@ -370,46 +376,47 @@ def collect_run_records_from_filesystem(output_root: Path) -> list[RunRecord]:
 
 
 def dataset_summary_renderable(output_root: Path, record: RunRecord) -> bool:
-    """``build_dataset_summary``가 이 latest run으로 canonical dataset 요약을 만들 수
-    있는지 경량 판정한다 — snapshot spec만 재파싱해 ``dataset_id`` 정합을 확인하고,
-    manifest·stage 산출물 probe는 하지 않는다.
+    """Check if ``build_dataset_summary`` can make canonical summary for this latest run.
 
-    ``build_dataset_summary``의 ``None`` 반환 조건(snapshot을 파싱할 수 없거나
-    ``dataset_id``가 어긋남)과 정확히 같은 기준이어야 한다 — ``GET /datasets``의
-    ``total``이 페이지 밖 dataset까지 expensive full summary를 만들지 않고도
-    목록에 실릴 dataset과 동일한 집합을 세도록 한다. 두 함수의 이 조건은 함께
-    바뀌어야 한다.
+    Only re-parses snapshot spec to verify ``dataset_id`` match; does not probe
+    manifest or stage output artifacts.
+
+    Must use exact same criteria as ``build_dataset_summary`` None return
+    conditions (snapshot unparseable or ``dataset_id`` mismatch) — so ``GET
+    /datasets`` ``total`` counts the same set of renderable datasets without
+    expensive full summary for out-of-page items. The two functions must change
+    this condition together.
     """
     spec = read_snapshot_spec(output_root, record.run_id)
     return spec is not None and spec.dataset_id == record.dataset_id
 
 
 def build_dataset_summary(output_root: Path, record: RunRecord) -> dict[str, JsonValue] | None:
-    """latest run의 canonical snapshot + manifest + stage 상태로 dataset 응답을 만든다.
+    """Build dataset response from latest run's canonical snapshot+manifest+stage status.
 
-    snapshot을 다시 읽어 dataset_id를 재검증한다 — record.dataset_id는 BuildIndex나
-    파일시스템 스캔에서 이미 얻은 값이지만, 최종 응답은 항상 이 시점에 다시 읽은
-    canonical snapshot과 일치해야 한다(#488). 재검증에 실패하거나(snapshot이
-    사라짐 등) 값이 어긋나면 None을 반환해 호출자가 이 run을 건너뛰게 한다.
+    Re-read snapshot to re-verify dataset_id — record.dataset_id was already
+    obtained from BuildIndex or filesystem scan, but final response must always
+    match the canonical snapshot re-read at this point (#488). If re-verification
+    fails (snapshot disappeared, etc.) or values mismatch, return None so the
+    caller skips this run.
 
-    row_count는 단일 스칼라로 축약하지 않는다: multi-source run에서는 source별
-    row_counts 맵과 그 합계(total_row_count)를 모두 제공한다(#488 semantics F).
+    row_count is not condensed to a single scalar: for multi-source runs,
+    provide both source-level row_counts map and total_row_count (#488 semantics F).
 
-    quality는 항상 None이다 — #486(구조화된 quality gate)을 선반영하지 않으며,
-    현재의 log-only 품질 경고를 임의로 PASS/WARN/FAIL로 변환하지 않는다
-    (#488 semantics E).
+    quality is always None — not forward-implementing #486 (structured quality gate);
+    current log-only quality warnings are not arbitrarily converted to
+    PASS/WARN/FAIL (#488 semantics E).
     """
-    # 이 guard는 dataset_summary_renderable()의 판정과 동일해야 한다 — total 카운트가
-    # 목록 항목과 같은 dataset 집합을 세도록 두 조건을 함께 유지한다.
+    # This guard must match dataset_summary_renderable() logic — keep both conditions
+    # in sync so total count covers the same dataset set as list items.
     spec = read_snapshot_spec(output_root, record.run_id)
     if spec is None or spec.dataset_id != record.dataset_id:
         return None
     manifest = read_manifest(output_root, record.run_id) or {}
 
-    # file/url kind(#498)는 provider/dataset이 항상 빈 문자열이므로
-    # source_identity()로 kind별 canonical identity("file"/upload_id,
-    # "url"/query 없는 endpoint)를 채운다 — public_api는 기존과 동일하게
-    # source.provider/source.dataset 그대로다.
+    # file/url kind (#498) always have empty provider/dataset, so fill canonical
+    # identity by kind with source_identity() ("file"/upload_id, "url"/endpoint without
+    # query) — public_api remains unchanged, using source.provider/source.dataset as-is.
     sources: list[JsonValue] = []
     for source in spec.sources:
         provider, dataset = source_identity(source)

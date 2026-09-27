@@ -1,4 +1,4 @@
-"""Data catalog page 생성기(#42)를 검증한다."""
+"""Verify data catalog page generator (#42)."""
 
 from __future__ import annotations
 

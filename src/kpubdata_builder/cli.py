@@ -1,12 +1,12 @@
-"""kpubdata-builder용 명령줄 진입점.
+"""Command-line entry point for kpubdata-builder.
 
-이 모듈은 argparse 기반 CLI를 구성하고, validate/preview/build/publish/serve 명령의
-진입점을 제공한다.
+This module configures an argparse-based CLI and provides entry points for
+validate/preview/build/publish/serve commands.
 
-주요 함수:
-    - build_parser: 하위 명령을 포함한 ArgumentParser 구성
-    - dispatch: 파싱된 명령을 실제 실행 함수로 분기
-    - main: CLI 프로세스용 최상위 진입점
+Key functions:
+    - build_parser: ArgumentParser with subcommands
+    - dispatch: Route parsed command to actual execution function
+    - main: Top-level entry point for CLI process
 """
 
 from __future__ import annotations
@@ -30,15 +30,14 @@ from .tabular import DEFAULT_PREVIEW_LIMIT
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """CLI 전용 ArgumentParser를 생성한다.
+    """Create CLI-exclusive ArgumentParser.
 
-    validate, preview, build 하위 명령을 등록하고 공통 --version 옵션도
-    함께 노출한다.
+    Registers validate, preview, build subcommands and also exposes common --version option.
 
-    반환값:
-        argparse.ArgumentParser: 구성 완료된 파서 객체.
+    Returns:
+        argparse.ArgumentParser: Configured parser object.
 
-    예시:
+    Example:
         >>> parser = build_parser()
         >>> parser.prog
         'kpubdata-builder'
@@ -280,14 +279,14 @@ def _create_client(
     timeout: float | None = None,
     cache: bool | None = None,
 ) -> SourceClient:
-    """kpubdata 클라이언트를 환경설정으로 생성한다.
+    """Create kpubdata client with configuration.
 
-    테스트에서 monkeypatch로 대체할 수 있도록 별도 함수로 분리한다. 실제
-    네트워크 호출은 build 실행(run_build) 시점에만 발생한다.
+    Separated as standalone function for monkeypatch replacement in tests. Actual
+    network calls happen during build execution (run_build).
     """
     from kpubdata import Client
 
-    # kpubdata #276 이후 from_env는 명시적 파라미터만 받는다(**kwargs 폐기).
+    # Since kpubdata #276, from_env accepts only explicit parameters (**kwargs removed).
     return cast(
         SourceClient,
         Client.from_env(
@@ -299,16 +298,16 @@ def _create_client(
 
 
 def _run_validate(spec_path: str) -> int:
-    """지정한 BuildSpec 파일을 로드하고 검증한다.
+    """Load and validate specified BuildSpec file.
 
-    매개변수:
-        spec_path: 검사할 YAML 파일 경로 문자열.
+    Args:
+        spec_path: YAML file path string to check.
 
-    반환값:
-        int: 성공 시 0, 로드/검증 실패 시 1.
+    Returns:
+        int: 0 on success, 1 on load/validation failure.
 
-    예외:
-        직접 예외를 전파하지 않고 오류 메시지와 종료 코드로 변환한다.
+    Raises:
+        Does not propagate exceptions directly; converts to error message and exit code.
     """
     try:
         spec = load_spec(Path(spec_path))
@@ -326,15 +325,15 @@ def _run_validate(spec_path: str) -> int:
 
 
 def _run_build(spec_path: str, *, output_dir: str, run_id: str | None) -> int:
-    """BuildSpec을 로드·검증한 뒤 Medallion 파이프라인을 실행한다.
+    """Load and validate BuildSpec, then execute Medallion pipeline.
 
-    매개변수:
-        spec_path: 빌드할 BuildSpec YAML 경로.
-        output_dir: 실행 워크스페이스 루트.
-        run_id: 실행 식별자. None이면 타임스탬프로 생성.
+    Args:
+        spec_path: BuildSpec YAML path to build.
+        output_dir: Execution workspace root.
+        run_id: Execution identifier. If None, generated from timestamp.
 
-    반환값:
-        int: 모든 소스 성공 시 0, 로드/검증/빌드 실패 시 1.
+    Returns:
+        int: 0 if all sources succeed, 1 on load/validation/build failure.
     """
     try:
         spec = load_spec(Path(spec_path))
@@ -367,16 +366,16 @@ def _run_build(spec_path: str, *, output_dir: str, run_id: str | None) -> int:
 
 
 def _run_preview(spec_path: str, *, limit: int) -> int:
-    """BuildSpec을 로드·검증한 뒤 각 소스의 스키마와 샘플만 출력한다.
+    """Load and validate BuildSpec, then print only schema and sample for each source.
 
-    실제 아티팩트 파일은 만들지 않는다.
+    Does not create actual artifact files.
 
-    매개변수:
-        spec_path: 미리볼 BuildSpec YAML 경로.
-        limit: 소스별 샘플 최대 행 수.
+    Args:
+        spec_path: Path to BuildSpec YAML file.
+        limit: Max sample rows per source.
 
-    반환값:
-        int: 성공 시 0, 로드/검증 실패 시 1.
+    Returns:
+        int: 0 on success, 1 on load/validation failure.
     """
     try:
         spec = load_spec(Path(spec_path))
@@ -394,7 +393,7 @@ def _run_preview(spec_path: str, *, limit: int) -> int:
         client = _create_client()
         result = preview_build(spec, client=client, limit=limit)
     except ValueError as exc:
-        # limit < 1 같은 사용자 입력 오류.
+        # User input error like limit < 1.
         print(f"error: invalid preview input: {exc}", file=sys.stderr)
         return 1
 
@@ -411,7 +410,7 @@ def _run_preview(spec_path: str, *, limit: int) -> int:
             print(f"      {row}")
 
     if failed_sources:
-        # 소스 fetch 실패는 stderr + exit 1 — CI/자동화가 성공으로 오판하지 않도록.
+        # Source fetch failure → stderr + exit 1 — prevents CI/automation misinterpretation.
         print("error: preview failed for one or more sources", file=sys.stderr)
         for source in result.previews:
             if source.status != "ok":
@@ -420,15 +419,15 @@ def _run_preview(spec_path: str, *, limit: int) -> int:
     return 0
 
 
-#: 게시 대상이 아닌 run workspace 산출물. artifacts_dir 로 run 루트를 그대로
-#: 넘기는 경우가 흔한데, ``rglob("*")`` 은 그때 bronze 원본과 BuildSpec snapshot
-#: 까지 전부 쓸어 담았다 — 게시하려던 것은 gold 뿐이다.
+#: Run workspace artifacts not for publication. When artifacts_dir passed as run root,
+#: ``rglob("*")`` sweeps up bronze original and BuildSpec snapshot too —
+#: we only want gold.
 _NON_PUBLISHABLE_DIRS = frozenset({"bronze", "silver"})
 _NON_PUBLISHABLE_FILES = frozenset({"manifest.json", "buildspec.yaml"})
 
 
 def _is_non_publishable(path: Path, root: Path) -> bool:
-    """이 파일이 run workspace 부산물이라 게시 대상이 아닌지."""
+    """Whether this file is a run workspace artifact and not a publication target."""
     relative = path.relative_to(root)
     if relative.parts and relative.parts[0] in _NON_PUBLISHABLE_DIRS:
         return True
@@ -443,23 +442,23 @@ def _run_publish(
     artifacts_dir: str,
     public: bool = False,
 ) -> int:
-    """BuildSpec을 로드·검증한 뒤 지정한 target에 산출물을 게시한다.
+    """Load and validate BuildSpec, then publish artifacts to specified target.
 
-    매개변수:
-        spec_path: 게시 기준 BuildSpec YAML 경로.
-        target: 게시 대상 식별자 (PUBLISHER_REGISTRY 키).
-        destination: 로컬 디렉터리 경로 또는 원격 repo id.
-        artifacts_dir: 게시할 파일이 있는 디렉터리.
-        public: kaggle 신규 데이터셋을 공개로 만들지 여부 (다른 target은 무시).
+    Args:
+        spec_path: BuildSpec YAML path baseline for publishing.
+        target: Publication target identifier (PUBLISHER_REGISTRY key).
+        destination: Local directory path or remote repo id.
+        artifacts_dir: Directory containing files to publish.
+        public: Whether to make new Kaggle dataset public (ignored for other targets).
 
-    반환값:
-        int: 성공 시 0, 로드/검증/게시 실패 시 1.
+    Returns:
+        int: 0 on success, 1 on load/validation/publish failure.
     """
     try:
         spec = load_spec(Path(spec_path))
-        # publish=True 로 검증한다. 그냥 validate_spec(spec) 만 부르면 게시 전용
-        # 규칙(license 선언 등)이 적용되지 않아서, HTTP publish 가 막는 spec 을
-        # CLI 로는 그대로 올릴 수 있었다 — 같은 정책이 경로에 따라 달랐다.
+        # Validate with publish=True. If only validate_spec(spec) called, publication-only
+        # rules (license declaration etc.) not applied, so specs blocked by HTTP publish
+        # could be uploaded via CLI — same policy varied by path.
         validate_spec(replace(spec, publish=True))
     except SpecLoadError as exc:
         print(f"error: failed to load spec: {exc}", file=sys.stderr)
@@ -477,8 +476,8 @@ def _run_publish(
 
     publisher = PUBLISHER_REGISTRY[target]
 
-    # 레이아웃 단위(Kaggle)는 디렉터리 자체를, 파일 단위(local/HF)는 개별 파일을
-    # 전달한다. 이렇게 publisher별 입력 계약 불일치를 해소한다 (#176).
+    # Layout-based (Kaggle) passes directory itself, file-based (local/HF) passes individual files.
+    # Resolves per-publisher input contract mismatch (#176).
     paths: tuple[Path, ...]
     if publisher.expects_directory:
         paths = (artifacts_path,)
@@ -487,7 +486,7 @@ def _run_publish(
         paths = tuple(p for p in candidates if not _is_non_publishable(p, artifacts_path))
         skipped = [p for p in candidates if p not in paths]
         if skipped:
-            # 조용히 빼지 않는다 — 무엇이 올라가는지는 게시자가 알아야 한다.
+            # Do not silently exclude — publisher must know what goes up.
             print(f"note: skipping {len(skipped)} non-dataset file(s):", file=sys.stderr)
             for path in skipped[:10]:
                 print(f"  - {path.relative_to(artifacts_path)}", file=sys.stderr)
@@ -514,22 +513,22 @@ def _run_publish(
 
 
 def _run_serve(*, output_dir: str, host: str, port: int, max_workers: int | None) -> int:
-    """BuilderService를 HTTP 서버로 실행한다 (#249).
+    """Run BuilderService as HTTP server (#249).
 
-    매개변수:
-        output_dir: 실행 워크스페이스 루트.
-        host: 바인딩 호스트.
-        port: 바인딩 포트.
-        max_workers: 동시 요청 스레드 상한. None이면 KPUBDATA_BUILDER_MAX_WORKERS env,
-            그것도 없으면 기본값(10)을 쓴다 (#374).
+    Args:
+        output_dir: Execution workspace root.
+        host: Binding host.
+        port: Binding port.
+        max_workers: Max concurrent request threads. If None, use KPUBDATA_BUILDER_MAX_WORKERS env,
+            else default (10) (#374).
 
-    반환값:
-        int: 종료 코드. Ctrl-C/ SIGTERM 우아한 종료 시 0.
+    Returns:
+        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM.
     """
     from .service import BuilderService
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
-    # 우선순위: --max-workers 플래그 > KPUBDATA_BUILDER_MAX_WORKERS env > 기본값.
+    # Priority: --max-workers flag > KPUBDATA_BUILDER_MAX_WORKERS env > default.
     if max_workers is None:
         env_workers = os.environ.get("KPUBDATA_BUILDER_MAX_WORKERS")
         max_workers = int(env_workers) if env_workers else _DEFAULT_MAX_WORKERS
@@ -541,7 +540,7 @@ def _run_serve(*, output_dir: str, host: str, port: int, max_workers: int | None
         client_factory=_create_client,
         async_max_workers=max_workers,
     )
-    # 장시간 실행 명령이므로 시작 로그가 파이프 버퍼링에 갈리지 않도록 즉시 flush한다.
+    # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
         f"serving kpubdata-builder on http://{host}:{port} "
         f"(output: {output_dir}, max_workers: {max_workers})",
@@ -555,13 +554,13 @@ def _run_serve(*, output_dir: str, host: str, port: int, max_workers: int | None
 
 
 def _run_rebuild_index(output_dir: str) -> int:
-    """파일시스템 스캔으로 빌드 인덱스를 재구축한다 (#309, ADR 0003).
+    """Rebuild build index by filesystem scan (#309, ADR 0003).
 
-    매개변수:
-        output_dir: 빌드 출력 루트 디렉터리.
+    Args:
+        output_dir: Build output root directory.
 
-    반환값:
-        int: 성공 시 0, 실패 시 1.
+    Returns:
+        int: 0 on success, 1 on failure.
     """
     from .store import rebuild_index
 
@@ -578,12 +577,11 @@ def _run_rebuild_index(output_dir: str) -> int:
 
 
 def _run_prune_cancelled(*, output_dir: str, ttl_hours: float | None, apply: bool) -> int:
-    """TTL이 지난 cancelled+partial run 산출물을 나열/정리한다 (#549).
+    """List/clean up cancelled+partial run artifacts past TTL (#549).
 
-    기본은 dry-run이고, ``--apply``를 줘야 삭제가 일어난다. TTL은 인자가
-    우선이고, 없으면 ``KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`` 환경변수,
-    그마저 없으면 비활성(대상 없음)이다 — 잘못된 설정으로 증거가 사라지는
-    일은 없다.
+    Default is dry-run; ``--apply`` is needed for deletion. TTL argument takes
+    precedence; if absent, use ``KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`` env var,
+    if that too absent, disabled (no targets) — misconfiguration never loses evidence.
     """
     import os
 
@@ -853,15 +851,15 @@ def _run_verify(
 
 
 def dispatch(args: argparse.Namespace) -> int:
-    """파싱된 argparse 결과를 실제 명령 실행 함수로 전달한다.
+    """Pass parsed argparse result to actual command execution function.
 
-    매개변수:
-        args: argparse가 생성한 네임스페이스.
+    Args:
+        args: Namespace generated by argparse.
 
-    반환값:
-        int: CLI 종료 코드.
+    Returns:
+        int: CLI exit code.
 
-    예시:
+    Example:
         >>> parser = build_parser()
         >>> dispatch(parser.parse_args(["preview"]))
         1
@@ -918,24 +916,24 @@ def dispatch(args: argparse.Namespace) -> int:
             kpubdata_root=args.kpubdata_root,
             skip_pr=args.skip_pr,
         )
-    # 일반적인 CLI 경로로는 도달할 수 없지만(argparse가 알 수 없는 하위 명령을 거부함),
-    # 프로그래밍 방식 호출자를 위한 방어적 대체 경로로 유지한다.
+    # Cannot reach via normal CLI path (argparse rejects unknown subcommands),
+    # but kept as defensive fallback for programmatic callers.
     return 2
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI 프로세스의 최상위 진입점으로 동작한다.
+    """Act as the topmost entry point of CLI process.
 
-    매개변수:
-        argv: 테스트나 프로그래밍 호출을 위한 인자 목록. None이면 sys.argv 사용.
+    Args:
+        argv: Argument list for tests or programmatic calls. Uses sys.argv if None.
 
-    반환값:
-        int: 운영체제에 전달할 종료 코드.
+    Returns:
+        int: Exit code to pass to OS.
 
-    예외:
-        argparse가 발생시키는 SystemExit를 내부적으로 종료 코드로 변환한다.
+    Raises:
+        Converts SystemExit raised by argparse to exit code internally.
 
-    예시:
+    Example:
         >>> main(["--version"]) in {0, 2}
         True
     """

@@ -1,4 +1,4 @@
-"""OpenAPI의 named media-type examples를 Studio가 소비할 JSON으로 추출한다."""
+"""Extract named media-type examples from OpenAPI that Studio consumes as JSON."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ HTTP_METHODS = frozenset({"delete", "get", "head", "options", "patch", "post", "
 
 
 def resolve_local_ref(document: dict[str, Any], value: Any) -> Any:
-    """mapping 전체가 local ``$ref``이면 실제 값을 재귀적으로 반환한다."""
+    """If entire mapping is local ``$ref``, recursively return actual value."""
     seen: set[str] = set()
     while isinstance(value, dict) and set(value) == {"$ref"}:
         ref = value["$ref"]
@@ -66,7 +66,7 @@ def _media_examples(
 
 
 def extract_examples(document: dict[str, Any]) -> dict[str, Any]:
-    """경로 순서를 보존해 모든 request/response named example을 추출한다."""
+    """Extract all request/response named examples preserving path order."""
     records: list[dict[str, Any]] = []
     paths = document.get("paths", {})
     if not isinstance(paths, dict):

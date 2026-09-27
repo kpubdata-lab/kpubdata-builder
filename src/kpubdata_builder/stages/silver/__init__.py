@@ -1,12 +1,12 @@
-"""Silver 단계 패키지 (#46).
+"""Silver stage package (#46).
 
-Bronze raw records를 Polars 테이블로 변환하고 스키마 검증·통계 요약·미리보기를
-생성하는 Silver 단계 구현을 노출한다.
+Exposes Silver stage implementation that converts Bronze raw records to Polars tables and
+generates schema validation, statistics summary, and preview.
 
-주요 구성:
-    - SilverDataset / ValidationResult / ValidationProblem: 산출물·검증 모델
+Main components:
+    - SilverDataset / ValidationResult / ValidationProblem: output and validation models
     - build_silver_dataset: BronzeArtifact → SilverDataset
-    - persist_silver_dataset: Silver 산출물 영속화
+    - persist_silver_dataset: persist Silver output
 """
 
 from __future__ import annotations

@@ -1,23 +1,24 @@
-"""kpubdata → Builder 전 구간 E2E (yeongseon/kpubdata#282).
+"""kpubdata → Builder full E2E pipeline (yeongseon/kpubdata#282).
 
-기존 cross-repo 검증은 **형태(shape)** 만 봤다 — `test_kpubdata_client_protocol.py`는
-`kpubdata.Client`에 `.dataset().list().items`가 있는지 구조만 확인하고,
-`test_studio_contract.py`는 가짜 클라이언트로 Builder 응답 wire 형태만 고정한다.
-그래서 kpubdata가 실제로 반환하는 레코드가 Bronze→Silver→Gold를 통과하는지는
-어느 레포의 CI에서도 확인되지 않았다.
+Previous cross-repo validation only checked **shape** — `test_kpubdata_client_protocol.py`
+verified that `kpubdata.Client` has the structure `.dataset().list().items`,
+and `test_studio_contract.py` fixed only the wire format of Builder responses with mock clients.
+So it was never confirmed in any repo's CI that records returned by kpubdata actually
+pass through Bronze→Silver→Gold.
 
-이 테스트는 **실제 `kpubdata.Client`** 를 Builder에 주입해 그 공백을 메운다.
-네트워크와 API 키는 kpubdata의 replay 전송(`KPUBDATA_MODE=replay`)으로 대체한다 —
-기록된 fixture를 재생하므로 결정적이고, 실 API 키가 필요 없다. 검증되는 경로:
+This test injects the **real `kpubdata.Client`** into Builder to close that gap.
+Network and API keys are replaced with kpubdata's replay transport (`KPUBDATA_MODE=replay`) —
+recorded fixtures are replayed, so it's deterministic and no real API key is needed.
+Validated path:
 
     BuildSpec(wire) → dispatch(POST /build) → orchestrator → Bronze
-      → kpubdata.Client → provider spec 실행기 → replay fixture
+      → kpubdata.Client → provider spec executor → replay fixture
       → Silver → Gold → export → manifest
 
-fixture는 kpubdata 레포의 `tests/fixtures/`에 있고 배포 wheel에는 포함되지 않는다.
-따라서 `KPUBDATA_REPLAY_DIR`가 가리키는 fixture 디렉터리가 있을 때만 실행하고,
-없으면 skip한다 — builder 단독 CI와 로컬 실행은 영향을 받지 않는다. 이 변수를
-설정해 실제로 돌리는 곳은 `.github/workflows/cross-repo-contract.yml`이다.
+Fixtures live in kpubdata repo's `tests/fixtures/` and are not in distributed wheels.
+So we only run when `KPUBDATA_REPLAY_DIR` points to a fixture directory, else skip —
+builder standalone CI and local runs are unaffected. This env var is set where it actually
+runs: `.github/workflows/cross-repo-contract.yml`.
 """
 
 from __future__ import annotations
@@ -32,15 +33,15 @@ import yaml
 from kpubdata_builder.service.app import BuilderService, ServiceResponse, dispatch
 from kpubdata_builder.spec import JsonValue
 
-# 데이터셋 선택 조건 두 가지:
+# Dataset selection criteria (two):
 #
-# 1. **한 페이지로 끝나야 한다** (totalCount 22 ≤ page_size 100). Builder Bronze는
-#    kpubdata Dataset을 보면 `list_all()`로 페이지를 끝까지 도는데, 2페이지를
-#    요청하면 기록된 fixture가 없어 replay가 실패한다.
-# 2. **혼합 타입 컬럼이 없어야 한다.** spec이 `integer`로 선언한 필드에 숫자가 아닌
-#    값이 섞여 있으면 kpubdata가 일부만 int로 캐스팅해 한 컬럼에 int/str이 공존하고,
-#    Builder Silver가 이를 거부한다(yeongseon/kpubdata#452). apt_trade/sh_trade/
-#    ultra_srt_ncst가 여기 걸린다 — 이 테스트가 처음 돌 때 그 문제를 잡아냈다.
+# 1. **Must fit one page** (totalCount 22 ≤ page_size 100). Builder Bronze calls
+#    `list_all()` on kpubdata Dataset and walks pages to the end. If we request 2 pages,
+#    the recorded fixture doesn't exist and replay fails.
+# 2. **No mixed-type columns.** If a field declared as `integer` in spec has non-numeric
+#    values mixed in, kpubdata casts only some to int, leaving int/str coexisting in one column,
+#    and Builder Silver rejects it (yeongseon/kpubdata#452). apt_trade/sh_trade/
+#    ultra_srt_ncst hit this — this test caught that bug on first run.
 _DATASET = "air_station"
 _PARAMS: dict[str, JsonValue] = {
     "station": "강남구",
@@ -70,14 +71,14 @@ requires_replay_fixtures = pytest.mark.skipif(
 
 @pytest.fixture
 def real_kpubdata_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuilderService:
-    """실제 kpubdata.Client를 쓰는 BuilderService — 전송만 replay로 바꾼다."""
+    """BuilderService using real kpubdata.Client — transport only replaced with replay."""
     replay_dir = _replay_dir()
-    assert replay_dir is not None  # skipif가 보장한다
+    assert replay_dir is not None  # guaranteed by skipif
     monkeypatch.setenv("KPUBDATA_MODE", "replay")
     monkeypatch.setenv("KPUBDATA_REPLAY_DIR", str(replay_dir))
 
     kpubdata = pytest.importorskip("kpubdata")
-    # replay는 인증 파라미터를 매칭에서 제외하므로 키 값 자체는 의미가 없다.
+    # Replay excludes auth params from matching, so key value itself is meaningless.
     client = kpubdata.Client(provider_keys={"datago": "replay-dummy"})
     return BuilderService(output_root=tmp_path, client_factory=lambda **_kwargs: client)
 
@@ -113,7 +114,7 @@ class TestCrossRepoPipeline:
         )
 
         assert isinstance(response, ServiceResponse)
-        # 실패 시 원인을 바로 보여준다 — cross-repo 회귀는 메시지가 곧 진단이다.
+        # On failure, show cause immediately — cross-repo regression message is itself diagnosis.
         assert response.status_code == 200, response.body
         assert response.body["status"] == "ok"
 
@@ -128,8 +129,8 @@ class TestCrossRepoPipeline:
         assert manifest_path.exists()
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-        # kpubdata가 실제로 돌려준 레코드 수가 파이프라인 끝까지 보존돼야 한다 —
-        # 어댑터가 응답 파싱을 바꾸면(items_path 변경 등) 여기서 먼저 깨진다.
+        # Record count from kpubdata must be preserved all the way to pipeline end.
+        # If adapter changes response parsing (items_path etc.), it breaks here first.
         row_counts = manifest["row_counts"]
         assert isinstance(row_counts, dict)
         assert sum(int(value) for value in row_counts.values()) == _EXPECTED_ROWS, row_counts
@@ -146,12 +147,12 @@ class TestCrossRepoPipeline:
         assert isinstance(response, ServiceResponse)
         assert response.status_code == 200, response.body
 
-        # export는 Gold 단계 아래 source alias 디렉터리에 기록된다.
+        # Export is recorded in source alias directory under Gold stage.
         exported = tmp_path / "cross-repo-export" / "gold" / "measurements" / "out" / "data.jsonl"
         assert exported.exists(), "jsonl export가 기록되지 않았다"
         rows = [json.loads(line) for line in exported.read_text(encoding="utf-8").splitlines()]
         assert len(rows) == _EXPECTED_ROWS
 
-        # 대기측정 API의 실제 필드명이 그대로 실려야 한다. kpubdata가 필드를 리네임하거나
-        # 응답 구조를 바꾸면 Studio 화면이 깨지는데, 그 회귀를 여기서 잡는다.
+        # Real field names from air measurement API must be preserved as-is. If kpubdata renames
+        # fields or changes response structure, Studio UI breaks — this catches that regression.
         assert {"dataTime", "pm10Value", "khaiValue"} <= set(rows[0]), sorted(rows[0])

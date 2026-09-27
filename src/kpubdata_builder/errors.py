@@ -1,11 +1,11 @@
-"""빌더 파이프라인 실패를 위한 오류 계층.
+"""Error hierarchy for builder pipeline failures.
 
-이 모듈은 BuildSpec 로드, 검증, 내보내기, 매니페스트 작성처럼
-파이프라인의 주요 단계별 실패를 구분하기 위한 예외 타입을 정의한다.
+Defines exception types for distinguishing failures at key pipeline stages
+(BuildSpec load, validation, export, manifest writing).
 
-주요 클래스:
-    - BuildError: 모든 빌더 예외의 공통 기반
-    - ValidationError: 여러 검증 문제를 함께 담는 구조화 예외
+Main classes:
+    - BuildError: Common base for all builder exceptions
+    - ValidationError: Structured exception holding multiple validation issues
 """
 
 from __future__ import annotations
@@ -19,24 +19,24 @@ if TYPE_CHECKING:
 
 
 class BuildError(Exception):
-    """모든 빌더 오류의 기반 예외.
+    """Base exception for all builder errors.
 
-    예외:
-        하위 예외들이 이 클래스를 상속하므로 호출자는 BuildError 하나만
-        잡아도 빌더 계층 오류를 일괄 처리할 수 있다.
+    Note:
+        Subexceptions inherit from this class, so callers can handle all
+        builder-layer errors by catching BuildError alone.
     """
 
 
 class SpecLoadError(BuildError):
-    """빌드 스펙을 로드하거나 파싱하지 못했음을 나타낸다."""
+    """Indicates failure to load or parse build specification."""
 
 
 class ValidationError(BuildError):
-    """빌드 스펙 검증에 실패했음을 나타낸다.
+    """Indicates build specification validation failure.
 
-    속성:
-        problems: 검증 단계에서 수집된 개별 오류 메시지 목록.
-        structured_problems: 구조화된 문제 객체 목록 (#417). None이면 구형.
+    Attributes:
+        problems: List of individual error messages collected during validation.
+        structured_problems: List of structured problem objects (#417). None if legacy.
     """
 
     def __init__(
@@ -51,42 +51,43 @@ class ValidationError(BuildError):
 
 
 class ExportError(BuildError):
-    """파일 내보내기나 출력 디렉터리 준비가 실패했음을 나타낸다."""
+    """Indicates failure to export files or prepare output directory."""
 
 
 class PathTraversalError(ExportError):
-    """출력 경로가 허용된 기준 디렉터리를 벗어남을 나타낸다 (#210).
+    """Indicates output path exceeds allowed base directory (#210).
 
-    사용자 제어 output_path에 절대 경로나 ``..`` 상위 이동이 섞여 의도치 않은
-    위치에 파일을 쓰려는 시도를 차단할 때 쓴다. ExportError를 상속하므로 기존
-    ``except ExportError`` 경로에서도 함께 처리된다.
+    Raised when user-controlled output_path contains absolute path or ``..`` traversal,
+    blocking attempt to write files to unintended location. Inherits from ExportError
+    so handled by existing ``except ExportError`` paths.
     """
 
 
 class ManifestError(BuildError):
-    """매니페스트 직렬화 또는 디스크 기록이 실패했음을 나타낸다."""
+    """Indicates failure to serialize manifest or write to disk."""
 
 
 class PublishError(BuildError):
-    """산출물 게시(복사/업로드/등록)가 실패했음을 나타낸다."""
+    """Indicates failure to publish artifacts (copy/upload/register)."""
 
 
 class TabularError(BuildError):
-    """원시 레코드의 표 변환/정규화에서 데이터 무결성 문제가 발생했음을 나타낸다.
+    """Indicates data integrity issue in raw record table conversion/normalization.
 
-    이질적(혼합 타입) 컬럼이나, 선언된 캐스팅이 값을 조용히 null로 만드는 손실
-    변환처럼, 조용히 데이터를 다시 쓰는 대신 명확히 실패해야 하는 경우에 쓴다.
+    Raised for heterogeneous (mixed-type) columns or lossy conversions where declared
+    casting silently nullifies values — cases that should fail explicitly instead of
+    silently rewriting data.
     """
 
 
 class DatasetValidationError(BuildError):
-    """조립된 데이터셋(Silver 등)이 검증을 통과하지 못했음을 나타낸다.
+    """Indicates assembled dataset (Silver etc.) failed validation.
 
-    spec 검증(ValidationError)과 구분되며, 검증 실패한 데이터셋이 다운스트림
-    (Gold/패키징)으로 흘러가지 않도록 오케스트레이터가 소스를 실패 처리할 때 쓴다.
+    Distinct from spec validation (ValidationError); used when orchestrator marks source
+    as failed to prevent validated-failed dataset from flowing to downstream (Gold/packaging).
 
-    속성:
-        problems: 데이터셋 검증 단계에서 수집된 개별 위반 메시지 목록.
+    Attributes:
+        problems: List of individual violation messages collected during dataset validation.
     """
 
     def __init__(self, problems: list[str], *, structured: list[object] | None = None) -> None:

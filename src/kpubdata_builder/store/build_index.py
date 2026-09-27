@@ -1,12 +1,12 @@
-"""빌드 인덱스 (#309, ADR 0003; 백엔드 분리 ADR 0010/0016).
+"""Build index (#309, ADR 0003; backend split ADR 0010/0016).
 
-완료된 빌드의 메타데이터를 인덱싱하여 목록 조회 성능을 개선한다.
-manifest.json이 정본이며, 이 인덱스는 파생물이다.
+Index completed build metadata to improve list query performance.
+manifest.json is canonical; this index is derivative.
 
-``BuildIndex`` 는 Protocol(인터페이스)이고, 기본 구현체는 단일 파일 SQLite 기반
-``SqliteBuildIndex`` 다(무외부의존 기본값). CUBRID 백엔드(``CubridBuildIndex``,
-ADR 0016)는 ``build_index_cubrid`` 에 있으며 ``make_build_index()`` 팩토리가
-``KPUBDATA_BUILDER_STORAGE_BACKEND`` 에 따라 선택한다.
+``BuildIndex`` is Protocol (interface); default implementation is single-file SQLite-based
+``SqliteBuildIndex`` (no-external-deps default). CUBRID backend (``CubridBuildIndex``,
+ADR 0016) is in ``build_index_cubrid``; ``make_build_index()`` factory selects
+based on ``KPUBDATA_BUILDER_STORAGE_BACKEND``.
 """
 
 from __future__ import annotations
@@ -24,26 +24,26 @@ if TYPE_CHECKING:
 else:
     _BaseConn = object
 
-# 스키마 버전: 인덱스 구조 변경 시 증가
-# 스키마 버전 2: status 어휘를 ok/failed/cancelled로 확장 (#334 비동기 job 모델 대비)
-# 스키마 버전 4: dataset_id 컬럼 추가 (#488). 정본은 BuildSpec snapshot(#487)이며,
-# 이 컬럼은 dataset→run 조회 성능을 위한 파생 검색 값일 뿐이다.
-# 스키마 버전 5: owner_id 컬럼 추가 (#505). 정본은 manifest.json이며, 이 컬럼은
-# canonical stable owner identity에 대한 파생 검색 값일 뿐이다. 이 인덱스는
-# 파생물이라 스키마 버전이 바뀌면 테이블을 DROP 후 재생성한다 — 기존 인덱스
-# 데이터는 사라지지만 manifest.json에서 rebuild_index()로 재구축할 수 있다.
+# Schema version: increments on index structure change
+# Schema version 2: extends status vocabulary to ok/failed/cancelled (#334 async job model)
+# Schema version 4: added dataset_id column (#488). Canonical is BuildSpec snapshot (#487),
+# this column is only derived lookup value for dataset→run query performance.
+# Schema version 5: added owner_id column (#505). Canonical is manifest.json, this column
+# is only derived lookup value for canonical stable owner identity. This index is derived,
+# so schema change DROP and recreate table — existing index data lost but
+# rebuilding via rebuild_index() from manifest.json restores it.
 SCHEMA_VERSION = 5
 
-# 빌드 인덱스 status 어휘. ADR 0003 파생 캐시. manifest.json이 정본.
+# Build index status vocabulary. ADR 0003 derived cache. manifest.json is canonical.
 BuildStatus = Literal["ok", "failed", "cancelled"]
 
-# 인덱스 파일 이름
+# Index filename
 _INDEX_FILENAME = "_builds.sqlite"
 
 
 @dataclass(frozen=True)
 class BuildEntry:
-    """빌드 인덱스 엔트리."""
+    """Build index entry."""
 
     run_id: str
     status: BuildStatus
@@ -57,12 +57,12 @@ class BuildEntry:
 
 
 class BuildIndex(Protocol):
-    """빌드 인덱스 인터페이스 (ADR 0010/0016).
+    """Build index interface (ADR 0010/0016).
 
-    ``SqliteBuildIndex``(기본)와 ``CubridBuildIndex`` 가 이 Protocol 을 구현한다.
-    ADR 0003 계약: manifest.json 이 정본, 인덱스는 파생물이며 인덱스 쓰기 실패가
-    빌드 실패의 원인이 되어서는 안 된다(``insert_or_replace``/``delete`` 는 예외를
-    삼킨다).
+    ``SqliteBuildIndex`` (default) and ``CubridBuildIndex`` implement this Protocol.
+    ADR 0003 contract: manifest.json is canonical, index is derivative; index write
+    failure must not cause build failure (``insert_or_replace``/``delete`` swallow
+    exceptions).
     """
 
     def insert_or_replace(
@@ -98,20 +98,20 @@ class BuildIndex(Protocol):
 
 
 class SqliteBuildIndex:
-    """단일 파일 SQLite 기반 빌드 인덱스 (ADR 0003, 기본 구현체).
+    """Single-file SQLite-based build index (ADR 0003, default implementation).
 
-    ADR 0003에 따라:
-    - manifest.json이 정본이며, 이 인덱스는 파생물이다
-    - 인덱스 쓰기 실패가 빌드 실패의 원인이 되어서는 안 됨
-    - WAL 모드 + busy_timeout으로 동시성 안전 장치
+    Per ADR 0003:
+    - manifest.json is canonical; this index is derivative
+    - Index write failure must not cause build failure
+    - WAL mode + busy_timeout for concurrency safety
     """
 
     def __init__(self, output_root: Path, *, index_path: Path | None = None) -> None:
-        """인덱스를 초기화한다.
+        """Initialize index.
 
         Args:
-            output_root: 빌드 출력 루트 디렉터리 (인덱스는 output_root/_builds.sqlite)
-            index_path: 인덱스 파일 경로 오버라이드 (rebuild_index의 원자적 교체용 임시 파일 등)
+            output_root: Build output root directory (index at output_root/_builds.sqlite)
+            index_path: Index file path override (temp file for rebuild_index atomic replace, etc)
         """
         self._output_root = output_root
         self._index_path = index_path if index_path is not None else output_root / _INDEX_FILENAME
@@ -120,23 +120,23 @@ class SqliteBuildIndex:
 
     @property
     def _conn(self) -> sqlite3.Connection:
-        """스레드 로컬 연결을 반환한다 (lazy initialization)."""
+        """Return thread-local connection (lazy initialization)."""
         if not hasattr(self._local, "conn"):
             self._local.conn = self._connect()
         return cast(sqlite3.Connection, self._local.conn)
 
     def _connect(self) -> sqlite3.Connection:
-        """새 SQLite 연결을 생성하고 설정한다."""
+        """Create and configure new SQLite connection."""
         conn = sqlite3.connect(
             str(self._index_path),
-            timeout=30.0,  # busy_timeout: 동시성 경합 시 대기 시간
+            timeout=30.0,  # busy_timeout: wait time on concurrency contention
         )
-        conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging: 동시 읽기 허용
+        conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging: allow concurrent reads
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_db(self) -> None:
-        """데이터베이스 스키마를 초기화한다."""
+        """Initialize database schema."""
         with self._transaction():
             self._conn.execute(
                 """
@@ -146,13 +146,13 @@ class SqliteBuildIndex:
                 )
                 """
             )
-            # 스키마 버전 확인
+            # Check schema version
             cur = self._conn.execute("SELECT version FROM schema_version")
             row = cur.fetchone()
             current_version = row[0] if row else None
 
             if current_version != SCHEMA_VERSION:
-                # builds 테이블 생성 (기존 테이블은 DROP 후 재생성)
+                # Create builds table (existing table DROP and recreate)
                 self._conn.execute("DROP TABLE IF EXISTS builds")
                 self._conn.execute(
                     """
@@ -169,16 +169,16 @@ class SqliteBuildIndex:
                     )
                     """
                 )
-                # finished_at 인덱스 (최신 빌드 우선 조회)
+                # finished_at index (latest builds first query)
                 self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_builds_finished_at ON builds(finished_at DESC)"
                 )
-                # dataset_id 인덱스 (#488): dataset→run 조회. snapshot 없는 legacy run은
-                # dataset_id가 NULL이므로 자연히 dataset grouping에서 제외된다.
+                # dataset_id index (#488): dataset→run query. legacy runs without snapshot have
+                # dataset_id NULL, naturally excluded from dataset grouping.
                 self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_builds_dataset_id ON builds(dataset_id)"
                 )
-                # 스키마 버전 기록
+                # Record schema version
                 self._conn.execute(
                     f"INSERT INTO schema_version (version) VALUES ({SCHEMA_VERSION})"
                 )
@@ -188,7 +188,7 @@ class SqliteBuildIndex:
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
-        """트랜잭션 컨텍스트 매니저."""
+        """Transaction context manager."""
         try:
             yield
             self._conn.commit()
@@ -208,20 +208,20 @@ class SqliteBuildIndex:
         dataset_id: str | None = None,
         owner_id: str | None = None,
     ) -> None:
-        """빌드 엔트리를 삽입 또는 대체한다.
+        """Insert or replace build entry.
 
         Args:
-            run_id: 빌드 실행 식별자
-            status: 빌드 상태 (ok/failed)
-            started_at: 빌드 시작 시각 (ISO 8601)
-            finished_at: 빌드 완료 시각 (ISO 8601)
-            spec_digest: spec 해시 (선택)
-            error: 오류 메시지 (실패 시)
-            created_by: 빌드를 요청한 주체 라벨 (선택, #388)
-            dataset_id: BuildSpec.dataset_id (선택, #488). snapshot이 없는 legacy
-                run은 None — dataset_id를 추측해 채우지 않는다.
-            owner_id: canonical stable owner identity (선택, #505). manifest.json에
-                이 필드가 없는 legacy run은 None.
+            run_id: Build execution identifier
+            status: Build state (ok/failed)
+            started_at: Build start time (ISO 8601)
+            finished_at: Build completion time (ISO 8601)
+            spec_digest: spec hash (optional)
+            error: Error message (on failure)
+            created_by: Build requester identity label (optional, #388)
+            dataset_id: BuildSpec.dataset_id (optional, #488). Legacy runs without
+                snapshot are None — don't guess/fill dataset_id.
+            owner_id: canonical stable owner identity (optional, #505). Legacy runs
+                without this field in manifest.json are None.
         """
         try:
             with self._transaction():
@@ -245,17 +245,17 @@ class SqliteBuildIndex:
                     ),
                 )
         except Exception:
-            # ADR 0003: 인덱스 쓰기 실패가 빌드 실패의 원인이 되어서는 안 됨
+            # ADR 0003: index write failure must not cause build failure
             pass
 
     def list_builds(self, limit: int | None = 50) -> list[BuildEntry]:
-        """빌드 목록을 최신 완료 시각 기준 내림차순으로 반환한다.
+        """Return builds sorted by latest finished_at descending.
 
         Args:
-            limit: 반환할 최대 빌드 수. None이면 모든 빌드를 반환한다.
+            limit: Max builds to return. None returns all builds.
 
         Returns:
-            BuildEntry 목록 (finished_at이 최신인 순)
+            BuildEntry list (newest finished_at first)
         """
         sql = """
             SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
@@ -283,15 +283,15 @@ class SqliteBuildIndex:
         ]
 
     def list_by_dataset(self, dataset_id: str, limit: int | None = None) -> list[BuildEntry]:
-        """특정 dataset_id에 속한 빌드 목록을 최신 완료 시각 기준 내림차순 반환한다 (#488).
+        """Return builds for dataset_id sorted by latest finished_at descending (#488).
 
         Args:
-            dataset_id: BuildSpec.dataset_id 값 (정확히 일치하는 것만).
-            limit: 반환할 최대 빌드 수. None이면 해당 dataset의 모든 빌드를 반환한다.
+            dataset_id: BuildSpec.dataset_id value (exact match only).
+            limit: Max builds to return. None returns all builds for this dataset.
 
         Returns:
-            BuildEntry 목록 (finished_at이 최신인 순). 이 dataset_id로 인덱싱된
-            run이 없으면 빈 목록.
+            BuildEntry list (newest finished_at first). Empty if no runs indexed
+            under this dataset_id.
         """
         sql = """
             SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
@@ -322,34 +322,33 @@ class SqliteBuildIndex:
     def list_recent_owned(
         self, *, limit: int, principal_owner_id: str | None, principal_label: str
     ) -> list[BuildEntry]:
-        """principal 소유 build만 최신 완료 순으로 최대 ``limit``개 반환한다 (#527).
+        """Return up to ``limit`` builds owned by principal, latest finished first (#527).
 
-        ownership 필터를 Python에서 전체 결과에 사후 적용하기 전에 LIMIT을
-        걸면(예: 전역 최신 10건을 먼저 가져온 뒤 필터링), 다른 principal의
-        최신 run들이 LIMIT을 다 채워 본인의 recent run이 잘릴 수 있다 — 이
-        메서드는 필터를 SQL WHERE로 LIMIT보다 먼저 적용해 그 문제를 없앤다.
+        Apply ownership filter before LIMIT at SQL WHERE stage, not after LIMIT in Python.
+        If we LIMIT first (e.g., get top 10 globally then filter), other principals'
+        recent runs fill the LIMIT, cutting off our recent runs. This method applies
+        filter via SQL WHERE before LIMIT to avoid that problem.
 
-        정책은 ``service.auth.principal_owns()``(#505)와 정확히 동일해야
-        한다:
+        Policy must match ``service.auth.principal_owns()`` (#505) exactly:
 
-        - 레코드와 principal 양쪽 모두 ``owner_id``가 있으면 그 값을 비교한다
-          (``principal_owner_id``가 아닌 경우에만).
-        - 그 외(레코드에 ``owner_id``가 없거나 principal에 ``owner_id``가
-          없음)에는 ``created_by == principal_label``로 폴백한다.
-        - 어느 쪽도 매치하지 않으면 제외한다(fail-closed) — SQL의 NULL 비교는
-          자연히 조건을 만족시키지 않으므로 별도 처리가 필요 없다.
+        - If both record and principal have ``owner_id``, compare those values
+          (only if ``principal_owner_id`` is not None).
+        - Otherwise (record lacks ``owner_id`` or principal lacks ``owner_id``),
+          fall back to ``created_by == principal_label``.
+        - Match neither: exclude (fail-closed). SQL NULL comparisons naturally fail,
+          no special handling needed.
 
         Args:
-            limit: 반환할 최대 빌드 수.
-            principal_owner_id: 요청 principal의 canonical stable owner_id.
-                ``None``이면(legacy/owner_id 미설정 principal) 레코드
-                ``owner_id``와 무관하게 항상 ``created_by`` 비교로 폴백한다
-                (``principal_owns()``와 동일).
-            principal_label: 요청 principal의 legacy 비교용 label
+            limit: Max builds to return.
+            principal_owner_id: Requesting principal's canonical stable owner_id.
+                If ``None`` (legacy/owner_id-unset principal), always fall back to
+                ``created_by`` comparison regardless of record ``owner_id``
+                (same as ``principal_owns()``).
+            principal_label: Requesting principal's legacy comparison label
                 (``Principal.label``).
 
         Returns:
-            BuildEntry 목록 (finished_at 내림차순, 최대 limit개).
+            BuildEntry list (finished_at descending, max limit items).
         """
         if principal_owner_id is not None:
             sql = """
@@ -389,24 +388,23 @@ class SqliteBuildIndex:
         ]
 
     def list_between(self, start_iso: str, end_iso: str) -> list[BuildEntry]:
-        """``[start_iso, end_iso)`` 반열린 구간에 완료된 빌드를 오름차순으로 반환한다 (#516).
+        """Return builds completed in [start_iso, end_iso) half-open range, ascending (#516).
 
-        ``finished_at``이 문자열 비교로 구간 안에 드는 행에 더해 ``finished_at``이
-        NULL인 행도 함께 반환한다 — SQL에서는 어느 구간에 속하는지 판정할 수 없는
-        값이므로 침묵하며 제외하지 않고 호출자에게 넘겨 malformed로 셀 수 있게
-        한다(#516 partial 판정). ISO 8601 UTC(``Z`` suffix, zero-padded) 형식이면
-        문자열 정렬이 시각 정렬과 일치하지만, 그 형식을 벗어나면서 문자열 정렬상
-        구간 밖으로 벗어나는 극단적인 legacy 값은 이 쿼리 자체에서 걸러질 수 있다
-        — 실제 배포에서 malformed 값은 대체로 같은 날짜 prefix를 공유하는 손상된
-        ISO 문자열(NULL 포함)이라 이 한계는 좁다. ``idx_builds_finished_at``
-        인덱스를 활용해 테이블 전체를 로드하지 않는다.
+        Include rows where ``finished_at`` falls in range by string comparison, plus rows
+        with NULL ``finished_at`` — SQL can't determine if NULL is in range, so return it
+        to caller without silent exclusion, allowing them to count as malformed (#516 partial).
+        String ordering matches time ordering for ISO 8601 UTC format (``Z`` suffix,
+        zero-padded). Extreme legacy values outside that format may be filtered by this
+        query itself. In practice, malformed values are mostly corrupted ISO strings
+        (including NULL) sharing same day prefix — this boundary is narrow. Uses
+        ``idx_builds_finished_at`` index to avoid full table load.
 
         Args:
-            start_iso: 구간 시작(포함), ISO 8601 UTC 문자열.
-            end_iso: 구간 끝(제외), ISO 8601 UTC 문자열.
+            start_iso: Range start (inclusive), ISO 8601 UTC string.
+            end_iso: Range end (exclusive), ISO 8601 UTC string.
 
         Returns:
-            BuildEntry 목록 (finished_at 오름차순, NULL은 먼저 온다).
+            BuildEntry list (finished_at ascending, NULL first).
         """
         cur = self._conn.execute(
             """
@@ -434,15 +432,15 @@ class SqliteBuildIndex:
         ]
 
     def latest_successful_finished_at(self) -> str | None:
-        """가장 최근 성공(``status='ok'``) 빌드의 ``finished_at``을 반환한다 (#516).
+        """Return finished_at of most recent successful (status='ok') build (#516).
 
-        Artifact Store의 ``last_write_at`` 근거로 쓰인다 — 실제 성공한 빌드가
-        artifact를 기록했다는 확실한 증거만 반환하며, 성공 기록이 없으면
-        ``None``이다("모른다"를 임의 값으로 채우지 않는다). ``idx_builds_finished_at``
-        인덱스를 활용하는 bounded 쿼리다.
+        Used as Artifact Store ``last_write_at`` basis — return only definite proof
+        that actual successful build wrote artifact; None if no success record
+        (don't fill unknown with arbitrary value). Bounded query using
+        ``idx_builds_finished_at`` index.
 
         Returns:
-            ISO 8601 문자열 또는 성공 기록이 없으면 None.
+            ISO 8601 string or None if no success record.
         """
         cur = self._conn.execute(
             """
@@ -456,13 +454,13 @@ class SqliteBuildIndex:
         return cast(str | None, row[0]) if row is not None else None
 
     def get(self, run_id: str) -> BuildEntry | None:
-        """특정 빌드를 조회한다.
+        """Query specific build.
 
         Args:
-            run_id: 빌드 실행 식별자
+            run_id: Build execution identifier
 
         Returns:
-            BuildEntry 또는 None (미발견 시)
+            BuildEntry or None (not found)
         """
         cur = self._conn.execute(
             """
@@ -489,23 +487,23 @@ class SqliteBuildIndex:
         )
 
     def delete(self, run_id: str) -> None:
-        """빌드 엔트리를 삭제한다.
+        """Delete build entry.
 
         Args:
-            run_id: 빌드 실행 식별자
+            run_id: Build execution identifier
         """
         try:
             with self._transaction():
                 self._conn.execute("DELETE FROM builds WHERE run_id = ?", (run_id,))
         except Exception:
-            # 인덱스 실패는 무시
+            # Ignore index failure
             pass
 
     def close(self) -> None:
-        """연결을 닫는다.
+        """Close connection.
 
-        파일을 이름 변경(rename)만으로 안전하게 이관할 수 있도록,
-        닫기 전에 WAL 내용을 메인 DB 파일로 체크포인트한다.
+        Checkpoint WAL contents to main DB file before close, so file can be
+        safely transferred by rename only.
         """
         if hasattr(self._local, "conn"):
             self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -514,11 +512,11 @@ class SqliteBuildIndex:
 
 
 def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
-    """output_root 아래 manifest.json 들을 스캔해 ``BuildEntry`` 를 산출한다.
+    """Scan manifest.json files under output_root, yield ``BuildEntry``.
 
-    정본(manifest.json + BuildSpec snapshot)에서 파생 인덱스 값을 계산한다. 손상/누락
-    run 은 건너뛴다 — 인덱스는 파생물이라 일부 run 이 빠져도 정본에 영향이 없다. 백엔드
-    (sqlite/cubrid)와 무관하게 재구축 소스로 공유된다.
+    Compute derived index values from canonical (manifest.json + BuildSpec snapshot).
+    Skip corrupted/missing runs — index is derivative so missing runs don't affect
+    canonical. Shared rebuild source across backends (sqlite/cubrid).
     """
     import json
 
@@ -542,15 +540,15 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
         except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             continue
 
-        # manifest.json이 정본이므로 파생 규칙은 manifest 패키지가 소유한다 (#481) —
-        # 취소된 run은 errors가 비어 있을 수 있어, 기존 "errors 유무" 파생만으로는
-        # 재구축 시 성공(ok)으로 잘못 승격된다.
+        # Since manifest.json is canonical, derived rules owned by manifest package (#481) —
+        # cancelled run may have empty errors, so existing "errors presence" derivation alone
+        # incorrectly promotes to success (ok) when rebuilding.
         status = cast(BuildStatus, status_from_manifest(manifest))
         snapshot_path = run_dir / BUILDSPEC_SNAPSHOT_FILENAME
         spec_digest: str | None = None
         dataset_id: str | None = None
-        # is_file()은 symlink를 따라가므로, 워크스페이스 밖 파일을
-        # 해시하는 것을 막기 위해 symlink는 명시적으로 거부한다.
+        # is_file() follows symlinks, so explicitly reject symlinks to prevent
+        # hashing files outside workspace.
         if snapshot_path.is_file() and not snapshot_path.is_symlink():
             try:
                 snapshot_bytes: bytes | None = snapshot_path.read_bytes()
@@ -558,9 +556,10 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
                 snapshot_bytes = None
             if snapshot_bytes is not None:
                 spec_digest = compute_spec_digest(snapshot_bytes)
-                # dataset_id는 파생 검색값일 뿐이다 (#488). snapshot YAML을
-                # 읽거나 파싱할 수 없으면 추측하지 않고 None으로 남긴다 —
-                # 인덱스 손상/누락이 정본(BuildSpec snapshot)을 바꾸지 않는다.
+                # dataset_id is only derived lookup value (#488).
+                # If can't read or parse snapshot YAML, don't guess,
+                # leave as None — index corruption/loss doesn't change
+                # canonical (BuildSpec snapshot).
                 try:
                     snapshot_doc = yaml.safe_load(snapshot_bytes.decode("utf-8"))
                 except (UnicodeDecodeError, yaml.YAMLError):
@@ -584,10 +583,10 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
 
 
 def _rebuild_sqlite(output_root: Path) -> int:
-    """SQLite 인덱스를 .tmp 에 새로 빌드한 뒤 원자적으로 교체한다 (#366).
+    """Build SQLite index fresh to .tmp, then atomically replace (#366).
 
-    스캔 도중 실패해도 기존 인덱스는 그대로 남는다. 원자적 rename 은 단일 파일
-    SQLite 에만 유효한 방식이라 cubrid 경로와 분리한다.
+    Existing index survives if scan fails. Atomic rename works only for single-file
+    SQLite, so separate from cubrid path.
     """
     if not output_root.exists():
         return 0
@@ -596,7 +595,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
     tmp_path = output_root / f"{_INDEX_FILENAME}.tmp"
     backup_path = output_root / f"{_INDEX_FILENAME}.bak"
 
-    # 이전 실행이 중단되어 남은 임시 파일 정리
+    # Clean up temp files left from interrupted previous run
     tmp_path.unlink(missing_ok=True)
 
     index = SqliteBuildIndex(output_root, index_path=tmp_path)
@@ -617,7 +616,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
     finally:
         index.close()
 
-    # 원자적 교체: 기존 인덱스를 .bak으로 백업 후 .tmp를 원본 자리로 rename
+    # Atomic replace: backup existing index to .bak, rename .tmp to original
     backup_path.unlink(missing_ok=True)
     if index_path.exists():
         index_path.rename(backup_path)
@@ -625,7 +624,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
     try:
         tmp_path.rename(index_path)
     except OSError:
-        # 교체 실패 시 백업에서 복원
+        # Restore from backup if replace fails
         if backup_path.exists():
             backup_path.rename(index_path)
         raise
@@ -636,7 +635,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
 
 
 def _rebuild_cubrid(output_root: Path) -> int:
-    """CUBRID 인덱스를 FS 매니페스트 스캔으로 재구축한다 (truncate + reinsert)."""
+    """Rebuild CUBRID index from FS manifest scan (truncate + reinsert)."""
     from .backend import get_engine
     from .build_index_cubrid import CubridBuildIndex
 
@@ -648,17 +647,17 @@ def _rebuild_cubrid(output_root: Path) -> int:
 
 
 def rebuild_index(output_root: Path) -> int:
-    """파일시스템 스캔으로 인덱스를 재구축한다 (백엔드 인지, ADR 0016).
+    """Rebuild index from filesystem scan (backend-aware, ADR 0016).
 
-    manifest.json 정본을 스캔해 파생 인덱스를 다시 채운다. 백엔드에 따라:
-    - sqlite: .tmp 에 빌드 후 원자적 rename 교체(#366).
-    - cubrid: builds 테이블을 truncate 후 단일 트랜잭션으로 reinsert.
+    Scan manifest.json canonical, refill derived index. Per backend:
+    - sqlite: build to .tmp, atomically rename-replace (#366).
+    - cubrid: truncate builds table, reinsert in single transaction.
 
     Args:
-        output_root: 빌드 출력 루트 디렉터리
+        output_root: Build output root directory
 
     Returns:
-        재구축된 빌드 수
+        Number of builds rebuilt
     """
     from .backend import storage_backend
 
@@ -668,10 +667,10 @@ def rebuild_index(output_root: Path) -> int:
 
 
 def make_build_index(output_root: Path) -> BuildIndex:
-    """선택된 백엔드에 맞는 ``BuildIndex`` 구현체를 생성한다 (ADR 0016).
+    """Create ``BuildIndex`` implementation for selected backend (ADR 0016).
 
-    sqlite(기본) → ``SqliteBuildIndex(output_root)``; cubrid → 전역 Engine 을 공유하는
-    ``CubridBuildIndex``. cubrid 모듈(및 sqlalchemy)은 cubrid 분기에서만 import 된다.
+    sqlite (default) → ``SqliteBuildIndex(output_root)``; cubrid → ``CubridBuildIndex``
+    sharing global Engine. cubrid module (and sqlalchemy) imported only in cubrid branch.
     """
     from .backend import storage_backend
 
