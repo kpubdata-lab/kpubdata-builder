@@ -1,13 +1,13 @@
-"""Gold 단계 패키지 (#47).
+"""Gold stage package (#47).
 
-Silver 정제 테이블을 export-ready 패키지(GoldPackage)로 만드는 Gold 단계
-구현을 노출한다.
+Exposes Gold stage implementation that makes Silver refined tables into export-ready
+packages (GoldPackage).
 
-주요 구성:
-    - GoldPackage / ExportPlan: 산출물·내보내기 계획 모델
+Main components:
+    - GoldPackage / ExportPlan: output and export plan models
     - build_gold_package: SilverDataset → GoldPackage
-    - persist_gold_package: Gold 산출물 영속화
-    - DatasetCard / build_dataset_card / render_dataset_card: 데이터셋 카드 (#37)
+    - persist_gold_package: persist Gold output
+    - DatasetCard / build_dataset_card / render_dataset_card: dataset card (#37)
 """
 
 from __future__ import annotations

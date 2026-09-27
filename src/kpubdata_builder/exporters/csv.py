@@ -1,9 +1,9 @@
-"""CSV 내보내기 도구 구현.
+"""CSV exporter implementation.
 
-이 모듈은 ArtifactDataset의 레코드를 RFC 4180 스타일의 CSV 파일로 직렬화하는
-exporter를 제공한다. 컬럼은 artifact.schema가 있으면 그 순서를, 없으면 레코드에서
-처음 등장한 순서를 따른다. 콤마/따옴표/개행이 포함된 값은 stdlib csv가 자동으로
-인용 처리한다.
+This module provides exporter to serialize ArtifactDataset records to RFC 4180 style
+CSV file. Columns follow artifact.schema order if present, else order of first
+appearance in records. Values containing commas/quotes/newlines are auto-quoted by
+stdlib csv.
 """
 
 from __future__ import annotations
@@ -24,11 +24,7 @@ from .base import BaseExporter, ExportResult, ensure_output_dir
 
 
 def _resolve_columns(artifact: ArtifactDataset) -> list[str]:
-    """CSV 헤더로 사용할 컬럼 순서를 결정한다.
-
-    schema가 선언되어 있으면 그 키 순서를 우선하고, 레코드에만 존재하는
-    추가 필드도 뒤에 포함한다. 결과는 입력에 대해 결정적이다.
-    """
+    """determines column order for CSV header."""
     columns: dict[str, None] = {}
     if artifact.schema:
         for key in artifact.schema:
@@ -39,22 +35,14 @@ def _resolve_columns(artifact: ArtifactDataset) -> list[str]:
     return list(columns.keys())
 
 
-# 스프레드시트가 수식으로 해석하는 선두 문자 집합.
-# 셀 값이 이 문자로 시작하면 앞에 홑따옴표를 붙여 수식 실행을 막는다 (CSV 인젝션 대응, CWE-1236).
+# leading characters that spreadsheets interpret as formulas.
+# prefix with single quote if cell starts with this character to prevent formula execution
+# (CSV injection mitigation, CWE-1236).
 _FORMULA_TRIGGER_CHARS = frozenset("=+-@\t\r")
 
 
 def _format_cell(value: JsonValue) -> str:
-    """단일 셀 값을 CSV 문자열로 변환한다.
-
-    None은 빈 문자열, bool은 소문자 JSON 표기, 중첩 list/dict는 결정적 JSON
-    문자열로 직렬화한다. 그 외 스칼라는 str()로 변환한다.
-
-    문자열이 스프레드시트 수식 트리거 문자(``=``, ``+``, ``-``, ``@``,
-    탭, 캐리지 리턴)로 시작하면 앞에 홑따옴표 ``'``를 붙여 수식 실행을
-    막는다(CSV 인젝션 대응, CWE-1236).  숫자·bool·None 등 비문자열 값은
-    변경하지 않는다.
-    """
+    """converts single cell value to CSV string."""
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -66,8 +54,8 @@ def _format_cell(value: JsonValue) -> str:
         if text and text[0] in _FORMULA_TRIGGER_CHARS:
             text = "'" + text
         return text
-    # date/datetime/Decimal 은 json.dumps 가 직렬화하지 못한다. 셀 하나 때문에
-    # 빌드 전체가 원인 불명으로 실패하던 자리다 (#629 후속).
+    # date/datetime/Decimal cannot be serialized by json.dumps. due to a single cell
+    # entire build would fail with unknown cause (#629 follow-up).
     safe = json_safe(value)
     if isinstance(safe, str):
         return safe
@@ -75,33 +63,33 @@ def _format_cell(value: JsonValue) -> str:
 
 
 class CsvExporter(BaseExporter):
-    """레코드를 CSV로 기록하는 내보내기 도구.
+    """exporter that writes records to CSV.
 
-    예시:
+    Example:
         >>> CsvExporter().name
         'csv'
     """
 
     @property
     def name(self) -> str:
-        """내보내기 도구 이름을 반환한다."""
+        """returns exporter name."""
         return "csv"
 
     def export(
         self, artifact: ArtifactDataset, target: ExportTarget, output_dir: Path
     ) -> ExportResult:
-        """표준 레코드를 CSV 파일로 내보낸다.
+        """exports standard records to CSV file.
 
-        매개변수:
-            artifact: CSV로 직렬화할 레코드 묶음.
-            target: 출력 경로와 옵션을 담은 내보내기 대상.
-            output_dir: 빌드 기준 출력 디렉터리.
+        Args:
+            artifact: record batch to serialize to CSV.
+            target: export target with output path and options.
+            output_dir: build-based output directory.
 
-        반환값:
-            ExportResult: 생성된 CSV 파일 메타데이터.
+        Returns:
+            ExportResult: generated CSV file metadata.
 
-        예외:
-            ExportError: 파일 쓰기에 실패한 경우.
+        Raises:
+            ExportError: if file write fails.
         """
         destination = ensure_output_dir(output_dir, target.output_path)
         columns = _resolve_columns(artifact)

@@ -1,11 +1,11 @@
-"""레코드를 명명된 분할로 나누는 로직 (#38).
+"""logic to split records into named partitions (#38).
 
-SplitSpec에 따라 레코드 시퀀스를 train/val/test 같은 비율 분할 또는 컬럼 값
-기반(연도/지역/카테고리) 분할로 나눈다. 비율 분할은 시드 기반으로 결정적이며,
-레코드 순서와 무관하게 재현 가능하다.
+splits record sequence by SplitSpec into ratio splits (train/val/test) or column-value
+splits (year/region/category). ratio splits are deterministic based on seed; reproducible
+regardless of record order.
 
-주요 함수:
-    - apply_splits: 레코드 + SplitSpec → {split 이름: 레코드 튜플}
+main functions:
+    - apply_splits: records + SplitSpec -> {split name: record tuple}
 """
 
 from __future__ import annotations
@@ -21,12 +21,13 @@ Record = dict[str, JsonValue]
 
 
 def _allocate_counts(total: int, ratios: dict[str, float], names: list[str]) -> dict[str, int]:
-    """비율을 정수 카운트로 배분한다(합 = total). 잔여는 큰 소수부 순으로 분배한다."""
+    """distributes ratios as integer counts (sum = total); remainder distributed by
+    largest fractional part."""
     ratio_sum = sum(ratios.values())
     exact = {name: total * ratios[name] / ratio_sum for name in names}
     counts = {name: int(exact[name]) for name in names}
     remainder = total - sum(counts.values())
-    # 소수부가 큰 순서(동률이면 이름 정순)로 잔여를 배분해 결정성을 보장한다.
+    # distributes remainder by largest fractional part (ties broken by name order) for determinism.
     by_fraction = sorted(
         names,
         key=lambda name: (-(exact[name] - counts[name]), name),
@@ -39,7 +40,7 @@ def _allocate_counts(total: int, ratios: dict[str, float], names: list[str]) -> 
 def _ratio_split(
     records: Sequence[Record], ratios: dict[str, float], seed: int
 ) -> dict[str, tuple[Record, ...]]:
-    """비율에 따라 레코드를 결정적으로 분할한다."""
+    """deterministically splits records by ratio."""
     names = sorted(ratios)
     counts = _allocate_counts(len(records), ratios, names)
     order = list(range(len(records)))
@@ -50,16 +51,16 @@ def _ratio_split(
     for name in names:
         chosen = order[position : position + counts[name]]
         position += counts[name]
-        # 원본 순서를 보존해 결과를 안정적으로 만든다.
+        # preserves original order for stable results.
         result[name] = tuple(records[index] for index in sorted(chosen))
     return result
 
 
-# 실제 레코드 값과 충돌하지 않도록 문자열이 아닌 단일 객체를 센티널로 사용한다.
-# object()는 str() 가능하지만, 동일한 object() 인스턴스는 정체성(identity)으로만
-# 구분된다. 이 고유한 정체성을 내부 버킷 키로 사용하므로, "__missing__" 또는
-# "__null__" 리터럴 문자열 값을 가진 레코드가 잘못된 버킷에 합산되는 충돌을
-# 방지한다 (#225).
+# uses single non-string object as sentinel to avoid collision with actual record values.
+# object() is str()-able, but identical object() instances are distinguished by(identity)only
+# distinguished. using this unique identity as internal bucket key, "__missing__" or
+# "__null__" literal string values don't collide into wrong bucket
+# prevents (#225).
 _MISSING_KEY_SENTINEL: object = object()
 _NULL_VALUE_SENTINEL: object = object()
 
@@ -70,15 +71,15 @@ _SENTINEL_NAMES: dict[object, str] = {
 
 
 def _key_split(records: Sequence[Record], key: str) -> dict[str, tuple[Record, ...]]:
-    """컬럼 값에 따라 레코드를 그룹으로 분할한다(값 → 분할 이름).
+    """splits records into groups by column values (value -> partition name).
 
-    키가 없는 레코드는 "__missing__" 버킷, None 값은 "__null__" 버킷,
-    빈 문자열은 "" 버킷으로 각각 분리한다.
+    records without key go to "__missing__" bucket, None values to "__null__" bucket,
+    empty strings to "" bucket.
 
-    센티널 객체를 내부 버킷 키로 사용해 키가 없는/None인 레코드와 리터럴
-    "__missing__"/"__null__" 문자열을 가진 레코드가 컬렉션 단계에서 합산되지
-    않도록 분리한다. 출력 dict 구성 시 센티널을 문자열 이름으로 변환하면서
-    이름이 충돌하면 병합(extend)한다 (#225).
+    uses sentinel objects for internal bucket keys so records without/with None key
+    and records with literal "__missing__"/"__null__" strings do not merge during
+    collection. output dict converts sentinels to string names on merge (extends on
+    name collision #225).
     """
     grouped: dict[object, list[Record]] = {}
     for record in records:
@@ -89,7 +90,7 @@ def _key_split(records: Sequence[Record], key: str) -> dict[str, tuple[Record, .
         else:
             bucket = str(record[key])
         grouped.setdefault(bucket, []).append(record)
-    # 센티널을 출력 이름으로 변환; 이름 충돌 시 병합해 레코드 손실을 막는다.
+    # converts sentinel to output name; merges on name collision to prevent record loss.
     result: dict[str, list[Record]] = {}
     for k, rows in grouped.items():
         name: str = k if isinstance(k, str) else _SENTINEL_NAMES[k]
@@ -98,17 +99,17 @@ def _key_split(records: Sequence[Record], key: str) -> dict[str, tuple[Record, .
 
 
 def apply_splits(records: Sequence[Record], spec: SplitSpec) -> dict[str, tuple[Record, ...]]:
-    """SplitSpec에 따라 레코드를 명명된 분할로 나눈다.
+    """splits records into named partitions by SplitSpec.
 
-    매개변수:
-        records: 분할할 레코드 시퀀스.
-        spec: 분할 정의.
+    arguments:
+        records: sequence of records to split.
+        spec: split definition.
 
-    반환값:
-        dict[str, tuple[Record, ...]]: 분할 이름 → 레코드 튜플.
+    returns:
+        dict[str, tuple[Record, ...]]: split name -> record tuple.
 
-    예외:
-        ValueError: 지원하지 않는 split 모드인 경우.
+    raises:
+        ValueError: if unsupported split mode.
     """
     if spec.mode == "ratio":
         return _ratio_split(records, spec.ratios, spec.seed)
@@ -120,7 +121,7 @@ def apply_splits(records: Sequence[Record], spec: SplitSpec) -> dict[str, tuple[
 def _ratio_split_frame(
     frame: pl.DataFrame, ratios: dict[str, float], seed: int
 ) -> dict[str, pl.DataFrame]:
-    """비율에 따라 DataFrame을 결정적으로 분할한다."""
+    """deterministically splits DataFrame by ratio."""
     names = sorted(ratios)
     counts = _allocate_counts(frame.height, ratios, names)
     order = list(range(frame.height))
@@ -131,56 +132,56 @@ def _ratio_split_frame(
     for name in names:
         chosen = order[position : position + counts[name]]
         position += counts[name]
-        # 원본 순서를 보존해 결과를 안정적으로 만든다.
+        # preserves original order for stable results.
         result[name] = frame[sorted(chosen)]
     return result
 
 
 def _key_split_frame(frame: pl.DataFrame, key: str) -> dict[str, pl.DataFrame]:
-    """컬럼 값에 따라 DataFrame을 그룹으로 분할한다.
+    """splits DataFrame into groups by column values.
 
-    키가 없는 레코드는 "__missing__" 버킷, None 값은 "__null__" 버킷으로 분리한다.
-    센티널 객체를 내부 버킷 키로 사용해 리터럴 "__missing__"/"__null__" 문자열
-    값과 충돌을 방지한다. 출력 dict 구성 시 센티널을 문자열 이름으로 변환하면서
-    이름이 충돌하면 병합한다 (#225).
+    records without key go to "__missing__" bucket, None values to "__null__" bucket.
+    uses sentinel objects for internal bucket keys so literal "__missing__"/"__null__"
+    string values do not collide. output dict converts sentinels to string names on
+    merge (extends on name collision #225).
     """
-    # 키가 없는 경우 전체를 __missing__ 버킷으로 반환
+    # if key missing, return entire as __missing__ bucket
     if key not in frame.columns:
         return {"__missing__": frame}
 
-    # None 값을 "__null__" 문자열로 치환하여 파티션 처리
-    # fill_null을 사용해 None을 명시적 문자열로 변환
+    # replace None with "__null__" string for partition handling
+    # use fill_null to convert None to explicit string
     key_col = frame[key]
-    # 문자열로 변환 후 None을 __null__로 치환
+    # convert to string then replace None with __null__
     key_str = key_col.cast(pl.Utf8, strict=False).fill_null("__null__")
     frame_with_key = frame.with_columns(key_str.alias("__split_key__"))
 
-    # partition_by로 그룹 분할
+    # partition groups by
     partitions = frame_with_key.partition_by("__split_key__", maintain_order=True)
 
-    # 결과 dict 구성: __split_key__ 컬럼 제거 및 중복 이름 병합
+    # construct result dict: remove __split_key__ column and merge duplicate names
     grouped: dict[str, list[pl.DataFrame]] = {}
     for partition in partitions:
-        split_name = partition["__split_key__"][0]  # 첫 행의 키 값을 분할 이름으로 사용
+        split_name = partition["__split_key__"][0]  # use key value of first row as partition name
         partition_clean = partition.drop("__split_key__")
         grouped.setdefault(split_name, []).append(partition_clean)
 
-    # 동일 이름의 파티션을 병합 (센티널 충돌 처리)
+    # merge partitions with same name (sentinel collision handling)
     return {name: pl.concat(dfs) for name, dfs in grouped.items()}
 
 
 def apply_splits_to_frame(frame: pl.DataFrame, spec: SplitSpec) -> dict[str, pl.DataFrame]:
-    """SplitSpec에 따라 DataFrame을 명명된 분할로 나눈다 (Polars 네이티브).
+    """splits DataFrame into named partitions by SplitSpec (Polars native).
 
-    매개변수:
-        frame: 분할할 DataFrame.
-        spec: 분할 정의.
+    arguments:
+        frame: DataFrame to split.
+        spec: split definition.
 
-    반환값:
-        dict[str, pl.DataFrame]: 분할 이름 → DataFrame.
+    returns:
+        dict[str, pl.DataFrame]: split name -> DataFrame.
 
-    예외:
-        ValueError: 지원하지 않는 split 모드인 경우.
+    raises:
+        ValueError: if unsupported split mode.
     """
     if spec.mode == "ratio":
         return _ratio_split_frame(frame, spec.ratios, spec.seed)

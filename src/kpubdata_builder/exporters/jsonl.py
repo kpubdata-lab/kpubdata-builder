@@ -1,7 +1,7 @@
-"""JSONL 내보내기 도구 스텁 구현.
+"""JSONL exporter stub implementation.
 
-이 모듈은 ArtifactDataset의 레코드를 줄바꿈 구분 JSON(JSONL) 형식으로
-직렬화하는 기본 exporter를 제공한다.
+This module provides baseline exporter to serialize ArtifactDataset records to
+newline-delimited JSON (JSONL) format.
 """
 
 from __future__ import annotations
@@ -20,33 +20,33 @@ from .base import BaseExporter, ExportResult, ensure_output_dir
 
 
 class JsonlExporter(BaseExporter):
-    """레코드를 줄바꿈 구분 JSON으로 기록하는 내보내기 도구.
+    """exporter that writes records as newline-delimited JSON.
 
-    예시:
+    Example:
         >>> JsonlExporter().name
         'jsonl'
     """
 
     @property
     def name(self) -> str:
-        """내보내기 도구 이름을 반환한다."""
+        """returns exporter name."""
         return "jsonl"
 
     def export(
         self, artifact: ArtifactDataset, target: ExportTarget, output_dir: Path
     ) -> ExportResult:
-        """표준 레코드를 JSONL 파일로 내보낸다.
+        """exports standard records to JSONL file.
 
-        매개변수:
-            artifact: JSONL로 직렬화할 레코드 묶음.
-            target: 출력 경로와 옵션을 담은 내보내기 대상.
-            output_dir: 빌드 기준 출력 디렉터리.
+        Args:
+            artifact: record batch to serialize to JSONL.
+            target: export target with output path and options.
+            output_dir: build-based output directory.
 
-        반환값:
-            ExportResult: 생성된 JSONL 파일 메타데이터.
+        Returns:
+            ExportResult: generated JSONL file metadata.
 
-        예외:
-            ExportError: 파일 쓰기에 실패한 경우.
+        Raises:
+            ExportError: if file write fails.
         """
         destination = ensure_output_dir(output_dir, target.output_path)
         try:
@@ -54,8 +54,8 @@ class JsonlExporter(BaseExporter):
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     for record in artifact.records:
-                        # allow_nan=False: NaN/Infinity는 비표준 JSON 토큰이 되므로 조용히
-                        # 기록하지 않고 ValueError로 실패시킨다 (#217).
+                        # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail
+                        # with ValueError instead of silently recording (#217).
                         f.write(
                             json.dumps(
                                 json_safe(record),
