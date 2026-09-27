@@ -58,6 +58,27 @@ freezes the current per-file count and fails only when a count grows, or when a
 file absent from the baseline has any. Write new code in English; the existing
 debt is paid down separately (#710).
 
+
+## 확인은 기계가 한다
+
+[POLICY 18.2](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) and [VERIFICATION.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/VERIFICATION.md) are canonical. Three rules
+carry most of the weight:
+
+- **A sentence with a number in it comes from a command.** Run it in the same breath
+  and paste the output. A figure recalled from memory is not a figure.
+- **Sweep with `git ls-files`, not with paths you chose.** Ask the repository what it
+  has. A hand-written path list is how `__tests__/` got missed.
+- **A rule without a gate is a wish.** When you add a rule, add the command that
+  checks it, wire it into CI, and write the test that shows it failing. Without the
+  third, nobody knows the gate works.
+
+Existing debt is frozen with a **ratchet** — the baseline holds today's per-file
+count and the check fails only when a count grows. Fixing everything first means
+starting nothing.
+
+Say "done" with the command's output. If tests failed, paste the failure. If a step
+was skipped, say it was skipped.
+
 ## Labels — what an agent applies
 
 **[POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) sections 2.1, 2.1.1 and 2.1.2 are the label reference.**
