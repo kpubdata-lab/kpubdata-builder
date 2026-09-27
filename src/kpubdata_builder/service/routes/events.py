@@ -30,11 +30,10 @@ def route(
     principal: Principal,
 ) -> RouteResponse | None:
     del body
-    # "/stages" route(service/routes/stages.py)와 동일한 순서를 따른다: run_id는
-    # segments[0]에서 바로 뽑아 path의 나머지 모양과 무관하게 먼저 검증한다 —
-    # "../escape/events"처럼 안전하지 않은 run_id는 이 adapter가 실제로 매칭되는
-    # 경로 모양인지와 상관없이 400으로 거부되어야 한다(#317 conformance와
-    # 동일한 path-traversal 방어 관례).
+    # Same order as "/stages" route (service/routes/stages.py): extract run_id from
+    # segments[0] and validate first regardless of remaining path shape — unsafe run_id
+    # like "../escape/events" must be rejected as 400 regardless of actual path shape
+    # matched by this adapter (#317 conformance and same path-traversal defense convention).
     if method != "GET" or not path.startswith(_PREFIX) or _SUFFIX not in path:
         return None
     segments = path[len(_PREFIX) :].split("/")
@@ -53,17 +52,16 @@ def route(
     if isinstance(tail_or_error, ServiceResponse):
         return tail_or_error
 
-    # 순서는 다른 /builds/{run_id}/* route와 동일하다(#488 관례, #496도 따른다):
-    # run_id 검증 -> 존재/ownership 확인 -> 실제 조회. cross-owner 접근이
-    # events 조회 로직에 도달하기 전에 403으로 막혀야 run 존재 여부가 이
-    # endpoint로 새어나가지 않는다.
+    # Order same as other /builds/{run_id}/* routes (#488 convention, #496 follows):
+    # run_id validation -> existence/ownership check -> actual query. Cross-owner access
+    # must be blocked as 403 before reaching events query logic, so run existence
+    # does not leak through this endpoint.
     #
-    # 존재/ownership 판정 자체는 check_active_run_access(#496 follow-up)가
-    # 맡는다 — persisted run(manifest 기반)뿐 아니라 아직 run
-    # directory/manifest가 없는 active async job(queued/running)도 async job
-    # registry로 인지해야 events polling이 그 구간에서 404/403으로 막히지
-    # 않는다. 다른 /builds/{run_id}/* route(manifest, stages 등)는 여전히
-    # persisted run만 다루므로 이 helper를 쓰지 않는다.
+    # Existence/ownership determination handled by check_active_run_access
+    # — must recognize not just persisted runs (manifest-based) but also active async jobs
+    # (queued/running) without run directory/manifest yet, so events polling is not blocked
+    # as 404/403 in that interval. Other /builds/{run_id}/* routes (manifest, stages etc.)
+    # still only handle persisted runs, so do not use this helper.
     error = check_active_run_access(service, run_id, principal)
     return error or service.get_build_events(run_id, limit=limit_or_error, tail=tail_or_error)
 

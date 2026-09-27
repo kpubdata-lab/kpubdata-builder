@@ -1,13 +1,15 @@
-"""Quality 도메인 서비스 (#596, 다섯 번째 조각).
+"""Quality domain service (#596, fifth segment).
 
-run 단위 structured quality(#486/#514)와 최근 window 집계(#486 후속)를 담는다.
+Encapsulates per-run structured quality (#486/#514) and recent-window aggregates
+(#486 follow-up).
 
-**datasets 도메인에 의존한다** — 24h 집계의 run 집합은 `DatasetsApiService` 의 canonical
-record 수집을 그대로 쓴다. 앞 조각(#605)에서 그 헬퍼를 public 으로 둔 이유가 여기다:
-같은 수집 로직을 복제하면 두 표면이 서로 다른 run 집합을 보게 되는 순간이 온다.
+**Depends on the datasets domain** — the run set for 24h aggregates uses
+``DatasetsApiService``'s canonical record collection directly. The reason that
+helper was made public in the prior segment (#605): duplicating the same collection
+logic causes two surfaces to eventually see different run sets.
 
-경계 하나를 지킨다 — **도메인 quality 와 시스템 observability(`/monitoring`)를 한 응답에
-섞지 않는다.** 그래서 monitoring 은 이 서비스에 들어오지 않는다.
+Maintains one boundary — **does not mix domain quality with system observability
+(`/monitoring`) in one response.** So monitoring is not included in this service.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from kpubdata_builder.store.artifacts import ArtifactStore
 
 
 class QualityApiService:
-    """run별 structured quality 조회와 최근 window 집계 (#486/#514)."""
+    """Per-run structured quality retrieval and recent-window aggregate (#486/#514)."""
 
     def __init__(
         self,
@@ -41,12 +43,13 @@ class QualityApiService:
         self._datasets = datasets
 
     def get_build_quality(self, run_id: str) -> ServiceResponse:
-        """run의 구조화된 Quality 결과와 schema drift를 조회한다 (#486, #514).
+        """Retrieve structured Quality results and schema drift for run (#486, #514).
 
-        manifest.json에 이미 저장된 source_key별 quality_results/schema_drift를
-        그대로 노출한다 — 별도 계산을 다시 하지 않는다(정본은 manifest).
-        ``availability``/``evaluated_checks``는 빈 매핑이 "평가했지만 0건"인지
-        "애초에 계산된 적이 없음"(legacy/partial run)인지 구분한다(#514).
+        Exposes quality_results/schema_drift per source_key already stored in
+        manifest.json — no separate recalculation (manifest is canonical).
+        ``availability``/``evaluated_checks`` distinguish whether empty mapping means
+        "evaluated but zero checks" or "never calculated" (legacy/partial run)
+        (#514).
         """
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
@@ -75,17 +78,18 @@ class QualityApiService:
     def quality_summary(
         self, *, window: str, principal: Principal | None = None
     ) -> ServiceResponse:
-        """최근 ``window`` 안 접근 가능한 run의 structured quality를 PASS/WARN/FAIL
-        run 수로 요약한다 (#486 후속, additive — API 1.22.0).
+        """Summarize structured quality within recent ``window`` as PASS/WARN/FAIL
+        run counts (#486 follow-up, additive — API 1.22.0).
 
-        개별 run의 ``quality_results``/dataset/owner는 노출하지 않는다 — 그건 per-run
-        ``GET /builds/{run_id}/quality``의 몫이다. 시스템 observability(``/monitoring``)와
-        도메인 quality를 한 응답에 섞지 않는다.
+        Individual run ``quality_results``/dataset/owner are not exposed —
+        that is ``GET /builds/{run_id}/quality``'s responsibility. Does not mix
+        system observability (``/monitoring``) with domain quality in one response.
 
-        run 집합은 datasets 도메인의 canonical record 수집을 재사용한다 — manifest mtime
-        (+ 파생 BuildIndex 시간창)으로 candidate를 좁힌 뒤 canonical snapshot + manifest로
-        재확인하며(ENFORCE_OWNERSHIP + oidc principal이면 본인 run만), all-history manifest
-        재파싱은 하지 않는다. index는 파생물이라 단독으로 신뢰하지 않는다(ADR 0003).
+        Run set reuses canonical record collection from datasets domain — narrows
+        candidates by manifest mtime (+ derived BuildIndex time window), then
+        re-confirms with canonical snapshot + manifest (ENFORCE_OWNERSHIP + if
+        oidc principal, own runs only); does not re-parse all-history manifest.
+        Index is a derivative so not trusted alone (ADR 0003).
         """
         if window != "24h":
             return ServiceResponse(400, {"error": f"unsupported window: {window!r} (only '24h')"})
@@ -101,7 +105,7 @@ class QualityApiService:
                 window_seconds=quality_service.QUALITY_SUMMARY_WINDOW_SECONDS,
             )
         except Exception:
-            # run enumeration 자체가 불가능한 경우에만 unavailable — "0건"과 구분한다.
+            # Only unavailable if run enumeration itself is impossible — distinct from "0 runs".
             return ServiceResponse(
                 200,
                 {

@@ -1,9 +1,10 @@
-"""File source 업로드 CRUD route (#498).
+"""File source upload CRUD route (#498).
 
-다른 route adapter와 달리 ``POST /uploads`` 는 JSON이 아니라 raw binary body를
-받는다 — 그래서 ``ROUTE_ADAPTERS``(표준 ``RouteAdapter`` 시그니처, JSON body만
-받음)에 넣지 않고 ``app._dispatch_impl`` 이 인증 직후 직접 호출한다(``raw_body``
-가 필요한 유일한 endpoint). GET/DELETE는 binary body가 필요 없다.
+Unlike other route adapters, ``POST /uploads`` accepts raw binary body, not JSON.
+Therefore, it is not placed in ``ROUTE_ADAPTERS`` (standard ``RouteAdapter``
+signature, accepts JSON body only), but is called directly by ``app._dispatch_impl``
+after authentication (``raw_body`` is the only endpoint that needs it). GET/DELETE
+do not require binary body.
 """
 
 from __future__ import annotations

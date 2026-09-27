@@ -1,4 +1,4 @@
-"""Route adapter 공통 타입."""
+"""Route adapter common types."""
 
 from __future__ import annotations
 

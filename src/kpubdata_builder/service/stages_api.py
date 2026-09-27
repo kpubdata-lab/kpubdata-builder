@@ -1,11 +1,12 @@
-"""Run stage 조회 서비스 (#596 후속, #637).
+"""Run stage retrieval service (#596 follow-up, #637).
 
-``/builds/{run_id}/stages`` 와 단계별 상세(Bronze/Silver/Gold)를 담는다.
+Encapsulates ``/builds/{run_id}/stages`` and per-stage details (Bronze/Silver/Gold).
 
-읽기 전용이고 필요한 것은 ``output_root`` 와 artifact store 둘뿐이다 — 도메인
-경계가 가장 선명한 조각이라 먼저 뗀다.
+Read-only; needs only ``output_root`` and artifact store — the domain boundary is
+clearest in this segment, so it is extracted first.
 
-**wire 계약은 바뀌지 않는다.** ``BuilderService`` 가 같은 시그니처로 위임한다.
+**wire contract is unchanged.** ``BuilderService`` delegates with the same
+signature.
 """
 
 from __future__ import annotations
@@ -21,17 +22,17 @@ from kpubdata_builder.store.artifacts import ArtifactStore
 
 
 class StagesApiService:
-    """run 의 단계별 산출물 조회 (#488)."""
+    """Per-run per-stage artifact retrieval (#488)."""
 
     def __init__(self, *, output_root: Path, store: ArtifactStore) -> None:
         self._output_root = output_root
         self._store = store
 
     def list_run_stages(self, run_id: str) -> ServiceResponse:
-        """run에 알려진 모든 source의 Bronze/Silver/Gold 상태를 반환한다 (#488).
+        """Return Bronze/Silver/Gold status for all known sources in run (#488).
 
-        호출 전에 run_id 검증·존재 확인·ownership 게이팅이 끝나 있어야 한다
-        (dispatch가 다른 /builds/{run_id}/* 라우트와 동일한 순서로 처리한다).
+        Before calling, run_id validation, existence check, and ownership gating must
+        be complete (dispatch processes /builds/{run_id}/* routes in the same order).
         """
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
@@ -51,11 +52,11 @@ class StagesApiService:
     def get_run_stage_detail(
         self, run_id: str, stage: str, source_key: str, *, limit: int
     ) -> ServiceResponse:
-        """단일 source의 단일 stage에 대한 안전한 summary/preview를 반환한다 (#488).
+        """Return safe summary/preview for single stage of single source (#488).
 
-        순서: stage 이름 검증(구조) → manifest에서 known source 확인 → 각 stage
-        reader가 sidecar만 읽어 응답을 구성한다. raw fetch_params/export
-        options/credential/absolute path는 어디에도 담지 않는다.
+        Order: stage name validation (structure) → check known source in manifest →
+        each stage reader reads only sidecar to build response. Raw fetch_params/
+        export options/credentials/absolute paths are never included.
         """
         if stage not in stages_service.STAGE_NAMES:
             return ServiceResponse(
@@ -106,8 +107,8 @@ class StagesApiService:
                 if gold is not None
                 else []
             )
-            # Gold sample sidecar가 아직 없으므로 만들어내지 않는다 — Silver sample을
-            # 가장하지 않고 명시적으로 unavailable을 표현한다.
+            # Gold sample sidecar doesn't exist yet — no synthesis; explicitly
+            # represent unavailable rather than faking Silver sample.
             body["sample"] = None
             body["sample_available"] = False
 

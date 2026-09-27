@@ -1,12 +1,13 @@
-"""Upload 도메인 서비스 (#596, providers 에 이어 두 번째 조각).
+"""Upload domain service (#596, second segment after providers).
 
-``ProvidersService`` 와 같은 형태다 — **자기 의존성만 받고**, wire 계약은 건드리지
-않는다. upload 도메인이 실제로 쓰는 것은 저장소 하나뿐이다.
+Same form as ``ProvidersService`` — **takes only self-dependencies**, wire contract
+untouched. The upload domain only uses one repository.
 
-저장소를 객체가 아니라 **호출 가능한 provider** 로 받는 이유가 있다: ``UploadRepository``
-는 처음 필요할 때만 SQLite 파일을 만든다(#498). 생성자에서 저장소를 미리 받아버리면
-upload 를 한 번도 쓰지 않는 워크스페이스에도 ``.service/uploads.sqlite3`` 가 생긴다 —
-지연 생성이 실제로 지연되도록 호출 시점에 가져온다.
+Why receive the repository as a **callable provider** rather than object:
+``UploadRepository`` creates SQLite file only on first use (#498). Accepting the
+repository in the constructor would create ``.service/uploads.sqlite3`` even in
+workspaces that never use uploads — lazy creation remains actual by fetching at
+call time.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ RepositoryProvider = Callable[[], UploadRepository]
 
 
 def upload_metadata_body(metadata: UploadMetadata) -> dict[str, JsonValue]:
-    """UploadMetadata를 wire JSON으로 변환한다 (#498). content는 절대 포함하지 않는다."""
+    """Convert UploadMetadata to wire JSON (#498). Content is never included."""
     return {
         "upload_id": metadata.upload_id,
         "format": metadata.format,
@@ -36,7 +37,7 @@ def upload_metadata_body(metadata: UploadMetadata) -> dict[str, JsonValue]:
 
 
 class UploadsService:
-    """``kind="file"`` source 가 참조하는 업로드의 생성·조회·삭제 (#498)."""
+    """Create/retrieve/delete uploads referenced by ``kind="file"`` source (#498)."""
 
     def __init__(self, *, repository: RepositoryProvider) -> None:
         self._repository = repository
@@ -45,17 +46,17 @@ class UploadsService:
         self,
         raw: bytes,
         *,
-        format: str,  # noqa: A002 - 계약 필드명과 맞춘다
+        format: str,  # noqa: A002 - match wire contract field name
         encoding: str,
         original_filename: str | None,
         principal: Principal,
     ) -> ServiceResponse:
-        """업로드 content를 저장하고 즉시 파싱 가능한지 검증한다 (#498).
+        """Save upload content and validate immediate parseability (#498).
 
-        저장은 owner_id로 격리된다 — 나중에 BuildSpec의 ``kind="file"`` source가
-        이 upload_id를 참조하려면 같은 principal이어야 한다(``build``/``preview``의
-        resolver가 다시 확인한다). 파싱 가능성은 여기서 fail-fast로 확인한다 —
-        나중에 build 시점에야 손상된 파일임을 알게 되는 것을 피한다.
+        Storage is isolated by owner_id — later, BuildSpec's ``kind="file"`` source
+        referencing this upload_id must be from the same principal (build/preview
+        resolvers re-check). Parseability is checked fail-fast here — avoids
+        discovering corrupted files only at build time.
         """
         if principal.owner_id is None:
             return ServiceResponse(403, {"error": "stable principal is required"})
@@ -81,7 +82,7 @@ class UploadsService:
         return ServiceResponse(200, upload_metadata_body(metadata))
 
     def get_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
-        """현재 principal 소유 업로드의 안전한 메타데이터만 반환한다 (content 제외)."""
+        """Return safe metadata-only for upload owned by current principal (content excluded)."""
         if principal.owner_id is None:
             return ServiceResponse(403, {"error": "stable principal is required"})
         metadata = self._repository().get_metadata(principal.owner_id, upload_id)
@@ -90,7 +91,7 @@ class UploadsService:
         return ServiceResponse(200, upload_metadata_body(metadata))
 
     def delete_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
-        """현재 principal 소유 업로드만 삭제한다."""
+        """Delete only uploads owned by current principal."""
         if principal.owner_id is None:
             return ServiceResponse(403, {"error": "stable principal is required"})
         deleted = self._repository().delete(principal.owner_id, upload_id)
