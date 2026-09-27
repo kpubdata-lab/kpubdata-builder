@@ -36,7 +36,8 @@ def _stub_bin_dir(tmp_path: Path) -> Path:
 
 
 def _run_entrypoint(env: dict[str, str], bin_dir: Path) -> subprocess.CompletedProcess[bytes]:
-    # Prevent key variable leakage from test runner environment by clearing and re-injecting controlled vars.
+    # Prevent key variable leakage from test runner environment by clearing and re-injecting
+    # controlled vars.
     full_env = {k: v for k, v in os.environ.items() if k not in _CONTROLLED_ENVS}
     full_env["PATH"] = f"{bin_dir}:{full_env.get('PATH', '')}"
     for key, value in env.items():

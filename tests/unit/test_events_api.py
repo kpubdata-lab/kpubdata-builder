@@ -1,7 +1,8 @@
 """``GET /builds/{run_id}/events`` HTTP API test (#496).
 
 Event emission itself (which boundary emits which event) is covered by test_pipeline_events.py.
-This file verifies the route adapter layer — existence/ownership/bounded query (limit/tail)/secret non-exposure —
+This file verifies the route adapter layer — existence/ownership/bounded query
+(limit/tail)/secret non-exposure —
 via actual ``BuilderService.build()``/``dispatch``.
 """
 
@@ -101,7 +102,8 @@ exports:
 
 class _ObservedAsyncService(BuilderService):
     """``_run_build_job`` (all of ``build()`` call + owner_id manifest correction)
-    completion; sets ``completed`` — helper to deterministically await the actual async build completion
+    completion; sets ``completed`` — helper to deterministically await the actual async build
+    completion
     (manifest correction reflected) without polling/sleep."""
 
     def __init__(
@@ -371,7 +373,9 @@ class TestOwnership:
     def test_unknown_run_404_before_ownership_leak(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Non-existent run returns 404 without distinguishing cross-owner (existence not exposed)."""
+        """Non-existent run returns 404 without distinguishing cross-owner (existence not
+        exposed).
+        """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         monkeypatch.setattr(
@@ -425,7 +429,8 @@ class TestActiveAsyncRunEvents:
 
     ``check_run_exists``/``check_ownership`` assume run directory·manifest.json already exist,
     but async run has no run directory until worker starts and manifest appears only after run ends.
-    During that span (queued/running), event store already has ``run_submitted`` (and subsequent events),
+    During that span (queued/running), event store already has ``run_submitted`` (and subsequent
+    events),
     so this endpoint must not return 404/403.
     """
 
@@ -688,7 +693,8 @@ class TestActiveAsyncRunEvents:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Even terminal job terminated without manifest due to worker pool enqueue failure
-        (build() never called, no run directory exists), only owner can query — registry snapshot's owner_id is sole
+        (build() never called, no run directory exists), only owner can query — registry
+        snapshot's owner_id is sole
         determination ground."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = BuilderService(
@@ -730,13 +736,17 @@ class TestActiveAsyncRunEvents:
 
 
 class TestAsyncManifestOwnerIdPropagation:
-    """After async run completion, persisted manifest.owner_id contains submitting principal's stable
+    """After async run completion, persisted manifest.owner_id contains submitting principal's
+        stable
     owner_id (#496 follow-up: security BLOCKER).
 
-    Before fix, ``_run_build_job`` passed no owner_id to ``build()``, so async run's manifest.owner_id was always None —
-    the moment manifest was written, ``check_active_run_access`` switched to manifest path, reverting from stable
+    Before fix, ``_run_build_job`` passed no owner_id to ``build()``, so async run's
+    manifest.owner_id was always None —
+    the moment manifest was written, ``check_active_run_access`` switched to manifest path,
+    reverting from stable
     owner_id comparison (#505) to legacy created_by/label comparison. With two principals using same
-    label (OIDC sub 8-char truncation collision etc.), that fallback could only on completed runs permit cross-owner
+    label (OIDC sub 8-char truncation collision etc.), that fallback could only on completed runs
+    permit cross-owner
     access — the A/B scenarios below reproduce that.
     """
 
@@ -775,7 +785,9 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_completed_run_owner_gets_200_other_same_label_principal_gets_403(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Requirement scenarios 2/3: A gets 200, B (different owner_id) using same label gets 403."""
+        """Requirement scenarios 2/3: A gets 200, B (different owner_id) using same label gets
+        403.
+        """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         completed = threading.Event()
         service = _ObservedAsyncService(
@@ -878,7 +890,8 @@ class TestAsyncManifestOwnerIdPropagation:
     ) -> None:
         """#498 known limitation persistence check: ``kind=file`` submitted via async path
         even though manifest owner_id is now correctly filled, still does not pass owner_id to file
-        source resolver — if upload owner themselves submit, async path cannot find that upload and build must fail
+        source resolver — if upload owner themselves submit, async path cannot find that upload
+        and build must fail
         (unlike sync ``/build``)."""
         completed = threading.Event()
         service = _ObservedAsyncService(
@@ -920,7 +933,8 @@ class TestAsyncManifestOwnerIdPropagation:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Not just manifest but also BuildIndex (#505 SSOT, ``GET /builds`` listing path)
-        must carry same stable owner_id — two repositories must not create SSOT mismatch with different values."""
+        must carry same stable owner_id — two repositories must not create SSOT
+        mismatch with different values."""
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,

@@ -103,7 +103,8 @@ def test_rejects_unsupported_format(tmp_path: Path) -> None:
 
 
 def test_reexport_with_format_change_removes_stale_shards(tmp_path: Path) -> None:
-    # When re-running with different format to same output_path, previous shard files must not remain (#203).
+    # When re-running with different format to same output_path, previous shard files must not
+    # remain (#203).
     parquet_target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
     jsonl_target = ExportTarget(
         kind="huggingface", output_path="hf/apt_trade", options={"format": "jsonl"}
@@ -147,7 +148,8 @@ def test_failing_export_leaves_no_temp_dir_behind(
     def raise_tabular_error(records: object) -> None:
         raise TabularError("혼합 타입 컬럼")
 
-    # Must replace records_to_dataframe imported directly from huggingface module for patch to apply.
+    # Must replace records_to_dataframe imported directly from huggingface module for patch to
+    # apply.
     monkeypatch.setattr(hf_module, "records_to_dataframe", raise_tabular_error)
 
     with pytest.raises(ExportError):

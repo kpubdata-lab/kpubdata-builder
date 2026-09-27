@@ -120,7 +120,9 @@ _APT_TRADE = "datago.apt_trade"
 
 
 class TestFindPreviousSilverScoping:
-    """Finds only the immediately preceding "success" run for the same dataset_id·source_key, not just any previous run (#486)."""
+    """Finds only the immediately preceding "success" run for the same dataset_id·source_key,
+    not just any previous run (#486).
+    """
 
     def test_returns_none_when_no_candidates(self, tmp_path: Path) -> None:
         outcome = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key="s")
@@ -137,7 +139,9 @@ class TestFindPreviousSilverScoping:
         assert stats.row_count == 5
 
     def test_does_not_compare_across_datasets(self, tmp_path: Path) -> None:
-        """In order dataset A run, dataset B run, dataset A new run, A new is not compared with B."""
+        """In order dataset A run, dataset B run, dataset A new run, A new is not compared with
+        B.
+        """
         _write_run(tmp_path, "a-run1", dataset_id="dataset.a", row_count=10)
         _write_run(tmp_path, "b-run1", dataset_id="dataset.b", row_count=999)
 

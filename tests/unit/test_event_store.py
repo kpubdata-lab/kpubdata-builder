@@ -1,7 +1,8 @@
 """BuildEvent model/BuildEventStore repository unit test (#496).
 
 HTTP API/pipeline integration is covered by test_events_api.py/test_pipeline_events.py respectively.
-This file purely verifies store's append-only contract, ordering, concurrency, bounded query, and timezone-aware timestamps.
+This file purely verifies store's append-only contract, ordering, concurrency, bounded query, and
+timezone-aware timestamps.
 """
 
 from __future__ import annotations
@@ -121,14 +122,17 @@ class TestAppend:
         assert event.metrics is None
 
     def test_append_failure_propagates_not_swallowed(self, tmp_path: Path) -> None:
-        """store.append() is the single source of truth for event timeline; does not swallow failures.
+        """store.append() is the single source of truth for event timeline; does not swallow
+            failures.
 
         Unlike BuildIndex (ADR 0003, derived index), this store does not silently
         swallow failures but propagates exceptions directly — the recorder (pipeline-side wrapper)
-        decides how to handle that failure (#496, paired with recorder swallow test in test_pipeline_events.py).
+        decides how to handle that failure (#496, paired with recorder swallow test in
+        test_pipeline_events.py).
 
         ``sqlite3.Connection``/``Cursor`` are C extension types and cannot be monkeypatched directly
-        (immutable type), so thread-local connection slots are replaced with fake connections to inject failures.
+        (immutable type), so thread-local connection slots are replaced with fake connections to
+        inject failures.
         """
         store = BuildEventStore(tmp_path)
         store._local.conn = _FailingConnection()
@@ -223,7 +227,8 @@ class TestLimitAndTail:
         """Even in large runs, limit is applied at SQL level without reading entire table.
 
         ``sqlite3.Connection`` is an immutable C type and cannot be monkeypatched directly,
-        so thread-local connection slots are replaced with a spy that delegates to the real connection
+        so thread-local connection slots are replaced with a spy that delegates to the real
+        connection
         and records only executed SQL.
         """
         store = BuildEventStore(tmp_path)

@@ -1001,7 +1001,9 @@ class TestMonitoringDispatch:
     def test_summary_status_is_degraded_when_artifact_store_unavailable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """artifact_store BuildIndex query failure makes unavailable, which makes overall status degraded."""
+        """artifact_store BuildIndex query failure makes unavailable, which makes overall
+        status degraded.
+        """
         service = _service(tmp_path)
         monkeypatch.setattr(
             service._build_index,

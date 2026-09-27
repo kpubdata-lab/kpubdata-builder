@@ -176,7 +176,8 @@ class TestTheLicenseIsNeverGuessed:
     """``dataset-metadata.json`` is the file Kaggle reads as canonical.
 
     Without declaration, silently applying ``CC-BY-4.0`` was making false claims on others' data.
-    For data like Korean Copyright Act Type 2-4 with commercial/derivative restrictions, that's clear mislabeling.
+    For data like Korean Copyright Act Type 2-4 with commercial/derivative restrictions, that's
+    clear mislabeling.
     """
 
     def _artifact(self, **metadata: object) -> ArtifactDataset:
