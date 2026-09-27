@@ -34,6 +34,7 @@ def _clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         "KPUBDATA_BUILDER_DEV_MODE",
         "KPUBDATA_BUILDER_API_KEY",
+        "KPUBDATA_BUILDER_ADMIN_SUBJECTS",
         "OIDC_ISSUER",
         "OIDC_AUDIENCE",
         "OIDC_JWKS_URL",
@@ -128,6 +129,74 @@ class TestValidBearerToken:
         result = authenticate(bearer_token=f"bearer {token}")
         assert isinstance(result, Principal)
         assert result.kind == "oidc"
+
+
+class TestAdminRole:
+    """OIDC principal 의 관리자 역할 (#679).
+
+    예전에는 ``kind in ("dev", "service")`` 가 곧 관리자였다 — 즉 **관리자가
+    되는 유일한 방법이 OIDC 로 로그인하지 않는 것**이었다.
+    """
+
+    def test_oidc_principal_is_not_admin_by_default(self, oidc_env: bytes) -> None:
+        token = _make_token(oidc_env)
+        result = authenticate(bearer_token=f"Bearer {token}")
+        assert isinstance(result, Principal)
+        assert result.is_admin is False
+
+    def test_listed_subject_becomes_admin(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "user-1234567890")
+        token = _make_token(oidc_env)
+        result = authenticate(bearer_token=f"Bearer {token}")
+        assert isinstance(result, Principal)
+        assert result.is_admin is True
+
+    def test_unlisted_subject_stays_non_admin(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "someone-else")
+        token = _make_token(oidc_env)
+        result = authenticate(bearer_token=f"Bearer {token}")
+        assert isinstance(result, Principal)
+        assert result.is_admin is False
+
+    def test_match_uses_the_full_subject_not_the_truncated_identifier(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``identifier`` 는 sub 앞 8자다. 그것으로 비교하면 접두사가 같은 다른
+        계정이 관리자가 된다 — 이 토큰의 sub 는 ``user-1234567890`` 이고
+        identifier 는 ``user-123`` 이다."""
+        monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "user-123")
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
+        assert isinstance(result, Principal)
+        assert result.identifier == "user-123"
+        assert result.is_admin is False
+
+    def test_admin_list_accepts_comma_and_space_separators(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "KPUBDATA_BUILDER_ADMIN_SUBJECTS", "first-admin, user-1234567890 second-admin"
+        )
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
+        assert isinstance(result, Principal)
+        assert result.is_admin is True
+
+    def test_dev_principal_is_admin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
+        result = authenticate()
+        assert isinstance(result, Principal)
+        assert result.kind == "dev"
+        assert result.is_admin is True
+
+    def test_service_principal_is_admin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret-key")
+        result = authenticate(api_key="secret-key")
+        assert isinstance(result, Principal)
+        assert result.kind == "service"
+        assert result.is_admin is True
 
 
 class TestInvalidTokens:

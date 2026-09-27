@@ -36,6 +36,8 @@ _CONTRACT_PATH = Path(__file__).parents[2] / "contract" / "builder-api.yaml"
 # service/app.py:dispatch의 라우팅 규칙을 기계적으로 추출하기 어렵기 때문에
 # 명시적으로 선언하여 유지보수성을 높인다.
 _DISPATCH_ROUTES: dict[tuple[str, str], str] = {
+    ("/admin/runs", "GET"): "adminListRuns",
+    ("/admin/config", "GET"): "adminGetConfig",
     ("/healthz", "GET"): "healthz",
     ("/version", "GET"): "getVersion",
     ("/catalog", "GET"): "getCatalog",
@@ -373,6 +375,8 @@ def test_preview_request_schema_declares_bounded_limit_and_sample_mode() -> None
 # 계약이 기술하는 모든 오퍼레이션은 BuilderService에 실제로 구현돼 있어야 한다.
 # 구현 경로 이름은 계약과 1:1로 일치한다(#226: aspirational 비동기/publish 라우트 제거).
 _IMPLEMENTED_OPERATIONS = {
+    "adminListRuns",
+    "adminGetConfig",
     "healthz",
     "getVersion",
     "getCatalog",
@@ -602,6 +606,10 @@ def test_planned_operations_excluded_from_implementation_check() -> None:
 # 각 operation이 YAML에 선언한 상태 코드와 실제 구현이 반환하는 상태 코드의
 # 매핑. service/app.py:dispatch와 각 service 메서드를 분석하여 작성한다.
 _OPERATION_STATUS_CODES: dict[str, set[int]] = {
+    # 관리 엔드포인트(#679). 404가 없다 — 경로가 고정이고 run을 개별 조회하지
+    # 않는다. 400도 없다 — limit은 거부하지 않고 clamp한다.
+    "adminListRuns": {200, 403, 503},
+    "adminGetConfig": {200, 403},
     "healthz": {200},
     "getVersion": {200},
     "getCatalog": {200, 502},

@@ -2277,6 +2277,71 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /admin/runs:
+    get:
+      operationId: adminListRuns
+      summary: 모든 소유자의 run 상태 조회 (관리자 전용, #679)
+      description: >-
+        관리자 principal에게 모든 소유자의 run을 **메타데이터만** 반환한다.
+        산출물 바이트·credential·응답 본문은 어떤 경우에도 포함하지 않는다 —
+        이 제품은 BYOK이고, 관리자가 사용자 데이터를 열 수 있는지는 아직
+        결정되지 않았다(#679). 소유자는 되돌릴 수 없는 `owner_id` 해시로만
+        구분된다. 관리자가 아니면 403이다.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: 모든 소유자의 run 메타데이터
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRunsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 관리자 역할이 아님
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: build index를 읽을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/config:
+    get:
+      operationId: adminGetConfig
+      summary: 적용 중인 정책 설정 조회 (관리자 전용, #679)
+      description: >-
+        지금 적용 중인 정책의 **상태**만 반환한다. 토큰·키·issuer URL 같은
+        설정 값은 포함하지 않는다. 관리자가 아니면 403이다.
+      responses:
+        "200":
+          description: 적용 중인 정책 상태
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 관리자 역할이 아님
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -2355,6 +2420,43 @@ components:
         pattern: "^upl_[a-f0-9]{32}$"
 
   schemas:
+    AdminRunsResponse:
+      type: object
+      additionalProperties: false
+      required: [runs, count]
+      properties:
+        count:
+          type: integer
+        runs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [run_id, status]
+            properties:
+              run_id:
+                type: string
+              status:
+                type: string
+              started_at:
+                type: string
+                nullable: true
+              finished_at:
+                type: string
+                nullable: true
+              owner_id:
+                type: string
+                nullable: true
+                description: 되돌릴 수 없는 소유자 해시. 사용자 신원을 담지 않는다.
+    AdminConfigResponse:
+      type: object
+      additionalProperties: false
+      required: [enforce_ownership, publish_server_credential_fallback]
+      properties:
+        enforce_ownership:
+          type: boolean
+        publish_server_credential_fallback:
+          type: boolean
     Error:
       type: object
       required: [error]

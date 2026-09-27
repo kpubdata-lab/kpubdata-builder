@@ -24,6 +24,7 @@ __all__ = [
     "PUBLISH_CREDENTIAL_SLOTS",
     "PublishCredentialResolution",
     "resolve_publish_credentials",
+    "server_fallback_allowed",
 ]
 
 logger = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ def resolve_publish_credentials(
     if stored:
         return PublishCredentialResolution(values=stored)
 
-    if not _server_fallback_allowed():
+    if not server_fallback_allowed():
         # 서버 토큰 폴백을 닫으면, credential 을 저장하지 않은 principal 은
         # 게시할 수 없다. 다중 사용자 배포가 "아무나 서버 소유자 계정으로 게시"
         # 를 끝내려면 이 스위치가 필요하다 (#635).
@@ -128,7 +129,7 @@ def resolve_publish_credentials(
     return PublishCredentialResolution(values=resolved)
 
 
-def _server_fallback_allowed() -> bool:
+def server_fallback_allowed() -> bool:
     """저장된 credential 이 없을 때 서버 환경변수로 내려가도 되는지.
 
     기본은 허용이다 — 단일 사용자 배포에서 전역 토큰 하나는 정상 구성이고,

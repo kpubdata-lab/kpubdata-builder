@@ -54,6 +54,13 @@ _ENFORCE_OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 # 허용 목록을 "필수"로 되돌리는 스위치. 미설정이면 공개 가입(제한 없음)이 기본이다.
 _OIDC_REQUIRE_ALLOWLIST_ENV = "OIDC_LEGACY_REQUIRE_ALLOWLIST"
 
+#: 관리자로 대우할 OIDC ``sub`` 목록 (#679). 쉼표/공백 구분.
+#:
+#: 관리자는 **설정으로만** 지정한다. 런타임에 API 로 관리자를 늘릴 수 있으면
+#: 관리자 하나가 탈취됐을 때 되돌릴 방법이 없다 — 설정 파일과 재시작이
+#: 되돌리는 경로다.
+_ADMIN_SUBJECTS_ENV = "KPUBDATA_BUILDER_ADMIN_SUBJECTS"
+
 _logger = logging.getLogger(__name__)
 
 
@@ -75,6 +82,11 @@ class Principal:
     kind: str
     identifier: str | None = None
     owner_id: str | None = None
+    #: 관리 작업(#679)을 할 수 있는가. ``kind`` 로 유추하지 않는다 — 예전에는
+    #: ``kind in ("dev", "service")`` 가 곧 관리자였고, 그래서 **관리자가 되는
+    #: 유일한 방법이 OIDC 로 로그인하지 않는 것**이었다. 역할을 값으로 들고
+    #: 있어야 OIDC 로 인증한 사람도 관리자가 될 수 있다.
+    is_admin: bool = False
 
     @property
     def label(self) -> str:
@@ -171,7 +183,13 @@ def _verify_api_key(api_key: str | None) -> Principal | AuthError:
     if api_key is not None and hmac.compare_digest(
         api_key.encode("utf-8"), expected.encode("utf-8")
     ):
-        return Principal(kind="service", owner_id=compute_owner_id("service", "default"))
+        # service principal 은 계속 관리자다 — 예전 ``kind in ("dev", "service")``
+        # 게이트와 같은 권한이다(#679). 달라진 것은 그 사실이 값으로 보인다는 것.
+        return Principal(
+            kind="service",
+            owner_id=compute_owner_id("service", "default"),
+            is_admin=True,
+        )
     return AuthError(reason="invalid api key")
 
 
@@ -250,6 +268,12 @@ def _oidc_allowlists() -> tuple[set[str], set[str], set[str]]:
         _parse(_OIDC_ALLOWED_SUBJECTS_ENV),
         _parse(_OIDC_ALLOWED_EMAILS_ENV),
     )
+
+
+def _admin_subjects() -> set[str]:
+    """관리자로 대우할 OIDC ``sub`` 집합 (#679). 미설정이면 빈 집합."""
+    raw = os.environ.get(_ADMIN_SUBJECTS_ENV, "")
+    return {s.strip() for s in raw.replace(" ", ",").split(",") if s.strip()}
 
 
 def validate_oidc_config() -> None:
@@ -426,7 +450,15 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     # 필요한 persistent ownership 판정에 쓰인다.
     owner_id = compute_owner_id("oidc", issuer, sub)
     # 로그 추적용 식별자로 sub 앞 8자만(전체 sub 노출 최소화).
-    return Principal(kind="oidc", identifier=sub[:8], owner_id=owner_id)
+    #
+    # 관리자 판정은 **전체 sub** 로 한다. 앞 8자로 비교하면 접두사가 같은 다른
+    # 계정이 관리자가 된다.
+    return Principal(
+        kind="oidc",
+        identifier=sub[:8],
+        owner_id=owner_id,
+        is_admin=sub in _admin_subjects(),
+    )
 
 
 def authenticate(
@@ -444,7 +476,7 @@ def authenticate(
     if _is_dev_mode():
         # dev principal owner_id는 실행마다 바뀌지 않는 고정 local 식별자다(#505) —
         # OIDC principal의 owner_id는 항상 "oidc:" 로 시작해 namespace가 겹치지 않는다.
-        return Principal(kind="dev", owner_id=compute_owner_id("dev", "local"))
+        return Principal(kind="dev", owner_id=compute_owner_id("dev", "local"), is_admin=True)
 
     if bearer_token and _oidc_issuers():
         if bearer_token.lower().startswith("bearer "):
