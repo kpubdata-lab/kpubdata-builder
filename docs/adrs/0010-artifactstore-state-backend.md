@@ -1,6 +1,9 @@
 # ADR 0010 — ArtifactStore 추상화 + BuildIndex 백엔드 분리
 
-- 상태: 제안됨(Proposed)
+- 상태: 승인됨(Accepted) — 구현 완료. 백엔드 선택은 ADR 0016 이 확장
+
+> `store/__init__.py` 의 `make_build_index()` 가 `KPUBDATA_BUILDER_STORAGE_BACKEND`
+> 에 따라 백엔드를 고른다. CUBRID 백엔드는 ADR 0016 에서 더해졌다.
 - 관련 이슈: #375, #334(ADR 0008), #309(ADR 0003)
 - 관련 문서: [ADR 0003](./0003-persistent-build-store.md), ADR 0008(PR #381, 비동기 build job), [ARCHITECTURE.md](../ARCHITECTURE.md)
 

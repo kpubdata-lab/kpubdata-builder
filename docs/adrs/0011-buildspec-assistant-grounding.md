@@ -1,6 +1,11 @@
 # ADR 0011 — BuildSpec 어시스턴트 그라운딩 계약
 
-- 상태: 제안됨(Proposed)
+- 상태: 승인됨(Accepted) — studio 에 구현 완료
+
+> `kpubdata-studio` 의 `src/features/assistant/` 에 구현되어 있다 —
+> `scrub.ts`(전송 전 시크릿 마스킹), `columnMeaning.ts`, `AssistantChat.tsx`.
+> evidence 를 데이터로 다루고 그 안의 지시를 따르지 않는다는 이 ADR 의 핵심은
+> 프롬프트 구성에 반영되어 있다.
 - 관련 이슈: #415, ADR 0009(인증), ADR 0005(API 계약 단일 소소스)
 - 관련 문서: [BUILD_SPEC.md](../BUILD_SPEC.md), [BOUNDARY.md](../BOUNDARY.md), [API_CONTRACT.md](../API_CONTRACT.md)
 

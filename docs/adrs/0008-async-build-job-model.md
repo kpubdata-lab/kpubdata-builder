@@ -1,6 +1,10 @@
 # ADR 0008 — 비동기 build job 모델: 상태·실패·취소·멱등성·부분 산출물
 
-- 상태: 제안됨(Proposed)
+- 상태: 승인됨(Accepted) — 구현 완료
+
+> 상태가 "제안됨" 으로 남아 있었지만 `service/jobs.py` 의 `AsyncBuildExecutor`·
+> `JobRegistry` 로 구현되어 있고 `POST /builds` 가 이 모델로 동작한다. 제안된
+> 것이 아니라 동작하는 것이다.
 - 관련 이슈: #334, #308(ADR 0002), #309(ADR 0003)
 - 관련 문서: [ADR 0002](./0002-build-execution-model.md), [ADR 0003](./0003-persistent-build-store.md), [BUILD_STATE.md](../BUILD_STATE.md), [API_CONTRACT.md](../API_CONTRACT.md)
 

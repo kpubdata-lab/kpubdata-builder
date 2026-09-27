@@ -20,10 +20,21 @@
 
 ## 언어 정책
 
-- **Documentation**: 기본적으로 한국어로 작성한다. 영어 확장은 향후 릴리스에서 계획한다.
-- **Code**: 코드(변수명, 함수명, 주석, docstring)는 한국어 우선으로 작성한다.
-- **Commit messages**: 항상 영어로 작성한다.
-- **Issue / PR titles and descriptions**: 한국어를 사용해도 되고, 영어도 가능하다.
+> 정본은 [kpubdata/AGENTS.md](https://github.com/yeongseon/kpubdata/blob/main/AGENTS.md#언어-정책)
+> 다. 여기와 다르면 그쪽이 맞다. 아직 확정 전이고 ADR 로 정리해 논의한다.
+
+- **Documentation** (`docs/`, `*.md`): 한국어로 작성한다.
+- **Code** (주석, docstring): **영어로 작성한다.** 글로벌 오픈소스로 공개하기
+  때문이다 — docstring 은 `help()`·API 문서·IDE 힌트에 그대로 나오는 공개
+  문서다.
+  - 사용자에게 보이는 **문자열 리터럴**은 대상이 아니다. 예외·로그 메시지와 UI
+    문자열의 언어는 런타임 동작이고 별도 결정이다.
+- **Commit messages**: Always in English.
+- **PR titles**: **Always in English**, Conventional Commits. squash merge 에서 PR
+  제목이 그대로 커밋 메시지가 되고 CHANGELOG·릴리스 노트로 이어진다.
+- **CHANGELOG·릴리스 노트**: 영어.
+- **Issue / PR 본문, 리뷰 코멘트**: **어느 언어든 환영한다.** 영어로 올라온
+  이슈에는 영어로 답한다.
 
 ## 브랜치 규칙
 
