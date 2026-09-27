@@ -1,8 +1,8 @@
-"""``tests/unit/_openapi.py`` 순수 파이썬 validator의 단위 테스트 (#209, ADR-0005).
+"""Unit tests for ``tests/unit/_openapi.py`` pure Python validator (#209, ADR-0005).
 
-validator 자체가 드리프트를 잡아내는지(필수 필드 누락·타입 변경) 증명한다.
-conformance 게이트의 가치는 이 검증기가 "유효 응답은 통과시키고, 회귀 응답은
-실패시키는지"에 달려 있으므로, 합격/불합격 경계를 명시적으로 고정한다.
+Prove validator itself catches drift (missing required fields, type changes).
+Conformance gate's value depends on validator "passing valid responses, failing regressed
+ones", so we explicitly lock pass/fail boundaries.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def _contract() -> dict[str, Any]:
     return yaml.safe_load(_CONTRACT_PATH.read_text(encoding="utf-8"))
 
 
-# --- type / required / enum / minimum 경계 -------------------------------------
+# --- type / required / enum / minimum boundaries -----------------------------------------------
 
 
 def test_accepts_object_with_all_required_fields() -> None:
@@ -51,22 +51,22 @@ def test_rejects_wrong_value_type() -> None:
 
 
 def test_integer_does_not_accept_bool() -> None:
-    # bool은 int의 하위 타입이지만 JSON integer가 아니다.
+    # bool is subtype of int but JSON integer is not.
     schema: dict[str, Any] = {"type": "integer"}
-    assert validate(True, schema, {})  # True/False는 integer로 거부
+    assert validate(True, schema, {})  # True/False rejected as integer
 
 
 def test_nullable_union_accepts_string_and_null() -> None:
     schema: dict[str, Any] = {"type": ["string", "null"]}
     assert validate(None, schema, {}) == []
     assert validate("ok", schema, {}) == []
-    assert validate(7, schema, {})  # 정수는 거부
+    assert validate(7, schema, {})  # integer rejected
 
 
 def test_enum_rejects_out_of_range_value() -> None:
     schema: dict[str, Any] = {"type": "string", "enum": ["ok", "failed"]}
     assert validate("ok", schema, {}) == []
-    assert validate("pending", schema, {})  # enum 밖
+    assert validate("pending", schema, {})  # out of enum
 
 
 def test_minimum_rejects_below_bound() -> None:
@@ -107,7 +107,7 @@ def test_min_items_rejects_short_array() -> None:
     assert validate([], schema, {})
 
 
-# --- 구조적 키워드: $ref / oneOf / additionalProperties / items -----------------
+# --- structural keywords: $ref / oneOf / additionalProperties / items -----------
 
 
 def test_ref_resolves_local_schema() -> None:
@@ -115,7 +115,7 @@ def test_ref_resolves_local_schema() -> None:
         "components": {"schemas": {"Foo": {"type": "object", "required": ["x"]}}}
     }
     assert validate({"x": 1}, {"$ref": "#/components/schemas/Foo"}, contract) == []
-    assert validate({}, {"$ref": "#/components/schemas/Foo"}, contract)  # x 누락
+    assert validate({}, {"$ref": "#/components/schemas/Foo"}, contract)  # x missing
 
 
 def test_ref_raises_on_unresolved_target() -> None:
@@ -138,10 +138,10 @@ def test_oneof_accepts_when_at_least_one_branch_matches() -> None:
             {"$ref": "#/components/schemas/ValidationError"},
         ]
     }
-    # Error 형태와 ValidationError 형태 각각이 한 분기에 맞는다.
+    # Error shape and ValidationError shape each fit one branch.
     assert validate({"error": "boom"}, schema, contract) == []
     assert validate({"status": "invalid"}, schema, contract) == []
-    # 어느 쪽도 아니면 실패.
+    # If neither, fail.
     assert validate({"unexpected": 1}, schema, contract)
 
 
@@ -152,7 +152,7 @@ def test_additional_properties_schema_validates_extras() -> None:
         "additionalProperties": {"type": "string"},
     }
     assert validate({"known": "a", "extra": "b"}, schema, {}) == []
-    # 추가 프로퍼티가 문자열이 아니면 거부.
+    # Additional properties must be string if not, reject.
     assert validate({"known": "a", "extra": 5}, schema, {})
 
 
@@ -167,7 +167,7 @@ def test_additional_properties_false_rejects_extras() -> None:
 
 
 def test_additional_properties_omitted_allows_extras() -> None:
-    # 응답에 새 선택 필드가 더해지는 부가적 변화는 통과시킨다(전방 호환).
+    # Additive change with new optional fields in response passes (forward compatible).
     schema: dict[str, Any] = {
         "type": "object",
         "required": ["status"],
@@ -183,7 +183,7 @@ def test_array_items_are_each_validated() -> None:
     assert any("$[1]" in e for e in errors)
 
 
-# --- response_schema 조회 / 경로 정규화 ----------------------------------------
+# --- response_schema lookup / path normalization --------------------------------
 
 
 def test_response_schema_returns_declared_schema() -> None:
@@ -199,17 +199,17 @@ def test_response_schema_none_for_undeclared_status() -> None:
 
 
 def test_response_schema_normalizes_path_template() -> None:
-    # /artifacts/{run_id} 템플릿을 구체적 run_id로 조회한다.
+    # Query /artifacts/{run_id} template with concrete run_id.
     contract = _contract()
     assert response_schema(contract, "/artifacts/any-run-id", "GET", 200) is not None
     assert response_schema(contract, "/artifacts/any-run-id", "GET", 404) is not None
 
 
-# --- 게이트 가치 증명: 실제 계약 스키마로 회귀 잡기 ----------------------------
+# --- gate value proof: catch regression with actual contract schema -----------
 
 
 def test_gate_catches_required_field_drift() -> None:
-    """app.py가 BuildSuccessResponse에서 run_id를 빼먹는 회귀를 게이트가 잡는다."""
+    """gate catches regression where app.py omits run_id from BuildSuccessResponse."""
     contract = _contract()
     schema = response_schema(contract, "/build", "POST", 200)
     assert schema is not None
@@ -227,7 +227,7 @@ def test_gate_catches_required_field_drift() -> None:
 
 
 def test_gate_catches_type_drift() -> None:
-    """api_version이 문자열에서 정수로 바뀌는 회귀도 잡는다."""
+    """gate also catches regression where api_version changes from string to integer."""
     contract = _contract()
     schema = response_schema(contract, "/version", "GET", 200)
     assert schema is not None

@@ -1,8 +1,8 @@
-"""Medallion 디렉터리 재구성(#44)이 만든 패키지 레이아웃을 잠그는 테스트.
+"""Test locking package layout created by Medallion directory reorganization (#44).
 
-flat 모듈(spec.py, validator.py, manifest.py)이 Medallion 구조의 패키지로
-이동했는지, 공개 표면이 그대로 유지되는지, stages/silver·gold·pipeline
-골격이 import 가능한지 검증한다.
+Flat modules (spec.py, validator.py, manifest.py) moved to Medallion package structure;
+verify public surface unchanged, stages/silver·gold·pipeline
+skeleton importable.
 """
 
 from __future__ import annotations

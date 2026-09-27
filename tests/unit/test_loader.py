@@ -1,4 +1,4 @@
-"""BuildSpec YAML 로드 경로의 성공과 실패 시나리오를 검증한다."""
+"""Verify success and failure scenarios of BuildSpec YAML load path."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from kpubdata_builder.spec import load_spec
 
 
 def test_load_spec_reads_valid_yaml(tmp_path: Path) -> None:
-    # 정상 YAML이 BuildSpec 객체로 파싱되는지 확인한다.
+    # Verify valid YAML parses into BuildSpec object.
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(
         """
@@ -37,7 +37,7 @@ exports:
 
 
 def test_load_spec_raises_for_invalid_yaml(tmp_path: Path) -> None:
-    # 잘못된 YAML 문법은 SpecLoadError로 감싸지는지 검증한다.
+    # Verify invalid YAML syntax is wrapped as SpecLoadError.
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text("dataset_id: [unterminated\n", encoding="utf-8")
 
@@ -46,14 +46,14 @@ def test_load_spec_raises_for_invalid_yaml(tmp_path: Path) -> None:
 
 
 def test_load_spec_raises_for_missing_file(tmp_path: Path) -> None:
-    # 존재하지 않는 파일 경로도 SpecLoadError로 처리되는지 확인한다.
+    # Verify non-existent file path is handled as SpecLoadError.
     with pytest.raises(SpecLoadError):
         load_spec(tmp_path / "missing.yaml")
 
 
 def test_load_spec_rejects_circular_yaml_without_crash(tmp_path: Path) -> None:
-    # YAML anchor/alias로 만든 순환 구조는 RecursionError crash가 아니라
-    # SpecLoadError로 처리되어야 한다 (#169).
+    # YAML anchor/alias circular structures should be SpecLoadError, not
+    # RecursionError crash (#169).
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(
         """
@@ -78,7 +78,7 @@ exports:
 
 
 def test_load_spec_rejects_non_finite_float_params(tmp_path: Path) -> None:
-    # YAML .nan은 json.dumps에서 비표준 NaN 토큰이 되므로 SpecLoadError로 거부한다 (#201).
+    # YAML .nan becomes non-standard NaN token in json.dumps, so reject as SpecLoadError (#201).
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(
         """
@@ -103,8 +103,8 @@ exports:
 
 
 def test_load_spec_parses_rename_and_derived(tmp_path: Path) -> None:
-    # #611 — Silver가 canonical dataset이 되려면 rename과 파생 컬럼을 선언으로
-    # 표현할 수 있어야 한다.
+    # #611 — for Silver to become canonical dataset, rename and derived columns must
+    # be expressible as declaration.
     spec_path = tmp_path / "spec.yaml"
     spec_path.write_text(
         """

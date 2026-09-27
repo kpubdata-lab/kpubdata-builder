@@ -1,4 +1,4 @@
-"""드리프트 감지 단위 테스트 (#445, DRIFT-1; dataset/source 범위 한정은 #486)."""
+"""Drift detection unit test (#445, DRIFT-1; dataset/source scoping #486)."""
 
 from __future__ import annotations
 
@@ -83,10 +83,10 @@ def _write_run(
     errors: tuple[str, ...] = (),
     owner_id: str | None = None,
 ) -> None:
-    """buildspec.yaml snapshot + manifest.json + silver/{source_key}/schema+stats.json을 기록한다.
+    """Records buildspec.yaml snapshot + manifest.json + silver/{source_key}/schema+stats.json.
 
-    find_previous_silver가 읽는 것과 동일한 파일 배치를 최소한으로 재현하는
-    fixture다 — 실제 파이프라인을 돌리지 않고 스코핑 로직만 결정적으로 검증한다.
+    Minimally reproduces the file layout that find_previous_silver reads.
+    Fixture verifies scoping logic deterministically without running the actual pipeline.
     """
     spec = BuildSpec(
         dataset_id=dataset_id,
@@ -120,7 +120,9 @@ _APT_TRADE = "datago.apt_trade"
 
 
 class TestFindPreviousSilverScoping:
-    """직전 아무 run이 아니라 동일 dataset_id·source_key의 직전 "성공" run만 찾는다 (#486)."""
+    """Finds only the immediately preceding "success" run for the same dataset_id·source_key,
+    not just any previous run (#486).
+    """
 
     def test_returns_none_when_no_candidates(self, tmp_path: Path) -> None:
         outcome = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key="s")
@@ -137,7 +139,9 @@ class TestFindPreviousSilverScoping:
         assert stats.row_count == 5
 
     def test_does_not_compare_across_datasets(self, tmp_path: Path) -> None:
-        """dataset A run, dataset B run, dataset A new run 순서에서 A new가 B와 비교되지 않는다."""
+        """In order dataset A run, dataset B run, dataset A new run, A new is not compared with
+        B.
+        """
         _write_run(tmp_path, "a-run1", dataset_id="dataset.a", row_count=10)
         _write_run(tmp_path, "b-run1", dataset_id="dataset.b", row_count=999)
 
@@ -147,7 +151,7 @@ class TestFindPreviousSilverScoping:
 
         assert isinstance(found, SilverBaseline)
         stats = found.stats
-        assert stats.row_count == 10  # dataset.b(999)가 아니라 dataset.a의 이전 run.
+        assert stats.row_count == 10  # Previous run of dataset.a, not dataset.b(999).
 
     def test_does_not_compare_across_sources(self, tmp_path: Path) -> None:
         _write_run(tmp_path, "run0", dataset_id="d.a", source_key="datago.other", row_count=10)
@@ -195,7 +199,7 @@ class TestFindPreviousSilverScoping:
         assert stats.row_count == 2
 
     def test_missing_snapshot_or_stats_are_skipped(self, tmp_path: Path) -> None:
-        # snapshot 없는 legacy run.
+        # Legacy run without snapshot.
         legacy_dir = tmp_path / "legacy"
         legacy_dir.mkdir()
         (legacy_dir / "manifest.json").write_text(

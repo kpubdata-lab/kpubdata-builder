@@ -1,4 +1,4 @@
-"""HuggingFaceExporter(#9)의 레이아웃·카드·메타데이터 생성을 검증한다."""
+"""Verify HuggingFaceExporter (#9) layout, card, and metadata generation."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def _artifact() -> ArtifactDataset:
 
 
 def test_creates_hf_directory_layout(tmp_path: Path) -> None:
-    # data/ + README.md + dataset_infos.json의 HF 표준 레이아웃을 생성한다.
+    # Generate HF standard layout of data/ + README.md + dataset_infos.json.
     target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
 
     result = HuggingFaceExporter().export(_artifact(), target, tmp_path)
@@ -41,7 +41,7 @@ def test_creates_hf_directory_layout(tmp_path: Path) -> None:
 
 
 def test_default_format_is_parquet_and_round_trips(tmp_path: Path) -> None:
-    # 기본 형식은 parquet이며 데이터가 round-trip 보존되는지 확인한다.
+    # Default format is parquet; verify data round-trip preservation.
     target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
 
     result = HuggingFaceExporter().export(_artifact(), target, tmp_path)
@@ -55,7 +55,7 @@ def test_default_format_is_parquet_and_round_trips(tmp_path: Path) -> None:
 
 
 def test_jsonl_format_option(tmp_path: Path) -> None:
-    # format=jsonl 옵션이면 jsonl shard를 한 줄당 한 레코드로 기록한다.
+    # With format=jsonl option, record jsonl shards as one record per line.
     target = ExportTarget(
         kind="huggingface", output_path="hf/apt_trade", options={"format": "jsonl"}
     )
@@ -69,21 +69,21 @@ def test_jsonl_format_option(tmp_path: Path) -> None:
 
 
 def test_readme_has_yaml_front_matter_and_unicode(tmp_path: Path) -> None:
-    # README.md가 YAML front matter로 시작하고 한글이 보존되는지 확인한다.
+    # Verify README.md starts with YAML front matter and Korean is preserved.
     target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
 
     result = HuggingFaceExporter().export(_artifact(), target, tmp_path)
 
     text = (result.output_path / "README.md").read_text(encoding="utf-8")
     assert text.startswith("---\n")
-    assert text.count("---") >= 2  # front matter 시작/끝
+    assert text.count("---") >= 2  # front matter start/end
     assert "license: cc-by-4.0" in text
     assert "# 아파트 실거래가" in text
     assert "- datago.apt_trade" in text
 
 
 def test_dataset_infos_is_valid_json_with_features(tmp_path: Path) -> None:
-    # dataset_infos.json이 유효 JSON이며 features/num_examples를 담는지 확인한다.
+    # Verify dataset_infos.json is valid JSON and contains features/num_examples.
     target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
 
     result = HuggingFaceExporter().export(_artifact(), target, tmp_path)
@@ -95,7 +95,7 @@ def test_dataset_infos_is_valid_json_with_features(tmp_path: Path) -> None:
 
 
 def test_rejects_unsupported_format(tmp_path: Path) -> None:
-    # 지원하지 않는 format은 ExportError로 거부한다.
+    # Reject unsupported formats with ExportError.
     target = ExportTarget(kind="huggingface", output_path="hf/apt_trade", options={"format": "xml"})
 
     with pytest.raises(ExportError, match="format"):
@@ -103,7 +103,8 @@ def test_rejects_unsupported_format(tmp_path: Path) -> None:
 
 
 def test_reexport_with_format_change_removes_stale_shards(tmp_path: Path) -> None:
-    # 같은 output_path로 포맷을 바꿔 재실행하면 이전 shard 파일이 남지 않아야 한다 (#203).
+    # When re-running with different format to same output_path, previous shard files must not
+    # remain (#203).
     parquet_target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
     jsonl_target = ExportTarget(
         kind="huggingface", output_path="hf/apt_trade", options={"format": "jsonl"}
@@ -114,13 +115,13 @@ def test_reexport_with_format_change_removes_stale_shards(tmp_path: Path) -> Non
 
     data_dir = result.output_path / "data"
     shards = sorted(p.name for p in data_dir.iterdir())
-    # parquet shard는 사라지고 jsonl shard만 남아야 한다.
+    # parquet shards should disappear; only jsonl shards remain.
     assert shards == ["train-00000-of-00001.jsonl"]
 
 
 def test_jsonl_format_rejects_non_finite_float(tmp_path: Path) -> None:
-    # jsonl shard에 NaN/Infinity가 들어가면 비표준 JSON 토큰이 되므로 ValueError로
-    # 실패시킨다 (bronze guard와 동일 계약) (#217).
+    # NaN/Infinity in jsonl shards become non-standard JSON tokens, so fail with ValueError
+    # (same contract as bronze guard) (#217).
     artifact = ArtifactDataset(records=({"v": float("inf")},))
     target = ExportTarget(
         kind="huggingface", output_path="hf/apt_trade", options={"format": "jsonl"}
@@ -131,14 +132,14 @@ def test_jsonl_format_rejects_non_finite_float(tmp_path: Path) -> None:
 
 
 def test_registry_exposes_huggingface_exporter() -> None:
-    # HF exporter가 kind "huggingface"로 레지스트리에 등록되어 있는지 확인한다.
+    # Verify HF exporter is registered with kind "huggingface" in registry.
     assert isinstance(EXPORTER_REGISTRY["huggingface"], HuggingFaceExporter)
 
 
 def test_failing_export_leaves_no_temp_dir_behind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # TabularError(또는 다른 예외)가 발생해도 .hf_tmp_* 임시 디렉터리가 남지 않아야 한다 (#222).
+    # Temporary .hf_tmp_* directories must not remain even if TabularError occurs (#222).
     import kpubdata_builder.exporters.huggingface as hf_module
     from kpubdata_builder.errors import TabularError
 
@@ -147,13 +148,14 @@ def test_failing_export_leaves_no_temp_dir_behind(
     def raise_tabular_error(records: object) -> None:
         raise TabularError("혼합 타입 컬럼")
 
-    # huggingface 모듈에서 직접 import한 records_to_dataframe을 교체해야 패치가 적용된다.
+    # Must replace records_to_dataframe imported directly from huggingface module for patch to
+    # apply.
     monkeypatch.setattr(hf_module, "records_to_dataframe", raise_tabular_error)
 
     with pytest.raises(ExportError):
         HuggingFaceExporter().export(_artifact(), target, tmp_path)
 
-    # 임시 디렉터리(.hf_tmp_*)가 남아 있으면 안 된다.
+    # Temporary directories (.hf_tmp_*) must not remain.
     hf_parent = tmp_path / "hf"
     if hf_parent.exists():
         leaked = [p for p in hf_parent.iterdir() if p.name.startswith(".hf_tmp_")]
@@ -161,11 +163,11 @@ def test_failing_export_leaves_no_temp_dir_behind(
 
 
 class TestJsonlRecordsGoThroughJsonSafe:
-    """#629 의 수정이 jsonl exporter 에만 적용되고 여기엔 빠져 있었다.
+    """#629 fix applied only to jsonl exporter and was missing here.
 
-    Gold 테이블은 Polars 에서 오므로 ``casts: {deal_date: date}`` 를 선언하면
-    레코드에 ``date``/``Decimal`` 객체가 그대로 담긴다. 그래서 같은 spec 이
-    ``kind: jsonl`` 로는 나가고 ``kind: huggingface`` 로는 TypeError 로 죽었다.
+    Gold table comes from Polars, so when ``casts: {deal_date: date}`` is declared
+    records contain ``date``/``Decimal`` objects as-is. So the same spec
+    works with ``kind: jsonl`` but dies with TypeError on ``kind: huggingface``.
     """
 
     def _artifact(self) -> ArtifactDataset:
@@ -187,6 +189,6 @@ class TestJsonlRecordsGoThroughJsonSafe:
         assert len(data_files) == 1
         record = json.loads(data_files[0].read_text(encoding="utf-8").strip())
         assert record["deal_date"] == "2024-03-01"
-        # Decimal 은 문자열로 남는다 — float 로 바꾸면 금액의 소수 자릿수가
-        # 조용히 달라진다.
+        # Decimal remains string — changing to float alters amount decimal places
+        # silently.
         assert record["price"] == "12345.67"
