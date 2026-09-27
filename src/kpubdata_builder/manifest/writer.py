@@ -1,10 +1,10 @@
-"""빌드 매니페스트 기록기 (Medallion 재구성: 기존 manifest.py에서 분리).
+"""Build manifest writer (Medallion reorganization: split from old manifest.py).
 
-이 모듈은 BuildManifest를 결정적 JSON으로 디스크에 기록한다. UTC 기준 ISO
-문자열과 정렬된 키를 사용해 직렬화 결과를 안정적으로 유지한다.
+This module records BuildManifest as deterministic JSON to disk. UTC-based ISO
+strings and sorted keys to keep serialization stable.
 
-주요 함수:
-    - manifest_writer / write_manifest: 디스크 기록 함수
+Key functions:
+    - manifest_writer / write_manifest: Disk recording functions
 """
 
 from __future__ import annotations
@@ -22,23 +22,23 @@ from .models import BuildManifest
 
 
 def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
-    """빌드 매니페스트를 결정적 JSON으로 디스크에 기록한다.
+    """Record build manifest as deterministic JSON to disk.
 
-    매개변수:
-        manifest: 기록할 매니페스트 데이터.
-        output_path: 결과 JSON 파일 경로.
+    Args:
+        manifest: Manifest data to record.
+        output_path: Result JSON file path.
 
-    예외:
-        ManifestError: 디렉터리 생성 또는 파일 기록에 실패한 경우.
+    Raises:
+        ManifestError: Directory creation or file write failure.
     """
     payload = {
         "schema_version": manifest.schema_version,
         "build_id": manifest.build_id,
-        # additive (#481): run의 종단 상태와 부분 산출물 여부. legacy manifest에는
-        # 이 키가 없고, reader는 부재 시 기존대로 errors 유무에서 status를 파생한다
-        # (manifest.status_from_manifest가 그 규칙의 정본). 취소된 run이
-        # 성공/실패와 구분되고, BuildIndex 재구축(store.rebuild_index)이
-        # manifest만으로 cancelled를 복원할 수 있게 하는 것이 목적이다.
+        # additive (#481): run's terminal state and partial output flag. Legacy manifests don't have
+        # this key; reader derives status from errors presence if absent,
+        # as before (manifest.status_from_manifest is the authoritative rule). Cancelled runs
+        # Distinct from success/failed; goal is BuildIndex rebuild (store.rebuild_index)
+        # can restore cancelled from manifest alone.
         "status": manifest.status,
         "partial": manifest.partial,
         "started_at": manifest.started_at.astimezone(timezone.utc).isoformat(),
@@ -49,8 +49,8 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         "inputs": list(manifest.inputs),
         "inputs_fingerprint": manifest.inputs_fingerprint,
         "created_by": manifest.created_by,
-        # canonical stable owner identity (#505, additive) — created_by는 legacy
-        # display 라벨로 계속 함께 기록된다. legacy 소비자는 이 키를 몰라도 무해하다.
+        # canonical stable owner identity (#505, additive) — created_by continues as legacy
+        # display label. legacy consumers harmless if unaware of this key.
         "owner_id": manifest.owner_id,
         "outputs": list(manifest.outputs),
         "warnings": list(manifest.warnings),
@@ -60,8 +60,8 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
             key: asdict(summary) for key, summary in manifest.schema_summaries.items()
         },
         "provenance": [asdict(entry) for entry in manifest.provenance],
-        # additive (#486): source_key별 구조화된 quality/drift 결과. 빈 dict가
-        # 기본값이므로 legacy 소비자가 이 키를 몰라도 무해하다.
+        # additive (#486): per-source_key structured quality/drift results. Empty dict default
+        # so legacy consumers harmless if unaware of this key.
         "quality_results": {
             key: [asdict(r) for r in results] for key, results in manifest.quality_results.items()
         },
@@ -74,22 +74,23 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         "drift_evaluation": {
             key: [asdict(e) for e in entries] for key, entries in manifest.drift_evaluation.items()
         },
-        # additive (#506): composition(join) 실행 결과의 출처. composition 미사용
-        # run은 null이다 — legacy 소비자가 이 키를 몰라도 무해하다.
+        # additive (#506): provenance of composition (join) execution results. composition-unused
+        # run is null — legacy consumers harmless if unaware of this key.
         "composition": asdict(manifest.composition) if manifest.composition is not None else None,
     }
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # 같은 디렉터리에 임시 파일로 쓴 뒤 os.replace로 원자적 교체한다. truncate-then-write는
-        # 크래시/동시 접근 시 부분·손상된 매니페스트를 남길 수 있다 (#204).
+        # Write as temp file in same directory, then atomic replace via
+        # os.replace. truncate-then-write
+        # can leave partial/corrupted manifest on crash/concurrent access (#204).
         fd, tmp_name = tempfile.mkstemp(dir=output_path.parent, prefix=".manifest_", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 _ = handle.write(f"{serialized}\n")
             os.replace(tmp_name, output_path)
         except BaseException:
-            # 교체 전 실패 시 임시 파일을 정리한다(이미 교체됐다면 무시).
+            # Clean up temp file if replace fails (ignore if already replaced).
             with contextlib.suppress(OSError):
                 os.unlink(tmp_name)
             raise
@@ -98,11 +99,11 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
 
 
 def write_manifest(manifest: BuildManifest, output_path: Path) -> None:
-    """빌드 매니페스트를 기록하는 공개 별칭 함수다.
+    """Public alias function that records build manifest.
 
-    매개변수:
-        manifest: 기록할 매니페스트 객체.
-        output_path: 출력 경로.
+    Args:
+        manifest: Manifest object to record.
+        output_path: Output path.
     """
     manifest_writer(manifest, output_path)
 

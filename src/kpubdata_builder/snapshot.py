@@ -1,18 +1,18 @@
-"""스냅샷 기반 증분 빌드 지원 (#15).
+"""Snapshot-based incremental build support (#15).
 
-이전 빌드의 스냅샷(데이터 체크섬 + fetch 파라미터)을 저장·로드하고, 현재
-데이터/파라미터와 비교해 변경 여부를 판단한다. 변경이 없으면 재빌드를 건너뛰어
-빌드 시간과 API 호출을 줄일 수 있다.
+Store and load previous build snapshot (data checksum + fetch parameters), compare
+with current data/parameters to detect changes. Skip rebuild if unchanged
+Reduces build time and API calls.
 
-스냅샷 저장 구조::
+Snapshot storage structure::
 
     {root}/.kpubdata-builder/snapshots/{dataset_id}/snapshot.json
 
-주요 구성:
-    - BuildSnapshot: 마지막 빌드 스냅샷 모델
-    - compute_records_checksum: 재현 가능한 SHA-256 체크섬
-    - save_snapshot / load_snapshot: 디스크 저장·로드
-    - has_data_changed: 이전 스냅샷 대비 변경 여부 판단
+Key components:
+    - BuildSnapshot: Last build snapshot model
+    - compute_records_checksum: Reproducible SHA-256 checksum
+    - save_snapshot / load_snapshot: Disk save/load
+    - has_data_changed: Detect changes vs previous snapshot
 """
 
 from __future__ import annotations
@@ -31,14 +31,14 @@ _SNAPSHOT_DIRNAME = ".kpubdata-builder"
 
 @dataclass(frozen=True)
 class BuildSnapshot:
-    """마지막 빌드의 데이터 버전 스냅샷.
+    """Data version snapshot of last build.
 
-    속성:
-        dataset_id: 데이터셋 식별자.
-        built_at: 빌드 시각 (UTC ISO 8601 문자열).
-        data_checksum: 데이터의 재현 가능한 체크섬 ("sha256:...").
-        record_count: 레코드 수.
-        source_params: fetch 파라미터 스냅샷.
+    Attributes:
+        dataset_id: Dataset identifier.
+        built_at: Build time (UTC ISO 8601 string).
+        data_checksum: Reproducible data checksum ("sha256:...").
+        record_count: Record count.
+        source_params: Fetch parameter snapshot.
     """
 
     dataset_id: str
@@ -49,17 +49,17 @@ class BuildSnapshot:
 
 
 def compute_records_checksum(records: Sequence[Mapping[str, JsonValue]]) -> str:
-    """레코드의 재현 가능한 SHA-256 체크섬을 계산한다.
+    """Calculate reproducible SHA-256 checksum of records.
 
-    각 레코드를 정렬 키 기반으로 개별 직렬화한 뒤 직렬화된 문자열을 정렬해
-    레코드 키 순서뿐 아니라 레코드(행) 순서 차이도 제거한다. 동일한 데이터
-    집합은 API 반환 순서와 무관하게 같은 체크섬을 갖는다 (#165).
+    Individually serialize each record with sorted key, then sort serialized strings
+    to remove differences in record key order and record (row) order. Same
+    dataset has same checksum regardless of API return order (#165).
 
-    매개변수:
-        records: 체크섬을 계산할 레코드 시퀀스.
+    Args:
+        records: Record sequence to calculate checksum from.
 
-    반환값:
-        str: "sha256:" 접두사가 붙은 16진 해시.
+    Returns:
+        str: Hexadecimal hash with "sha256:" prefix.
     """
     serialized_records = sorted(
         json.dumps(dict(record), ensure_ascii=False, sort_keys=True, default=str)
@@ -70,20 +70,20 @@ def compute_records_checksum(records: Sequence[Mapping[str, JsonValue]]) -> str:
 
 
 def _snapshot_path(root: Path, dataset_id: str) -> Path:
-    """dataset_id에 대한 스냅샷 파일 경로를 계산한다(경로 안전성 검증 포함)."""
+    """Calculate snapshot file path for dataset_id (includes path safety validation)."""
     validate_path_segment(dataset_id, field_name="dataset_id")
     return root / _SNAPSHOT_DIRNAME / "snapshots" / dataset_id / "snapshot.json"
 
 
 def save_snapshot(snapshot: BuildSnapshot, *, root: Path) -> Path:
-    """스냅샷을 root 아래 결정적 JSON으로 저장하고 경로를 반환한다.
+    """Save snapshot as deterministic JSON under root, return path.
 
-    매개변수:
-        snapshot: 저장할 스냅샷.
-        root: 워크스페이스 루트.
+    Args:
+        snapshot: Snapshot to save.
+        root: Workspace root.
 
-    반환값:
-        Path: 기록된 snapshot.json 경로.
+    Returns:
+        Path: Recorded snapshot.json path.
     """
     path = _snapshot_path(root, snapshot.dataset_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,20 +102,21 @@ def save_snapshot(snapshot: BuildSnapshot, *, root: Path) -> Path:
 
 
 def load_snapshot(dataset_id: str, *, root: Path) -> BuildSnapshot | None:
-    """저장된 스냅샷을 로드한다(없으면 None).
+    """Load saved snapshot (None if missing).
 
-    매개변수:
-        dataset_id: 데이터셋 식별자.
-        root: 워크스페이스 루트.
+    Args:
+        dataset_id: Dataset identifier.
+        root: Workspace root.
 
-    반환값:
-        BuildSnapshot | None: 스냅샷 객체 또는 None.
+    Returns:
+        BuildSnapshot | None: Snapshot object or None.
     """
     path = _snapshot_path(root, dataset_id)
     if not path.exists():
         return None
-    # 손상/잘린 스냅샷은 증분 빌드를 깨뜨리는 대신 "스냅샷 없음"으로 안전하게 저하시킨다.
-    # (None → has_data_changed가 True → 전체 재빌드) (#194).
+    # Corrupted/truncated snapshot safely degrades to "no snapshot"
+    # instead of breaking incremental build.
+    # (None → has_data_changed becomes True → full rebuild) (#194).
     try:
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
@@ -147,15 +148,15 @@ def has_data_changed(
     source_params: Mapping[str, JsonValue],
     snapshot: BuildSnapshot | None,
 ) -> bool:
-    """이전 스냅샷 대비 데이터 또는 파라미터가 바뀌었는지 판단한다.
+    """Determine if data or parameters changed vs previous snapshot.
 
-    매개변수:
-        records: 현재 데이터 레코드.
-        source_params: 현재 fetch 파라미터.
-        snapshot: 이전 스냅샷(없으면 첫 빌드).
+    Args:
+        records: Current data records.
+        source_params: Current fetch parameters.
+        snapshot: Previous snapshot (if missing, first build).
 
-    반환값:
-        bool: 변경되었거나 첫 빌드면 True.
+    Returns:
+        bool: True if changed or first build.
     """
     if snapshot is None:
         return True

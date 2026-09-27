@@ -1,14 +1,14 @@
-"""원시 레코드를 표 형태로 만들기 위한 Polars 도우미.
+"""Polars helper functions for making raw records into table form.
 
-이 모듈은 원시 JSON 유사 레코드를 Polars DataFrame으로 변환하고,
-필수 컬럼 검증과 느슨한 타입 캐스팅을 수행하는 유틸리티를 제공한다.
+This module provides utilities to convert raw JSON-like records to Polars DataFrame,
+perform required column validation and loose type casting.
 
-주요 구성:
-    - CastReport / CastResult: 캐스팅 중 null 증가를 추적하는 보고 객체
-    - validate_required_columns: 필수 컬럼 존재 여부 확인
-    - cast_columns: 지정 타입으로 컬럼 캐스팅
+Key components:
+    - CastReport / CastResult: Report objects tracking null increase during casting
+    - validate_required_columns: Check required column presence
+    - cast_columns: Cast columns to specified types
 
-records ↔ DataFrame 변환은 convert 모듈로 이동했다 (#49).
+records ↔ DataFrame conversion moved to convert module (#49).
 """
 
 from __future__ import annotations
@@ -21,21 +21,21 @@ import polars as pl
 
 DtypeSpec = str | pl.DataType | type[pl.DataType]
 
-#: 포맷이 섞인 문자열을 숫자로 읽는 named cast (#611). dtype이 아니라 캐스팅
-#: 전략이므로 _NAMED_DTYPES와 분리한다 — 원천 공공데이터의 금액은 천단위
-#: 구분자가 포함된 문자열("120,000")로 오고, 그대로 int 캐스팅하면 전부 null이
-#: 되어 #188의 data-loss 가드가 빌드를 실패시킨다.
+#: Named cast for reading mixed-format strings as numbers (#611). Casting
+#: strategy, not dtype, so separated from _NAMED_DTYPES — source public data amounts are
+#: strings with thousands separators ("120,000"), and direct int cast → all null
+#: making #188's data-loss guard fail the build.
 _FORMATTED_CASTS: Mapping[str, pl.DataType] = {
     "int_comma": pl.Int64(),
     "float_comma": pl.Float64(),
 }
 
-#: 여러 표기가 섞인 문자열을 canonical 텍스트로 모으는 named cast (#620). dtype이
-#: 아니라 캐스팅 전략이므로 _NAMED_DTYPES와 분리한다.
+#: named cast collecting mixed notation strings into canonical text (#620). Separate from
+#: _NAMED_DTYPES because it's casting strategy, not dtype.
 TEXT_CASTS: frozenset[str] = frozenset({"year_month"})
 
-#: year_month 가 받는 두 표기. **길이까지 고정한다** — 느슨한 파서는 "20230"을
-#: 조용히 2023-0 따위로 읽어 틀린 연/월을 만든다. 월 범위도 여기서 막는다.
+#: Two notations year_month accepts. **Fix length too** — loose parser reads "20230" as
+#: "2023-0" etc., creating wrong year/month. Month range also blocked here.
 YEAR_MONTH_DASHED = r"^\d{4}-(0[1-9]|1[0-2])$"
 YEAR_MONTH_COMPACT = r"^\d{4}(0[1-9]|1[0-2])$"
 
@@ -59,12 +59,12 @@ _NAMED_DTYPES: Mapping[str, pl.DataType] = {
 
 @dataclass(frozen=True)
 class CastReport:
-    """strict=False 캐스팅으로 추가된 null 값의 컬럼별 개수.
+    """Per-column count of null values added by strict=False casting.
 
-    속성:
-        column: 보고 대상 컬럼명.
-        nulls_before: 캐스팅 전 null 개수.
-        nulls_after: 캐스팅 후 null 개수.
+    Attributes:
+        column: Target column name.
+        nulls_before: Null count before casting.
+        nulls_after: Null count after casting.
     """
 
     column: str
@@ -73,17 +73,17 @@ class CastReport:
 
     @property
     def nulls_introduced(self) -> int:
-        """캐스팅 과정에서 새로 생긴 null 수를 반환한다."""
+        """Return count of newly created nulls from casting."""
         return self.nulls_after - self.nulls_before
 
 
 @dataclass(frozen=True)
 class CastResult:
-    """audit 결과와 컬럼별 null 보고서를 담는 값 객체.
+    """Value object holding audit result and per-column null report.
 
-    속성:
-        df: 캐스팅 완료 DataFrame.
-        reports: null 증가가 감지된 컬럼 보고서 모음.
+    Attributes:
+        df: Cast-complete DataFrame.
+        reports: Collection of column reports where null increase detected.
     """
 
     df: pl.DataFrame
@@ -91,7 +91,7 @@ class CastResult:
 
     @property
     def has_nulls_introduced(self) -> bool:
-        """하나 이상의 컬럼에서 null 증가가 있었는지 반환한다."""
+        """Return whether null increased in any column."""
         return any(r.nulls_introduced > 0 for r in self.reports)
 
 
@@ -99,17 +99,17 @@ def validate_required_columns(
     df: pl.DataFrame,
     required_columns: Sequence[str],
 ) -> pl.DataFrame:
-    """필수 컬럼이 모두 있는지 확인하고 누락 시 예외를 발생시킨다.
+    """Verify all required columns present, raise exception if missing.
 
-    매개변수:
-        df: 검사할 DataFrame.
-        required_columns: 반드시 존재해야 하는 컬럼 이름 목록.
+    Args:
+        df: DataFrame to check.
+        required_columns: List of column names that must exist.
 
-    반환값:
-        pl.DataFrame: 입력과 동일한 DataFrame.
+    Returns:
+        pl.DataFrame: Same DataFrame as input.
 
-    예외:
-        ValueError: 하나 이상의 필수 컬럼이 없을 때.
+    Raises:
+        ValueError: If one or more required columns absent.
     """
     missing_columns = [column for column in required_columns if column not in df.columns]
     if missing_columns:
@@ -142,10 +142,10 @@ def cast_columns(
     *,
     audit: bool = False,
 ) -> pl.DataFrame | CastResult:
-    """지정한 타입으로 컬럼을 캐스팅하고 필요하면 null 보고서를 함께 반환한다.
+    """Cast column to specified type, return null report if needed.
 
-    audit=True이면 컬럼별 null 보고서를 담은 CastResult를 반환한다.
-    audit=False(기본값)이면 데이터프레임을 직접 반환한다.
+    If audit=True, return CastResult with per-column null report.
+    If audit=False (default), return DataFrame directly.
     """
     reports: list[CastReport] = []
     expressions: list[pl.Expr] = []
@@ -195,17 +195,17 @@ def cast_columns(
 
 
 def _formatted_cast(dtype: DtypeSpec) -> pl.DataType | None:
-    """named formatted cast이면 대상 dtype을, 아니면 None을 돌려준다 (#611)."""
+    """Return target dtype if named formatted cast, else None (#611)."""
     if isinstance(dtype, str):
         return _FORMATTED_CASTS.get(dtype.strip().lower())
     return None
 
 
 def _cast_formatted_numeric(column: str, dtype: pl.DataType) -> pl.Expr:
-    """천단위 구분자와 주변 공백을 제거한 뒤 숫자로 캐스팅한다 (#611).
+    """Remove thousands separator and whitespace, cast to number (#611).
 
-    구분자 제거에 실패해 남은 값은 strict=False로 null이 되고, 그 손실은 호출자의
-    audit이 감지한다 — 포맷을 넓히는 것이지 실패를 묻는 것이 아니다.
+    Failure to remove separator leaves value that becomes null via strict=False,
+    and caller's audit detects that loss — widening format, not hiding failure.
     """
     return (
         pl.col(column)
@@ -218,15 +218,14 @@ def _cast_formatted_numeric(column: str, dtype: pl.DataType) -> pl.Expr:
 
 
 def _cast_year_month(column: str) -> pl.Expr:
-    """``2020-01`` 과 ``202207`` 을 canonical ``"YYYY-MM"`` 으로 모은다 (#620).
+    """Collect ``2020-01`` and ``202207`` into canonical ``"YYYY-MM"`` (#620).
 
-    Date가 아니라 Utf8이다. ``pl.Date`` 로 만들면 원천에 없던 ``01일`` 을 추가하게
-    되고, polars에 월 단위 period 타입은 없다. 월 시계열로 해석할 필요가 있으면
-    다운스트림이 한다.
+    Text, not Date. Making it ``pl.Date`` adds ``01`` (day) not in source;
+    Polars lacks month-only period type. Downstream handles if month-series interpretation needed.
 
-    어느 표기에도 맞지 않는 값은 null이 되어 호출자의 audit이 잡는다. 다만 그
-    메시지는 개수만 말하므로, Silver 정규화는 어느 값이 거부됐는지를 먼저 확인해
-    보고한다 — ``normalize._year_month_violations``.
+    Values matching neither notation become null, caught by caller's audit. But audit
+    message only reports count, so Silver normalization checks which values rejected first
+    — ``normalize._year_month_violations``.
     """
     text = pl.col(column).cast(pl.Utf8).str.strip_chars()
     return (
@@ -240,7 +239,7 @@ def _cast_year_month(column: str) -> pl.Expr:
 
 
 def _resolve_dtype(dtype: DtypeSpec) -> pl.DataType:
-    """문자열 또는 Polars 타입 명세를 실제 DataType 인스턴스로 해석한다."""
+    """Interpret string or Polars type spec as actual DataType instance."""
     if isinstance(dtype, str):
         normalized = dtype.strip().lower()
         try:
@@ -256,13 +255,13 @@ def _resolve_dtype(dtype: DtypeSpec) -> pl.DataType:
 
 
 def _cast_boolean(column: str) -> pl.Expr:
-    """문자열 기반 불리언 토큰을 안전하게 Polars Boolean 표현식으로 변환한다.
+    """Safely convert string-based boolean tokens to Polars Boolean expression.
 
-    알 수 없는 값은 strict 실패 대신 null로 남겨 audit 단계에서 감지할 수 있게 한다.
+    Keep unknown values as null instead of strict failure, so audit stage can detect.
     """
     normalized = pl.col(column).cast(pl.Utf8).str.strip_chars().str.to_lowercase()
     return (
-        # 여러 truthy/falsy 표기를 단일 bool 표현으로 정규화한다.
+        # Normalize multiple truthy/falsy notations into single bool representation.
         pl.when(normalized.is_in(_TRUE_TOKENS))
         .then(pl.lit(True))
         .when(normalized.is_in(_FALSE_TOKENS))

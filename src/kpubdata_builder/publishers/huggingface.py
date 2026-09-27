@@ -1,4 +1,4 @@
-"""Hugging Face Hub 게시자 — artifact를 HF 데이터셋 레포지토리에 업로드한다."""
+"""Hugging Face Hub publisher — uploads artifacts to HF dataset repository."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from .base import BasePublisher, PublishResult
 
 
 def _repo_path_for(path: Path, common_root: Path | None) -> str:
-    """파일 artifact를 레이아웃을 보존하는 repo 상대 경로로 매핑한다.
+    """Map file artifact to repo-relative path preserving layout.
 
-    공통 상위 디렉터리(common_root) 기준 상대 경로를 사용해 중첩 구조를 유지하고,
-    근거가 없으면 basename으로 폴백한다.
+    Use relative path from common root to preserve nesting structure;
+    fall back to basename if common root not applicable.
     """
     if common_root is not None:
         try:
@@ -25,7 +25,7 @@ def _repo_path_for(path: Path, common_root: Path | None) -> str:
 
 
 class HuggingFacePublisher(BasePublisher):
-    """Hugging Face Hub 데이터셋 레포지토리에 artifact 파일을 업로드한다."""
+    """Upload artifact files to Hugging Face Hub dataset repository."""
 
     @property
     def name(self) -> str:
@@ -39,13 +39,13 @@ class HuggingFacePublisher(BasePublisher):
         private: bool = True,
         credentials: Mapping[str, str] | None = None,
     ) -> PublishResult:
-        """artifact를 HuggingFace 데이터셋 레포지토리에 게시한다.
+        """Publish artifact to HuggingFace dataset repository.
 
-        매개변수:
-            artifact_paths: 업로드할 파일 또는 디렉토리 목록.
-            destination: HF 레포지토리 ID (예: "kpubdata/air-quality").
-            private: 신규 repo 생성 시 visibility. ``exist_ok=True``이므로 기존
-                repo의 visibility는 변경하지 않는다.
+        Args:
+            artifact_paths: List of files or directories to upload.
+            destination: HF repository ID (e.g., "kpubdata/air-quality").
+            private: Visibility on new repo creation. Since ``exist_ok=True``, existing
+                repo visibility is not changed.
         """
         try:
             from huggingface_hub import HfApi  # type: ignore[import-not-found]
@@ -55,11 +55,11 @@ class HuggingFacePublisher(BasePublisher):
                 "Install it with: pip install huggingface_hub"
             ) from exc
 
-        # ``credentials=None`` 만 "호출자가 정하지 않았다"는 뜻이다 — CLI 처럼
-        # 실행하는 사람과 서버 환경이 같은 경로다. mapping 을 받았으면 그 안의
-        # 값만 쓴다. 예전에는 빈 mapping 도 환경변수로 내려갔고, 서비스가 빈
-        # 결과일 때 kwarg 자체를 생략했기 때문에, 요청자 credential 을 강제하는
-        # 설정을 켜 두어도 서버 토큰으로 게시가 그대로 나갔다 (#635).
+        # Only ``credentials=None`` means "caller did not specify" — like CLI where
+        # execution context and server environment share same path. If mapping received,
+        # only values in it are used. Previously, empty mapping also went env var,
+        # When result, kwarg itself omitted, so even with enforce-requester-creds config on,
+        # publishing went through with server token (#635).
         token = os.environ.get("HF_TOKEN") if credentials is None else credentials.get("HF_TOKEN")
         if not token:
             raise RuntimeError(
@@ -68,9 +68,8 @@ class HuggingFacePublisher(BasePublisher):
             )
 
         api = HfApi(token=token)
-        # 먼저 신규 dataset repo가 존재하도록 보장한다. exist_ok=True인 기존
-        # repo에는 visibility mutation을 수행하지 않으며 update_repo_settings도
-        # 호출하지 않는다(#491).
+        # First ensure new dataset repo exists. For existing repo with exist_ok=True,
+        # no visibility mutation or update_repo_settings call (#491).
         api.create_repo(
             repo_id=destination,
             repo_type="dataset",
@@ -79,21 +78,23 @@ class HuggingFacePublisher(BasePublisher):
         )
         count = 0
 
-        # 파일 artifact의 공통 상위 디렉터리를 기준으로 repo 내 경로를 정한다.
-        # bare filename으로 평탄화하면 중첩 디렉터리 레이아웃이 사라지고, 서로 다른
-        # 디렉터리의 동명 파일이 무경고로 덮어쓰기된다 (#170).
+        # Determine repo path based on common parent directory of file artifacts.
+        # Flattening to bare filename loses nested directory layout, same-named files in
+        # different dirs silently overwrite (#170).
         file_parents = [str(p.parent) for p in artifact_paths if not p.is_dir()]
         common_root: Path | None
         try:
             common_root = Path(os.path.commonpath(file_parents)) if file_parents else None
         except ValueError:
-            # 절대/상대 경로가 섞이는 등 공통 경로를 구할 수 없으면 basename으로 폴백.
+            # Fallback to basename if common path cannot be computed
+            # (mixed absolute/relative paths etc.).
             common_root = None
-        # 공통 루트가 파일시스템 루트("/")이면 의미 있는 공통 상위가 없다는 뜻이다.
-        # 그대로 쓰면 무관한 절대경로가 tmp/..., var/... 같은 호스트 경로로 누출되므로
-        # "공통 루트 없음"으로 취급해 basename으로 폴백한다 (#205).
-        # is_absolute() 가드가 없으면 상대 경로의 commonpath인 Path(".")도 parent==self
-        # 조건에 걸려 basename으로 평탄화되는 회귀가 생긴다(상대 경로 레이아웃은 보존해야 함).
+        # If common root is filesystem root ("/"), means no meaningful common parent.
+        # Using as-is would leak unrelated absolute paths as host paths like tmp/..., var/...,
+        # so treat as "no common root" and fallback to basename (#205).
+        # Without is_absolute() guard, Path(".") as commonpath of
+        # relative paths also hits parent==self
+        # condition, causing recursion flattening to basename (must preserve relative path layout).
         if (
             common_root is not None
             and common_root.is_absolute()
@@ -112,7 +113,7 @@ class HuggingFacePublisher(BasePublisher):
                 )
             else:
                 repo_path = _repo_path_for(path, common_root)
-                # 두 artifact가 같은 repo 경로로 매핑되면 한쪽이 묻히므로 명시적으로 실패.
+                # If two artifacts map to same repo path, one gets buried, so fail explicitly.
                 prior = seen_repo_paths.get(repo_path)
                 if prior is not None and prior != path:
                     raise PublishError(

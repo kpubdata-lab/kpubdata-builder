@@ -1,11 +1,10 @@
-"""File/URL 원시 bytes를 Bronze 레코드로 파싱한다 (#498).
+"""Parse File/URL raw bytes to Bronze records (#498).
 
-File upload와 URL fetch는 서로 다른 경로로 bytes를 얻지만, 그 bytes를 레코드로
-바꾸는 규칙은 동일해야 한다(같은 CSV 파싱 결과는 어디서 왔든 같은 레코드가
-되어야 한다) — 그래서 두 kind가 이 모듈 하나를 공유한다.
+File upload and URL fetch obtain bytes differently, but rules for converting bytes
+to records must be identical. Same parsing result regardless of source.
 
-지원 포맷은 CSV/JSON/JSONL/Parquet(#498 P0 범위)이다. Excel/ZIP은 범위 밖이며
-loader/validator가 이미 그 값을 거부한다.
+Supported formats are CSV/JSON/JSONL/Parquet (#498 P0 scope). Excel/ZIP out of scope
+loader/validator already rejects those values.
 """
 
 from __future__ import annotations
@@ -27,28 +26,28 @@ _TEXT_FORMATS = frozenset({"csv", "json", "jsonl"})
 def parse_tabular_bytes(
     raw: bytes,
     *,
-    format: str,  # noqa: A002 - 계약 필드명과 맞춘다
+    format: str,  # noqa: A002 - matches contract field name
     encoding: str = "utf-8",
     read_as: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, JsonValue], ...]:
-    """원시 bytes를 ``format`` 규칙으로 파싱해 레코드 튜플로 반환한다.
+    """Parse raw bytes by ``format`` rules and return record tuple.
 
-    매개변수:
-        raw: 파일 또는 HTTP 응답의 원시 bytes.
+    Args:
+        raw: Raw bytes from file or HTTP response.
         format: ``"csv"`` | ``"json"`` | ``"jsonl"`` | ``"parquet"``.
-        encoding: 텍스트 포맷(csv/json/jsonl) 디코딩에 쓸 인코딩. parquet은
-            바이너리 포맷이라 무시된다.
-        read_as: ``sources[].schema.read_as`` 선언. CSV는 lexeme(원문 문자열)이
-            파싱 단계에서만 남아 있다 — ``pl.read_csv``가 ``00123``을 정수
-            ``123``으로 추론한 뒤에는 Silver에서 문자열로 되돌려도 앞자리 0을
-            복구할 수 없다. 그래서 선언된 컬럼은 여기서부터 문자열로 읽는다.
+        encoding: Encoding for text format (csv/json/jsonl) decoding. Parquet is
+            binary format, ignored.
+        read_as: ``sources[].schema.read_as`` declaration. CSV uses lexeme (original string)
+            remains only in parse step — ``pl.read_csv`` infers ``00123`` as integer
+            ``123``; after that, even if converted back to string in Silver, leading 0
+            can't be recovered. So declared columns read as strings from here.
 
-    반환값:
-        레코드 튜플. Bronze pipeline이 소비하는 것과 동일한
-        ``dict[str, JsonValue]`` 형태다.
+    Returns:
+        Record tuples. Same as consumed by Bronze pipeline
+        ``dict[str, JsonValue]`` format.
 
-    예외:
-        IngestionError: 빈 content, 지원하지 않는 format, 디코딩/파싱 실패.
+    Raises:
+        IngestionError: Empty content, unsupported format, decode/parse failure.
     """
     if not raw:
         raise IngestionError("source content is empty")
@@ -75,7 +74,7 @@ def _decode(raw: bytes, encoding: str) -> str:
 def _parse_parquet(raw: bytes) -> tuple[dict[str, JsonValue], ...]:
     try:
         frame = pl.read_parquet(io.BytesIO(raw))
-    except Exception as exc:  # polars가 던지는 예외 타입이 다양해 광범위하게 잡는다
+    except Exception as exc:  # Polars throws various exception types, so catch broadly
         raise IngestionError(f"failed to parse parquet content: {exc}") from exc
     return tuple(dataframe_to_records(frame))
 
@@ -83,8 +82,8 @@ def _parse_parquet(raw: bytes) -> tuple[dict[str, JsonValue], ...]:
 def _parse_csv(
     text: str, *, read_as: Mapping[str, str] | None = None
 ) -> tuple[dict[str, JsonValue], ...]:
-    # 선언된 컬럼만 Utf8로 고정한다. 선언되지 않은 컬럼의 추론은 그대로 두어,
-    # read_as를 쓰지 않는 spec의 결과가 바뀌지 않게 한다.
+    # Fix only declared columns to Utf8. Leave inference for undeclared columns unchanged,
+    # so specs not using read_as don't change behavior.
     overrides = {column: pl.Utf8 for column, dtype in (read_as or {}).items() if dtype == "str"}
     try:
         frame = pl.read_csv(
@@ -103,9 +102,10 @@ def _parse_json(text: str) -> tuple[dict[str, JsonValue], ...]:
     except json.JSONDecodeError as exc:
         raise IngestionError(f"failed to parse json content: {exc}") from exc
     if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
-        # 자유형 key 추측(예: {"data": [...]}) 대신 명시적으로 array-of-object만
-        # 허용한다 — 이 코드베이스가 quality.compare_columns 등에서 이미 지키는
-        # "자유형 eval/추측 금지" 원칙과 동일하다.
+        # Explicitly allow only array-of-object instead of free-form
+        # key guessing (e.g. {"data": [...]})
+        # — same "no free-form eval/guessing" principle already enforced in
+        # quality.compare_columns etc.
         raise IngestionError(
             'json content must be a top-level array of objects (e.g. [{"col": "value"}, ...])'
         )

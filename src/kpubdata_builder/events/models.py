@@ -1,18 +1,18 @@
-"""Run 단위 structured event timeline 모델 (#496).
+"""Per-run structured event timeline model (#496).
 
-Build 실행 과정을 raw logger 파싱 없이 조회할 수 있도록, run 안에서 일어나는
-주요 전이(run/source fetch/stage/quality)를 명시적 구조화 모델로 표현한다.
+Allows querying the build execution process without raw logger parsing. Main
+Express transitions (run/sourceetch/stage/quality) as explicit structured models.
 
-원칙:
-    - event/status/stage 어휘는 bounded(Literal)하고 deterministic하다. 임의
-      logger message 문자열을 API 계약으로 승격하지 않는다.
-    - arbitrary object dumping, exception 객체 직렬화, stack trace, raw
-      provider response, raw path, credential은 이 모델에 담지 않는다 — 호출부
-      (``events.recorder``/``pipeline.orchestrator``)가 이미 안전하다고 확인한
-      값만 여기로 들어온다.
-    - ``seq``는 store가 append 시점에 부여하는 monotonic ordering identifier다
-      (#496) — 병렬 source worker가 동시에 append해도 store가 부여한 전역 순서를
-      그대로 신뢰할 수 있다. append 전에는 placeholder(0)다.
+Principles:
+    - event/status/stage vocabulary is bounded (Literal) and deterministic. Arbitrary
+      don't elevate logger message strings to API contract.
+    - arbitrary object dumping, exception object serialization, stack trace, raw
+      provider response, raw path, credential not stored here — caller
+      (``events.recorder``/``pipeline.orchestrator``) already verified safe
+      values only.
+    - ``seq`` is monotonic ordering identifier assigned by store at append time
+      (#496) — Even if parallel source workers append concurrently, the global order
+      can be trusted as-is. Placeholder (0) before append.
 """
 
 from __future__ import annotations
@@ -24,31 +24,31 @@ from typing import Literal
 
 from ..spec.models import JsonValue
 
-# run 수준 전이. "run_cancelled"(#481)는 async job이 실제로 terminal
-# ``cancelled``로 확정되는 순간에만 기록되는 종결 event다 — queued 취소(파이프라인
-# 미실행)와 running 취소(안전 경계 종결)가 모두 이 하나로 끝나며, 같은 run에
-# ``run_finished``/``run_failed``와 함께 나타나지 않는다. 과도기 상태
-# (``cancelling``)는 job status로만 노출하고 별도 event를 만들지 않는다.
+# Run-level transition. "run_cancelled" (#481) is an async job actually recorded as
+# terminal state-confirming only when confirmed ``cancelled`` — queued cancellation (pipeline
+# not-run) and running cancellation (safety boundary closure) both end with this one,
+# never appearing with ``run_finished``/``run_failed`` in same run. Transient state
+# (``cancelling``) exposed only via job status, no separate event.
 RunEventName = Literal[
     "run_submitted", "run_started", "run_finished", "run_failed", "run_cancelled"
 ]
 
-# source fetch 전이 (#498 resolver 경계: public_api/file/url 공통).
+# source fetch transition (#498 resolver boundary: common to public_api/file/url).
 SourceFetchEventName = Literal[
     "source_fetch_started", "source_fetch_completed", "source_fetch_failed"
 ]
 
-# medallion stage 전이. "export"는 BuildSpec.exports 실행 단계다.
+# medallion stage transition. "export" is BuildSpec.exports execution phase.
 StageEventName = Literal["stage_started", "stage_completed", "stage_failed"]
 
-# quality/schema 평가 체크포인트 (#486 결과를 재판정하지 않고 그대로 반영).
+# quality/schema evaluation checkpoint (#486 reflect results as-is, no re-judgment).
 QualityEventName = Literal["quality_evaluated"]
 
 EventName = RunEventName | SourceFetchEventName | StageEventName | QualityEventName
 
-# event의 결과. "ok"는 성공/정상 완료, "warn"은 quality_evaluated에서 WARN이
-# 하나 이상 있었지만 FAIL은 없었던 경우, "fail"은 실패다. run/source/stage 전이는
-# ok 또는 fail만 쓴다(started는 ok, completed는 ok, failed는 fail).
+# Event outcome. "ok" = success/normal completion, "warn" = quality_evaluated has WARN
+# but no FAIL, "fail" = failure. run/source/stage transitions use ok or fail only
+# (started=ok, completed=ok, failed=fail).
 EventStatus = Literal["ok", "warn", "fail"]
 
 StageName = Literal["bronze", "silver", "gold", "export"]
@@ -56,22 +56,22 @@ StageName = Literal["bronze", "silver", "gold", "export"]
 
 @dataclass(frozen=True, slots=True)
 class BuildEvent:
-    """단일 structured run event.
+    """Single structured run event.
 
-    속성:
-        seq: store가 append 시점에 부여하는 monotonic ordering identifier.
-            append 전에는 0(placeholder) — ``BuildEventStore.append()``가 실제
-            값을 채운 새 인스턴스를 반환한다.
-        timestamp: timezone-aware UTC 시각.
-        run_id: 이 event가 속한 run.
-        event: 어떤 전이가 일어났는지 (bounded vocabulary).
-        status: 그 전이의 결과 (ok/warn/fail).
-        source_key: 관련 소스 식별자. run 수준 event는 None.
-        stage: 관련 medallion stage. source fetch/run 수준 event는 None.
-        message: 사람이 읽는 bounded, 안전한 요약. 없으면 None — 임의 값을
-            지어내지 않는다.
-        metrics: JSON 직렬화 가능한 안전한 수치 요약(예: rows/check_count).
-            원본 provider 응답이나 임의 object를 담지 않는다.
+    Attributes:
+        seq: Monotonic ordering identifier assigned by store at append time.
+            0 before append (placeholder) — ``BuildEventStore.append()`` returns
+            new instance with actual value filled.
+        timestamp: Timezone-aware UTC time.
+        run_id: Run this event belongs to.
+        event: What transition occurred (bounded vocabulary).
+        status: Outcome of that transition (ok/warn/fail).
+        source_key: Related source identifier. None for run-level events.
+        stage: Related medallion stage. None for source fetch/run-level events.
+        message: Human-readable bounded, safe summary. None if absent — don't
+            fabricate arbitrary values.
+        metrics: JSON-serializable safe numeric summary (e.g. rows/check_count).
+            Does not hold raw provider responses or arbitrary objects.
     """
 
     seq: int

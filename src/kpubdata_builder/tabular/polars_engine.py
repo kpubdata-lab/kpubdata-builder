@@ -1,9 +1,9 @@
-"""Polars 기반 tabular 엔진 구현 (#49).
+"""Polars-based tabular engine implementation (#49).
 
-DataFrame으로부터 스키마 정보, 테이블 통계, 미리보기 슬라이스를 산출한다.
-records ↔ DataFrame 변환은 convert 모듈을 재노출하여 단일 진입점을 제공한다.
+Derives schema info, table statistics, preview slice from DataFrame.
+records ↔ DataFrame conversion reuses convert module to provide single entry point.
 
-주요 함수:
+Key functions:
     - infer_schema: DataFrame → SchemaInfo
     - compute_statistics: DataFrame → TableStatistics
     - generate_preview: DataFrame → PreviewSlice
@@ -20,16 +20,16 @@ DEFAULT_PREVIEW_LIMIT = 5
 
 
 def infer_schema(df: pl.DataFrame) -> SchemaInfo:
-    """DataFrame의 컬럼 스키마를 SchemaInfo로 추론한다.
+    """Infer column schema of DataFrame as SchemaInfo.
 
-    nullable은 컬럼에 null이 하나라도 존재하는지로 판정하고, unique_count는
-    Polars n_unique(null을 하나의 고유값으로 포함) 기준이다.
+    nullable is determined by whether column has any null, unique_count is
+    Per Polars n_unique (null counted as one unique value).
 
-    매개변수:
-        df: 스키마를 추론할 DataFrame.
+    Args:
+        df: DataFrame to infer schema from.
 
-    반환값:
-        SchemaInfo: 컬럼 순서를 보존한 스키마 요약.
+    Returns:
+        SchemaInfo: Schema summary preserving column order.
     """
     columns = tuple(
         ColumnInfo(
@@ -44,16 +44,16 @@ def infer_schema(df: pl.DataFrame) -> SchemaInfo:
 
 
 def compute_statistics(df: pl.DataFrame) -> TableStatistics:
-    """DataFrame의 행/널/중복 통계를 계산한다.
+    """Calculate row/null/duplicate statistics of DataFrame.
 
-    duplicate_rate는 (전체 행 - 고유 행) / 전체 행으로 계산하며, 빈 테이블은
-    0.0으로 둔다.
+    duplicate_rate is (total rows - unique rows) / total rows; empty table is
+    0.0.
 
-    매개변수:
-        df: 통계를 계산할 DataFrame.
+    Args:
+        df: DataFrame to calculate statistics for.
 
-    반환값:
-        TableStatistics: 행 수, 컬럼별 null 수, 중복 행 비율.
+    Returns:
+        TableStatistics: Row count, nulls per column, duplicate row ratio.
     """
     row_count = df.height
     null_counts = {name: df.get_column(name).null_count() for name in df.columns}
@@ -66,18 +66,18 @@ def compute_statistics(df: pl.DataFrame) -> TableStatistics:
 
 
 def generate_preview(df: pl.DataFrame, limit: int = DEFAULT_PREVIEW_LIMIT) -> PreviewSlice:
-    """DataFrame 상위 N행 미리보기 슬라이스를 생성한다.
+    """Generate preview slice of top N rows of DataFrame.
 
-    매개변수:
-        df: 미리보기를 만들 DataFrame.
-        limit: 포함할 최대 행 수 (기본값 DEFAULT_PREVIEW_LIMIT).
+    Args:
+        df: DataFrame to create preview from.
+        limit: Maximum rows to include (default DEFAULT_PREVIEW_LIMIT).
 
-    반환값:
-        PreviewSlice: 상위 행과 전체 행 수.
+    Returns:
+        PreviewSlice: Top rows and total row count.
 
-    예외:
-        ValueError: limit이 음수인 경우. 음수 limit은 df.head로 전달되면 "마지막
-            행을 제외한 전부"를 반환해 예상치 못한 큰 프리뷰를 만들기 때문이다 (#190).
+    Raises:
+        ValueError: If limit is negative. Negative limit passed to df.head returns "last
+            all except last row", creating unexpectedly large preview (#190).
     """
     if limit < 0:
         raise ValueError(f"preview limit must be >= 0, got {limit}")

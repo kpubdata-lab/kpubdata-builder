@@ -1,4 +1,4 @@
-"""암호화된 사용자별 Provider credential 저장소."""
+"""Encrypted per-user Provider credential repository."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _MASK = "********"
 
 
 def normalize_provider(provider: str) -> str:
-    """Provider path key를 canonical 소문자로 검증한다."""
+    """Validate Provider path key as canonical lowercase."""
     normalized = provider.strip().lower()
     if not _PROVIDER_PATTERN.fullmatch(normalized):
         raise ValueError("provider must be a lowercase alphanumeric identifier")
@@ -26,22 +26,22 @@ def normalize_provider(provider: str) -> str:
 
 
 def associated_data(owner_id: str, provider: str) -> bytes:
-    """AES-GCM AAD. owner_id·provider 에 credential 을 바인딩한다.
+    """AES-GCM AAD. Bind credential to owner_id and provider.
 
-    백엔드(SQLite/CUBRID)와 무관하게 **동일한** 값이어야 암복호가 호환된다 —
-    두 저장소가 이 단일 함수를 공유한다.
+    Must be **identical** regardless of backend (SQLite/CUBRID) for encrypt/decrypt compatibility —
+    both stores share this single function.
     """
     return f"{owner_id}\0{provider}".encode()
 
 
 def validate_owner_id(owner_id: str) -> None:
-    """stable owner_id 필수(빈 값 거부, fail-closed)."""
+    """Stable owner_id required (empty values rejected, fail-closed)."""
     if not owner_id:
         raise ValueError("stable owner_id is required")
 
 
 class CredentialRepository(Protocol):
-    """owner_id + provider를 key로 하는 credential repository abstraction."""
+    """Credential repository abstraction keyed by owner_id + provider."""
 
     def get_metadata(self, owner_id: str, provider: str) -> CredentialMetadata: ...
 
@@ -55,7 +55,7 @@ class CredentialRepository(Protocol):
 
 
 class SQLiteCredentialRepository:
-    """ciphertext만 SQLite에 기록하는 credential repository."""
+    """Credential repository that records only ciphertext to SQLite."""
 
     def __init__(self, path: Path, cipher: CredentialCipher) -> None:
         self._path = path

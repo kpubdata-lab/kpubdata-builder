@@ -1,16 +1,17 @@
-"""CUBRID 기반 암호화 Provider credential 저장소 (ADR 0016).
+"""CUBRID-based encrypted Provider credential repository (ADR 0016).
 
-``SQLiteCredentialRepository`` 와 동일한 ``CredentialRepository`` Protocol 을 SQLAlchemy
-Core 로 구현한다. **ciphertext 만** 저장하며, AES-GCM AAD(``associated_data``)와 owner
-검증(``validate_owner_id``)은 store.py 의 단일 함수를 공유한다 — 백엔드가 달라도
-암복호 시맨틱이 동일하다.
+Implements same ``CredentialRepository`` Protocol as ``SQLiteCredentialRepository`` using SQLAlchemy
+Core. Stores **ciphertext only**; AES-GCM AAD (``associated_data``) and owner validation
+(``validate_owner_id``) share single function from store.py — encrypt/decrypt semantics identical
+regardless of backend.
 
-이 모듈은 ``_credential_repository_from_env`` 의 cubrid 분기에서만 import 된다 —
-``sqlalchemy`` 를 import 하므로 기본(sqlite) 경로에 optional 의존성을 끌어들이지 않는다.
+This module imported only in cubrid branch of ``_credential_repository_from_env`` —
+imports ``sqlalchemy``, so doesn't pull optional dependency into default (sqlite) path.
 
-동시성: 프로세스 전역 단일 Engine(커넥션 풀 + pool_pre_ping)을 받아 연산마다 짧은
-커넥션을 빌린다. put 은 dialect 독립적으로 단일 트랜잭션 내 delete+insert 로 upsert 한다.
-credential 쓰기는 사용자 액션이므로 (파생 인덱스와 달리) 예외를 삼키지 않고 전파한다.
+Concurrency: receives single process-wide Engine (connection pool + pool_pre_ping),
+borrows short connection per operation. put does upsert as delete+insert within single transaction,
+dialect-independent. credential write is user action (unlike derived index),
+    doesn't swallow exceptions.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 
 
 class CubridCredentialRepository:
-    """ciphertext 만 CUBRID 에 기록하는 credential repository (ADR 0016)."""
+    """Credential repository that records only ciphertext to CUBRID (ADR 0016)."""
 
     def __init__(self, engine: Engine, cipher: CredentialCipher) -> None:
         self._engine = engine
@@ -51,10 +52,10 @@ class CubridCredentialRepository:
             self._metadata,
             Column("owner_id", String(255), primary_key=True),
             Column("provider", String(64), primary_key=True),
-            # ciphertext 는 base64 텍스트(CLOB)로 저장한다. CUBRID 는 BLOB 에 NOT NULL 을
-            # 허용하지 않고(errno -1014), pycubrid 의 BLOB 바이너리 왕복이 str 로 돌아와
-            # 깨지므로, base64 문자열로 저장해 결정적 왕복 + NOT NULL 을 확보한다. SQLite
-            # 구현은 raw BLOB 을 쓰지만, Protocol 뒤라 저장 표현은 백엔드마다 달라도 된다.
+            # Ciphertext stored as base64 text (CLOB). CUBRID doesn't allow NOT NULL on BLOBs
+            # (errno -1014); pycubrid BLOB round-trip corrupts. Use base64 string for
+            # deterministic round-trip + NOT NULL. SQLite uses raw BLOB; backend storage
+            # representation can differ behind Protocol.
             Column("ciphertext", Text, nullable=False),
             Column("updated_at", String(40), nullable=False),
         )
@@ -106,7 +107,7 @@ class CubridCredentialRepository:
             credential, associated_data=associated_data(owner_id, provider)
         )
         ciphertext_b64 = base64.b64encode(ciphertext).decode("ascii")
-        # 단일 트랜잭션 내 delete+insert — dialect upsert 에 의존하지 않는다.
+        # delete+insert within single transaction — does not rely on dialect upsert.
         with self._engine.begin() as conn:
             conn.execute(
                 delete(self._table).where(

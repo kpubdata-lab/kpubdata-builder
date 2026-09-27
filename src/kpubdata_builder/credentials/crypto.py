@@ -1,7 +1,7 @@
-"""Credential 암호화 경계.
+"""Credential encryption boundary.
 
-저장소에는 nonce와 AES-GCM ciphertext/tag만 기록한다. master key는 저장소와
-분리된 환경설정에서 주입하며 이 모듈이나 DB에 기록하지 않는다.
+Store records only nonce and AES-GCM ciphertext/tag. Master key is injected from
+separate configuration, not recorded in this module or DB.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ _NONCE_BYTES = 12
 
 
 class CredentialCryptoError(ValueError):
-    """credential 암복호화 설정 또는 무결성 오류."""
+    """Credential encryption/decryption configuration or integrity error."""
 
 
 class CredentialCipher(Protocol):
-    """저장소가 사용하는 인증 암호 인터페이스."""
+    """Authentication cipher interface used by repository."""
 
     def encrypt(self, plaintext: str, *, associated_data: bytes) -> bytes: ...
 
@@ -30,7 +30,7 @@ class CredentialCipher(Protocol):
 
 
 class AesGcmCredentialCipher:
-    """256-bit AES-GCM credential 암호기."""
+    """256-bit AES-GCM credential cipher."""
 
     def __init__(self, master_key: bytes) -> None:
         if len(master_key) != 32:
@@ -39,7 +39,7 @@ class AesGcmCredentialCipher:
 
     @classmethod
     def from_base64(cls, encoded_key: str) -> AesGcmCredentialCipher:
-        """URL-safe base64 master key로 암호기를 생성한다."""
+        """Create cipher from URL-safe base64 master key."""
         try:
             key = base64.urlsafe_b64decode(encoded_key.encode("ascii"))
         except (UnicodeEncodeError, binascii.Error, ValueError) as exc:

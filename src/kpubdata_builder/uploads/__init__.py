@@ -1,7 +1,7 @@
-"""File source 업로드 저장소 (#498).
+"""File source upload store (#498).
 
-``POST /uploads`` 로 올라온 파일 bytes를 owner_id로 격리해 저장하고, BuildSpec의
-``kind="file"`` source가 참조하는 ``upload_id`` 로 조회한다.
+Store file bytes uploaded via ``POST /uploads`` isolated by owner_id, and query
+via ``upload_id`` referenced by BuildSpec ``kind="file"`` source.
 """
 
 from __future__ import annotations

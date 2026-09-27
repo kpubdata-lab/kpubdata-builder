@@ -1,13 +1,14 @@
-"""빌드 매니페스트용 상세 provenance 모델 (#12).
+"""Detailed provenance model for build manifest (#12).
 
-이 모듈은 소스별 출처 추적 정보(언제·어디서·어떤 파라미터로 가져왔고, 몇 건을
-받았으며, 데이터 체크섬은 무엇인지)를 담는 불변 값 객체와 빌더를 정의한다.
-체크섬은 정렬 키 기반 JSON 직렬화 후 SHA-256으로 계산해 재현 가능하다.
+This module holds immutable value objects for per-source provenance tracking
+info (when/where/with what params fetched,
+how many records received, what data checksums) and define builder.
+Checksums reproducible: sorted-key JSON serialization then SHA-256.
 
-주요 구성:
-    - SourceProvenance: 단일 소스 fetch 출처 스냅샷
-    - compute_data_checksum: 레코드의 재현 가능한 SHA-256 체크섬
-    - build_source_provenance: 원시 입력 → SourceProvenance
+Key components:
+    - SourceProvenance: Single source fetch provenance snapshot
+    - compute_data_checksum: Reproducible SHA-256 checksum of records
+    - build_source_provenance: Raw input → SourceProvenance
 """
 
 from __future__ import annotations
@@ -23,16 +24,16 @@ from ..spec import JsonValue
 
 @dataclass(frozen=True)
 class SourceProvenance:
-    """단일 소스 fetch에 대한 상세 출처 정보.
+    """Detailed provenance info for single source fetch.
 
-    속성:
-        provider: 데이터 제공자 식별자 (예: datago).
-        dataset: 데이터셋 식별자.
-        fetched_at: fetch 완료 시각 (UTC ISO 8601 문자열).
-        record_count: 가져온 레코드 수.
-        data_checksum: 데이터의 재현 가능한 체크섬 ("sha256:..." 형식).
-        api_version: 소스 API 버전. 알 수 없으면 "unknown".
-        params: fetch 요청 파라미터 스냅샷.
+    Attributes:
+        provider: Data provider identifier (e.g. datago).
+        dataset: Dataset identifier.
+        fetched_at: Fetch completion time (UTC ISO 8601 string).
+        record_count: Number of records fetched.
+        data_checksum: Reproducible data checksum ("sha256:..." format).
+        api_version: Source API version. "unknown" if unavailable.
+        params: Fetch request parameter snapshot.
     """
 
     provider: str
@@ -45,16 +46,16 @@ class SourceProvenance:
 
 
 def compute_data_checksum(records: Sequence[Mapping[str, JsonValue]]) -> str:
-    """레코드의 재현 가능한 SHA-256 체크섬을 계산한다.
+    """Calculate reproducible SHA-256 checksum of records.
 
-    정렬 키 기반 JSON 직렬화로 키 순서 차이를 제거하므로, 동일 데이터는 항상
-    동일 해시를 만든다.
+    Sorted-key JSON serialization removes key order differences, so identical data
+    always produces identical hash.
 
-    매개변수:
-        records: 체크섬을 계산할 레코드 시퀀스.
+    Args:
+        records: Record sequence to calculate checksum from.
 
-    반환값:
-        str: "sha256:" 접두사가 붙은 16진 해시.
+    Returns:
+        str: Hexadecimal hash with "sha256:" prefix.
     """
     # Sort records by their serialized form to make checksum order-independent
     serialized_records = sorted(
@@ -75,18 +76,18 @@ def build_source_provenance(
     params: Mapping[str, JsonValue],
     api_version: str = "unknown",
 ) -> SourceProvenance:
-    """원시 fetch 정보로부터 SourceProvenance를 생성한다.
+    """Create SourceProvenance from raw fetch info.
 
-    매개변수:
-        provider: 데이터 제공자 식별자.
-        dataset: 데이터셋 식별자.
-        fetched_at: fetch 완료 시각 (timezone-aware).
-        records: 가져온 레코드 (수와 체크섬 계산에 사용).
-        params: fetch 요청 파라미터.
-        api_version: 소스 API 버전. 생략 시 "unknown".
+    Args:
+        provider: Data provider identifier.
+        dataset: Dataset identifier.
+        fetched_at: Fetch completion time (timezone-aware).
+        records: Fetched records (used for count and checksum calculation).
+        params: Fetch request parameters.
+        api_version: Source API version. "unknown" if omitted.
 
-    반환값:
-        SourceProvenance: UTC ISO 시각과 체크섬이 채워진 출처 스냅샷.
+    Returns:
+        SourceProvenance: Provenance snapshot filled with UTC ISO time and checksum.
     """
     return SourceProvenance(
         provider=provider,
@@ -100,16 +101,16 @@ def build_source_provenance(
 
 
 def compute_inputs_fingerprint(provenance: Sequence[SourceProvenance]) -> str | None:
-    """빌드 입력 전체에 대한 재현성 지문을 계산한다 (#211).
+    """Calculate reproducibility fingerprint for entire build input (#211).
 
-    소스별 데이터 체크섬을 ``provider.dataset=sha256:...`` 형태로 정렬·결합해
-    한 번 더 해싱한다. 소스 순서와 무관하게, 같은 입력 집합이면 동일 지문이 나온다.
+    Sort and combine per-source data checksums as ``provider.dataset=sha256:...`` format,
+    then hash once more. Regardless of source order, same input set produces same fingerprint.
 
-    매개변수:
-        provenance: 소스별 출처 스냅샷 시퀀스.
+    Args:
+        provenance: Sequence of provenance snapshots per source.
 
-    반환값:
-        str | None: "sha256:" 접두사가 붙은 지문. provenance가 비면 None.
+    Returns:
+        str | None: Fingerprint with "sha256:" prefix. None if provenance empty.
     """
     if not provenance:
         return None

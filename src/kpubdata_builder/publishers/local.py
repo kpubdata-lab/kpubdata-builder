@@ -1,10 +1,11 @@
-"""로컬 파일시스템 게시 도구 (#28).
+"""Local filesystem publisher tool (#28).
 
-생성된 산출물 파일을 로컬 레지스트리 디렉터리로 복사하여 등록한다. 원격
-업로드 없이 Exporter/Publisher 경계를 검증할 수 있는 가장 단순한 publisher다.
+Copy generated artifact files to local registry directory for registration.
+Simplest publisher that validates Exporter/Publisher boundary without remote
+upload.
 
-주요 구성:
-    - LocalPublisher: 로컬 디렉터리 등록 publisher
+Key components:
+    - LocalPublisher: local directory registration publisher
 """
 
 from __future__ import annotations
@@ -18,19 +19,20 @@ from .base import BasePublisher, PublishResult
 
 
 class LocalPublisher(BasePublisher):
-    """산출물을 로컬 레지스트리 디렉터리로 복사·등록하는 publisher.
+    """Publisher copying/registering artifacts to local registry directory.
 
-    실패 정책:
-        - 디렉터리 artifact는 명시적으로 거부한다(`PublishError`). 디렉터리 레이아웃
-          게시는 별도 publisher의 책임이며, 여기서 무음 복사 형태로 지원하지 않는다.
-        - 서로 다른 경로지만 basename이 충돌하는 artifact는 거부한다 — 데이터 손실을
-          막기 위한 명시적 실패를 선택한다.
-        - copy 자체가 실패하면 `OSError`를 `PublishError`로 감싸 전파한다.
+    Failure policy:
+        - Reject directory artifacts explicitly (PublishError). Directory layout
+          publication is separate publisher responsibility, not supported as silent
+          copy here.
+        - Reject artifacts with different paths but conflicting basenames — choose
+          explicit failure to prevent data loss.
+        - Wrap copy failures: propagate OSError wrapped as PublishError.
     """
 
     @property
     def name(self) -> str:
-        """게시 도구 식별자."""
+        """Publisher tool identifier."""
         return "local"
 
     def publish(
@@ -40,19 +42,19 @@ class LocalPublisher(BasePublisher):
         destination: str,
         credentials: Mapping[str, str] | None = None,
     ) -> PublishResult:
-        """산출물 파일을 destination 디렉터리로 복사하고 결과를 반환한다.
+        """Copy artifact files to destination directory and return result.
 
-        매개변수:
-            artifact_paths: 복사할 산출물 파일 경로.
-            destination: 대상 로컬 디렉터리 경로.
+        Parameters:
+            artifact_paths: Artifact file paths to copy.
+            destination: Target local directory path.
 
-        반환값:
-            PublishResult: 게시 위치와 개수.
+        Returns:
+            PublishResult: Publish location and count.
 
-        예외:
-            PublishError: 디렉터리 artifact / basename 충돌 / 복사 I/O 실패.
+        Raises:
+            PublishError: Directory artifact / basename conflict / copy I/O failure.
         """
-        # 디렉터리 거부: shutil.copy2는 디렉터리를 다루지 못하므로 사전에 명확한 에러를 던진다.
+        # Reject directory: shutil.copy2 cannot handle directories, so pre-check with clear error.
         directories = [p for p in artifact_paths if p.is_dir()]
         if directories:
             offenders = ", ".join(str(p) for p in directories)
@@ -60,7 +62,8 @@ class LocalPublisher(BasePublisher):
                 f"directory artifacts are not supported by LocalPublisher: {offenders}"
             )
 
-        # basename 충돌 거부: flat copy 정책에서 같은 이름이면 한쪽이 묻히므로 명시적으로 실패.
+        # Reject basename collision: in flat copy policy, same name
+        # hides one side, so explicit fail.
         names: dict[str, Path] = {}
         for path in artifact_paths:
             existing = names.get(path.name)
