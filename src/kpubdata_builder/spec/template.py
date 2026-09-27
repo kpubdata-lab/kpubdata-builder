@@ -1,12 +1,13 @@
-"""재사용 가능한 빌드 템플릿 렌더링 (#14).
+"""Reusable build template rendering (#14).
 
-자주 쓰는 빌드 패턴을 `_template` 메타 블록 + ``{{ param }}`` 플레이스홀더를 가진
-YAML 템플릿으로 정의하고, 파라미터만 바꿔 완성된 BuildSpec YAML을 생성한다.
-외부 의존성 없이 stdlib 정규식 치환을 사용한다.
+Define frequently-used build patterns as YAML templates with a ``_template``
+metadata block and ``{{ param }}`` placeholders, then generate completed BuildSpec
+YAML by substituting only parameters. Uses stdlib regex substitution with no
+external dependencies.
 
-주요 함수:
-    - render_template: 템플릿 + 파라미터 → 완성된 YAML 문자열
-    - load_template: 템플릿을 렌더링해 BuildSpec으로 로드
+Main functions:
+    - render_template: template + parameters → completed YAML string
+    - load_template: render template then load as BuildSpec
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
 def _effective_params(template_meta: dict[str, object], params: dict[str, str]) -> dict[str, str]:
-    """선언된 파라미터 기본값에 사용자 파라미터를 덮어써 최종 값을 만든다."""
+    """Overlay user parameters on declared parameter defaults to produce final values."""
     effective: dict[str, str] = {}
     declared = template_meta.get("parameters", {})
     if isinstance(declared, dict):
@@ -37,9 +38,9 @@ def _effective_params(template_meta: dict[str, object], params: dict[str, str]) 
 
 
 def _render_template_data(path: str | Path, params: dict[str, str]) -> dict[str, object]:
-    """템플릿 YAML을 파라미터로 치환해 메모리 매핑으로 반환한다(내부 헬퍼).
+    """Substitute template YAML with parameters and return as in-memory mapping (internal helper).
 
-    렌더링된 YAML을 재파싱하지 않아 "1" → int 같은 타입 강제 변환을 방지한다.
+    Avoids re-parsing rendered YAML to prevent type coercion like "1" → int.
     """
     try:
         raw = Path(path).read_text(encoding="utf-8")
@@ -89,18 +90,18 @@ def _render_template_data(path: str | Path, params: dict[str, str]) -> dict[str,
 
 
 def render_template(path: str | Path, params: dict[str, str]) -> str:
-    """템플릿 YAML을 파라미터로 렌더링해 완성된 YAML 문자열을 반환한다.
+    """Render template YAML with parameters and return completed YAML string.
 
-    매개변수:
-        path: 템플릿 YAML 경로.
-        params: 플레이스홀더에 채울 파라미터(선언된 기본값을 덮어쓴다).
+    Args:
+        path: Template YAML file path.
+        params: Placeholder parameters (override declared defaults).
 
-    반환값:
-        str: `_template` 블록이 제거되고 플레이스홀더가 치환된 YAML.
+    Returns:
+        str: YAML with ``_template`` block removed and placeholders substituted.
 
-    예외:
-        SpecLoadError: 파일 로드 실패, 최상위가 매핑이 아님, 또는 값이 없는
-            플레이스홀더가 남은 경우.
+    Raises:
+        SpecLoadError: File load failed, top-level is not a mapping, or placeholders
+            with no values remain.
     """
     substituted = _render_template_data(path, params)
     # Re-dump so the output is valid YAML regardless of substitution values.
@@ -108,20 +109,20 @@ def render_template(path: str | Path, params: dict[str, str]) -> str:
 
 
 def load_template(path: str | Path, params: dict[str, str]) -> BuildSpec:
-    """템플릿을 렌더링한 뒤 BuildSpec으로 파싱한다.
+    """Render template then parse as BuildSpec.
 
-    매개변수:
-        path: 템플릿 YAML 경로.
-        params: 플레이스홀더 파라미터.
+    Args:
+        path: Template YAML file path.
+        params: Placeholder parameters.
 
-    반환값:
-        BuildSpec: 렌더링·파싱된 빌드 명세.
+    Returns:
+        BuildSpec: Rendered and parsed build specification.
 
-    예외:
-        SpecLoadError: 렌더링 또는 파싱 실패 시.
+    Raises:
+        SpecLoadError: Rendering or parsing failed.
     """
-    # 이미 치환된 메모리 구조를 직접 parse_spec에 전달해 YAML 재직렬화·재파싱으로 인한
-    # 타입 강제 변환("1" → int 등)을 방지한다 (#225).
+    # Pass already-substituted in-memory structure directly to parse_spec to avoid
+    # YAML re-serialization/re-parsing and type coercion ("1" → int, etc.) (#225).
     substituted = _render_template_data(path, params)
     return parse_spec(substituted)
 

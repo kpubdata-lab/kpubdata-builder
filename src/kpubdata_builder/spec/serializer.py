@@ -1,4 +1,4 @@
-"""Run별 재현성 감사를 위한 canonical BuildSpec 직렬화와 snapshot 저장."""
+"""Canonical BuildSpec serialization and snapshot saving for per-run reproducibility audit."""
 
 from __future__ import annotations
 
@@ -17,8 +17,9 @@ from .models import BuildSpec, JsonValue
 BUILDSPEC_SNAPSHOT_FILENAME = "buildspec.yaml"
 REDACTED_VALUE = "<redacted>"
 
-# BuildSpec에는 별도 credential 모델이 없고 자유 형식 JSON 매핑만 있다. 따라서
-# 부분 문자열 추측 대신, 실제로 credential 값에 쓰이는 명시적 키만 redaction한다.
+# BuildSpec has no separate credential model — only free-form JSON mapping.
+# Therefore, redact only explicit keys actually used in credential values,
+# not substring guessing.
 _SECRET_FIELD_NAMES = frozenset(
     {
         "access_token",
@@ -37,7 +38,8 @@ _SECRET_FIELD_NAMES = frozenset(
         "service_key",
         "servicekey",
         "token",
-        # 이 저장소가 실제 credential 환경변수/헤더 이름으로 사용하는 키.
+        # Keys actually used as credential environment variables/header names in
+        # this repository.
         "hf_token",
         "kaggle_key",
         "kpubdata_builder_api_key",
@@ -52,10 +54,11 @@ def _normalized_key(key: str) -> str:
 
 
 def _canonical_json(value: JsonValue) -> JsonValue:
-    """자유 형식 JSON 값을 key 순서와 secret redaction이 고정된 값으로 복사한다.
+    """Copy free-form JSON value with fixed key order and secret redaction.
 
-    ``params``/``auth`` 처럼 **키가 credential 이름일 수 있는** 자유 형식 매핑에만
-    쓴다. 키가 컬럼명인 구조적 매핑에는 :func:`_canonical_structure` 를 쓴다.
+    Use only for free-form mappings like ``params``/``auth`` where keys may be
+    credential names. For structural mappings where keys are column names, use
+    :func:`_canonical_structure`.
     """
     if isinstance(value, dict):
         result: dict[str, JsonValue] = {}
@@ -73,14 +76,15 @@ def _canonical_json(value: JsonValue) -> JsonValue:
 
 
 def _canonical_structure(value: JsonValue) -> JsonValue:
-    """구조적 매핑을 key 순서만 고정해 복사한다 — redaction은 하지 않는다 (#623).
+    """Copy structural mapping with fixed key order only — no redaction (#623).
 
-    ``schema.rename``/``read_as``/``column_null_tokens`` 등은 키가 **원천 컬럼명**
-    이다. 여기에 credential-key redaction을 걸면 ``token``/``api_key``/``password``
-    라는 이름의 컬럼이 ``"<redacted>"`` 로 치환된다. 그러면 스냅샷은 loader 가
-    기대하는 타입(list/dict)이 아니라 문자열을 담게 되어 다시 파싱되지 않고, 서로
-    다른 결측 표기를 선언한 spec 들이 같은 digest 를 갖게 되어 recipe 동일성도
-    무너진다. 컬럼명은 credential 이 아니다 — 값만 구조 그대로 옮긴다.
+    Fields like ``schema.rename``/``read_as``/``column_null_tokens`` have keys
+    that are source column names. Applying credential-key redaction would replace
+    columns named ``token``/``api_key``/``password`` with ``"<redacted>"``, causing
+    snapshots to hold strings instead of list/dict types expected by loaders,
+    preventing re-parsing. Specs declaring different null tokens would also get the
+    same digest, breaking recipe identity. Column names are not credentials—copy
+    values only, preserving structure.
     """
     if isinstance(value, dict):
         return {key: _canonical_structure(value[key]) for key in sorted(value)}
@@ -90,7 +94,7 @@ def _canonical_structure(value: JsonValue) -> JsonValue:
 
 
 def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
-    """BuildSpec을 필드 순서와 optional 기본값이 고정된 JSON 호환 매핑으로 만든다."""
+    """Convert BuildSpec to JSON-compatible mapping with fixed field order and optional defaults."""
     sources: list[JsonValue] = []
     for source in spec.sources:
         schema: JsonValue = None
@@ -100,16 +104,19 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
                 "dtypes": _canonical_structure(cast(JsonValue, source.schema.dtypes)),
                 "casts": _canonical_structure(cast(JsonValue, source.schema.casts)),
             }
-            # 나머지 Silver 변환 선언(#611 이후)은 **선언됐을 때만** 싣는다.
+            # Remaining Silver transformation declarations (post-#611) included
+            # only when declared.
             #
-            # 이들도 recipe의 일부다 — 빠지면 변환 규칙을 바꿔도 digest가 그대로라,
-            # R1의 "같은 recipe는 같은 output" 주장에서 정작 Silver를 만든 규칙이
-            # recipe 밖에 남는다. 그래서 선언된 값은 반드시 싣는다.
+            # They are part of the recipe too — if omitted, changing transformation
+            # rules leaves digest unchanged, breaking R1's "same recipe means same
+            # output" claim by leaving the rules that created Silver outside the
+            # recipe. So declared values must always be included.
             #
-            # 다만 비어 있을 때까지 키를 실으면, 이 필드들을 쓰지 않는 **기존 spec의
-            # digest가 전부 바뀐다.** digest는 manifest·BuildIndex·GET /datasets에
-            # 노출되는 recipe identity라, 업그레이드 시점에 "같은 recipe인가" 비교가
-            # 끊긴다. 쓰지 않는 기능 때문에 정체성이 바뀌어서는 안 된다.
+            # However, including keys even when empty changes digests of all
+            # existing specs that don't use these fields. Digest is recipe identity
+            # exposed in manifest/BuildIndex/GET /datasets, so upgrade-time
+            # comparisons of "is this the same recipe?" break. Identity must not
+            # change because of unused features.
             optional: dict[str, JsonValue] = {
                 "rename": _canonical_structure(cast(JsonValue, source.schema.rename)),
                 "read_as": _canonical_structure(cast(JsonValue, source.schema.read_as)),
@@ -146,12 +153,12 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
                 ],
             }
             schema.update({key: value for key, value in optional.items() if value})
-        # kind별로 유효한 field만 싣는다 (#498). loader의 _reject_foreign_fields가
-        # kind-foreign field의 "존재"만으로 거부하므로, 여기서 모든 kind의 field를
-        # 항상 함께 실으면 canonical snapshot 자체가 round-trip 불가능한 spec이
-        # 된다 — schema(#437)가 이미 쓰는 "관련 없으면 아예 emit하지 않는다" 패턴을
-        # 그대로 따른다. 기존 public_api-only spec에는 "kind": "public_api" 한
-        # 필드만 additive로 늘어난다.
+        # Include only fields valid for each kind (#498). Loader's
+        # _reject_foreign_fields rejects on mere presence of kind-foreign fields,
+        # so always including all kinds' fields makes canonical snapshot itself
+        # round-trip-unsafe — follow schema's (#437) existing pattern of "omit if
+        # unrelated". For existing public_api-only specs, only the "kind":
+        # "public_api" field grows additively.
         entry: dict[str, JsonValue] = {"kind": source.kind, "alias": source.alias, "schema": schema}
         if source.kind == "file":
             entry["upload_id"] = source.upload_id
@@ -166,12 +173,12 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
             entry["dataset"] = source.dataset
             entry["params"] = _canonical_json(source.params)
             if source.param_grid:
-                # 전개된 조합이 곧 어떤 데이터를 가져왔는지를 정한다 — recipe 의
-                # 일부다. 빠지면 grid 를 바꿔도 digest 가 그대로라 "같은 recipe 는
-                # 같은 output" 주장이 성립하지 않는다 (#613).
+                # Expanded combinations determine which data was fetched — part of
+                # the recipe. If omitted, changing grid leaves digest unchanged,
+                # breaking "same recipe means same output" (#613).
                 #
-                # 비었을 때는 싣지 않는다. 쓰지 않는 기능 때문에 기존 spec 의
-                # digest 가 움직이면 안 된다 (#640 과 같은 이유).
+                # Omit when empty. Existing specs' digests must not change because
+                # of unused features (same reason as #640).
                 entry["param_grid"] = _canonical_structure(
                     cast(
                         JsonValue,
@@ -252,16 +259,16 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
         "quality": quality,
         "composition": composition,
     }
-    # 선언됐을 때만 싣는다. 항상 실으면 attribution 을 쓰지 않는 기존 spec 의
-    # spec_digest 까지 전부 바뀐다 — recipe 신원이 이유 없이 갈라진다 (#640 과
-    # 같은 이유).
+    # Include only when declared. Always including changes spec_digest of all
+    # existing specs not using attribution — recipe identity diverges
+    # unmotivatedly (same reason as #640).
     if spec.attribution is not None:
         mapping["attribution"] = spec.attribution
     return mapping
 
 
 def serialize_spec(spec: BuildSpec) -> str:
-    """BuildSpec을 결정적인 canonical UTF-8 YAML 문자열로 직렬화한다."""
+    """Serialize BuildSpec to deterministic canonical UTF-8 YAML string."""
     return yaml.safe_dump(
         canonical_spec_mapping(spec),
         allow_unicode=True,
@@ -272,19 +279,19 @@ def serialize_spec(spec: BuildSpec) -> str:
 
 
 def serialize_spec_bytes(spec: BuildSpec) -> bytes:
-    """실제 snapshot에 기록할 canonical bytes를 반환한다."""
+    """Return canonical bytes to record in actual snapshot."""
     return serialize_spec(spec).encode("utf-8")
 
 
 def compute_spec_digest(payload: bytes) -> str:
-    """canonical snapshot bytes의 SHA-256 digest를 반환한다."""
+    """Return SHA-256 digest of canonical snapshot bytes."""
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def write_buildspec_snapshot(
     spec: BuildSpec, *, output_root: Path, run_id: str
 ) -> tuple[Path, str]:
-    """canonical BuildSpec을 run workspace에 원자적으로 기록하고 digest를 반환한다."""
+    """Atomically record canonical BuildSpec to run workspace and return digest."""
     validate_path_segment(run_id, field_name="run_id")
     run_dir = output_root / run_id
     ensure_within(output_root, run_dir, label="run directory")

@@ -133,16 +133,7 @@ class PublishApiService:
         destination: str | None = None,
         owner_id: str | None = None,
     ) -> ServiceResponse:
-        """GET /builds/{run_id}/publish/readiness (#491).
-
-        side-effect-free다 — Publisher를 호출하거나 원격 dataset을 만들지
-        않는다. ready == blockers가 하나도 없음으로 deterministic하게 계산한다.
-
-        ``owner_id`` 는 credential blocker 판정에만 쓴다. 이게 없으면 readiness
-        는 서버 환경변수만 보고 ready 를 답했다 — 정작 POST 는 요청자 기준으로
-        판정하므로, 폴백을 닫아 둔 배포에서 readiness 와 publish 가 서로 다른
-        답을 냈다.
-        """
+        """GET /builds/{run_id}/publish/readiness (#491)."""
         resolved_target, error = publish_service.resolve_target(target)
         if resolved_target is None:
             return ServiceResponse(
@@ -181,13 +172,7 @@ class PublishApiService:
         *,
         principal: Principal,
     ) -> ServiceResponse:
-        """POST /builds/{run_id}/publish (#491).
-
-        readiness와 완전히 같은 deterministic 검사를 다시 수행한다 — 호출자가
-        먼저 GET readiness를 불렀다고 신뢰하지 않는다(TOCTOU: readiness 통과
-        이후 상태가 바뀌어도 여기서 다시 막힌다). blocker가 하나라도 있으면
-        기존 Publisher를 절대 호출하지 않는다.
-        """
+        """POST /builds/{run_id}/publish (#491)."""
         if not isinstance(body, Mapping):
             return ServiceResponse(400, {"error": "request body must be a JSON object"})
 
@@ -393,11 +378,7 @@ class PublishApiService:
         *,
         principal: Principal,
     ) -> ServiceResponse:
-        """GET /builds/{run_id}/publish/receipt (#551).
-
-        unknown receipt로 영구 차단된 운영자가 상태를 조회한다. 소유자 불일치는
-        404로 응답해 다른 owner의 receipt 존재 자체를 노출하지 않는다.
-        """
+        """GET /builds/{run_id}/publish/receipt (#551)."""
         owner_key = principal.owner_id or principal.label
         receipt = self._publish_receipts.get_by_key(
             owner_key=owner_key, run_id=run_id, target=target, destination=destination
@@ -420,12 +401,7 @@ class PublishApiService:
         return ServiceResponse(200, body)
 
     def publish_audit_log(self, run_id: str, *, principal: Principal) -> ServiceResponse:
-        """GET /builds/{run_id}/publish/audit (#563).
-
-        reconcile/reset 감사 이력을 소유자 단위로 반환한다 — receipt가 이미
-        reset으로 삭제된 경우도 포함한다. 항목은 최소 필드(fingerprint/action/
-        actor/recorded_at)만 담고 credential·경로 원문은 없다.
-        """
+        """GET /builds/{run_id}/publish/audit (#563)."""
         owner_key = principal.owner_id or principal.label
         entries = self._publish_receipts.audit_entries(owner_key=owner_key, run_id=run_id)
         return ServiceResponse(
@@ -443,12 +419,7 @@ class PublishApiService:
         *,
         principal: Principal,
     ) -> ServiceResponse:
-        """POST /builds/{run_id}/publish/reconcile (#551).
-
-        unknown receipt를 원격 상태 확인으로 확정한다. 원격에 결과가 있으면
-        succeeded로 확정하고, 확실히 없으면 receipt를 reset해 재게시(새 claim)를
-        허용한다. 원격 확인 자체가 불가능하면 503 — 아무 것도 변경하지 않는다.
-        """
+        """POST /builds/{run_id}/publish/reconcile (#551)."""
         if not isinstance(body, Mapping):
             return ServiceResponse(400, {"error": "request body must be a JSON object"})
         unknown_fields = sorted(str(key) for key in body if key not in {"target", "destination"})

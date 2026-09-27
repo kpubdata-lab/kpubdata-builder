@@ -1,21 +1,24 @@
-"""Medallion 파이프라인 오케스트레이터 (#48).
+"""Medallion pipeline orchestrator (#48).
 
-BuildSpec의 각 소스를 Bronze → Silver → Gold 순서로 실행하고, 각 단계 산출물을
-실행 워크스페이스에 저장한 뒤 빌드 매니페스트를 기록한다.
+Execute each source in BuildSpec in Bronze → Silver → Gold order,
+persist each stage's outputs in the execution workspace, and record
+the build manifest.
 
-부분 성공 정책(BUILD_STATE.md): 소스 중 하나라도 실패하면 전체 상태는 failed로
-기록하되, 성공한 소스의 산출물과 실패 정보를 매니페스트에 함께 남긴다.
+Partial success policy (BUILD_STATE.md): If any source fails,
+the overall status is recorded as failed, but successful sources'
+outputs and failure information are preserved in the manifest.
 
-BuildSpec.composition이 있으면(#506) 모든 source가 Bronze/Silver/Gold를 마친 뒤,
-composition이 참조하는 두 source의 검증된 Silver를 join해 별도 결합 Gold
-dataset(gold/{composition.name}/)을 추가로 만든다. 기존 source별 독립 Gold는
-그대로 유지된다 — composition은 부가 산출물이지 대체가 아니다.
+If BuildSpec.composition exists (#506), after all sources complete
+Bronze/Silver/Gold, composition joins the validated Silver layers
+of its two referenced sources to create a separate combined Gold
+dataset (gold/{composition.name}/). Existing independent Gold per
+source is preserved — composition is additive, not a replacement.
 
-주요 구성:
-    - SourceBuildOutcome: 소스별 실행 결과
-    - CompositionOutcome: composition(join) 실행 결과 (#506)
-    - BuildResult: 전체 실행 결과
-    - run_build: 파이프라인 진입점
+Key components:
+    - SourceBuildOutcome: per-source execution result
+    - CompositionOutcome: composition (join) execution result (#506)
+    - BuildResult: overall execution result
+    - run_build: pipeline entry point
 """
 
 from __future__ import annotations
@@ -77,14 +80,14 @@ from .export import export_gold_package
 
 logger = logging.getLogger(__name__)
 
-# 소스를 동시에 실행할 최대 스레드 수. 소스별 fetch/stage는 대부분 네트워크 I/O로
-# 대기하므로 순차 실행 시 총 소요 시간이 소스 수에 비례해 늘어난다. 소스 수만큼
-# 무제한으로 스레드를 만들지 않도록 상한을 둔다 (#247).
+# Maximum threads for concurrent source execution. Per-source fetch/stage
+# are mostly network I/O waits, so sequential execution time grows linearly
+# with source count. Cap threads to avoid unlimited spawning (#247).
 _MAX_PARALLEL_SOURCES = 4
 
 
 def _dataset_card_license(spec: BuildSpec) -> str:
-    """canonical license를 우선하고 문자열인 legacy metadata 값을 보조로 사용한다."""
+    """Prioritize canonical license; use string legacy metadata as fallback."""
     if spec.license is not None:
         return spec.license
     legacy_license = spec.metadata.get("license")
@@ -92,44 +95,46 @@ def _dataset_card_license(spec: BuildSpec) -> str:
 
 
 def _gold_package_metadata(spec: BuildSpec) -> dict[str, str]:
-    """Gold 패키지에 실을 metadata — exporter가 보는 유일한 출처다 (#629).
+    """Gold package metadata — sole source seen by exporter (#629).
 
-    exporter는 ``ArtifactDataset.metadata`` 하나만 본다. 그 하나를 만드는 곳이
-    두 군데였기 때문에 둘이 갈렸고, 뒤가 앞을 덮었다. 이제 여기가 유일한
-    출처다.
+    The exporter sees only ``ArtifactDataset.metadata``. There were two
+    places building it, causing divergence; the second overwrote the first.
+    This is now the only authoritative source.
 
-    ``license``는 **선언됐을 때만** 키를 싣는다. 빈 문자열을 실으면 Kaggle
-    exporter의 기본값(CC-BY-4.0) 대신 빈 라이선스가 게시된다 — 선언하지 않은
-    것과 빈 값으로 선언한 것은 다르다.
+    ``license`` is included only when explicitly set. Omitting the key
+    allows exporter default (CC-BY-4.0) to apply on Kaggle — a declared
+    empty string differs from an omitted license.
     """
     metadata = {
         "title": spec.title,
         "description": spec.description,
-        # Kaggle exporter가 dataset-metadata.json의 id를 여기서 읽는다
-        # (#550 정합화 — spec.dataset_id가 곧 게시 destination 식별자).
+        # Kaggle exporter reads the dataset id from here
+        # (#550 standardization — spec.dataset_id is the publication destination).
         "dataset_id": spec.dataset_id,
     }
     if spec.attribution:
-        # 공공누리는 제1~4유형 모두 출처표시를 의무로 둔다. license 식별자만으로는
-        # 그 의무를 채울 수 없어서(기관명·유형·원문 URL 이 함께 있어야 한다)
-        # 별도 필드로 받아 카드까지 그대로 내려보낸다 (ADR 0018).
+        # Public Namuh (CCPL) types 1–4 all require attribution. License ID
+        # alone cannot satisfy that requirement (needs agency name, type,
+        # original URL together). Captured separately and passed to card
+        # as-is (ADR 0018).
         metadata["attribution"] = spec.attribution
     declared_license = _dataset_card_license(spec)
     if declared_license:
-        # 이것이 없으면 spec.license를 무엇으로 선언하든 Kaggle
-        # dataset-metadata.json은 항상 CC-BY-4.0이었다 — 같은 빌드가 dataset
-        # card와 Kaggle metadata에 서로 다른 라이선스를 적었다.
+        # Without this, Kaggle dataset-metadata.json always used CC-BY-4.0
+        # regardless of spec.license — the same build published different
+        # licenses in dataset card vs. Kaggle metadata.
         metadata["license"] = declared_license
     return metadata
 
 
 def _dataset_card_version(spec: BuildSpec) -> str:
-    """metadata.version이 문자열일 때만 사용한다.
+    """Use metadata.version only when it is a string.
 
-    metadata가 ``_parse_json_mapping``으로 임의 JSON 값을 허용하면서, null/숫자/list/dict
-    값을 그대로 ``str()``에 넘기면 ``"None"``·``"{...}"`` 같은 문자열이 dataset card에
-    그대로 노출된다. license와 동일하게 문자열이 아니면 빈 값으로 취급해
-    ``card.version or "unversioned"`` fallback이 정상 동작하게 한다.
+    metadata accepts arbitrary JSON via ``_parse_json_mapping``, so
+    passing null/number/list/dict through ``str()`` yields ``"None"``
+    or ``"{...}"`` strings leaked to dataset card. Like license, treat
+    non-strings as empty so ``card.version or "unversioned"`` fallback
+    works correctly.
     """
     version = spec.metadata.get("version")
     return version if isinstance(version, str) else ""
@@ -137,19 +142,20 @@ def _dataset_card_version(spec: BuildSpec) -> str:
 
 @dataclass(frozen=True)
 class SourceBuildOutcome:
-    """단일 소스에 대한 파이프라인 실행 결과.
+    """Single source pipeline execution result.
 
-    속성:
-        source_key: 소스 식별자.
-        status: "ok", "failed", 또는 "cancelled"(#481 — 안전한 stage 경계에서
-            협력적 취소가 관찰되어 다음 단계를 시작하지 않은 소스). "cancelled"는
-            실패가 아니므로 ``error``를 채우지 않으며, cancellation probe를 받는
-            async run에서만 만들어진다(동기 ``POST /build``/CLI는 probe가 없어
-            기존과 동일하게 ok/failed만 나온다).
-        stages_completed: 성공적으로 끝난 단계 이름 순서 (bronze/silver/gold).
-            취소된 소스도 취소 시점까지 실제로 완료한 단계만 담는다 — 실행되지
-            않은 단계를 성공으로 가장하지 않는다.
-        error: 실패 시 오류 메시지.
+    Attributes:
+        source_key: source identifier.
+        status: "ok", "failed", or "cancelled" (#481 — cancellation
+            observed at safe stage boundary; next stage not started).
+            "cancelled" is not a failure; error field left empty. Only
+            created by async runs with cancellation probe (sync
+            POST /build/CLI lacks probe, returns ok/failed only).
+        stages_completed: successfully completed stage names in order
+            (bronze/silver/gold). Cancelled sources also record actual
+            completed stages to cancellation point — incomplete stages
+            are not misrepresented as successful.
+        error: failure message if status is "failed".
     """
 
     source_key: str
@@ -160,17 +166,17 @@ class SourceBuildOutcome:
 
 @dataclass(frozen=True)
 class CompositionOutcome:
-    """composition(join) 실행 결과 (#506).
+    """Composition (join) execution result (#506).
 
-    SourceBuildOutcome과 별도 타입으로 둔다 — composition에는 bronze/silver/gold
-    stage 개념이 적용되지 않고(두 source의 Silver를 결합할 뿐), manifest에서도
-    "combined result"로 명확히 구분되어야 하기 때문이다.
+    Separate type from SourceBuildOutcome — composition has no bronze/
+    silver/gold stages (only combines two source Silvers), and must be
+    clearly distinguished as "combined result" in manifest.
 
-    속성:
-        name: 결합 Gold dataset 이름 (CompositionSpec.name).
-        status: "ok" | "failed"(join 자체 실행 실패) | "skipped"(참조한 source가
-            실패해 join을 시도조차 못함).
-        error: 실패/스킵 사유.
+    Attributes:
+        name: combined Gold dataset name (CompositionSpec.name).
+        status: "ok" | "failed" (join itself failed) | "skipped"
+            (referenced source failed; join not attempted).
+        error: failure/skip reason.
     """
 
     name: str
@@ -180,17 +186,18 @@ class CompositionOutcome:
 
 @dataclass(frozen=True)
 class BuildResult:
-    """전체 빌드 실행 결과.
+    """Overall build execution result.
 
-    속성:
-        context: 실행 컨텍스트.
-        status: 전체 상태 ("ok", "failed", 또는 "cancelled"). "cancelled"는
-            cancellation probe(#481)를 넘긴 호출자에서만 나온다 — 동기
-            ``POST /build``/CLI 경로는 기존대로 ok/failed만 반환한다.
-        outcomes: 소스별 실행 결과.
-        manifest_path: 기록된 빌드 매니페스트 경로.
-        composition_outcome: composition 실행 결과. BuildSpec.composition이
-            없으면 None(#506).
+    Attributes:
+        context: execution context.
+        status: overall status ("ok", "failed", or "cancelled").
+            "cancelled" only appears with cancellation probe (#481) —
+            sync POST /build/CLI paths return ok/failed only (traditional
+            behavior).
+        outcomes: per-source execution results.
+        manifest_path: persisted build manifest path.
+        composition_outcome: composition execution result. None if
+            BuildSpec.composition absent (#506).
     """
 
     context: BuildContext
@@ -202,18 +209,18 @@ class BuildResult:
 
 
 def _fetch_source_key(source: SourceRef) -> str:
-    """Bronze fetch identity 키를 반환한다 (kind별 canonical identity, #498)."""
+    """Return Bronze fetch identity (canonical per-kind identity, #498)."""
     provider, dataset = source_identity(source)
     return f"{provider}.{dataset}"
 
 
 def _output_source_key(source: SourceRef) -> str:
-    """워크스페이스/결과 기록에 사용할 사용자 노출 키를 반환한다."""
+    """Return user-facing output key for workspace/result recording."""
     return source.alias if source.alias else _fetch_source_key(source)
 
 
 def _retag_bronze_artifact(artifact: BronzeArtifact, *, output_key: str) -> BronzeArtifact:
-    """fetch provenance는 유지하고 산출물 경로용 source_key만 교체한다."""
+    """Keep fetch provenance; replace only source_key for output paths."""
     return BronzeArtifact(
         source_key=output_key,
         raw_records=artifact.raw_records,
@@ -224,12 +231,12 @@ def _retag_bronze_artifact(artifact: BronzeArtifact, *, output_key: str) -> Bron
 
 
 def _record_output_paths(outputs: list[str], *paths: Path) -> None:
-    """생성된 산출물 경로를 manifest outputs에 모두 기록한다."""
+    """Record all generated output paths to manifest outputs."""
     outputs.extend(str(path) for path in paths)
 
 
 def _quality_failure_messages(fail_results: Sequence[QualityCheckResult]) -> list[str]:
-    """FAIL로 판정된 QualityCheckResult를 DatasetValidationError 메시지로 변환한다 (#486)."""
+    """Convert FAIL-rated QualityCheckResult to DatasetValidationError message (#486)."""
     messages: list[str] = []
     for r in fail_results:
         location = f" @ {r.column}" if r.column else ""
@@ -242,7 +249,7 @@ def _quality_failure_messages(fail_results: Sequence[QualityCheckResult]) -> lis
 
 
 def _to_schema_drift_findings(findings: Sequence[DriftFinding]) -> tuple[SchemaDriftFinding, ...]:
-    """deterministic DriftFinding을 API/manifest용 SchemaDriftFinding으로 변환한다 (#486)."""
+    """Convert deterministic DriftFinding to API/manifest SchemaDriftFinding (#486)."""
     return tuple(
         SchemaDriftFinding(kind=f.kind, column=f.column, detail=f.detail) for f in findings
     )
@@ -253,15 +260,15 @@ def _execute_exports(
     artifact: ArtifactDataset,
     exports: tuple[ExportTarget, ...],
 ) -> list[Path]:
-    """내보내기 도구를 실행하고 생성된 파일 경로를 반환한다.
+    """Execute exporters and return generated file paths.
 
-    매개변수:
-        gold_dir: Gold 패키지 디렉터리.
-        artifact: 내보내기 도구가 소비할 조립 산출물.
-        exports: 내보내기 대상 목록.
+    Args:
+        gold_dir: Gold package directory.
+        artifact: assembled output for exporters to consume.
+        exports: list of export targets.
 
-    반환값:
-        생성된 파일 경로 목록.
+    Returns:
+        List of generated file paths.
 
     """
     output_paths: list[Path] = []
@@ -280,12 +287,13 @@ def _execute_exports(
 
 @dataclass(frozen=True)
 class _SourcePipelineResult:
-    """단일 소스 파이프라인 실행의 로컬 결과.
+    """Local result of single-source pipeline execution.
 
-    여러 소스를 스레드 풀로 동시에 실행할 때(#247), _run_source_pipeline이 공유
-    가변 상태(outputs/row_counts/schema_summaries/provenance)를 직접 건드리지
-    않고 자신의 결과만 반환하게 한다. 병합은 run_build에서 모든 스레드가 끝난
-    뒤 단일 스레드로 수행한다.
+    When running multiple sources concurrently via thread pool (#247),
+    _run_source_pipeline returns its results locally instead of directly
+    touching shared mutable state (outputs/row_counts/schema_summaries/
+    provenance). Merging happens in run_build after all threads complete,
+    in a single thread.
     """
 
     outcome: SourceBuildOutcome
@@ -314,30 +322,30 @@ def _run_source_pipeline(
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
 ) -> _SourcePipelineResult:
-    """한 소스를 Bronze → Silver → Gold로 실행하고 산출물을 저장한다.
+    """Execute one source Bronze → Silver → Gold and persist outputs.
 
-    공유 가변 컨테이너를 인자로 받는 대신 결과를 로컬로 모아 반환하므로,
-    여러 소스에 대해 동시에(스레드 풀에서) 안전하게 호출할 수 있다 (#247).
+    Instead of accepting shared mutable containers, collects results
+    locally and returns them, so this can be called concurrently (from
 
-    ``upload_repository``/``owner_id`` 는 ``kind="file"`` source에서만 쓰인다
-    (#498) — 업로드 소유권 확인에 필요한 stable principal id다.
+    ``upload_repository``/``owner_id`` are only used by ``kind="file"``
+    sources (#498) — stable principal id needed for upload ownership
 
-    ``recorder``는 이 소스의 실제 실행 boundary(fetch/stage/quality)에서만
-    structured event를 남긴다(#496) — 실행되지 않은 단계를 완료로 가장하지
-    않는다. 어느 단계까지 성공했는지는 기존 ``completed`` 목록으로 판정하고,
-    export처럼 ``completed``에 반영되지 않는 단계는 ``export_started`` 플래그로
-    별도 추적한다 — 기존 partial-run outcome 계약(``stages_completed``)은
-    바꾸지 않는다.
+    ``recorder`` emits structured events only at this source's actual
+    execution boundaries (fetch/stage/quality) (#496) — incomplete stages
+    are not misrepresented as done. Whether each stage completed is still
+    tracked via ``completed`` list; stages like export (reflected in
+    ``completed``) use ``export_started`` flag for separate tracking —
+    preserving existing partial-run outcome contract (``stages_completed``)
 
-    매개변수:
-        capture_silver: True면 검증을 통과한 SilverDataset을 결과에 함께 담는다.
-            composition(#506)이 이 소스를 참조할 때만 켜서, composition을 쓰지
-            않는 일반 빌드는 Silver 테이블을 불필요하게 오래 들고 있지 않는다.
-        cancellation: 협력적 취소 probe (#481). ``None``이면(동기 ``POST /build``,
-            CLI) 취소 점검 자체가 없어 기존 동작과 100% 동일하다. probe가 있으면
-            **stage 사이의 안전 경계**에서만 점검한다 — 실행 중인 stage를 중간에
-            끊지 않고(부분 object를 남기지 않는다), 직전 stage의 산출물이 디스크에
-            기록된 *뒤* 다음 stage를 새로 시작하기 *전*에만 확인한다.
+    Args:
+        capture_silver: if True, include validated SilverDataset in
+            result. Only enabled when composition (#506) references this
+            source; general builds without composition don't hold Silver
+        cancellation: cooperative cancellation probe (#481). If None
+            (sync POST /build, CLI), no cancellation check occurs —
+            100% identical to existing behavior. If probe present, check
+            **only at safe stage boundaries** — don't interrupt running
+            stage (no partial objects left), check only after prior
     """
     output_key = _output_source_key(source)
     completed: list[str] = []
@@ -345,30 +353,29 @@ def _run_source_pipeline(
     provenance_entry: SourceProvenance | None = None
     evaluated_row_count: int | None = None
     captured_silver: SilverDataset | None = None
-    # 예외가 발생해도(schema 검증 실패, quality FAIL 등) 이미 계산된 구조화된
-    # 결과는 살아남아 실패 outcome에도 실린다 (#486) — quality_results가 예외
-    # 때문에 사라지지 않는다.
+    # Structured Quality/Schema results survive exceptions (schema validation
+    # failure, quality FAIL, etc.) and outlive the source failure outcome
+    # (#486) — quality_results won't be lost due to exceptions below.
     quality_results: tuple[QualityCheckResult, ...] = ()
     quality_evaluated = False
     schema_drift: tuple[SchemaDriftFinding, ...] = ()
     drift_evaluation: tuple[DriftEvaluation, ...] = ()
-    # completed 목록에 없는 export 단계 진행 여부를 별도로 추적한다(#496) —
-    # export는 gold 완료 후 실행되지만 기존 outcome 모델(stages_completed)에는
-    # 반영되지 않는다. fetch_completed는 "bronze" not in completed만으로는
-    # source fetch 성공 여부와 bronze persist 성공 여부를 구분할 수 없어서
-    # (persist가 fetch *이후*에 실패할 수 있다) 별도로 추적한다.
+    # Track export stage progress separately from completed list (#496) —
+    # export runs after gold completion but isn't reflected in existing
+    # outcome model (stages_completed). fetch_completed separately tracks
+    # whether fetch succeeded vs. bronze persist success (persist can fail
+    # *after* fetch), distinguishing success boundaries.
     export_started = False
     fetch_completed = False
     try:
-        # 경계 0 (#481): 이 소스는 아직 아무 것도 시작하지 않았다. worker pool
-        # (#247, 최대 4개)에서 순서를 기다리다 이제 막 시작하려는 소스는 취소가
-        # 이미 요청됐다면 fetch 자체를 시작하지 않는다 — 취소 후 새 원격 I/O를
-        # 시작하지 않기 위해서다.
+        # Boundary 0 (#481): This source hasn't started yet. Waiting in worker
+        # pool (#247, max 4) and about to start; if cancellation was already
+        # requested, skip fetch itself — don't start new remote I/O after cancel.
         raise_if_cancelled(cancellation)
-        # kind(public_api/file/url)에 맞는 resolver로 원시 레코드를 가져온다
-        # (#498) — 이후 Silver/Gold는 kind를 전혀 알 필요가 없다. bronze stage와
-        # source fetch는 이 호출을 공유 경계로 삼는다(#496) — public_api/file/url
-        # 모두 동일한 event 어휘를 쓴다.
+        # Resolve raw records using resolver matching kind (public_api/file/url)
+        # (#498) — Silver/Gold need not know kind afterward. Bronze stage and
+        # source fetch share this call as execution boundary (#496) —
+        # public_api/file/url all use identical event vocabulary.
         recorder.stage_started(output_key, "bronze")
         recorder.source_fetch_started(output_key)
         bronze = build_bronze_artifact_for_source(
@@ -391,24 +398,24 @@ def _run_source_pipeline(
             metrics={"records": len(bronze.raw_records)},
         )
         _record_output_paths(outputs, bronze_paths.records_path, bronze_paths.metadata_path)
-        # bronze 성공 직후 확정한다: 이후 단계가 실패해도(부분 실패) provenance는 남는다
-        # (병렬화 이전 shared list에 즉시 append하던 것과 동일한 동작을 유지) (#247).
+        # Finalize immediately after bronze success: even if later stages fail
+        # (partial failure), provenance survives (same as pre-parallelization
+        # immediate append to shared list) (#247).
         provenance_provider, provenance_dataset = source_identity(source)
         provenance_entry = build_source_provenance(
             provider=provenance_provider,
             dataset=provenance_dataset,
             fetched_at=bronze.fetched_at,
             records=bronze.raw_records,
-            # bronze.fetch_params는 kind별 resolver가 이미 secret/path 없이
-            # 채운 값이다(#498) — file은 upload_id/format/encoding, url은 query
-            # string이 제거된 endpoint/method, public_api는 기존 source.params
-            # 그대로다.
+            # bronze.fetch_params is already scrubbed of secret/path by
+            # kind-specific resolver (#498) — file has upload_id/format/
+            # encoding, url has endpoint/method without query string,
+            # public_api has original source.params unchanged.
             params=bronze.fetch_params,
         )
 
-        # 경계 1 (#481): Bronze 산출물이 디스크에 기록되고 provenance까지 확정된
-        # 뒤다. 여기서 취소가 관찰되면 Bronze는 그대로 보존되고 Silver는 아예
-        # 시작하지 않는다.
+        # Boundary 1 (#481): Bronze outputs written to disk and provenance
+        # finalized. Cancellation observed here preserves Bronze, skips Silver.
         raise_if_cancelled(cancellation)
 
         recorder.stage_started(output_key, "silver")
@@ -429,9 +436,9 @@ def _run_source_pipeline(
         )
         evaluated_row_count = silver.statistics.row_count
 
-        # 구조화된 Quality/Schema 평가 (#486). Preview와 동일한 공통 evaluator를
-        # 쓴다 — 예외가 아래에서 발생해도 quality_results는 이미 채워져 있으므로
-        # 실패 outcome의 manifest에도 보존된다.
+        # Structured Quality/Schema evaluation (#486). Uses same common
+        # evaluator as Preview — if exception occurs below, quality_results
+        # already filled, surviving in failure outcome (#486).
         quality_results = evaluate_quality(
             silver,
             context.spec.quality,
@@ -440,21 +447,23 @@ def _run_source_pipeline(
             column_dtypes=column_dtypes,
         )
         quality_evaluated = True
-        # quality checkpoint event(#496)는 #486 판정 결과를 그대로 반영한다 —
-        # 이 아래에서 FAIL로 소스가 실패해도(quality gate) 평가가 실제로
-        # 일어났다는 사실과 그 결과는 이미 기록된다(partial run 가시성).
+        # Quality checkpoint event (#496) reflects #486 verdict — even if FAIL
+        # causes source failure below, evaluation actually occurred and results
+        # already recorded (partial-run visibility).
         recorder.quality_evaluated(output_key, quality_results)
 
-        # 검증에 실패한 Silver 데이터셋이 Gold/패키징으로 흘러가지 않도록 소스를
-        # 실패 처리한다. 검증은 더 이상 권고용이 아니라 게이트다 (#189). 기존 오류
-        # 계약(메시지 형식)은 하위 호환을 위해 그대로 유지한다.
+        # Fail source if Silver validation failed. Validation is now a gate,
+        # not advisory (#189). Existing error message contract preserved for
+        # backward compatibility.
         if not silver.validation.ok:
-            # ValidationProblem 객체를 DatasetValidationError가 기대하는 문자열 목록으로 변환 (#261)
+            # Convert ValidationProblem objects to string list expected by
+            # DatasetValidationError (#261)
             problem_messages = [problem.message for problem in silver.validation.problems]
             raise DatasetValidationError(problem_messages)
 
-        # PII 스캔 게이트 (#441, QG-1). 원본 값은 결과/로그에 담지 않는다.
-        # block: 검출 시 빌드 실패, warn: manifest/로그 경고, allow: 통과.
+        # PII scan gate (#441, QG-1). Original values not included in
+        # results/logs. block: fail on detection, warn: manifest/log warning,
+        # allow: pass through.
         if context.spec.pii is not None:
             findings = [
                 f for f in scan_pii(silver.table) if f.column not in context.spec.pii.allow_columns
@@ -470,9 +479,9 @@ def _run_source_pipeline(
                         ", ".join(f"{f.kind}@{f.column}({f.count})" for f in findings),
                     )
 
-        # 품질 WARN/FAIL 게이트 (#446, #486). WARN은 로그만 남기고 계속 진행하며,
-        # FAIL은 Gold 진입 전에 소스를 실패 처리한다. quality_results는 이미 위에서
-        # 채워졌으므로 여기서 raise해도 manifest에 보존된다.
+        # Quality WARN/FAIL gate (#446, #486). WARN logs only, continues;
+        # FAIL halts source before Gold entry. quality_results already filled
+        # above, survives even if raise here.
         fail_results = [r for r in quality_results if r.status == "fail"]
         if fail_results:
             raise DatasetValidationError(_quality_failure_messages(fail_results))
@@ -537,8 +546,9 @@ def _run_source_pipeline(
             message="Silver written",
             metrics={"row_count": evaluated_row_count},
         )
-        # Silver 게이트(schema/PII/quality)를 모두 통과한 시점에만 담는다 — composition(#506)이
-        # 이 값을 join에 그대로 쓰므로, 검증 실패한 데이터가 흘러들면 안 된다.
+        # Capture Silver only after passing all gates (schema/PII/quality) —
+        # composition (#506) uses this value directly for join, so validated
+        # data only.
         if capture_silver:
             captured_silver = silver
         _record_output_paths(
@@ -550,8 +560,8 @@ def _run_source_pipeline(
             silver_paths.validation_path,
         )
 
-        # 경계 2 (#481): Silver 산출물이 모두 기록된 뒤다. 취소가 관찰되면
-        # Bronze+Silver를 보존하고 Gold는 시작하지 않는다.
+        # Boundary 2 (#481): All Silver outputs written. Cancellation observed
+        # preserves Bronze+Silver, skips Gold.
         raise_if_cancelled(cancellation)
 
         recorder.stage_started(output_key, "gold")
@@ -576,13 +586,13 @@ def _run_source_pipeline(
             *gold_paths.splits_paths.values(),
         )
 
-        # 경계 3 (#481): Gold 산출물이 기록된 뒤, export를 시작하기 전이다.
-        # 이 소스의 medallion 단계는 모두 끝났고 export만 남았다.
+        # Boundary 3 (#481): Gold outputs written, before export starts.
+        # All medallion stages complete; export remains.
         raise_if_cancelled(cancellation)
 
-        # export 단계(#496): SourceBuildOutcome.stages_completed에는 반영되지
-        # 않는 기존 모델을 유지하되(#488 stage API와 동일 계약), 실제 export
-        # 실행 boundary에서 started/completed/failed를 별도로 기록한다.
+        # export stage (#496): SourceBuildOutcome.stages_completed unchanged
+        # (existing model per #488 stage API), but actual export execution
+        # boundary records started/completed/failed separately.
         export_started = True
         recorder.stage_started(output_key, "export")
         export_paths = export_gold_package(gold, output_dir=gold_paths.gold_dir)
@@ -603,12 +613,11 @@ def _run_source_pipeline(
         _ = card_path.write_text(render_dataset_card(card), encoding="utf-8")
         _record_output_paths(outputs, card_path)
 
-        # BuildSpec.exports는 위 export_gold_package가 이미 전부 실행했다 —
-        # package.export_plan.targets가 곧 spec.exports이기 때문이다 (#629).
-        # 예전에는 같은 타깃을 같은 디렉터리에 한 번 더 썼고, 두 번째가 만든
-        # ArtifactDataset에는 schema가 없어서 게시되는 산출물에서 schema가
-        # 사라졌다. manifest outputs에는 같은 경로가 중복됐고 file_count는 두
-        # 배였다.
+        # BuildSpec.exports fully executed above by export_gold_package —
+        # package.export_plan.targets is spec.exports (#629). Previously,
+        # same target used twice in same dir; second's ArtifactDataset
+        # lacked schema, losing it in published outputs. manifest outputs
+        # duplicated paths, file_count doubled.
         recorder.stage_completed(
             output_key,
             "export",
@@ -634,11 +643,11 @@ def _run_source_pipeline(
             silver=captured_silver,
         )
     except BuildCancelled:
-        # 협력적 취소는 실패가 아니다 (#481) — 아래 공통 except보다 먼저 잡아
-        # "이 소스 실패"로 해석되지 않게 한다. 실패 event(stage_failed/
-        # source_fetch_failed)를 남기지 않고, error도 채우지 않는다. 이미 완료된
-        # 단계(completed)와 그 산출물(outputs)은 그대로 보존해 partial manifest에
-        # 실린다 — 실행되지 않은 단계는 어디에도 성공으로 기록되지 않는다.
+        # Cooperative cancellation is not failure (#481) — caught before
+        # common except below so not interpreted as "this source failed". No
+        # failure events (stage_failed/source_fetch_failed), error field empty.
+        # Already completed stages (completed) and outputs preserved in partial
+        # manifest — unstarted stages never recorded as successful.
         return _SourcePipelineResult(
             outcome=SourceBuildOutcome(
                 source_key=output_key,
@@ -654,15 +663,14 @@ def _run_source_pipeline(
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
         )
-    except Exception as exc:  # stage 실패를 결과로 변환하여 매니페스트에 기록
-        # 검증 오류(ValidationError, DatasetValidationError)는 파일시스템 경로를
-        # 포함하지 않으므로 메시지를 그대로 전달한다. IngestionError(#498)도
-        # 마찬가지로 안전한 메시지만 담도록 설계되어 있다(raw 응답 본문/내부
-        # 스택 없음) — SSRF 차단·오버사이즈·손상 파일 사유를 사용자가 바로
-        # 확인할 수 있어야 한다.
-        # ExportError/ManifestError 등 다른 BuildError 하위 예외는 목적지 경로
-        # 같은 내부 정보를 메시지에 포함할 수 있으므로, 상세 내용은 서버 경고로
-        # 기록하고 클라이언트에는 일반 메시지만 반환한다 (#225).
+    except Exception as exc:  # Convert stage failure to result for manifest
+        # ValidationError/DatasetValidationError include no filesystem paths,
+        # so message passed as-is. IngestionError (#498) also designed to
+        # carry only safe messages (no raw response body/internal stack) —
+        # SSRF block/oversize/corrupt file reasons visible to user immediately.
+        # Other BuildError subclasses (ExportError/ManifestError) may include
+        # internal info like destination paths, so log detailed message to
+        # server warning, return generic message to client (#225).
         if isinstance(exc, (ValidationError, DatasetValidationError, IngestionError)):
             error_msg = str(exc)
         else:
@@ -673,10 +681,10 @@ def _run_source_pipeline(
                 exc_info=exc,
             )
             error_msg = f"pipeline failed for source {output_key!r}"
-        # 실제로 도달한 마지막 boundary 기준으로 실패 event를 남긴다(#496) —
-        # completed 목록이 이미 "어느 stage까지 성공했는지"의 정본이므로, 그
-        # 다음 stage가 실패한 stage다. 시도조차 되지 않은 stage는 실패로
-        # 가장하지 않는다(이벤트를 아예 남기지 않는다).
+        # Record failure event per last boundary actually reached (#496) —
+        # completed list is authoritative for "how far did each stage get",
+        # so next stage is the failed one. Unstarted stages don't record as
+        # failures (no events at all).
         if "bronze" not in completed:
             if not fetch_completed:
                 recorder.source_fetch_failed(output_key, message=error_msg)
@@ -707,9 +715,10 @@ def _run_source_pipeline(
 
 @dataclass(frozen=True)
 class _CompositionPipelineResult:
-    """composition 실행의 로컬 결과 (#506). _SourcePipelineResult와 동일한 이유로
-    분리한다 — 모든 source 스레드가 끝난 뒤 단일 스레드에서만 실행되지만, 반환값을
-    바로 매니페스트 병합 루프에 꽂을 수 있게 같은 모양을 유지한다."""
+    """Local result of composition execution (#506). Separate from
+    _SourcePipelineResult for same reason — runs single-threaded after all
+    sources complete, but return shape preserved for same manifest merge loop.
+    """
 
     outcome: CompositionOutcome
     output_paths: tuple[str, ...] = ()
@@ -724,14 +733,15 @@ def _run_composition(
     silver_by_key: Mapping[str, SilverDataset],
     context: BuildContext,
 ) -> _CompositionPipelineResult:
-    """composition(join)을 실행하고 결합 Gold 산출물을 저장한다 (#506).
+    """Execute composition (join) and persist combined Gold outputs (#506).
 
-    join key 존재/dtype 호환성 검증과 duplicate-key explosion 감지는 여기서
-    호출하는 ``build_composed_gold_package``(빌드 파이프라인의 런타임 검증
-    게이트)가 담당한다 — spec.validator는 alias 참조 같은 구조만 검증한다.
+    Join key existence/dtype compatibility validation and duplicate-key
+    explosion detection are handled by ``build_composed_gold_package``
+    (runtime validation gate in build pipeline) — spec.validator only
+    checks structural alias references.
 
-    참조된 source 중 하나라도 Silver를 통과하지 못했으면(``silver_by_key``에
-    없으면) join을 시도하지 않고 "skipped"로 반환한다.
+    If any referenced source failed to pass Silver, join is not attempted
+    and returns "skipped".
     """
     join = composition.join
     missing = [alias for alias in (join.left, join.right) if alias not in silver_by_key]
@@ -762,8 +772,9 @@ def _run_composition(
         )
 
     if stats.duplicate_key_warning:
-        # on_duplicate_key="fail"이었다면 build_composed_gold_package가 이미 CompositionError를
-        # 던졌으므로 여기 도달했다는 건 severity="warn"(기본)이라는 뜻이다 — 로그만 남기고 진행.
+        # If on_duplicate_key="fail" was set, build_composed_gold_package
+        # would have raised CompositionError, so reaching here means
+        # severity="warn" (default) — log only, continue.
         logger.warning(
             "composition %r: duplicate join keys on both sides may have multiplied rows "
             "(left=%s distinct_keys=%d/%d rows, right=%s distinct_keys=%d/%d rows, "
@@ -805,7 +816,7 @@ def _run_composition(
     _ = card_path.write_text(render_dataset_card(card), encoding="utf-8")
     _record_output_paths(outputs, card_path)
 
-    # 단일 소스 경로와 같은 이유로 여기서도 다시 export하지 않는다 (#629).
+    # Single-source path doesn't export again (#629).
 
     schema_summary = build_schema_summary(
         (col.name, col.dtype, col.nullable) for col in combined_schema.columns
@@ -846,70 +857,68 @@ def run_build(
     event_store: BuildEventStore | None = None,
     cancellation: CancellationProbe | None = None,
 ) -> BuildResult:
-    """BuildSpec을 Medallion 파이프라인으로 실행한다.
+    """Execute BuildSpec through Medallion pipeline.
 
-    매개변수:
-        spec: 실행할 빌드 명세.
-        client: Bronze fetch에 사용할 kpubdata 호환 클라이언트.
-        output_root: 실행 워크스페이스 루트.
-        run_id: 실행 식별자. 생략 시 타임스탬프 기반으로 생성.
-        created_by: 빌드를 요청한 principal의 display/legacy 라벨(#388).
-        owner_id: ``kind="file"`` source resolver가 업로드 소유권 확인에
-            쓰는 canonical stable owner identity(#505/#498) — "이 run이
-            참조하는 업로드의 소유자"다. sync ``/build``는 언제나 제출
-            principal 본인이 곧 그 소유자이므로 그대로 재사용해도 안전하지만,
-            async ``/builds``는 지금까지처럼 ``None``으로 남겨 file-backed
-            source resolver에 stable identity를 노출하지 않는다(#498 async
-            limitation, 그대로 유지).
-        manifest_owner_id: persisted run manifest(및 그 manifest를 그대로
-            읽어 채우는 BuildIndex, #505 SSOT)에 기록할 canonical stable
-            owner identity — "이 run을 제출한 principal"이다. 생략(``None``)
-            하면 ``owner_id``를 그대로 쓴다(기존 sync 호출자와 100% 동일하게
-            동작). async 호출자는 file resolver용 ``owner_id``는 ``None``으로
-            둔 채 이 필드만 채워, "누가 이 run을 제출했는가"(persisted
-            ownership)와 "file resolver가 무엇을 소유권 확인에 쓸 수
-            있는가"를 서로 다른 값으로 분리한다.
-        upload_repository: ``kind="file"`` source의 업로드 content를 조회할
-            저장소 (#498). None이면 file source가 있는 build는 실패한다.
-        event_store: structured run event timeline 저장소 (#496). None이면
-            (CLI 직접 호출 등) event를 전혀 기록하지 않는다 — 기존 호출자는
-            아무 것도 바꾸지 않아도 된다.
-        cancellation: 협력적 취소 probe (#481). None이면(동기 ``POST /build``,
-            CLI) 취소 점검이 전혀 일어나지 않아 기존 동작과 100% 동일하다.
-            probe가 있으면 각 소스의 stage 경계와, 모든 소스가 끝난 뒤
-            composition/manifest finalize 직전의 마지막 경계(``commit()``)에서
-            점검한다. ``commit()``이 성공하면 그 시점부터는 정상 종료로
-            확정되어 이후 취소 요청은 거절된다 — 성공 manifest를 쓴 run이
-            나중에 cancelled로 뒤집히는 모순을 구조적으로 막는다.
+    Args:
+        spec: BuildSpec to execute.
+        client: kpubdata-compatible client for Bronze fetch.
+        output_root: execution workspace root.
+        run_id: execution identifier. Auto-generated from timestamp if omitted.
+        created_by: display/legacy label of principal requesting build (#388).
+        owner_id: canonical stable owner identity for ``kind="file"`` source
+            resolver's upload ownership verification (#505/#498) — "owner of
+            uploads this run references". Sync POST /build always uses
+            submitting principal as owner; async /builds omits this for now
+            (None), not exposing stable identity to file resolver (#498 async
+            limitation, preserved).
+        manifest_owner_id: canonical stable owner identity recorded in persisted
+            run manifest (and BuildIndex reading that manifest, #505 SSOT) —
+            "who submitted this run". Omit (None) to use owner_id (100% same
+            as existing sync callers). Async callers can omit file resolver's
+            owner_id (None) while filling this separately: "who submitted"
+            (persisted ownership) separate from "what can file resolver verify"
+            (different values).
+        upload_repository: content repository for ``kind="file"`` sources (#498).
+            None fails builds with file sources.
+        event_store: structured run event timeline repository (#496). None
+            (CLI direct call) records no events — existing callers need no changes.
+        cancellation: cooperative cancellation probe (#481). None (sync POST /build,
+            CLI) skips cancellation checks entirely — 100% same as existing behavior.
+            With probe, check at stage boundaries and after all sources complete,
+            before composition/manifest finalize (``commit()``). Success of
+            ``commit()`` locks run as successful — later cancellation rejected,
+            structurally preventing success manifest from later inverting to
+            cancelled.
 
-    반환값:
-        BuildResult: 전체 상태("ok"/"failed"/"cancelled"), 소스별 결과,
-        매니페스트 경로. "cancelled"는 cancellation probe가 있는 호출자에서만
-        나온다.
+    Returns:
+        BuildResult: overall status (ok/failed/cancelled), per-source results,
+        manifest path. "cancelled" only with cancellation probe caller.
 
-    예외:
-        ValidationError: spec이 최소 실행 요건을 만족하지 못한 경우.
-        ValueError: run_id에 안전하지 않은 문자가 포함된 경우.
+    Raises:
+        ValidationError: spec fails minimum execution requirements.
+        ValueError: run_id contains unsafe characters.
     """
     effective_manifest_owner_id = owner_id if manifest_owner_id is None else manifest_owner_id
-    # 진입점에서 spec을 먼저 검증한다(fail-fast). 검증을 호출자에게만 맡기면 잘못된
-    # spec이 단계 깊숙이 들어가 cryptic 에러로 터지므로, 단계 진입 전에 막는다 (#212).
+    # Validate spec first at entry point (fail-fast). Delegating to caller
+    # risks malformed spec deeply entering stages with cryptic errors;
+    # block before stage entry (#212).
     validate_spec(spec)
     context = BuildContext.create(spec, output_root=output_root, run_id=run_id)
-    # run_id가 확정된(BuildContext.create가 생략 시 생성) 직후에만 recorder를
-    # 만들 수 있다 — "started"는 실제로 실행이 시작되는 이 지점의 실제 semantics다
-    # (#496). validate_spec 실패는 run_id/워크스페이스가 아예 없으므로 event를
-    # 남기지 않는다 — 기존에도 그 실패에 대해서는 워크스페이스가 만들어지지 않는다.
+    # Recorder created only after run_id finalized (BuildContext.create
+    # generates if omitted) — "started" is true semantic here (#496).
+    # validate_spec failure: no run_id/workspace, no event recorded.
+    # Existing behavior: validation failure → no workspace created.
     recorder = BuildEventRecorder(event_store, run_id=context.run_id)
     recorder.run_started()
-    # 검증된 실제 실행 입력을 pipeline보다 먼저 고정한다. 이후 source 단계가 실패해도
-    # run 감사 정보는 남고, validation 실패 입력은 snapshot으로 기록되지 않는다.
+    # Lock validated actual execution inputs before pipeline. Later source
+    # failures still preserve run audit info; validation input failures
+    # don't snapshot (no workspace created).
     _, spec_digest = write_buildspec_snapshot(
         spec, output_root=context.output_root, run_id=context.run_id
     )
 
-    # composition(#506)이 참조하는 alias의 Silver만 스레드 결과에 담아 살려둔다 —
-    # composition을 쓰지 않는 빌드는 기존과 동일하게 아무 것도 추가로 보존하지 않는다.
+    # composition (#506) referenced aliases' Silver only survives thread results
+    # — non-composition builds unchanged, no extra preservation.
     composition_aliases: frozenset[str] = (
         frozenset({spec.composition.join.left, spec.composition.join.right})
         if spec.composition is not None
@@ -929,17 +938,18 @@ def run_build(
             cancellation=cancellation,
         )
 
-    # 소스별 fetch/stage는 대부분 네트워크 I/O 대기이므로 스레드 풀로 동시에 실행해
-    # 총 소요 시간을 줄인다 (#247). executor.map은 완료 순서가 아니라 spec.sources
-    # 순서로 결과를 반환하므로 이후 병합 결과(매니페스트)가 결정적으로 유지된다.
+    # Per-source fetch/stage mostly waits on network I/O, so concurrent
+    # execution via thread pool reduces total time (#247). executor.map
+    # returns results in spec.sources order, not completion order, so
+    # downstream merge (manifest) stays deterministic.
     max_workers = min(len(spec.sources), _MAX_PARALLEL_SOURCES)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(_worker, spec.sources))
 
     outcomes = tuple(result.outcome for result in results)
 
-    # 모든 소스 실행이 끝난 뒤 단일 스레드에서 병합한다 — 스레드 간 공유 가변
-    # 상태가 없으므로 이 단계는 병렬화 이전과 동일하게 안전하다 (#247).
+    # After all source execution, merge single-threaded — no shared mutable
+    # state across threads, so this stage is as safe as pre-parallelization (#247).
     outputs: list[str] = []
     row_counts: dict[str, int] = {}
     schema_summaries: dict[str, SchemaSummary] = {}
@@ -956,10 +966,10 @@ def run_build(
             schema_summaries[result.outcome.source_key] = result.schema_summary
         if result.provenance_entry is not None:
             provenance.append(result.provenance_entry)
-        # quality_evaluated는 evaluate_quality가 실제로 호출됐는지를 나타낸다(#486) —
-        # FAIL로 소스가 실패해도 결과는 보존된다. bronze/silver 자체가 실패해
-        # evaluate_quality에 도달하지 못한 소스는 매니페스트에 키가 생기지 않는다
-        # (0건 평가와 "평가 자체가 없었음"을 구분한다).
+        # quality_evaluated tracks whether evaluate_quality was actually called
+        # (#486) — even if FAIL fails source, result survives. Bronze/Silver
+        # failure never reaches evaluate_quality, so manifest lacks that key
+        # (distinguish "0 checks" from "no evaluation").
         if result.quality_evaluated:
             quality_results[result.outcome.source_key] = result.quality_results
         if result.schema_drift:
@@ -972,28 +982,27 @@ def run_build(
         if result.silver is not None:
             silver_by_key[result.outcome.source_key] = result.silver
 
-    # ---- 마지막 안전 경계 (#481) --------------------------------------------
+    # ---- Final safety boundary (#481)-----------------------------------------
     #
-    # 여기가 이 run의 "point of no return"이다. 두 가지 경우에 취소로 확정한다.
+    # This run's "point of no return". Cancellation is final in two cases:
     #
-    #   (a) 어떤 소스든 stage 경계에서 이미 취소를 관찰한 경우.
-    #   (b) 모든 소스가 끝났지만 composition/manifest finalize에 진입하기 직전에
-    #       취소 요청이 도착한 경우 — ``commit()``이 False를 반환한다.
+    #   (a) Any source already observed cancellation at stage boundary.
+    #   (b) All sources complete, but cancellation arrives before entering
+    #       composition/manifest finalize — ``commit()`` returns False.
     #
-    # ``commit()``이 True를 반환하면 그 시점부터 취소 요청은 거절되므로
-    # (``CancellationProbe`` 계약), 아래 정상 경로가 성공/실패 manifest를 쓰는
-    # 동안 job 상태가 cancelling으로 바뀌는 일이 없다 — "성공 manifest를 쓴 run이
-    # cancelled로 뒤집히는" 모순과 "cancelling -> succeeded" 전이를 구조적으로
-    # 막는다. (a)에서는 이미 취소가 요청된 것이 확정이라 commit을 호출하지 않는다.
+    # ``commit()`` success locks cancellation requests (``CancellationProbe``
+    # contract), so normal path below writes success/failure manifest while
+    # job never transitions to cancelling — preventing success manifest
+    # inversion to cancelled, and preventing cancelling → succeeded transition.
+    # (a) skips commit: cancellation already confirmed final.
     cancelled = any(outcome.status == "cancelled" for outcome in outcomes)
     if not cancelled and cancellation is not None and not cancellation.commit():
         cancelled = True
 
-    # composition(#506)은 모든 source가 끝난 뒤, 참조된 두 source의 검증된 Silver를
-    # 가지고 단일 스레드에서 실행한다 — join 자체는 병렬화 대상이 아니다.
-    # 취소된 run에서는 아예 시작하지 않는다 — 취소 이후 새 stage를 시작하지 않는
-    # 원칙이 source 단계와 동일하게 적용되고, manifest도 실행되지 않은
-    # composition을 성공으로 기록하지 않는다(composition은 null로 남는다).
+    # composition (#506) runs after all sources complete, single-threaded,
+    # using validated Silver from referenced sources. Skipped on cancelled
+    # run — no new stages start after cancel (same source stage principle).
+    # Manifest doesn't record unstarted composition as success (null).
     composition_outcome: CompositionOutcome | None = None
     composition_provenance: CompositionProvenance | None = None
     if spec.composition is not None and not cancelled:
@@ -1016,14 +1025,14 @@ def run_build(
     if composition_outcome is not None and composition_outcome.status != "ok":
         errors = (*errors, f"{composition_outcome.name}: {composition_outcome.error}")
     if cancelled:
-        # 취소는 실패가 아니므로 run_failed를 남기지 않고, 정상 완료도 아니므로
-        # run_finished도 남기지 않는다 (#481). 종결 event(``run_cancelled``)는
-        # job의 terminal 전이를 실제로 확정하는 service 계층이 정확히 한 번
-        # 남긴다 — 여기서도 남기면 queued 취소(파이프라인이 아예 실행되지 않는
-        # 경로)와 event 개수가 달라지고, 같은 run에 종결 event가 둘 생긴다.
+        # Cancellation is not failure, so no run_failed; not success either,
+        # no run_finished (#481). Terminal event (``run_cancelled``) recorded
+        # by service layer once at job transition — recording here too would
+        # differ from queued cancel (never executed) and duplicate on same run.
         #
-        # 이미 실패한 소스가 있었다면 그 사유는 errors에 그대로 남긴다 — 취소가
-        # 실패를 삼키지 않는다. 다만 run의 종단 상태는 "cancelled"다.
+        # If sources already failed, failure reasons survive in errors —
+        # cancellation doesn't suppress failure. But run terminal state is
+        # "cancelled".
         status = "cancelled"
     elif errors:
         status = "failed"
@@ -1035,17 +1044,18 @@ def run_build(
     manifest = BuildManifest(
         build_id=context.run_id,
         status=status,
-        # partial(#481)은 "정상 완료 전에 종료되어 outputs가 부분 산출물"이라는
-        # 뜻이다. 취소된 run에만 True이며, 실패한 run의 부분성은 기존대로
-        # status/errors로 표현한다(기존 소비자 의미를 바꾸지 않는다).
+        # # partial (#481): "completed before normal finish, outputs are
+        # partial artifacts". True only for cancelled runs; partial nature
+        # of failed runs expressed via status/errors as before (preserve
+        # existing consumer meaning).
         partial=cancelled,
         started_at=context.started_at,
         finished_at=utc_now(),
         inputs=tuple(_output_source_key(source) for source in spec.sources),
         outputs=tuple(outputs),
-        # recorder가 흡수한 event 기록 실패(#496)를 여기 싣는다 — 새 API 필드를
-        # 추가하지 않고 기존 authoritative warnings 채널을 재사용해, event
-        # timeline에 실제로 구멍이 있었는지 API 소비자가 알 수 있게 한다.
+        # # recorder absorbed event logging failures (#496) here — reusing
+        # existing authoritative warnings channel without new API field,
+        # so API consumers can see if event timeline actually has gaps.
         warnings=recorder.dropped_events(),
         errors=errors,
         row_counts=row_counts,

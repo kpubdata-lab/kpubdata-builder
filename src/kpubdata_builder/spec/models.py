@@ -1,13 +1,4 @@
-"""BuildSpec 데이터 모델 (Medallion 재구성: 기존 spec.py에서 분리).
-
-이 모듈은 빌드 선언을 표현하는 불변 데이터 클래스와 JSON 호환 타입 별칭만
-정의한다. YAML 로딩/파싱은 loader.py, 검증은 validator.py에 분리되어 있다.
-
-주요 구성:
-    - SourceRef: 원본 데이터 소스 참조
-    - ExportTarget: 출력 대상 정의
-    - BuildSpec: 전체 빌드 선언 모델
-"""
+"""BuildSpec data model (Medallion refactor: separated from legacy spec.py)."""
 
 from __future__ import annotations
 
@@ -20,30 +11,13 @@ JsonPrimitive: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 
 
-#: column_null_tokens 의 컬럼이 없을 때 무엇을 할지 (#623).
+#: What to do when a column is absent in column_null_tokens (#623).
 ON_ABSENT_POLICIES: tuple[str, ...] = ("error", "ignore")
 
 
 @dataclass(frozen=True)
 class ColumnNullTokens:
-    """한 컬럼의 결측 표기 선언과, 그 컬럼이 없을 때의 정책 (#623).
-
-    "이 컬럼에서 무엇이 결측인가"와 "이 컬럼이 반드시 있어야 하는가"는 **별개의
-    계약**이다. 둘을 한 선언이 함께 주장하면, 결측 표기를 적어 두었다는 이유만으로
-    모든 세대에 그 컬럼이 있어야 한다고 말하게 된다. 그래서 presence 정책을 따로
-    둔다.
-
-    속성:
-        tokens: 이 컬럼에서 결측으로 볼 원천 표기. 전역 ``null_tokens`` 에 더해진다.
-        on_absent: 컬럼이 없을 때. ``"error"`` (기본값)는 오타와 schema drift를
-            잡는다 — 선언이 조용한 무동작이 되면 결측이 값으로 남은 채 품질 지표가
-            그것을 세지 않는다. ``"ignore"`` 는 **이 규칙의 적용을 건너뛴다.**
-
-    ``"ignore"`` 가 그 컬럼을 optional로 만들지는 않는다. ``rename``/``zfill``/
-    ``derived`` 는 여전히 선언된 컬럼의 존재를 요구하고, 그것은 그 선언들 자신의 계약
-    의미다. ``on_absent`` 가 끊는 것은 "결측 표기를 선언했다 = 그 컬럼이 반드시
-    있다"는 결합 하나뿐이다.
-    """
+    """Column null token declaration and policy (#623)."""
 
     tokens: tuple[str, ...] = ()
     on_absent: str = "error"
@@ -51,47 +25,52 @@ class ColumnNullTokens:
 
 @dataclass(frozen=True)
 class SchemaContract:
-    """소스 스키마 계약 — Silver 검증/정규화 규칙 (#437).
+    """Source schema contract — Silver validation/normalization rules (#437).
 
-    BuildSpec 의 ``sources[].schema`` 선언이 이 모델로 파싱되고,
-    orchestrator/preview 가 build_silver_dataset 의 인자로 전달한다.
-    이전까지는 게이트가 존재했지만 통과 조건이 없었다 (항상 ok).
+    BuildSpec's ``sources[].schema`` declaration is parsed into this model and
+    passed by orchestrator/preview as an argument to build_silver_dataset.
+    Previously a gate existed but had no passing condition (always OK).
 
-    속성:
-        required: 필수 컬럼 목록. validate_table 의 required_columns 로 전달.
-        dtypes: 컬럼별 기대 dtype (문자열, ``_NAMED_DTYPES`` 키). validate_table 의
-            column_dtypes 로 전달.
-        casts: 정규화 시 적용할 컬럼별 캐스팅 (문자열). normalize_table 의 casts 로
-            전달. 캐스팅으로 인한 null 손실은 audit=True 로 감지돼 TabularError 로
-            표면화된다 (#188).
-        rename: 원 필드명 → canonical 컬럼명 매핑 (#611). 캐스팅보다 먼저 적용되므로
-            dtypes/casts/derived 는 모두 rename 이후의 이름을 가리킨다.
-        derived: 기존 컬럼에서 새 컬럼을 만드는 규칙 (#611). 캐스팅 뒤에 적용된다.
-            ``date_parts`` 가 조각이 모두 있는 행을 날짜로 만들지 못하면 casts 와 같은
-            기준으로 TabularError 를 낸다 (#188).
-        read_as: 원천 컬럼을 읽을 타입 선언 (``{컬럼: "str"}``). 레코드마다 타입이
-            다른 원천 컬럼을 선언으로 처리한다. 키는 rename 이전의 원 필드명이다.
-        null_tokens: 결측을 나타내는 원천 표기. 캐스팅 전에 null로 모은다. 모든
-            문자열 컬럼에 걸린다.
-        column_null_tokens: 특정 컬럼에서만 인정하는 결측 표기 (#623). 전역
-            ``null_tokens`` 에 **더해서** 적용된다. 같은 의미의 결측이 컬럼마다
-            다르게 표기되는 원천이 있는데, 전역 선언만으로는 다른 컬럼의 의미를
-            바꾸지 않고 그것을 표현할 수 없다. 키는 rename *이전* 의 원 필드명이고,
-            값은 :class:`ColumnNullTokens` 다.
-        coalesce: 세대별 alias 컬럼을 하나의 canonical 컬럼으로 모으는 규칙 (#620).
-            ``{canonical: (후보1, 후보2, ...)}``. ``rename`` 과 달리 여러 원본이 한
-            이름으로 모인다. 한 행에서 후보 둘 이상이 non-null이고 값이 다르면
-            실패한다 — 조용한 first-wins는 세대 경계가 잘못 잡혔다는 유일한 신호를
-            삼킨다. 키는 rename *이전* 의 원 필드명이다. 수렴한 후보 컬럼은 canonical
-            컬럼에 흡수되어 사라지지만, 사라지는 범위는 선언된 alias group 안으로
-            한정되고 행은 보존된다.
-        zfill: canonical 식별자를 선언된 폭으로 왼쪽 0 padding 한다 (#620).
-            ``{컬럼: 폭}``. 키는 rename *이후* 의 이름이다.
+    Attributes:
+        required: List of required columns. Passed as required_columns to
+            validate_table.
+        dtypes: Expected dtype per column (string, ``_NAMED_DTYPES`` keys).
+            Passed as column_dtypes to validate_table.
+        casts: Per-column casting applied during normalization (string). Passed
+            as casts to normalize_table. Null loss from casting is detected with
+            audit=True and surfaced as TabularError (#188).
+        rename: Source field name → canonical column name mapping (#611).
+            Applied before casting, so dtypes/casts/derived all refer to names
+            after rename.
+        derived: Rules to create new columns from existing ones (#611). Applied
+            after casting. If date_parts cannot merge rows with all fragments
+            into a date, raises TabularError by the same criteria as casts (#188).
+        read_as: Type declaration for reading source columns (``{column: "str"}``).
+            Handles source columns with type varying per record as declarations.
+            Keys are original field names before rename.
+        null_tokens: Source notation for missing values. Collected as null before
+            casting. Applies to all string columns.
+        column_null_tokens: Column-specific missing value notation (#623).
+            Applied **in addition to** global ``null_tokens``. Some sources mark
+            the same missing value differently per column; global declarations
+            alone cannot express this without changing meaning in other columns.
+            Keys are original field names *before* rename; values are
+            :class:`ColumnNullTokens`.
+        coalesce: Rules to coalesce generation-aliased columns into one canonical
+            column (#620). ``{canonical: (candidate1, candidate2, ...)}``. Unlike
+            ``rename``, multiple sources merge under one name. Fails if two or
+            more candidates are non-null and differ in a single row — silent
+            first-wins masks the only signal of misaligned generation boundaries.
+            Keys are original field names *before* rename. Coalesced candidate
+            columns are absorbed into the canonical column and disappear, but the
+            scope is limited to the declared alias group and rows are preserved.
+        zfill: Left-pad canonical identifiers to declared width with zeros (#620).
+            ``{column: width}``. Keys are names *after* rename.
 
-    적용 순서는 ``read_as -> null_tokens -> coalesce -> rename -> zfill -> casts ->
-    derived`` 다. ``null_tokens`` 가 ``coalesce`` 앞인 것은 결측 표기가 아직
-    문자열이면 coalesce가 그것을 값으로 보고 충돌시키기 때문이고, ``zfill`` 이
-    ``rename`` 뒤인 것은 선언이 canonical 이름을 가리키기 때문이다.
+    Application order is ``read_as -> null_tokens -> coalesce -> rename -> zfill
+    -> casts -> derived``. null_tokens comes before coalesce because missing
+    notation is still string; coalesce would treat it as a value and conflict.
+    zfill comes after rename because the declaration refers to canonical names.
     """
 
     required: tuple[str, ...] = ()
@@ -106,24 +85,25 @@ class SchemaContract:
     zfill: dict[str, int] = field(default_factory=dict)
 
 
-#: 지원하는 DerivedColumn.kind 값 (#611). 자유형 표현식 대신 typed rule로 표현한다
-#: — RangeRule/CompareColumnsRule의 관례를 따른다.
+#: Supported DerivedColumn.kind values (#611). Expressed as typed rules instead
+#: of free-form expressions — follows the convention of RangeRule/CompareColumnsRule.
 DERIVED_KINDS: tuple[str, ...] = ("date_parts", "join_key")
 
-#: schema.read_as 가 허용하는 타입. 혼합 타입을 푸는 용도이므로 문자열만 받는다.
+#: Types allowed by schema.read_as. Accepts only strings for resolving mixed types.
 READ_AS_TYPES: tuple[str, ...] = ("str",)
 
 
 @dataclass(frozen=True)
 class DerivedColumn:
-    """기존 컬럼에서 새 컬럼을 만드는 규칙 (#611).
+    """Rules to create new columns from existing ones (#611).
 
-    속성:
-        name: 만들어질 컬럼명.
-        kind: 파생 방식. ``"date_parts"`` 는 연/월/일 세 컬럼을 Date로 합치고,
-            ``"join_key"`` 는 여러 컬럼을 하나의 문자열 복합키로 합친다.
-        columns: 입력 컬럼명. ``date_parts`` 는 (year, month, day) 순서로 정확히 3개,
-            ``join_key`` 는 1개 이상.
+    Attributes:
+        name: Name of the column to be created.
+        kind: Derivation method. ``"date_parts"`` merges year/month/day three
+            columns into a Date; ``"join_key"`` merges multiple columns into one
+            composite string key.
+        columns: Input column names. date_parts requires exactly 3 in (year,
+            month, day) order; join_key requires 1 or more.
     """
 
     name: str
@@ -131,63 +111,27 @@ class DerivedColumn:
     columns: tuple[str, ...]
 
 
-#: 지원하는 SourceRef.kind 값 (#498). 알 수 없는 kind는 loader가 즉시 거부한다.
+#: Supported SourceRef.kind values (#498). Loader immediately rejects unknown kinds.
 SOURCE_KINDS: tuple[str, ...] = ("public_api", "file", "url")
 
-#: url kind에서 허용하는 HTTP method (#498 P0 — GET, Auth=None만 지원).
+#: HTTP methods allowed in url kind (#498 P0 — only GET, Auth=None supported).
 SOURCE_URL_METHODS: tuple[str, ...] = ("GET",)
 
-#: file kind에서 허용하는 업로드 포맷 (#498 P0). Excel/ZIP은 범위 밖이다.
+#: Upload formats allowed in file kind (#498 P0). Excel/ZIP are out of scope.
 SOURCE_FILE_FORMATS: tuple[str, ...] = ("csv", "json", "jsonl", "parquet")
 
-#: url kind에서 허용하는 응답 포맷 (#498 P0). 지정하지 않으면 Content-Type로 추론한다.
+#: Response formats allowed in url kind (#498 P0). Inferred from Content-Type if unspecified.
 SOURCE_URL_FORMATS: tuple[str, ...] = ("json", "jsonl", "csv")
 
-#: 서버가 발급하는 upload_id 형태 (#498). ``POST /uploads`` 만 이 형태의 id를
-#: 만든다 — 사용자가 임의 문자열을 upload_id로 넣어 filesystem/조회를 조작할 수
-#: 없도록 loader/validator가 이 패턴으로 형태를 고정한다.
+#: Upload ID format issued by server (#498). Only ``POST /uploads`` creates IDs
+#: of this form — loader/validator pin shape to this pattern to prevent users
+#: from injecting arbitrary strings as upload_id and manipulating filesystem/queries.
 UPLOAD_ID_PATTERN: re.Pattern[str] = re.compile(r"^upl_[a-f0-9]{32}$")
 
 
 @dataclass(frozen=True)
 class SourceRef:
-    """Canonical 소스 참조 — Public API / File / URL 세 kind를 표현한다 (#498).
-
-    ``kind`` 로 세 가지 소스를 구분한다. 세 kind는 서로 다른 field 조합을 쓰지만
-    ``alias``/``schema`` 는 공통이다(공통 alias/schema 정책, #498).
-
-    - ``"public_api"``(기본값, 하위 호환): 기존 kpubdata provider/dataset 참조.
-      ``provider``/``dataset``/``params`` 를 쓴다. kind를 생략한 기존 BuildSpec은
-      항상 이 kind로 해석된다 — 기존 Public API BuildSpec 동작은 그대로 유지된다.
-    - ``"file"``: 사전에 ``POST /uploads`` 로 업로드된 파일을 가리킨다. 로컬
-      파일시스템 경로 대신 서버가 발급한 불투명한 ``upload_id`` 만 참조한다 —
-      filename/path를 직접 참조하지 않는다(경로 주입 방지).
-    - ``"url"``: 안전한 GET(Auth=None) HTTP(S) 소스를 가리킨다. arbitrary header나
-      POST/PUT/PATCH는 계약에 없다 — 필드 자체가 없어 표현할 수 없다.
-
-    속성:
-        provider: provider 식별자. ``kind="public_api"`` 에서만 사용.
-        dataset: dataset 식별자. ``kind="public_api"`` 에서만 사용.
-        params: list 호출에 전달할 원시 파라미터. ``kind="public_api"`` 에서만 사용.
-            ``param_grid`` 와 함께 쓰면 **모든 조합에 공통으로 붙는** 값이 된다
-            (예: ``numOfRows``).
-        param_grid: 여러 파라미터 조합에 걸쳐 반복 호출하기 위한 선언 (#613).
-            값마다 리스트를 주면 데카르트 곱으로 전개된다. ``kind="public_api"``
-            에서만 사용. 전개 순서는 고정이다 — 순서가 바뀌면 Bronze 바이트가
-            바뀌어 재빌드 결정성이 깨진다.
-        alias: 조립 단계에서 사용할 사용자 정의 소스 이름 (모든 kind 공통).
-        schema: 소스 스키마 계약. None 이면 Silver 검증을 생략한다 (모든 kind 공통,
-            하위 호환, #437).
-        kind: ``"public_api"``(기본) | ``"file"`` | ``"url"``.
-        upload_id: 업로드된 파일의 서버 발급 식별자. ``kind="file"`` 에서만 사용.
-        format: 파일/응답 파싱 포맷. ``kind="file"`` 은 필수(csv/json/jsonl/parquet),
-            ``kind="url"`` 은 선택(json/jsonl/csv, 생략 시 Content-Type로 추론).
-        encoding: 텍스트 디코딩에 쓸 인코딩. ``kind="file"`` 에서만 의미가 있다
-            (parquet 제외 — 바이너리 포맷이라 인코딩이 없다). 기본값 ``"utf-8"``.
-        endpoint: 안전하게 fetch할 절대 URL. ``kind="url"`` 에서만 사용.
-        method: HTTP method. ``kind="url"`` 에서만 사용하며 P0는 ``"GET"`` 만
-            허용한다.
-    """
+    """Canonical source reference — represents three kinds: Public API/File/URL (#498)."""
 
     provider: str = ""
     dataset: str = ""
@@ -205,12 +149,12 @@ class SourceRef:
 
 @dataclass(frozen=True)
 class ExportTarget:
-    """빌드를 위한 구체적인 내보내기 대상 정의.
+    """Concrete export target definition for build.
 
-    속성:
-        kind: exporter 레지스트리 키.
-        output_path: output_dir 기준 상대 출력 경로.
-        options: exporter 전용 선택 옵션.
+    Attributes:
+        kind: Registry key for exporter.
+        output_path: Relative output path from output_dir.
+        options: Exporter-specific optional settings.
     """
 
     kind: str
@@ -220,14 +164,14 @@ class ExportTarget:
 
 @dataclass(frozen=True)
 class SplitSpec:
-    """데이터셋을 명명된 분할로 나누는 방법 정의 (#38).
+    """Definition of how to divide dataset into named splits (#38).
 
-    속성:
-        mode: 분할 방식. "ratio"는 비율 기반(train/val/test), "key"는 컬럼 값
-            기반(연도/지역/카테고리)으로 나눈다.
-        ratios: ratio 모드에서 분할 이름 → 비율 매핑 (합이 1.0이어야 한다).
-        key: key 모드에서 분할 기준이 되는 컬럼 이름.
-        seed: ratio 모드의 결정적 셔플 시드.
+    Attributes:
+        mode: Split method. "ratio" is ratio-based (train/val/test); "key" is
+            column value-based (year/region/category).
+        ratios: Mapping of split name → ratio for ratio mode (sum must be 1.0).
+        key: Column name used as split criterion in key mode.
+        seed: Deterministic shuffle seed for ratio mode.
     """
 
     mode: str
@@ -238,13 +182,7 @@ class SplitSpec:
 
 @dataclass(frozen=True)
 class PiiPolicy:
-    """PII 검출 정책 (#441, QG-1).
-
-    속성:
-        mode: ``"block"``(기본, 검출 시 빌드 실패) | ``"warn"``(manifest 경고만) |
-            ``"allow"``(통과). ``publish=True`` 스펙에서는 ``allow``를 금지한다.
-        allow_columns: 모드와 무관하게 스캔을 건너뛸 컬럼명 목록(오탐 해제용).
-    """
+    """PII detection policy (#441, QG-1)."""
 
     mode: str = "block"
     allow_columns: tuple[str, ...] = ()
@@ -252,17 +190,17 @@ class PiiPolicy:
 
 @dataclass(frozen=True)
 class RangeRule:
-    """숫자 컬럼의 최소/최대 범위 규칙 (#486).
+    """Min/max range rule for numeric columns (#486).
 
-    자유형 Python/eval 대신 typed rule로 표현한다. min/max는 포함(inclusive)
-    경계다. null 값은 range 위반으로 계산하지 않는다 — missing/null 여부는
-    ``max_null_ratio``가 별도로 담당한다(역할 분리).
+    Expressed as typed rule instead of free-form Python/eval. min/max are
+    inclusive boundaries. Null values do not count as range violations — missing
+    value handling is managed separately by max_null_ratio (separation of concerns).
 
-    속성:
-        column: 대상 컬럼명.
-        min: 허용 최소값(포함). None이면 하한을 검사하지 않는다.
-        max: 허용 최대값(포함). None이면 상한을 검사하지 않는다.
-        severity: 위반 시 심각도 — ``"warn"``(기본) | ``"fail"``.
+    Attributes:
+        column: Target column name.
+        min: Allowed minimum value (inclusive). None skips lower bound check.
+        max: Allowed maximum value (inclusive). None skips upper bound check.
+        severity: Severity on violation — ``"warn"`` (default) | ``"fail"``.
     """
 
     column: str
@@ -273,17 +211,17 @@ class RangeRule:
 
 @dataclass(frozen=True)
 class CompareColumnsRule:
-    """두 컬럼 간 비교 규칙 (#486).
+    """Comparison rule between two columns (#486).
 
-    자유형 expression/eval을 금지하고, 제한된 operator 집합만 허용한다.
-    두 컬럼 모두 null이 아닌 행만 평가 대상이다(비교 불가능한 행을 자동
-    통과로 세지 않는다).
+    Prohibits free-form expression/eval; allows only a restricted operator set.
+    Only rows where both columns are non-null are evaluated (rows that cannot be
+    compared do not auto-pass).
 
-    속성:
-        left: 왼쪽 컬럼명.
-        operator: ``eq``/``ne``/``gt``/``gte``/``lt``/``lte`` 중 하나.
-        right: 오른쪽 컬럼명.
-        severity: 위반 시 심각도 — ``"warn"``(기본) | ``"fail"``.
+    Attributes:
+        left: Left column name.
+        operator: One of ``eq``/``ne``/``gt``/``gte``/``lt``/``lte``.
+        right: Right column name.
+        severity: Severity on violation — ``"warn"`` (default) | ``"fail"``.
     """
 
     left: str
@@ -294,27 +232,30 @@ class CompareColumnsRule:
 
 @dataclass(frozen=True)
 class QualityPolicy:
-    """데이터 품질 임계 정책 (#446, QG-3; range/compare_columns/severity는 #486).
+    """Data quality threshold policy (#446, QG-3; range/compare_columns/severity
+    are #486).
 
-    Silver 통계(row_count/null_counts/duplicate_rate)와 테이블 자체(range/
-    compare_columns)에 대한 임계. 초과 시 위반으로 구조화된 QualityCheckResult로
-    보고하고(quality.evaluator), severity에 따라 WARN(계속 진행) 또는 FAIL(Gold
-    진입 전 소스 실패)로 게이트한다.
+    Thresholds on Silver statistics (row_count/null_counts/duplicate_rate) and
+    the table itself (range/compare_columns). On excess, violations are reported
+    as structured QualityCheckResult (quality.evaluator) and gated by severity:
+    WARN (continue) or FAIL (source failure before Gold entry).
 
-    기존 3개 필드(max_duplicate_rate/max_null_ratio/min_rows)의 타입과 기본
-    severity(``"warn"``)는 #446 시절 그대로 유지한다 — 하위 호환. 명시적 FAIL이
-    필요하면 대응하는 ``*_severity`` 필드를 함께 선언한다.
+    Type and default severity (``"warn"``) of existing 3 fields (max_duplicate_rate
+    /max_null_ratio/min_rows) are preserved from #446 — backward compat. If
+    explicit FAIL is needed, declare the corresponding ``*_severity`` field
+    together.
 
-    속성:
-        max_duplicate_rate: 허용 최대 중복 행 비율 (0.0~1.0). 초과 시 위반.
-        max_duplicate_rate_severity: 위반 시 심각도. 기본 ``"warn"``.
-        max_null_ratio: 컬럼별 허용 최대 null 비율 (``{컬럼명: 비율}``).
-        max_null_ratio_severity: 컬럼별 위반 심각도 override (``{컬럼명: severity}``).
-            선언되지 않은 컬럼은 기본 ``"warn"``.
-        min_rows: 최소 행 수. 미만 시 위반.
-        min_rows_severity: 위반 시 심각도. 기본 ``"warn"``.
-        range: 컬럼별 최소/최대 범위 규칙 목록 (#486).
-        compare_columns: 컬럼 간 비교 규칙 목록 (#486).
+    Attributes:
+        max_duplicate_rate: Max duplicate row ratio allowed (0.0~1.0). Excess is
+            violation.
+        max_duplicate_rate_severity: Violation severity. Default ``"warn"``.
+        max_null_ratio: Max null ratio per column allowed (``{column: ratio}``).
+        max_null_ratio_severity: Per-column violation severity override
+            (``{column: severity}``). Undeclared columns default ``"warn"``.
+        min_rows: Minimum row count. Below is violation.
+        min_rows_severity: Violation severity. Default ``"warn"``.
+        range: Per-column min/max range rule list (#486).
+        compare_columns: Column comparison rule list (#486).
     """
 
     max_duplicate_rate: float | None = None
@@ -329,23 +270,24 @@ class QualityPolicy:
 
 @dataclass(frozen=True)
 class JoinSpec:
-    """두 source를 결합하는 equi-join 계약 (#506).
+    """Equi-join contract to combine two sources (#506).
 
-    구조(참조 alias 존재, type/severity 어휘)는 spec.validator가 파싱 직후 검증한다.
-    join key의 실제 존재 여부와 dtype 호환성은 파싱 시점엔 알 수 없다(Silver 스키마가
-    나와야 확인 가능) — 그 부분은 spec.validator가 아니라 orchestrator의 빌드 파이프라인
-    검증 게이트(런타임)에서 확인한다. 완료조건 문서의 "validate 단계에서 확인"은 이
-    구조 검증과 파이프라인 게이트를 합쳐 부르는 표현으로 읽어야 한다.
+    Structure (reference alias existence, type/severity vocabulary) is validated
+    by spec.validator after parsing. Actual existence of join keys and dtype
+    compatibility cannot be known at parse time (requires Silver schema) — that
+    is verified by orchestrator's build pipeline gate (runtime), not spec.validator.
+    "Validate during the validate phase" in completion conditions should read as
+    encompassing both this structure validation and pipeline gate.
 
-    속성:
-        left: 왼쪽 source의 alias (BuildSpec.sources[].alias 참조).
-        right: 오른쪽 source의 alias.
-        left_key: 왼쪽 테이블의 join key 컬럼명.
-        right_key: 오른쪽 테이블의 join key 컬럼명.
-        type: join 종류. "inner" | "left" (초기 범위, #506).
-        on_duplicate_key: 양쪽 key 모두 중복 값을 가져 many-to-many로 행이
-            폭증할 수 있을 때의 처리. "warn"(기본, manifest에 경고만 기록) |
-            "fail"(빌드 실패). QualityPolicy의 severity 관례를 따른다.
+    Attributes:
+        left: Alias of left source (see BuildSpec.sources[].alias).
+        right: Alias of right source.
+        left_key: Join key column name in left table.
+        right_key: Join key column name in right table.
+        type: Join kind. "inner" | "left" (initial scope, #506).
+        on_duplicate_key: Action when both keys carry duplicate values and rows
+            expand many-to-many. "warn" (default, only log to manifest) | "fail"
+            (build failure). Follows QualityPolicy severity convention.
     """
 
     left: str
@@ -358,16 +300,16 @@ class JoinSpec:
 
 @dataclass(frozen=True)
 class CompositionSpec:
-    """여러 source를 하나의 Gold dataset으로 조립하는 계약 (#506).
+    """Contract to assemble multiple sources into one Gold dataset (#506).
 
-    초기 범위는 두 source 단일 equi-join으로 제한한다(3개 이상 join graph는
-    제외 범위) — 그래서 리스트가 아니라 단일 JoinSpec만 받는다.
+    Initial scope is limited to two-source single equi-join (3+ join graphs are
+    out of scope) — thus receives single JoinSpec, not a list.
 
-    속성:
-        name: 결합 결과 Gold dataset 이름. gold/{name}/ 출력 디렉터리 세그먼트로도
-            쓰이므로 다른 source의 output key(alias 또는 provider.dataset)와
-            겹치면 안 된다.
-        join: 결합에 사용할 단일 JoinSpec.
+    Attributes:
+        name: Name of combined Gold dataset. Also used as gold/{name}/ output
+            directory segment; must not overlap with other source output keys
+            (alias or provider.dataset).
+        join: Single JoinSpec used for combination.
     """
 
     name: str
@@ -376,31 +318,33 @@ class CompositionSpec:
 
 @dataclass(frozen=True)
 class BuildSpec:
-    """데이터셋 산출물을 위한 선언적 빌드 명세.
+    """Declarative build specification for dataset artifacts.
 
-    속성:
-        dataset_id: 데이터셋의 전역 식별자.
-        title: 사람이 읽는 제목.
-        description: 빌드 목적과 데이터 설명.
-        sources: 입력 소스 목록.
-        exports: 출력 대상 목록.
-        metadata: 산출물에 실을 임의 메타데이터.
-        publish: 빌드 후 게시까지 수행할지 여부.
-        splits: 데이터셋 분할 정의. 없으면 분할하지 않는다.
-        pii: PII 스캔 정책. None이면 스캔을 생략한다 (하위 호환, #441).
-        license: 데이터셋 라이선스/이용허락범위 (SPDX 식별자 또는 자유 텍스트).
-            ``publish=True`` 시 반드시 선언해야 한다 (#443). kpubdata 가 라이선스
-            메타데이터를 제공하지 않으므로 사용자 명시 선언만이 출처이다.
-        attribution: 출처표시 문구. 공공누리(KOGL)는 제1~4유형 모두 출처표시를
-            의무로 두는데, ``license`` 만으로는 그 문구를 담을 수 없다 — 유형과
-            기관명과 원문 URL 이 함께 있어야 성립하기 때문이다. 선언하면 데이터셋
-            카드의 "출처" 절에 그대로 실린다. 레거시 publish config 의
-            ``card.attribution`` 에 대응한다 (ADR 0018).
-        quality: 데이터 품질 임계 정책. None이면 검사를 생략한다 (하위 호환, #446).
-        composition: 두 source를 join해 하나의 Gold dataset으로 조립하는 계약.
-            None이면 기존과 동일하게 source별 독립 Gold만 생성한다 (하위 호환, #506).
+    Attributes:
+        dataset_id: Global identifier for the dataset.
+        title: Human-readable title.
+        description: Build purpose and data description.
+        sources: List of input sources.
+        exports: List of output targets.
+        metadata: Arbitrary metadata to include in artifacts.
+        publish: Whether to publish after build.
+        splits: Dataset split definition. None means no split.
+        pii: PII scan policy. None skips scan (backward compat, #441).
+        license: Dataset license/usage terms (SPDX identifier or free text).
+            Must be declared when ``publish=True`` (#443). kpubdata does not
+            provide license metadata, so user explicit declaration is the only
+            source.
+        attribution: Attribution text. KOGL requires attribution for
+            types 1-4, but license alone cannot convey it — requires both type
+            and institution and original URL. When declared, appears in the
+            dataset card's "Source" section. Maps to legacy publish config's
+            ``card.attribution`` (ADR 0018).
+        quality: Data quality threshold policy. None skips check (backward compat,
+            #446).
+        composition: Contract to join two sources into one Gold dataset. None
+            generates independent Gold per source (backward compat, #506).
 
-    예시:
+    Example:
         >>> BuildSpec.from_yaml("specs/sample.yaml")
     """
 
@@ -420,17 +364,7 @@ class BuildSpec:
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> BuildSpec:
-        """YAML 파일에서 BuildSpec을 로드한다.
-
-        .. deprecated::
-            Use ``load_spec(path)`` directly to keep model and I/O separate.
-
-        매개변수:
-            path: YAML 파일 경로.
-
-        반환값:
-            BuildSpec: 파싱 완료된 불변 명세 객체.
-        """
+        """Load BuildSpec from YAML file."""
         import warnings
 
         warnings.warn(
@@ -438,7 +372,7 @@ class BuildSpec:
             DeprecationWarning,
             stacklevel=2,
         )
-        # models <-> loader 순환 import를 피하기 위한 지연 import.
+        # Delayed import to avoid circular import between models <-> loader.
         from .loader import load_spec
 
         return load_spec(Path(path))
