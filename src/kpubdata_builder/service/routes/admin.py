@@ -78,7 +78,12 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         record_admin_action(principal, "admin.runs.list", outcome="index_unavailable")
         return ServiceResponse(503, {"error": "build index unavailable"})
 
-    rows: dict[str, dict[str, JsonValue]] = {}
+    # run_id -> (정렬 키, 응답 행). 정렬 키를 응답과 따로 든다 — queued job 은
+    # started_at 이 비어 있는데(아직 시작하지 않았다) 그 빈 값으로 정렬하면
+    # **방금 들어온 job 이 목록 맨 뒤로 밀려 limit 에 먼저 잘린다.** 보이게
+    # 하려고 넣은 항목이 정렬 때문에 사라지는 셈이다. 접수 시각은 순서를
+    # 정하는 데만 쓰고 응답에는 넣지 않는다.
+    rows: dict[str, tuple[str, dict[str, JsonValue]]] = {}
     # 진행 중인 run 을 먼저 넣는다. BuildIndex 는 manifest 가 생긴 뒤에만
     # 채워지므로 queued/running job 은 인덱스에 아예 없다 — 그런데 멈춘 run 이
     # 바로 운영자가 찾는 것이다. 인덱스 항목이 같은 run_id 로 있으면 그쪽이
@@ -92,28 +97,34 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         # 시작 시각이 아니므로 비워 둔다 — 그대로 넣으면 아직 돌지도 않은 job 이
         # 이미 시작한 것으로 읽힌다.
         started = None if job.status == _QUEUED_JOB_STATUS else job.created_at
-        rows[job.run_id] = {
-            "run_id": job.run_id,
-            "status": job.status,
-            "started_at": started,
-            "finished_at": finished,
-            "owner_id": job.owner_id,
-        }
+        rows[job.run_id] = (
+            job.created_at,
+            {
+                "run_id": job.run_id,
+                "status": job.status,
+                "started_at": started,
+                "finished_at": finished,
+                "owner_id": job.owner_id,
+            },
+        )
     for entry in entries:
-        rows[entry.run_id] = {
-            "run_id": entry.run_id,
-            "status": entry.status,
-            "started_at": entry.started_at,
-            "finished_at": entry.finished_at,
-            "owner_id": entry.owner_id,
-        }
+        rows[entry.run_id] = (
+            entry.started_at or "",
+            {
+                "run_id": entry.run_id,
+                "status": entry.status,
+                "started_at": entry.started_at,
+                "finished_at": entry.finished_at,
+                "owner_id": entry.owner_id,
+            },
+        )
 
     ordered = sorted(
-        rows.values(),
-        key=lambda row: (str(row.get("started_at") or ""), str(row["run_id"])),
+        rows.items(),
+        key=lambda item: (item[1][0], item[0]),
         reverse=True,
     )[:limit]
-    runs: list[JsonValue] = [cast(JsonValue, row) for row in ordered]
+    runs: list[JsonValue] = [cast(JsonValue, row) for _, (_, row) in ordered]
     record_admin_action(principal, "admin.runs.list", target=f"limit={limit}")
     return ServiceResponse(200, {"runs": runs, "count": len(runs)})
 

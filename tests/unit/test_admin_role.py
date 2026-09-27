@@ -262,6 +262,15 @@ class TestInFlightRuns:
         assert len(rows) == 1
         assert rows[0]["status"] == "succeeded"
 
+    def test_a_queued_job_is_not_sorted_away_by_its_empty_started_at(self) -> None:
+        """A queued job reports no started_at, but it is the newest thing in the
+        list. Ordering on the empty value would push it behind every finished run
+        and the limit would cut it first -- the entry added to make in-flight runs
+        visible would disappear."""
+        jobs = [_Job("run-new", "queued", "2026-09-27T09:00:00Z", "2026-09-27T09:00:00Z", None)]
+        response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN, "limit=1")
+        assert [run["run_id"] for run in response.body["runs"]] == ["run-new"]
+
     def test_the_limit_still_caps_the_merged_list(self) -> None:
         jobs = [_Job(f"j{i}", "queued", f"2026-09-27T02:{i:02d}:00Z", "x", None) for i in range(10)]
         response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN, "limit=3")
