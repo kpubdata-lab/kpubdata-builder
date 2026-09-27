@@ -38,7 +38,7 @@ import secrets
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -55,16 +55,42 @@ from .errors import (
 )
 
 # Schema version. Being canonical, this catalog cannot be dropped and recreated
-# when the version changes — it needs a migration. There is no migration path yet,
-# so a mismatched version refuses to open. That beats discarding data silently.
-SCHEMA_VERSION = 1
+# when the version changes — it needs a migration. Every step lives in _MIGRATIONS,
+# and a version with no path to the current one refuses to open rather than
+# discarding data silently.
+#
+# 2: baseline scoping columns on table_snapshots (#700) — owner_id,
+#    coverage_fingerprint, source_params_fingerprint, schema_contract_version.
+SCHEMA_VERSION = 2
 
 CATALOG_FILENAME = "_warehouse.sqlite"
+
+# Column order for every snapshot read. One list rather than four copies of the
+# same SELECT, because SnapshotRow is positional and a drifting order would
+# silently put a fingerprint in the wrong field.
+_SNAPSHOT_COLUMNS = (
+    "id, table_id, run_id, schema_version, coverage_hash, artifact_digest,"
+    " row_count, state, created_at, committed_at, owner_id, coverage_fingerprint,"
+    " source_params_fingerprint, schema_contract_version"
+)
 
 SnapshotState = Literal["staging", "validated", "committed", "quarantined"]
 
 # Default lease lifetime, so a crashed query cannot pin a snapshot forever.
 DEFAULT_LEASE_SECONDS = 3600
+
+
+# Each entry upgrades from the version that is its key to the next one. A column is
+# added with SQL rather than by rebuilding: this catalog is canonical, so a
+# migration preserves every row it touches.
+_MIGRATIONS: Mapping[int, tuple[str, ...]] = {
+    1: (
+        "ALTER TABLE table_snapshots ADD COLUMN owner_id TEXT",
+        "ALTER TABLE table_snapshots ADD COLUMN coverage_fingerprint TEXT",
+        "ALTER TABLE table_snapshots ADD COLUMN source_params_fingerprint TEXT",
+        "ALTER TABLE table_snapshots ADD COLUMN schema_contract_version TEXT",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -91,7 +117,23 @@ class TableRow:
 
 @dataclass(frozen=True)
 class SnapshotRow:
-    """One snapshot row in the catalog."""
+    """One snapshot row in the catalog.
+
+    The last four fields exist so that drift can pick a baseline that is actually
+    comparable (#700). Each is optional, because a snapshot recorded before those
+    columns existed has none, and a missing value must read as "cannot compare"
+    rather than as a match.
+
+    Attributes:
+        owner_id: Who produced this snapshot. A baseline never crosses owners —
+            row counts and schema are metadata about someone else's data.
+        coverage_fingerprint: What population was collected (region, period,
+            parameter set). Two snapshots with different fingerprints are not
+            comparable by volume.
+        source_params_fingerprint: The request parameters behind the collection.
+        schema_contract_version: The schema contract in force. A volume baseline
+            across a contract change is compared silently otherwise.
+    """
 
     id: str
     table_id: str
@@ -103,6 +145,10 @@ class SnapshotRow:
     state: SnapshotState
     created_at: str
     committed_at: str | None
+    owner_id: str | None = None
+    coverage_fingerprint: str | None = None
+    source_params_fingerprint: str | None = None
+    schema_contract_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -203,11 +249,7 @@ class TableCatalog:
             )
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is not None and row[0] != SCHEMA_VERSION:
-                raise SnapshotStateError(
-                    f"catalog schema version is {row[0]} but this code expects "
-                    f"{SCHEMA_VERSION}. Being canonical, this catalog is never "
-                    "recreated automatically — it needs a migration."
-                )
+                self._migrate(conn, int(row[0]))
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS tables ("
                 " id TEXT PRIMARY KEY,"
@@ -229,7 +271,11 @@ class TableCatalog:
                 " state TEXT NOT NULL CHECK (state IN"
                 "   ('staging','validated','committed','quarantined')),"
                 " created_at TEXT NOT NULL,"
-                " committed_at TEXT)"
+                " committed_at TEXT,"
+                " owner_id TEXT,"
+                " coverage_fingerprint TEXT,"
+                " source_params_fingerprint TEXT,"
+                " schema_contract_version TEXT)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
@@ -248,6 +294,35 @@ class TableCatalog:
             )
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+
+    def _migrate(self, conn: sqlite3.Connection, found: int) -> None:
+        """Walk an older catalog up to ``SCHEMA_VERSION``.
+
+        Runs inside the caller's ``BEGIN IMMEDIATE``, so a failure part way leaves
+        the catalog on the version it started from rather than somewhere between two.
+
+        A version this code cannot reach — newer than it knows, or older with a gap
+        in the chain — refuses to open. Being canonical, the catalog is never
+        recreated to make a mismatch go away.
+
+        Raises:
+            SnapshotStateError: There is no path from ``found`` to the current
+                version.
+        """
+        version = found
+        while version != SCHEMA_VERSION:
+            steps = _MIGRATIONS.get(version)
+            if steps is None:
+                raise SnapshotStateError(
+                    f"catalog schema version is {found} and this code expects "
+                    f"{SCHEMA_VERSION}, with no migration from {version}. Being "
+                    "canonical, this catalog is never recreated automatically."
+                )
+            for statement in steps:
+                conn.execute(statement)
+            version += 1
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
 
     # ------------------------------------------------------------------ tables
 
@@ -313,11 +388,20 @@ class TableCatalog:
         artifact_digest: str,
         row_count: int | None = None,
         snapshot_id: str | None = None,
+        owner_id: str | None = None,
+        coverage_fingerprint: str | None = None,
+        source_params_fingerprint: str | None = None,
+        schema_contract_version: str | None = None,
     ) -> SnapshotRow:
         """Register a snapshot in ``staging`` state.
 
         Called before anything is written to disk, so that garbage collection does
         not mistake an in-progress staging directory for an orphan.
+
+        The last four arguments are what makes this snapshot eligible as a drift
+        baseline (#700). Leaving one out is allowed and means "cannot compare on
+        that axis" — baseline selection treats a missing value as a mismatch rather
+        than as a match, so an unlabelled snapshot is never silently compared.
         """
         new_id = snapshot_id or f"snap_{uuid.uuid4().hex[:16]}"
         created = _now()
@@ -326,8 +410,10 @@ class TableCatalog:
                 raise TableNotFound(f"no such table: {table_id!r}")
             conn.execute(
                 "INSERT INTO table_snapshots (id, table_id, run_id, schema_version,"
-                " coverage_hash, artifact_digest, row_count, state, created_at, committed_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, 'staging', ?, NULL)",
+                " coverage_hash, artifact_digest, row_count, state, created_at,"
+                " committed_at, owner_id, coverage_fingerprint,"
+                " source_params_fingerprint, schema_contract_version)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'staging', ?, NULL, ?, ?, ?, ?)",
                 (
                     new_id,
                     table_id,
@@ -337,6 +423,10 @@ class TableCatalog:
                     artifact_digest,
                     row_count,
                     created,
+                    owner_id,
+                    coverage_fingerprint,
+                    source_params_fingerprint,
+                    schema_contract_version,
                 ),
             )
         return SnapshotRow(
@@ -350,6 +440,10 @@ class TableCatalog:
             "staging",
             created,
             None,
+            owner_id,
+            coverage_fingerprint,
+            source_params_fingerprint,
+            schema_contract_version,
         )
 
     def get_snapshot(self, snapshot_id: str) -> SnapshotRow:
@@ -359,8 +453,7 @@ class TableCatalog:
             SnapshotNotFound: No such snapshot.
         """
         row = self._conn.execute(
-            "SELECT id, table_id, run_id, schema_version, coverage_hash, artifact_digest,"
-            " row_count, state, created_at, committed_at FROM table_snapshots WHERE id = ?",
+            f"SELECT {_SNAPSHOT_COLUMNS} FROM table_snapshots WHERE id = ?",
             (snapshot_id,),
         ).fetchone()
         if row is None:
@@ -370,8 +463,7 @@ class TableCatalog:
     def list_snapshots(self, table_id: str) -> list[SnapshotRow]:
         """List a table's snapshots, newest first."""
         rows = self._conn.execute(
-            "SELECT id, table_id, run_id, schema_version, coverage_hash, artifact_digest,"
-            " row_count, state, created_at, committed_at FROM table_snapshots"
+            f"SELECT {_SNAPSHOT_COLUMNS} FROM table_snapshots"
             " WHERE table_id = ? ORDER BY created_at DESC, id DESC",
             (table_id,),
         ).fetchall()
