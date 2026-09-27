@@ -1,9 +1,9 @@
-"""stages._stage_reader 단위 테스트 (#488).
+"""stages._stage_reader   (#488).
 
-Bronze/Silver/Gold stage 상태 판정과 안전한 summary 읽기를, 실제 파이프라인 실행
-없이 직접 조립한 디렉터리로 검증한다. 이렇게 하면 "Bronze 성공 → Silver 성공 →
-Gold 실패"처럼 실제 오케스트레이터로는 강제로 재현하기 어려운 partial 상태도
-정밀하게 검증할 수 있다.
+Bronze/Silver/Gold stage    summary ,   
+    .   "Bronze  → Silver  →
+Gold "      partial 
+   .
 """
 
 from __future__ import annotations
@@ -151,7 +151,7 @@ class TestStageStatus:
         run_id = "run1"
         source = "air"
         _write_bronze_artifact(tmp_path, run_id, source, "art1")
-        # silver 디렉터리 자체가 없음(검증 실패로 persist 이전에 raise된 상황을 모사).
+        # silver   (  persist  raise  ).
 
         results = compute_run_stage_summary(tmp_path, run_id, (source,), frozenset({source}))
         (result,) = results
@@ -160,12 +160,12 @@ class TestStageStatus:
         assert result.gold == "not_run"
 
     def test_silver_success_then_gold_failed(self, tmp_path: Path) -> None:
-        """Bronze 성공 → Silver 성공 → Gold 실패를 구분한다 (#488 핵심 요구사항)."""
+        """Bronze  → Silver  → Gold   (#488  )."""
         run_id = "run1"
         source = "air"
         _write_bronze_artifact(tmp_path, run_id, source, "art1")
         _write_silver(tmp_path, run_id, source)
-        # gold 디렉터리 없음 — gold persist 단계에서 실패했다고 가정.
+        # gold   — gold persist   .
 
         results = compute_run_stage_summary(tmp_path, run_id, (source,), frozenset({source}))
         (result,) = results
@@ -174,10 +174,10 @@ class TestStageStatus:
         assert result.gold == "failed"
 
     def test_source_fetch_failure_all_not_run_or_failed(self, tmp_path: Path) -> None:
-        """소스 자체가 fetch 단계에서 실패하면 bronze도 실패, 나머지는 not_run."""
+        """  fetch   bronze ,  not_run."""
         run_id = "run1"
         source = "missing"
-        # 아무 디렉터리도 생성하지 않음.
+        #    .
 
         results = compute_run_stage_summary(tmp_path, run_id, (source,), frozenset({source}))
         (result,) = results
@@ -186,7 +186,7 @@ class TestStageStatus:
         assert result.gold == "not_run"
 
     def test_unknown_source_without_error_entry_is_not_run(self, tmp_path: Path) -> None:
-        """failed_source_keys에 없고 아무 산출물도 없으면 not_run(방어적 기본값)."""
+        """failed_source_keys     not_run( )."""
         run_id = "run1"
         results = compute_run_stage_summary(tmp_path, run_id, ("ghost",), frozenset())
         (result,) = results
@@ -195,7 +195,7 @@ class TestStageStatus:
         assert result.gold == "not_run"
 
     def test_partial_silver_sidecar_is_unavailable(self, tmp_path: Path) -> None:
-        """디렉터리는 있지만 sidecar가 불완전하면 completed/failed가 아니라 unavailable."""
+        """  sidecar  completed/failed  unavailable."""
         run_id = "run1"
         source = "air"
         _write_bronze_artifact(tmp_path, run_id, source, "art1")
@@ -245,7 +245,7 @@ class TestStageStatus:
 
         summary = read_bronze_summary(tmp_path, run_id, source)
         assert summary is not None
-        # 동일 fetched_at이면 artifact_id 내림차순: "art-z" > "art-a"
+        #  fetched_at artifact_id : "art-z" > "art-a"
         assert summary.record_count == 99
 
     def test_unreadable_bronze_artifact_candidate_is_excluded(self, tmp_path: Path) -> None:
@@ -311,7 +311,7 @@ class TestSecureReading:
 
         generous = read_silver_summary(tmp_path, run_id, source, sample_limit=100)
         assert generous is not None
-        # persist 시점에 5행만 있으므로 limit=100이어도 5행을 넘지 않는다.
+        # persist  5  limit=100 5  .
         assert generous.sample == rows
         assert len(generous.sample) == 5
 

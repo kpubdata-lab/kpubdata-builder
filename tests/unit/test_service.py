@@ -1,4 +1,4 @@
-"""HTTP 서비스 façade(#36): validate/preview/build/artifacts 로직과 라우팅 검증."""
+"""HTTP service façade (#36): validate/preview/build/artifacts logic and routing verification."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ exports:
 )
 
 INVALID_SPEC_YAML = (
-    # 파싱은 통과하지만 validate_spec에서 미지원 exporter kind로 실패하는 명세.
+    # Parses OK but fails in validate_spec with unsupported exporter kind.
     """
 dataset_id: dataset.sample
 title: Sample Dataset
@@ -67,7 +67,7 @@ class _FakeResult:
 
 
 class _FakeCatalog:
-    """``client.datasets`` 흉내 — DatasetRef 목록을 provider 필터로 반환."""
+    """Mimics ``client.datasets`` — returns DatasetRef list filtered by provider."""
 
     def __init__(self, items: list[object] | None = None) -> None:
         self._items = items or []
@@ -131,7 +131,7 @@ def _service(tmp_path: Path) -> BuilderService:
 
 class TestVersion:
     def test_version_reports_api_contract_version(self, tmp_path: Path) -> None:
-        # #209: 계약 버전을 알리는 메타 엔드포인트.
+        # #209: Meta endpoint announcing contract version.
         from kpubdata_builder.service import API_CONTRACT_VERSION
 
         resp = _service(tmp_path).version()
@@ -155,7 +155,7 @@ class TestValidate:
         assert resp.status_code == 200
         assert resp.body["status"] == "valid"
         assert resp.body["dataset_id"] == "dataset.sample"
-        # #209: 응답에 계약 버전을 실어 소비자가 호환성을 확인할 수 있다.
+        # #209: Contract version in response so consumers can verify compatibility.
         assert resp.body["api_version"] == API_CONTRACT_VERSION
 
     def test_invalid_spec_returns_400(self, tmp_path: Path) -> None:
@@ -174,7 +174,7 @@ class TestPreview:
 
     def test_preview_writes_no_files(self, tmp_path: Path) -> None:
         _service(tmp_path).preview(VALID_SPEC_YAML)
-        # SQLite 인덱스 파일은 제외 (#309, ADR 0003)
+        # Exclude SQLite index files (#309, ADR 0003)
         files = [p.name for p in tmp_path.iterdir() if not p.name.startswith("_builds")]
         assert files == []
 
@@ -188,7 +188,7 @@ class TestPreview:
         assert client.close_calls == 1
 
     def test_returns_source_sample_and_diff_fields(self, tmp_path: Path) -> None:
-        # #497: 기존 필드(sample/total_rows/statistics)와 함께 신규 필드가 실린다.
+        # #497: New fields included alongside existing fields (sample/total_rows/statistics).
         resp = _service(tmp_path).preview(VALID_SPEC_YAML, limit=2)
         assert resp.status_code == 200
         preview = resp.body["previews"][0]
@@ -214,9 +214,9 @@ class TestPreview:
         assert first.body["previews"][0]["sample_mode"] == "random"
 
     def test_wide_dataset_diffs_are_truncated_over_the_wire(self, tmp_path: Path) -> None:
-        # #497 sample/diff memory 상한: limit(행 수)만으로는 wide dataset의 diff
-        # item 개수를 막지 못하므로, 실제 서비스 응답에서도 diffs가 상한을 지키고
-        # diff_truncated=true를 실어 클라이언트가 전체 diff로 오인하지 않게 한다.
+        # #497 sample/diff memory limit: row count alone cannot restrict diff
+        # item count; in real service responses, diffs respect limits and set
+        # diff_truncated=true so clients don't mistake it for complete diff.
         from kpubdata_builder.pipeline import MAX_PREVIEW_DIFF_ITEMS
 
         column_count = MAX_PREVIEW_DIFF_ITEMS + 50
@@ -248,7 +248,7 @@ class TestPreview:
 
 class TestPreviewLimitGuard:
     def test_preview_direct_call_rejects_zero_limit(self, tmp_path: Path) -> None:
-        # #225: BuilderService.preview()를 직접 호출할 때도 limit<1이면 400을 반환한다.
+        # #225: Direct calls to BuilderService.preview() also return 400 if limit<1.
         resp = _service(tmp_path).preview(VALID_SPEC_YAML, limit=0)
         assert resp.status_code == 400
         assert "limit" in str(resp.body.get("error", ""))
@@ -258,7 +258,7 @@ class TestPreviewLimitGuard:
         assert resp.status_code == 400
 
     def test_preview_direct_call_rejects_limit_above_max(self, tmp_path: Path) -> None:
-        # #497: limit 상한(1000) 신규 도입 — 이전엔 상한이 없었다(behavioral tightening).
+        # #497: New limit cap (1000) — previously unlimited (behavioral tightening).
         from kpubdata_builder.service.app import MAX_PREVIEW_LIMIT
 
         resp = _service(tmp_path).preview(VALID_SPEC_YAML, limit=MAX_PREVIEW_LIMIT + 1)
@@ -284,7 +284,7 @@ class TestPreviewLimitGuard:
         assert "seed" in str(resp.body.get("error", ""))
 
     def test_preview_direct_call_rejects_bool_seed(self, tmp_path: Path) -> None:
-        # bool은 int의 하위 타입이지만 seed 의미가 없으므로 거부한다.
+        # bool is int subtype but seed meaningless, so reject.
         resp = _service(tmp_path).preview(
             VALID_SPEC_YAML, sample_mode="random", seed=cast(int, True)
         )
@@ -321,7 +321,7 @@ class TestBuild:
         assert resp.body["schema_version"] == "1.0.0"
 
     def test_manifest_route_strips_persisted_internal_owner_id(self, tmp_path: Path) -> None:
-        """owner_id는 persisted manifest에 남지만 HTTP wire에는 노출하지 않는다 (#505)."""
+        """owner_id remains in persisted manifest but not exposed on HTTP wire (#505)."""
         service = _service(tmp_path)
         service.build(
             VALID_SPEC_YAML,
@@ -366,8 +366,8 @@ exports:
 
 
 class TestUploads:
-    """kind="file" source(#498) — POST /uploads가 owner_id로 격리한 업로드를
-    BuildSpec이 참조해 build/preview까지 이어지는 end-to-end 흐름을 검증한다."""
+    """kind="file" source (#498) — POST /uploads isolates uploads by owner_id
+    Verify end-to-end flow from BuildSpec through build/preview."""
 
     def test_create_upload_then_build_end_to_end(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
@@ -477,7 +477,7 @@ class TestUploads:
         assert resp.status_code == 400
 
     def test_preview_without_file_source_never_touches_upload_store(self, tmp_path: Path) -> None:
-        """file source가 없는 preview는 uploads.sqlite3를 만들지 않는다(지연 생성)."""
+        """Preview without file source doesn't create uploads.sqlite3 (deferred)."""
         _service(tmp_path).preview(VALID_SPEC_YAML)
 
         assert not (tmp_path / ".service" / "uploads.sqlite3").exists()
@@ -538,7 +538,7 @@ class TestListBuilds:
         assert "limit" in str(resp.body.get("error", ""))
 
     def test_dispatch_get_builds_query_limit(self, tmp_path: Path) -> None:
-        # ?limit=N 쿼리 파라미터를 지원해야 한다 (#252).
+        # Must support ?limit=N query parameter (#252).
         service = _service(tmp_path)
         service.build(VALID_SPEC_YAML, run_id="run_q1")
         service.build(VALID_SPEC_YAML, run_id="run_q2")
@@ -549,7 +549,7 @@ class TestListBuilds:
         assert len(builds) == 1
 
     def test_dispatch_get_builds_query_limit_guard(self, tmp_path: Path) -> None:
-        # 쿼리 limit이 양의 정수가 아니면 400 (#252).
+        # If query limit not positive integer, return 400 (#252).
         resp = dispatch(_service(tmp_path), "GET", "/builds", None, query="limit=0")
         assert resp.status_code == 400
         resp = dispatch(_service(tmp_path), "GET", "/builds", None, query="limit=abc")
@@ -580,7 +580,7 @@ class TestDispatch:
         assert resp.status_code == 200
 
     def test_preview_rejects_non_integer_limit(self, tmp_path: Path) -> None:
-        # 클라이언트가 limit을 잘못된 타입으로 보내면 조용히 기본값으로 떨어뜨리지 않고 400.
+        # If client sends limit as wrong type, return 400, not default silently.
         resp = dispatch(
             _service(tmp_path), "POST", "/preview", {"spec": VALID_SPEC_YAML, "limit": "5"}
         )
@@ -594,8 +594,8 @@ class TestDispatch:
         assert resp.status_code == 400
 
     def test_preview_rejects_limit_above_max(self, tmp_path: Path) -> None:
-        # #497: 신규 상한(1000) 도입 — 이전 client가 그 이상을 보내던 관행은 깨진다
-        # (behavioral tightening, 이전엔 상한이 없었다).
+        # #497: New cap (1000) — previous clients sending more will break
+        # (behavioral tightening; previously unlimited).
         from kpubdata_builder.service.app import MAX_PREVIEW_LIMIT
 
         resp = dispatch(
@@ -649,7 +649,7 @@ class TestDispatch:
         assert "seed" in str(resp.body.get("error", ""))
 
     def test_preview_rejects_bool_seed(self, tmp_path: Path) -> None:
-        # bool은 int의 하위 타입이지만 seed로는 거부한다.
+        # bool is int subtype but reject for seed.
         resp = dispatch(
             _service(tmp_path),
             "POST",
@@ -677,7 +677,7 @@ class TestDispatch:
     def test_preview_dispatch_defaults_sample_mode_to_first_when_omitted(
         self, tmp_path: Path
     ) -> None:
-        # 기존 client가 sample_mode/seed 없이 호출해도 기존과 동일하게 동작한다.
+        # Existing clients without sample_mode/seed must work as before.
         resp = dispatch(
             _service(tmp_path), "POST", "/preview", {"spec": VALID_SPEC_YAML, "limit": 1}
         )
@@ -685,7 +685,7 @@ class TestDispatch:
         assert resp.body["previews"][0]["sample_mode"] == "first"
 
     def test_build_rejects_non_string_run_id(self, tmp_path: Path) -> None:
-        # run_id가 문자열이 아니면 조용히 자동 생성 id로 떨어뜨리지 않고 400 (#185).
+        # Non-string run_id must return 400, not silently auto-generate (#185).
         resp = dispatch(
             _service(tmp_path), "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": 123}
         )
@@ -699,7 +699,7 @@ class TestDispatch:
         assert resp.status_code == 400
 
     def test_build_rejects_unsafe_run_id_with_400(self, tmp_path: Path) -> None:
-        # 경로 안전하지 않은 run_id는 500/연결 끊김이 아니라 구조화된 400을 반환한다 (#200).
+        # Unsafe path run_id returns structured 400, not 500/disconnect (#200).
         resp = dispatch(
             _service(tmp_path), "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "../bad"}
         )
@@ -708,22 +708,22 @@ class TestDispatch:
 
 
 class TestApiKeyAuth:
-    """API 키 인증(#248, #321, ADR 0006): X-API-Key 검증, fail-closed 정책."""
+    """API key auth (#248, #321, ADR 0006): X-API-Key verification, fail-closed policy."""
 
     def test_auth_required_when_env_and_dev_mode_unset(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # ADR 0006 fail-closed: dev-mode 미설정 + API 키 미설정 시 인증 거부 (401).
+        # ADR 0006 fail-closed: deny auth when dev-mode unset + API key unset (401).
         monkeypatch.delenv("KPUBDATA_BUILDER_API_KEY", raising=False)
         monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
         resp = dispatch(_service(tmp_path), "GET", "/version", None)
         assert resp.status_code == 401
-        assert resp.body["error"]  # 구체적 reason은 auth 구현에 위임
+        assert resp.body["error"]  # Specific reason deferred to auth implementation
 
     def test_auth_skipped_in_dev_mode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dev-mode 설정 시 API 키가 없어도 인증 생략 (로컬 개발 편의).
+        # dev-mode skips auth even without API key (local dev convenience).
         monkeypatch.delenv("KPUBDATA_BUILDER_API_KEY", raising=False)
         monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
         resp = dispatch(_service(tmp_path), "GET", "/version", None)
@@ -732,7 +732,7 @@ class TestApiKeyAuth:
     def test_auth_skipped_in_dev_mode_variant(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dev-mode="1"도 인증 생략.
+        # dev-mode="1" also skips auth.
         monkeypatch.delenv("KPUBDATA_BUILDER_API_KEY", raising=False)
         monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "1")
         resp = dispatch(_service(tmp_path), "GET", "/version", None)
@@ -745,7 +745,7 @@ class TestApiKeyAuth:
         monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret")
         resp = dispatch(_service(tmp_path), "GET", "/version", None)
         assert resp.status_code == 401
-        assert resp.body["error"]  # 구체적 reason은 auth 구현에 위임
+        assert resp.body["error"]  # Specific reason deferred to auth implementation
 
     def test_rejects_wrong_api_key_when_configured(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -766,7 +766,7 @@ class TestApiKeyAuth:
     def test_build_route_requires_api_key_when_configured(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # /build처럼 비용이 큰 엔드포인트도 예외 없이 보호돼야 한다.
+        # Even expensive endpoints like /build must be uniformly protected.
         monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
         monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret")
         resp = dispatch(
@@ -777,7 +777,7 @@ class TestApiKeyAuth:
 
 class TestBuildFailureResponseCode:
     def test_failed_build_returns_502(self, tmp_path: Path) -> None:
-        # 소스 fetch가 실패하면 status=failed + 502 — 매니페스트는 partial 정책으로 남는다.
+        # If source fetch fails, status=failed + 502 — manifest stays with partial policy.
         missing_source_yaml = VALID_SPEC_YAML.replace("air_quality", "missing")
         resp = _service(tmp_path).build(missing_source_yaml, run_id="run1")
 
@@ -788,7 +788,7 @@ class TestBuildFailureResponseCode:
 
 @pytest.fixture(autouse=True)
 def clear_cors_cache() -> None:
-    """CORS 캐시를 각 테스트 전에 비운다 (#322)."""
+    """Clear CORS cache before each test (#322)."""
     _clear_cors_cache()
     yield
 
@@ -798,8 +798,8 @@ def http_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterable[tuple[str, HTTPServer, threading.Thread]]:
-    """실제 HTTPServer를 임의 포트에 띄워서 어댑터 레벨 동작을 검증한다."""
-    # 테스트에서는 dev-mode를 설정하여 인증을 생략한다 (#321, ADR 0006).
+    """Start actual HTTPServer on random port to verify adapter-level behavior."""
+    # Test sets dev-mode to skip auth (#321, ADR 0006).
     monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
     service = _service(tmp_path)
     server = HTTPServer(("127.0.0.1", 0), make_handler(service))
@@ -819,7 +819,7 @@ def http_server_with_auth(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterable[tuple[str, HTTPServer, threading.Thread]]:
-    """인증이 활성화된 HTTPServer (dev-mode 미설정, API 키 설정)."""
+    """HTTPServer with auth enabled (dev-mode unset, API key set)."""
     monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
     monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret")
     service = _service(tmp_path)
@@ -836,14 +836,13 @@ def http_server_with_auth(
 
 
 class TestPreviewWireSerialization:
-    """POST /preview 실제 wire JSON 직렬화를 검증한다 (#497, 계약 섹션 6).
+    """POST /preview validates actual wire JSON serialization (#497, contract section 6).
 
-    ``BuilderService.preview()``가 반환하는 dict는 date/datetime 등 파이썬
-    객체를 그대로 담고 있을 수 있어(#440부터의 기존 ``sample`` 필드와 동일한
-    패턴), 실제 HTTP 응답 바이트까지 확인해야 ``service/http.py``의
-    ``json.dumps(default=str)`` 경로가 ``source_sample``/``diffs``에도 올바르게
-    적용되는지 알 수 있다. 별도 serializer를 새로 만들지 않고 기존 경로를
-    그대로 재사용한다.
+    dict returned by ``BuilderService.preview()`` contains Python
+    objects directly (same as #440+ existing ``sample`` field pattern).
+    Check actual HTTP response bytes to verify ``service/http.py``
+    ``json.dumps(default=str)`` correctly applied to ``source_sample``/``diffs``.
+    Reuse existing path without new serializer.
     """
 
     def _post_preview(
@@ -871,9 +870,9 @@ class TestPreviewWireSerialization:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
-        # casts를 선언하지 않고 raw record에 이미 파이썬 타입 값을 실어, kpubdata
-        # provider가 이미 typed 값을 돌려주는 흔한 경우를 흉내낸다 — records_to_dataframe가
-        # 이 타입들을 그대로 추론해 실어 나른다.
+        # No casts declared; raw record carries Python type values that kpubdata
+        # Mimics common case where provider returns typed values — records_to_dataframe
+        # These types inferred and carried as-is.
         row: dict[str, JsonValue] = {
             "id": "1",
             "n": None,
@@ -896,9 +895,9 @@ class TestPreviewWireSerialization:
         assert source_row["ratio"] == 1.5
         assert source_row["active"] is True
         assert source_row["label"] == "seoul"
-        # date/naive datetime은 http.py의 json.dumps(default=str)을 거쳐 str()
-        # 형식(공백 구분)의 문자열이 된다 — 기존 sample 필드와 동일 규칙(#497은 이를
-        # 재사용할 뿐 새 규칙을 만들지 않는다).
+        # date/naive datetime go through http.py json.dumps(default=str) → str()
+        # Becomes space-separated string — same rule as existing sample field (#497
+        # Reuse only; don't create new rules).
         assert source_row["d"] == "2025-01-01"
         assert source_row["ts"] == "2025-01-01 12:30:00"
 
@@ -909,8 +908,8 @@ class TestPreviewWireSerialization:
     def test_timezone_aware_datetime_survives_the_wire(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # test_silver.py::test_serializes_timezone_aware_datetime_values_as_iso_strings와
-        # 같은 패턴(직접 aware datetime 값을 실어 polars가 UTC로 정규화하게 한다).
+        # test_silver.py::test_serializes_timezone_aware_datetime_values_as_iso_strings and
+        # Same pattern (carry aware datetime directly, let polars normalize to UTC).
         monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
         kst = timezone(timedelta(hours=9))
         row: dict[str, JsonValue] = {
@@ -925,18 +924,18 @@ class TestPreviewWireSerialization:
         preview = cast(dict[str, object], cast(list[object], body["previews"])[0])
         source_row = cast(dict[str, object], cast(list[object], preview["source_sample"])[0])
         transformed_row = cast(dict[str, object], cast(list[object], preview["sample"])[0])
-        # source_sample은 bronze raw record를 그대로 노출하므로 원래 KST offset을
-        # 유지하고, Silver(transformed)는 polars가 UTC로 정규화한다 — KST 21:30과
-        # UTC 12:30은 같은 instant이므로 diff는 없지만(값 자체는 동일), 두 표현이
-        # 서로 다른 offset의 str() 문자열로 각자 정확히 직렬화되는지 확인한다.
+        # source_sample exposes bronze raw record as-is, preserving original KST offset
+        # Preserved; Silver (transformed) normalized by polars to UTC — KST 21:30 and
+        # UTC 12:30 is same instant so no diff (values equal), but representations differ
+        # Verify each str() with different offset serializes accurately.
         assert source_row["tz"] == "2025-01-01 21:30:00+09:00"
         assert transformed_row["tz"] == "2025-01-01 12:30:00+00:00"
 
     def test_diff_before_after_carry_wire_correct_types(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # declared cast로 실제 diff item이 만들어질 때도 before(str)/after(int)가
-        # 각자의 실제 JSON 타입으로 wire에 실린다(#497 diff item 예시와 동일한 형태).
+        # When actual diff item is created by declared cast, before(str)/after(int)
+        # Each in its actual JSON type on wire (same shape as #497 diff item examples).
         monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
         spec_yaml = (
             """
@@ -972,7 +971,7 @@ class TestHttpAdapter:
     def test_unsafe_run_id_returns_400_not_500(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # 경로 안전하지 않은 run_id가 어댑터에서 500/연결 끊김이 아니라 400이어야 한다 (#200).
+        # Unsafe path run_id must return 400 from adapter, not 500/disconnect (#200).
         base_url, _, _ = http_server
         req = urllib.request.Request(
             f"{base_url}/build",
@@ -1011,7 +1010,7 @@ class TestHttpAdapter:
     def test_non_object_json_body_returns_400(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # 유효하지만 객체가 아닌 JSON(스칼라)은 TypeError로 중단되지 않고 400 (#183).
+        # Valid but non-object JSON (scalar) must return 400, not TypeError (#183).
         base_url, _, _ = http_server
         req = urllib.request.Request(
             f"{base_url}/validate",
@@ -1028,7 +1027,7 @@ class TestHttpAdapter:
     def test_query_string_is_ignored_in_routing(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # 쿼리 스트링이 붙어도 경로 컴포넌트로만 라우팅된다 (#184).
+        # Even with query string, routing uses only path component (#184).
         base_url, _, _ = http_server
         req = urllib.request.Request(
             f"{base_url}/validate?x=1",
@@ -1042,7 +1041,7 @@ class TestHttpAdapter:
     def test_query_string_does_not_corrupt_run_id(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # /artifacts/<run_id>?download=1 의 쿼리가 run_id로 새지 않아야 한다 (#184).
+        # Query params like ?download=1 must not leak into run_id (#184).
         base_url, _, _ = http_server
         build_req = urllib.request.Request(
             f"{base_url}/build",
@@ -1060,7 +1059,7 @@ class TestHttpAdapter:
     def test_oversized_body_returns_413(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # 선언된 Content-Length가 상한을 넘으면 body를 읽지 않고 413으로 거부 (#186).
+        # If declared Content-Length exceeds limit, reject with 413 without reading (#186).
         import http.client
 
         base_url, _, _ = http_server
@@ -1071,7 +1070,7 @@ class TestHttpAdapter:
             conn.putrequest("POST", "/validate")
             conn.putheader("Content-Type", "application/json")
             conn.putheader("Content-Length", str(100 * 1024 * 1024))
-            conn.endheaders()  # body는 보내지 않는다 — 핸들러가 헤더만 보고 거부.
+            conn.endheaders()  # No body sent — handler rejects on headers alone.
             response = conn.getresponse()
             assert response.status == 413
         finally:
@@ -1080,7 +1079,7 @@ class TestHttpAdapter:
     def test_valid_post_validate_round_trips(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # 어댑터가 정상 요청을 dispatch에 전달하고 JSON 응답을 직렬화하는지 확인.
+        # Verify adapter passes normal request to dispatch and serializes JSON response.
         base_url, _, _ = http_server
         req = urllib.request.Request(
             f"{base_url}/validate",
@@ -1096,7 +1095,7 @@ class TestHttpAdapter:
     def test_options_preflight_returns_204_with_cors(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # CORS preflight(OPTIONS)가 204와 허용 헤더를 반환해야 한다 (#254).
+        # CORS preflight (OPTIONS) must return 204 + allow headers (#254).
         base_url, _, _ = http_server
         req = urllib.request.Request(f"{base_url}/build", method="OPTIONS")
         with urllib.request.urlopen(req, timeout=2.0) as response:
@@ -1114,10 +1113,10 @@ class TestHttpAdapter:
     def test_response_includes_cors_header(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # Same-origin 요청(Oriign 헤더 없음)은 CORS 헤더가 포함되어야 한다 (#322).
+        # Same-origin requests (no Origin header) must include CORS headers (#322).
         base_url, _, _ = http_server
         with urllib.request.urlopen(f"{base_url}/version", timeout=2.0) as response:
-            # Same-origin이면 `*`를 반환한다.
+            # If same-origin, return `*`.
             assert response.headers["Access-Control-Allow-Origin"] == "*"
 
     def test_cors_responses_always_vary_on_origin(
@@ -1125,8 +1124,8 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # 응답의 CORS 헤더가 Origin에 따라 달라지므로 Vary: Origin이 항상 있어야 한다 —
-        # 없으면 캐싱 프록시가 한 오리진용 응답을 다른 오리진에 재사용할 수 있다.
+        # CORS headers vary by Origin, so Vary: Origin always needed —
+        # Without it, caching proxy could reuse one origin's response for another.
         monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
         base_url, _, _ = http_server
 
@@ -1137,7 +1136,7 @@ class TestHttpAdapter:
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
             assert response.headers["Vary"] == "Origin"
 
-        # 거부된 오리진 응답도 Vary를 달아야 캐시가 두 응답을 섞지 않는다.
+        # Rejected origin responses must include Vary to prevent cache mixing.
         denied = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://evil.example"}
         )
@@ -1145,7 +1144,7 @@ class TestHttpAdapter:
             assert "Access-Control-Allow-Origin" not in response.headers
             assert response.headers["Vary"] == "Origin"
 
-        # preflight도 동일하다.
+        # Preflight is same.
         preflight = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://evil.example"}, method="OPTIONS"
         )
@@ -1158,16 +1157,16 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # 환경변수 미설정 시 크로스-오리진 요청은 CORS 헤더가 없어야 한다 (#322 default-deny).
-        # env를 명확하게 지우고 테스트
+        # Cross-origin requests with env unset must have no CORS headers (#322 default-deny).
+        # Clear env explicitly and test
         monkeypatch.delenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", raising=False)
         base_url, _, _ = http_server
-        # Origin 헤더를 포함한 요청 (크로스-오리진으로 간주)
+        # Request with Origin header (treated as cross-origin)
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
         with urllib.request.urlopen(req, timeout=2.0) as response:
-            # default-deny이므로 CORS 헤더가 없어야 함
+            # default-deny so no CORS headers
             assert "Access-Control-Allow-Origin" not in response.headers
 
     def test_cors_file_download_respects_allowlist(
@@ -1175,9 +1174,9 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # 파일 응답(_write_file)도 CORS 허용 목록을 따라야 한다 (#382).
-        # 이전에는 _write_file이 Origin을 전달하지 않아 same-origin으로 취급되어
-        # 허용되지 않은 오리진에도 Access-Control-Allow-Origin: * 를 보냈다.
+        # File responses (_write_file) must also follow CORS allowlist (#382).
+        # Previously _write_file didn't pass Origin, treated as same-origin
+        # Sent Access-Control-Allow-Origin: * even to unapproved origins.
         monkeypatch.delenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", raising=False)
         base_url, _, _ = http_server
         build_req = urllib.request.Request(
@@ -1188,14 +1187,14 @@ class TestHttpAdapter:
         )
         with urllib.request.urlopen(build_req, timeout=5.0) as response:
             assert response.status == 200
-        # 크로스오리진 파일 다운로드 요청
+        # Cross-origin file download request
         req = urllib.request.Request(
             f"{base_url}/artifacts/run1/manifest.json",
             headers={"Origin": "http://localhost:5173"},
         )
         with urllib.request.urlopen(req, timeout=2.0) as response:
             assert response.status == 200
-            # default-deny: 허용 목록에 없는 오리진은 CORS 헤더를 받지 않는다
+            # default-deny: origins not in allowlist get no CORS headers
             assert "Access-Control-Allow-Origin" not in response.headers
 
     def test_cors_file_download_allowed_origin_echoed(
@@ -1203,7 +1202,7 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # 허용된 오리진의 파일 다운로드는 해당 오리진을 echo 해야 한다 (#382).
+        # File download from approved origin must echo that origin (#382).
         monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
         base_url, _, _ = http_server
         build_req = urllib.request.Request(
@@ -1227,10 +1226,10 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # KPUBDATA_BUILDER_ALLOWED_ORIGINS로 허용 Origin을 설정할 수 있어야 한다 (#322).
+        # Must allow setting allowed Origins via KPUBDATA_BUILDER_ALLOWED_ORIGINS (#322).
         monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
         base_url, _, _ = http_server
-        # Origin 헤더를 포함한 요청
+        # Request with Origin header
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
@@ -1242,19 +1241,19 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # 여러 Origin을 콤마로 구분하여 설정할 수 있어야 한다 (#322).
+        # Must allow comma-separated Origins (#322).
         monkeypatch.setenv(
             "KPUBDATA_BUILDER_ALLOWED_ORIGINS",
             "http://localhost:5173,https://studio.example.com",
         )
         base_url, _, _ = http_server
-        # 첫 번째 오리진으로 요청
+        # Request from first origin
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
         with urllib.request.urlopen(req, timeout=2.0) as response:
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
-        # 두 번째 오리진으로 요청
+        # Request from second origin
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "https://studio.example.com"}
         )
@@ -1266,20 +1265,20 @@ class TestHttpAdapter:
         http_server: tuple[str, HTTPServer, threading.Thread],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # 허용 목록에 없는 Origin은 CORS 헤더가 없어야 한다 (#322).
+        # Origin not in allowlist must get no CORS headers (#322).
         monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
         base_url, _, _ = http_server
-        # 허용되지 않은 오리진으로 요청
+        # Request from unapproved origin
         req = urllib.request.Request(f"{base_url}/version", headers={"Origin": "http://evil.com"})
         with urllib.request.urlopen(req, timeout=2.0) as response:
-            # 허용되지 않은 오리진이므로 CORS 헤더가 없어야 함
+            # Unapproved origin so no CORS headers
             assert "Access-Control-Allow-Origin" not in response.headers
 
     def test_missing_api_key_returns_401_when_configured(
         self,
         http_server_with_auth: tuple[str, HTTPServer, threading.Thread],
     ) -> None:
-        # 어댑터가 X-API-Key 헤더를 dispatch로 전달해야 한다 (#248).
+        # Adapter must pass X-API-Key header to dispatch (#248).
         base_url, _, _ = http_server_with_auth
         with pytest.raises(urllib.error.HTTPError) as exc_info:
             urllib.request.urlopen(f"{base_url}/version", timeout=2.0)
@@ -1289,7 +1288,7 @@ class TestHttpAdapter:
         self,
         http_server_with_auth: tuple[str, HTTPServer, threading.Thread],
     ) -> None:
-        # http_server_with_auth fixture가 이미 API 키를 설정하므로 monkeypatch 불필요
+        # http_server_with_auth fixture already sets API key, no monkeypatch needed
         base_url, _, _ = http_server_with_auth
         req = urllib.request.Request(f"{base_url}/version", headers={"X-API-Key": "secret"})
         with urllib.request.urlopen(req, timeout=2.0) as response:
@@ -1299,8 +1298,8 @@ class TestHttpAdapter:
         self,
         http_server_with_auth: tuple[str, HTTPServer, threading.Thread],
     ) -> None:
-        # /healthz는 인증 게이트 밖에서 무인증 노출된다 (#372).
-        # 프로브가 자격증명을 실을 수 없으므로 키 없이 200 + {"status":"ok"}만 반환.
+        # /healthz is exposed unauthenticated outside auth gate (#372).
+        # Probe can't carry credentials, so return only 200 + {"status":"ok"} without key.
         base_url, _, _ = http_server_with_auth
         with urllib.request.urlopen(f"{base_url}/healthz", timeout=2.0) as response:
             assert response.status == 200
@@ -1309,7 +1308,7 @@ class TestHttpAdapter:
         assert body["status"] == "ok"
         assert "request_id" not in body
         assert request_id
-        # 버전·서비스 메타 정보가 누출되지 않아야 한다.
+        # Version/service metadata must not leak.
         assert "api_version" not in body
         assert "service" not in body
 
@@ -1348,7 +1347,7 @@ class TestHttpAdapter:
 
 
 class TestHttpUploads:
-    """POST /uploads(#498)의 실제 소켓 왕복 — binary body 전송·query 파싱·상한."""
+    """POST /uploads (#498) real socket roundtrip — binary body send·query parse·limit."""
 
     def test_create_get_delete_upload_round_trip_over_http(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
@@ -1418,9 +1417,9 @@ class TestHttpUploads:
     def test_create_upload_body_is_not_parsed_as_json(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # POST /uploads의 body는 CSV/바이너리도 그대로 허용된다 — 다른 endpoint와
-        # 달리 JSON 파싱을 시도하지 않는다(#498). 이 body는 유효한 JSON이 아니지만
-        # (raw text) 유효한 CSV이므로 format=csv로 성공해야 한다.
+        # POST /uploads body accepts CSV/binary as-is — unlike other endpoints
+        # Otherwise no JSON parse attempt (#498). This body is invalid JSON but
+        # (raw text) should succeed as format=csv since it's valid CSV.
         base_url, _, _ = http_server
         req = urllib.request.Request(
             f"{base_url}/uploads?format=csv",
@@ -1433,13 +1432,13 @@ class TestHttpUploads:
 
 
 class TestHttpRobustness:
-    """#218 (JSON 500 handler) 과 #219 (DoS hardening) 검증."""
+    """#218 (JSON 500 handler) and #219 (DoS hardening) verification."""
 
     def test_dispatch_exception_returns_json_500(
         self, tmp_path: Path, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # dispatch()에서 예외가 발생해도 연결이 끊기지 않고 JSON 500이 반환돼야 한다 (#218).
-        # 패치로 dispatch를 교체해 인위적으로 예외를 발생시킨다.
+        # Even if dispatch() raises, don't disconnect; return JSON 500 (#218).
+        # Patch dispatch to artificially raise exception.
         import unittest.mock
 
         base_url, _, _ = http_server
@@ -1459,12 +1458,12 @@ class TestHttpRobustness:
         assert exc_info.value.code == 500
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert body.get("error") == "internal server error"
-        # 내부 예외 메시지("boom")가 클라이언트에 누설되지 않아야 한다.
+        # Internal exception message ("boom") must not leak to client.
         assert "boom" not in json.dumps(body)
 
     def test_make_handler_has_socket_timeout(self, tmp_path: Path) -> None:
-        # 핸들러 클래스에 timeout이 설정돼 있어야 느린 클라이언트가 스레드를 무한 점거하지
-        # 않는다 (#219). BaseHTTPRequestHandler.timeout 이 None이면 무제한이다.
+        # Handler class must have timeout set so slow clients don't starve threads
+        # (#219). BaseHTTPRequestHandler.timeout being None means unlimited.
         from kpubdata_builder.service.http import _SOCKET_TIMEOUT_SECONDS, make_handler
 
         handler_cls = make_handler(_service(tmp_path))
@@ -1473,8 +1472,8 @@ class TestHttpRobustness:
         assert handler_cls.timeout > 0
 
     def test_serve_uses_bounded_threading_http_server(self, tmp_path: Path) -> None:
-        # serve()가 BoundedThreadingHTTPServer를 사용해야 느린 클라이언트가 서버
-        # 전체를 멈추지 않으면서도(#219) 동시 처리 스레드 수에 상한이 걸린다 (#253).
+        # serve() must use BoundedThreadingHTTPServer so slow clients don't starve server
+        # Without stopping all (#219), concurrent threads capped (#253).
         import contextlib
         import unittest.mock
         from http.server import ThreadingHTTPServer
@@ -1513,8 +1512,8 @@ class TestHttpRobustness:
             server.server_close()
 
     def test_bounded_server_limits_concurrent_processing(self, tmp_path: Path) -> None:
-        # 동시 처리 스레드 수가 max_workers로 상한이 걸려야 한다 (#253): 워커 수보다
-        # 많은 클라이언트가 동시에 접속해도 실제 동시 처리량은 max_workers를 넘지 않는다.
+        # Concurrent threads must be capped at max_workers (#253): more than workers
+        # Many simultaneous clients but actual throughput never exceeds max_workers.
         import time
         import unittest.mock
 
@@ -1559,7 +1558,7 @@ class TestHttpRobustness:
                 for t in client_threads:
                     t.start()
 
-                # 워커 풀이 상한(max_workers)까지 채워질 때까지 능동적으로 대기한다.
+                # Actively wait until worker pool fills to limit (max_workers).
                 deadline = time.monotonic() + 5.0
                 while time.monotonic() < deadline:
                     with lock:
@@ -1584,11 +1583,11 @@ class TestHttpRobustness:
     def test_bounded_server_rejects_connections_past_the_pending_limit(
         self, tmp_path: Path
     ) -> None:
-        """스레드 수만 제한하면 대기열은 여전히 무한이다.
+        """Limiting threads alone leaves queue unbounded.
 
-        ``ThreadPoolExecutor`` 의 작업 큐에 상한이 없어서, 워커가 다 찬 뒤에
-        들어온 연결은 소켓을 연 채로 얼마든지 쌓였다 — 스레드는 열 개여도
-        파일 디스크립터는 접속하는 만큼 늘어났다.
+        ``ThreadPoolExecutor`` task queue unbounded; after workers fill
+        Incoming connections stacked with socket open — even 10 threads
+        File descriptors grew with connections.
         """
         from kpubdata_builder.service.http import BoundedThreadingHTTPServer, make_handler
 
@@ -1606,7 +1605,7 @@ class TestHttpRobustness:
             def close(self) -> None:
                 self.closed = True
 
-        # 처리 1 + 대기 1 = 두 연결까지만 받는다.
+        # 1 processing + 1 waiting = accept up to 2 connections.
         server = BoundedThreadingHTTPServer(
             ("127.0.0.1", 0),
             make_handler(_service(tmp_path)),
@@ -1629,10 +1628,10 @@ class TestHttpRobustness:
             server.process_request(pending, ("10.0.0.2", 2))  # type: ignore[arg-type]
             server.process_request(rejected, ("10.0.0.3", 3))  # type: ignore[arg-type]
 
-            # 받아들인 둘은 아직 아무 응답도 받지 않았다 — 핸들러가 잡고 있다.
+            # Two accepted but no response yet — handler still processing.
             assert running.sent == b""
             assert pending.sent == b""
-            # 세 번째는 기다리지 않고 즉시 503 을 받고 끊긴다.
+            # Third gets immediate 503 and disconnects.
             assert rejected.sent.startswith(b"HTTP/1.1 503 Service Unavailable\r\n")
             assert b"Retry-After: 1" in rejected.sent
             assert b"Connection: close" in rejected.sent
@@ -1642,7 +1641,7 @@ class TestHttpRobustness:
             server.server_close()
 
     def test_bounded_server_admits_again_once_requests_drain(self, tmp_path: Path) -> None:
-        """거절 카운터를 되돌리지 않으면 서버가 한 번 붐빈 뒤 영구히 닫힌다."""
+        """Without resetting reject counter, server hangs once then closes permanently."""
         import time
 
         from kpubdata_builder.service.http import BoundedThreadingHTTPServer, make_handler
@@ -1679,7 +1678,7 @@ class TestHttpRobustness:
             server.server_close()
 
     def test_overloaded_response_is_a_well_formed_http_message(self) -> None:
-        """핸들러를 거치지 않고 소켓에 직접 쓰는 응답이라 형식이 틀려도 아무도 못 잡는다."""
+        """Responses written directly to socket bypass handler, no one catches format errors."""
         from kpubdata_builder.service.http import _OVERLOADED_RESPONSE
 
         head, _, body = _OVERLOADED_RESPONSE.partition(b"\r\n\r\n")
@@ -1690,7 +1689,7 @@ class TestHttpRobustness:
     def test_oversized_body_content_length_returns_413_http(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
     ) -> None:
-        # Content-Length가 _MAX_BODY_BYTES를 넘으면 body를 읽지 않고 413으로 거부 (#219).
+        # If Content-Length > _MAX_BODY_BYTES, reject with 413 without reading (#219).
         import http.client
 
         base_url, _, _ = http_server
@@ -1700,8 +1699,8 @@ class TestHttpRobustness:
         try:
             conn.putrequest("POST", "/validate")
             conn.putheader("Content-Type", "application/json")
-            conn.putheader("Content-Length", str(20 * 1024 * 1024))  # 20 MiB > 10 MiB 상한
-            conn.endheaders()  # body는 보내지 않는다 — 핸들러가 헤더만 보고 거부.
+            conn.putheader("Content-Length", str(20 * 1024 * 1024))  # 20 MiB > 10 MiB limit
+            conn.endheaders()  # No body sent — handler rejects on headers alone.
             response = conn.getresponse()
             assert response.status == 413
             resp_body = cast(dict[str, object], json.loads(response.read()))
@@ -1710,7 +1709,7 @@ class TestHttpRobustness:
             conn.close()
 
     def test_body_read_timeout_returns_json_400(self, tmp_path: Path) -> None:
-        # rfile.read()가 TimeoutError를 던지면 연결 끊김이 아닌 JSON 400이어야 한다 (#219).
+        # If rfile.read() raises TimeoutError, return JSON 400, not disconnect (#219).
         import io
 
         handler_cls = make_handler(_service(tmp_path))
@@ -1739,7 +1738,7 @@ class TestHttpRobustness:
         assert "timed out" in str(body.get("error", ""))
 
     def test_truncated_body_returns_json_400(self, tmp_path: Path) -> None:
-        # Content-Length보다 짧은 body(EOF)는 연결 끊김이 아닌 JSON 400이어야 한다 (#219).
+        # Body shorter than Content-Length (EOF) must return JSON 400, not disconnect (#219).
         import io
 
         handler_cls = make_handler(_service(tmp_path))
@@ -1750,7 +1749,7 @@ class TestHttpRobustness:
             def _write(self, status_code: int, body: dict[str, object]) -> None:  # type: ignore[override]
                 captured.append((status_code, body))
 
-        # Content-Length는 10이지만 실제로는 5바이트만 전달.
+        # Content-Length is 10 but only 5 bytes actually sent.
         truncated_rfile = io.BytesIO(b"hello")
 
         h = object.__new__(_PatchedHandler)
@@ -1765,7 +1764,7 @@ class TestHttpRobustness:
 
 
 class TestArtifactFileServing:
-    """아티팩트 파일 서빙 기능 테스트 (#323)."""
+    """Test artifact file serving functionality (#323)."""
 
     def test_serves_existing_file(self, tmp_path: Path) -> None:
         from kpubdata_builder.service import FileResponse
@@ -1818,7 +1817,7 @@ class TestArtifactFileServing:
         service = _service(tmp_path)
         dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
 
-        # out 디렉터리는 빌드로 생성되므로 존재함
+        # out directory exists since build created it
         (tmp_path / "run1" / "subdir").mkdir()
 
         resp = service.serve_artifact_file("run1", "subdir")
@@ -1838,9 +1837,9 @@ class TestArtifactFileServing:
         assert resp.filename == "manifest.json"
 
     def test_serves_nested_relative_path(self, tmp_path: Path) -> None:
-        """GET /artifacts/{run_id}가 돌려주는 run 디렉터리 기준 상대 경로(슬래시 포함)를
-        serve_artifact_file도 그대로 받아야 한다 (#323 후속). 이전에는 file_path 전체를
-        한 세그먼트로 검증해 'silver/air/table.parquet' 같은 값이 전부 400이었다."""
+        """GET /artifacts/{run_id} returns run directory relative paths (with slashes)
+        serve_artifact_file must also receive as-is (#323 follow-up). Previously entire file_path
+        validated as single segment, so 'silver/air/table.parquet' entirely 400."""
         from kpubdata_builder.service import FileResponse
 
         service = _service(tmp_path)
@@ -1852,7 +1851,7 @@ class TestArtifactFileServing:
 
         listed = service.artifacts("run1")
         assert isinstance(listed, ServiceResponse)
-        # wire 목록은 항상 POSIX "/" 기반이어야 한다 (OS 구분자·output_root prefix 없음).
+        # wire list must always use POSIX "/" (no OS separator or output_root prefix).
         for wire_path in listed.body["files"]:
             assert "\\" not in wire_path
             assert not wire_path.startswith("/")
@@ -1878,7 +1877,7 @@ class TestArtifactFileServing:
         assert resp.status_code == 400
 
     def test_blocks_percent_encoded_traversal(self, tmp_path: Path) -> None:
-        """percent-encode된 트래버설/구분자는 decode 후 다시 검증되어 차단된다."""
+        """Percent-encoded traversal/delimiters decoded then re-validated and blocked."""
         service = _service(tmp_path)
         dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
         dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run2"})
@@ -1899,48 +1898,48 @@ class TestArtifactFileServing:
         dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
         dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run2"})
 
-        # 다른 run 파일: '..'로만 접근 가능하므로 차단된다.
+        # Other run files: only accessible via '..', so blocked.
         assert service.serve_artifact_file("run1", "../run2/manifest.json").status_code == 400
-        # double slash -> 빈 성분
+        # double slash → empty component
         assert service.serve_artifact_file("run1", "silver//table.parquet").status_code == 400
 
     def test_mime_type_detection(self, tmp_path: Path) -> None:
         from kpubdata_builder.service.http import _get_mime_type
 
-        # 명시적 매핑
+        # Explicit mapping
         assert _get_mime_type(tmp_path / "data.parquet") == "application/vnd.apache.parquet"
         assert _get_mime_type(tmp_path / "data.csv") == "text/csv"
         assert _get_mime_type(tmp_path / "data.json") == "application/json"
         assert _get_mime_type(tmp_path / "data.txt") == "text/plain"
 
-        # mimetypes 라이브러리 (fallback)
+        # mimetypes library (fallback)
         assert _get_mime_type(tmp_path / "data.html") == "text/html"
         assert _get_mime_type(tmp_path / "data.xml") == "application/xml"
 
-        # 알 수 없는 확장자 → 기본값
+        # Unknown extension → default
         assert _get_mime_type(tmp_path / "data.unknown") == "application/octet-stream"
         assert _get_mime_type(tmp_path / "data") == "application/octet-stream"
 
 
 class TestOwnershipEnforcement:
-    """ENFORCE_OWNERSHIP 회귀: 인덱스 폴백 시에도 소유권이 강제되어야 한다 (#433).
+    """ENFORCE_OWNERSHIP regression: ownership must be enforced even in index fallback (#433).
 
-    list_builds의 SQLite 인덱스 분기에만 소유권 필터가 있고, 파일시스템 폴백에는
-    없어 ENFORCE_OWNERSHIP=true 여도 타인의 run_id가 노출되는 버그 회귀 테스트.
-    ADR 0003이 폴백을 정상 동작 모드로 설계하므로 예외 상황이 아님.
+    Ownership filter only in SQLite index branch of list_builds, not filesystem fallback
+    Regression test: even with ENFORCE_OWNERSHIP=true, other's run_id exposed bug.
+    ADR 0003 designed fallback as normal mode, not exception case.
     """
 
     def _build_as(self, service: BuilderService, run_id: str, created_by: str) -> None:
-        """created_by를 명시적으로 기록하며 빌드 (테스트 단순화용 주입)."""
+        """Build records created_by explicitly (injected for test simplicity)."""
         self._build_with_manifest_fields(service, run_id, created_by=created_by)
 
     def _build_with_manifest_fields(
         self, service: BuilderService, run_id: str, **fields: object
     ) -> None:
-        """빌드 후 manifest.json의 임의 필드(created_by/owner_id 등)를 덮어쓴다 (#505).
+        """After build, overwrite arbitrary manifest.json fields (created_by/owner_id etc) (#505).
 
-        owner_id를 None으로 명시하면 manifest에서 해당 키를 완전히 제거해
-        legacy(#505 이전) manifest shape를 흉내낸다.
+        Setting owner_id to None completely removes key from manifest
+        legacy(#505 pre-) mimic manifest shape.
         """
         dispatch(
             service,
@@ -1960,7 +1959,7 @@ class TestOwnershipEnforcement:
     def test_fallback_filters_other_owners_when_index_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """인덱스가 비었을 때 폴백이 다른 사용자의 run을 노출하면 안 된다 (#433)."""
+        """When index empty, fallback must not expose other user's runs (#433)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         self._build_as(service, "runA", "oidc:userA")
@@ -1979,10 +1978,10 @@ class TestOwnershipEnforcement:
     def test_fallback_filters_other_owners_when_index_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """인덱스 조회가 예외로 실패해도 폴백은 소유권을 강제해야 한다 (#433).
+        """Even if index lookup fails with exception, fallback must enforce ownership (#433).
 
-        SQLite 잠금 경합 등으로 list_builds가 예외를 던질 때, ENFORCE_OWNERSHIP+
-        oidc 조합이면 타인 run이 폴백으로 새어나가면 안 됨 (fail-closed).
+        When list_builds raises due to SQLite lock contention etc., ENFORCE_OWNERSHIP+
+        If oidc combo, other's run must not leak via fallback (fail-closed).
         """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
@@ -2004,7 +2003,7 @@ class TestOwnershipEnforcement:
     def test_owner_sees_own_run_in_fallback(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """소유자 본인은 폴백에서도 자신의 run을 볼 수 있어야 한다 (양성 회귀)."""
+        """Owner can see own runs even in fallback (positive regression)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         self._build_as(service, "runA", "oidc:userA")
@@ -2024,7 +2023,7 @@ def _build_run_ids(resp: ServiceResponse) -> list[str]:
 
 
 class TestStableOwnerIdOwnership:
-    """canonical owner_id 기반 ownership 판정 (#505) — /builds 목록·상세 경로."""
+    """Ownership judgment based on canonical owner_id (#505) — /builds list/detail."""
 
     def _build_with_manifest_fields(
         self, service: BuilderService, run_id: str, **fields: object
@@ -2047,10 +2046,10 @@ class TestStableOwnerIdOwnership:
     def test_owner_id_match_wins_even_with_different_display_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id가 일치하면 표시용 label(created_by)이 달라도 소유자로 인정된다 (#505).
+        """If owner_id matches, owner recognized even if display label (created_by) differs (#505).
 
-        display identity가 바뀌어도(향후 프로필 이름 갱신 등) persistent owner
-        identity는 바뀌지 않아야 한다는 완료 조건을 응답 목록 수준에서 검증한다.
+        Even if display identity changes (future profile name updates etc), persistent owner
+        Verify at response list level that identity completion condition holds.
         """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
@@ -2059,7 +2058,7 @@ class TestStableOwnerIdOwnership:
         )
         monkeypatch.setattr(service._build_index, "list_builds", lambda limit: [])
 
-        # label은 manifest의 created_by와 다르지만 owner_id는 동일 — 여전히 소유자.
+        # label differs from manifest created_by, but owner_id is same — still owner.
         renamed_principal = Principal(
             kind="oidc", identifier="new-display-name", owner_id="oidc:canonical-abc"
         )
@@ -2070,10 +2069,10 @@ class TestStableOwnerIdOwnership:
     def test_owner_id_mismatch_denied_even_with_matching_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id가 있는 신규 레코드는 label이 같아도 owner_id 불일치면 거부한다 (#505).
+        """New records with owner_id reject if owner_id mismatch even with same label (#505).
 
-        legacy 트렁케이션(sub 앞 8자) 충돌로 label만 우연히 같아지는 상황에서도
-        canonical owner_id가 우선하여 ownership이 섞이지 않는다.
+        Even when label happens same due to legacy truncation (first 8 chars before sub) collision
+        canonical owner_id takes priority so ownership doesn't mix.
         """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
@@ -2082,7 +2081,7 @@ class TestStableOwnerIdOwnership:
         )
         monkeypatch.setattr(service._build_index, "list_builds", lambda limit: [])
 
-        # label(identifier)은 "userA"로 원래 소유자와 같지만 owner_id는 다르다.
+        # label (identifier) is "userA", same as original owner, but owner_id differs.
         impostor = Principal(kind="oidc", identifier="userA", owner_id="oidc:different-owner")
         resp = service.list_builds(principal=impostor)
         run_ids = _build_run_ids(resp)
@@ -2091,13 +2090,13 @@ class TestStableOwnerIdOwnership:
     def test_legacy_run_without_owner_id_falls_back_to_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id가 없는(#505 이전) run은 created_by/label 비교로 계속 접근 가능해야 한다."""
+        """Runs without owner_id (#505 pre-) remain accessible via created_by/label."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         self._build_with_manifest_fields(service, "runA", created_by="oidc:userA", owner_id=None)
         monkeypatch.setattr(service._build_index, "list_builds", lambda limit: [])
 
-        # owner_id 없이(예: 기존 구성) 인증된 principal도 label로 자신의 legacy run에 접근.
+        # Authenticated principal without owner_id (e.g. legacy) accesses own runs via label.
         user_a = Principal(kind="oidc", identifier="userA")
         resp = service.list_builds(principal=user_a)
         run_ids = _build_run_ids(resp)
@@ -2106,9 +2105,9 @@ class TestStableOwnerIdOwnership:
     def test_ambiguous_record_with_no_owner_info_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id도 created_by도 없는 레코드는 "누구나 접근 가능"으로 취급하지 않는다.
+        """Records with neither owner_id nor created_by not treated as "anyone accessible".
 
-        "owner field가 없으니 누구나 접근 가능" 폴백은 금지한다는 요구사항의 회귀 테스트.
+        Regression test for requirement: forbid "no owner field so anyone can access" fallback.
         """
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
@@ -2123,7 +2122,7 @@ class TestStableOwnerIdOwnership:
     def test_builds_response_does_not_leak_owner_id_field(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """owner_id는 ownership 판정 내부용일 뿐 /builds wire 응답에 노출되면 안 된다 (#505)."""
+        """owner_id is internal to ownership judgment; not in /builds wire (#505)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         self._build_with_manifest_fields(
@@ -2139,10 +2138,10 @@ class TestStableOwnerIdOwnership:
 
 
 class _FakeCatalogRef:
-    """DatasetRef 흉내 — catalog() 가 접근하는 속성만 노출.
+    """Mimics DatasetRef — exposes only catalog() accessible attributes.
 
-    기본값은 실제 DatasetRef의 기본값과 같다(metadata 없는 dataset — #490
-    null/empty 직렬화 규칙 검증에 그대로 쓴다).
+    Defaults same as real DatasetRef (dataset without metadata — #490
+    null/empty serialization rule verification used as-is).
     """
 
     def __init__(
@@ -2179,7 +2178,7 @@ class _FakeCatalogRef:
 
 
 class TestCatalog:
-    """catalog 동적 provider 조회 (#436). ADR 0011 — 하드코딩 금지."""
+    """Dynamic catalog provider lookup (#436). ADR 0011 — no hardcoding."""
 
     def _service_with_catalog(
         self,
@@ -2240,12 +2239,11 @@ class TestCatalog:
     def test_catalog_does_not_hide_other_provider_missing_module(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """krx 의 pandas 누락만 격리하고 다른 import 실패는 드러나야 한다.
+        """Isolate krx's pandas omission only; other import failures must surface.
 
-        무엇이 없는지는 이제 로그에 남는다 — 응답 본문에는 싣지 않는다. 이
-        except 절은 upstream 클라이언트의 어떤 예외든 잡는데, 그 메시지에는
-        요청 URL 이 섞여 나올 수 있고 data.go.kr 계열은 API 키를 쿼리
-        파라미터로 보낸다.
+        What's missing now logged - not in response body.
+        except clause catches any exception from upstream client, but message contains
+        request URL which may be mixed in; data.go.kr series sends API key as query param.
         """
         import logging
 
@@ -2256,7 +2254,7 @@ class TestCatalog:
 
         assert response.status_code == 502
         assert response.body == {"error": "catalog unavailable"}
-        # 삼켜지지는 않는다 — 진단 정보는 로그로 간다.
+        # Not swallowed — diagnostic info goes to logs.
         assert "internal_datago" in caplog.text
 
     def test_catalog_keeps_krx_when_optional_dependency_is_available(self, tmp_path: Path) -> None:
@@ -2297,7 +2295,7 @@ class TestCatalog:
         assert krx_datasets[0]["requires_service_key"] is False
 
     def test_catalog_includes_unlisted_providers(self, tmp_path: Path) -> None:
-        """하드코딩 8개에 없는 provider도 동적 조회로 떠야 한다 (#436)."""
+        """Provider not in hardcoded 8 must appear via dynamic lookup (#436)."""
         refs = [_FakeCatalogRef("newprovider", "new_ds", "새 데이터셋")]
         resp = self._service_with_catalog(tmp_path, refs).catalog()
 
@@ -2312,7 +2310,7 @@ class TestCatalog:
         assert resp.body["providers"] == []
 
     def test_catalog_serializes_discovery_metadata(self, tmp_path: Path) -> None:
-        """DatasetRef의 탐색용 metadata가 allowlist로 직렬화된다 (#490)."""
+        """DatasetRef discovery metadata serialized as allowlist (#490)."""
         from kpubdata.core.capability import PaginationMode, QuerySupport
         from kpubdata.core.models import Operation, Representation
 
@@ -2351,7 +2349,7 @@ class TestCatalog:
         assert query_support["max_page_size"] == 1000
 
     def test_catalog_metadata_less_dataset_serializes_null_and_empty(self, tmp_path: Path) -> None:
-        """metadata 없는 dataset은 null/empty로 직렬화되고 응답이 깨지지 않는다 (#490)."""
+        """Dataset without metadata serializes as null/empty, response doesn't break (#490)."""
         resp = self._service_with_catalog(
             tmp_path, [_FakeCatalogRef("datago", "air_quality", "대기오염")]
         ).catalog()
@@ -2370,7 +2368,7 @@ class TestCatalog:
         assert dataset["application"] is None
 
     def test_catalog_serializes_application_when_declared(self, tmp_path: Path) -> None:
-        """raw_metadata.application을 그대로 전달한다 (활용신청 안내, secret 없음)."""
+        """Pass raw_metadata.application as-is (usage guide, no secret)."""
         ref = _FakeCatalogRef(
             "datago",
             "air_quality",
@@ -2394,7 +2392,7 @@ class TestCatalog:
         }
 
     def test_catalog_rejects_non_http_application_url(self, tmp_path: Path) -> None:
-        """application.url이 http(s)가 아니면 통째로 노출하지 않는다(임의 스킴 차단)."""
+        """application.url exposed only if http(s) (arbitrary schemes blocked)."""
         ref = _FakeCatalogRef(
             "datago",
             "air_quality",
@@ -2411,7 +2409,7 @@ class TestCatalog:
         assert dataset["application"] is None
 
     def test_catalog_serializes_request_parameters_without_secrets(self, tmp_path: Path) -> None:
-        """raw_metadata.request_parameters를 secret-free allowlist로 직렬화한다."""
+        """Serialize raw_metadata.request_parameters as secret-free allowlist."""
         ref = _FakeCatalogRef(
             "datago",
             "air_quality",
@@ -2426,10 +2424,10 @@ class TestCatalog:
                         "example": "서울",
                         "internal_hint": "leak me",
                     },
-                    # service_key_param / secret-like 이름은 제외된다.
+                    # service_key_param / secret-like names are excluded.
                     {"name": "serviceKey", "required": True},
                     {"name": "apiKey", "required": True},
-                    # name 없는 항목은 버린다.
+                    # Drop items without name.
                     {"required": True},
                     "not-a-dict",
                 ],
@@ -2452,7 +2450,7 @@ class TestCatalog:
         assert "leak me" not in json.dumps(resp.body, ensure_ascii=False)
 
     def test_catalog_never_exposes_raw_metadata_or_secrets(self, tmp_path: Path) -> None:
-        """raw_metadata와 secret-like 값은 응답에 절대 노출되지 않는다 (#490)."""
+        """raw_metadata and secret-like values never exposed in response (#490)."""
         ref = _FakeCatalogRef(
             "datago",
             "air_quality",
@@ -2474,7 +2472,7 @@ class TestCatalog:
         assert "sk-secret-value" not in serialized
         assert "raw-secret" not in serialized
         assert "endpoint_template" not in serialized
-        # allowlist 필드만 존재한다.
+        # Only allowlist field exists.
         providers = cast(list[dict[str, object]], resp.body["providers"])
         dataset = cast(dict[str, object], providers[0]["datasets"][0])
         assert set(dataset) == {
@@ -2490,7 +2488,7 @@ class TestCatalog:
             "request_parameters",
             "application",
         }
-        # service_key_param 존재 여부는 requires_service_key 불리언으로만 전달된다.
+        # service_key_param presence passed only as requires_service_key boolean.
         assert dataset["requires_service_key"] is True
         assert "service_key_param" not in serialized
 
@@ -2539,15 +2537,15 @@ class TestCatalog:
 
 
 class TestRunIdRouteValidation:
-    """/artifacts/{run_id} 라우트가 run_id를 소유권 검사보다 먼저 검증 (#439).
+    """/artifacts/{run_id} route validates run_id before ownership check (#439).
 
-    _read_manifest_created_by 가 URL에서 온 run_id로 검증 없이 경로를 조립하므로,
-    "../" 등 unsafe 세그먼트가 _check_ownership 보다 먼저 validate_path_segment
-    에 도달해야 한다.
+    _read_manifest_created_by assembles path from URL-sourced run_id without validation,
+    Unsafe segments like "../" validated by validate_path_segment before _check_ownership
+    must be reached.
     """
 
     def test_unsafe_run_id_returns_400_before_ownership(self, tmp_path: Path) -> None:
-        """unsafe run_id(``..``)는 _check_ownership 전에 400 (#439)."""
+        """Unsafe run_id (``..``) returns 400 before _check_ownership (#439)."""
         resp = dispatch(_service(tmp_path), "GET", "/artifacts/../bad", None)
         assert resp.status_code == 400
         err = str(resp.body.get("error", "")).lower()
@@ -2559,16 +2557,16 @@ class TestRunIdRouteValidation:
         assert "run_id" in str(resp.body.get("error", "")).lower()
 
     def test_safe_run_id_still_reaches_ownership_check(self, tmp_path: Path) -> None:
-        """safe run_id는 validate 통과 후 artifacts(또는 소유권 검사)로 (#439 양성)."""
+        """Safe run_id passes validate then → artifacts (or ownership check) (#439 positive)."""
         service = _service(tmp_path)
         service.build(VALID_SPEC_YAML, run_id="run1")
-        # ENFORCE_OWNERSHIP off(기본) → 200
+        # ENFORCE_OWNERSHIP off (default) → 200
         resp = dispatch(service, "GET", "/artifacts/run1", None)
         assert resp.status_code == 200
 
 
 class TestBuildSpecSnapshot:
-    """GET /builds/{run_id}/spec의 조회·보안·legacy 정책 (#487)."""
+    """GET /builds/{run_id}/spec query·security·legacy policy (#487)."""
 
     def test_owner_reads_snapshot_and_index_digest_matches(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
@@ -2622,7 +2620,7 @@ class TestBuildSpecSnapshot:
         response = dispatch(service, "GET", "/builds/owned/spec", None)
         assert response.status_code == 403
 
-        # ownership 거부 시 snapshot reader까지 도달하지 않는다.
+        # If ownership denied, never reach snapshot reader.
         monkeypatch.setattr(Path, "read_bytes", lambda _path: pytest.fail("snapshot read leaked"))
         response = dispatch(service, "GET", "/builds/owned/spec", None)
         assert response.status_code == 403
@@ -2641,11 +2639,11 @@ class TestBuildSpecSnapshot:
 
 
 class TestFileResponseStreaming:
-    """파일 응답은 통째로 메모리에 올리지 않는다 (#653 후속).
+    """File responses not loaded entirely into memory (#653 follow-up).
 
-    ``read_bytes()`` 로 한 번에 읽던 시절에는 응답 하나가 파일 크기만큼 메모리를
-    썼다. 서빙 대상이 build artifact(parquet/jsonl)라 크기에 상한이 없어서,
-    동시 다운로드 몇 개로 프로세스가 죽을 수 있었다.
+    When ``read_bytes()`` read all at once, one response consumed file-size memory
+    Used. Served build artifacts (parquet/jsonl) have no size limit,
+    A few concurrent downloads could crash process.
     """
 
     def _put_artifact(self, tmp_path: Path, name: str, payload: bytes) -> None:
@@ -2675,7 +2673,7 @@ class TestFileResponseStreaming:
     def test_the_whole_file_is_never_read_into_memory(
         self, http_server: tuple[str, HTTPServer, threading.Thread], tmp_path: Path
     ) -> None:
-        """``read_bytes`` 를 막아도 다운로드가 되어야 조각으로 읽는다는 증거가 된다."""
+        """Even if ``read_bytes`` blocked, download works — proof it reads in chunks."""
         import unittest.mock
 
         payload = b"x" * 5000
@@ -2696,7 +2694,7 @@ class TestFileResponseStreaming:
     def test_an_empty_file_is_served_as_empty(
         self, http_server: tuple[str, HTTPServer, threading.Thread], tmp_path: Path
     ) -> None:
-        """길이 0 이면 읽기 루프에 한 번도 들어가지 않는다 — 멈추지 않고 끝나야 한다."""
+        """Length 0 never enters read loop — must finish without blocking."""
         self._put_artifact(tmp_path, "empty.csv", b"")
         base_url, _, _ = http_server
 
@@ -2708,12 +2706,12 @@ class TestFileResponseStreaming:
 
 
 class TestFileContentTypeCharset:
-    """바이너리에 문자 인코딩을 선언하지 않는다."""
+    """Don't declare character encoding on binary."""
 
     def test_binary_types_get_no_charset(self) -> None:
         from kpubdata_builder.service.http import _content_type_header
 
-        # 예전에는 모든 파일 응답에 붙여서 parquet 에도 charset 이 달렸다.
+        # Previously added to all file responses, even parquet got charset.
         assert _content_type_header("application/vnd.apache.parquet") == (
             "application/vnd.apache.parquet"
         )

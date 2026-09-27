@@ -1,4 +1,4 @@
-"""ingestion.tabular_ingest: file/url source 원시 bytes → 레코드 파싱 검증 (#498)."""
+"""ingestion.tabular_ingest: file/url source raw bytes → record parsing validation (#498)."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ def test_parse_rejects_unknown_encoding_name() -> None:
 
 
 def test_parse_csv_rejects_malformed_csv() -> None:
-    # 헤더는 2개 컬럼인데 데이터 행이 3개 필드를 가짐 — polars가 파싱 오류로 거부한다.
+    # Header has 2 columns but data row has 3 fields — polars rejects with parsing error.
     raw = b"a,b\n1,2,3\n"
 
     with pytest.raises(IngestionError, match="failed to parse csv"):
@@ -124,8 +124,8 @@ def test_parse_csv_rejects_malformed_csv() -> None:
 
 
 def test_parse_csv_reads_declared_column_as_text() -> None:
-    # CSV는 파싱이 곧 타입 추론이다. 선언이 Silver까지 늦게 도착하면 `00123`은
-    # 이미 정수 123이 된 뒤라 앞자리 0을 복구할 방법이 없다 (#613).
+    # CSV parsing is type inference. If declaration arrives late in Silver,
+    # `00123` is already integer 123, and leading zeros cannot be recovered (#613).
     raw = b"code,amount\n00123,1000\n00456,2500\n"
 
     records = parse_tabular_bytes(raw, format="csv", read_as={"code": "str"})

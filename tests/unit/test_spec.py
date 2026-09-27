@@ -27,8 +27,8 @@ def _valid_payload() -> dict[str, object]:
 
 
 def test_build_spec_instantiation() -> None:
-    """최소 유효값만으로 BuildSpec을 생성할 수 있어야 한다."""
-    # 데이터 클래스 기본 생성 경로가 깨지지 않았는지 확인한다.
+    """BuildSpec can be instantiated with only minimum required fields."""
+    # Verify dataclass default constructor path hasn't broken.
     spec = BuildSpec(
         dataset_id="dataset.sample",
         title="Sample Dataset",
@@ -238,10 +238,11 @@ def test_load_spec_rejects_empty_yaml(tmp_path: Path) -> None:
 
 
 def test_build_spec_from_yaml_classmethod(tmp_path: Path) -> None:
-    """deprecated alias 는 load_spec 과 같은 결과를 내면서 DeprecationWarning 을 낸다.
+    """Deprecated alias yields same result as load_spec with DeprecationWarning.
 
-    alias 자체가 아직 공개 API 라 계속 테스트하되, 경고를 단언해 (1) 스위트 전체에
-    경고가 새지 않게 하고 (2) 제거 시점에 이 테스트가 먼저 깨지도록 계약을 고정한다.
+    The alias is still public API, so it stays tested; asserting the warning
+    (1) keeps it from leaking across the suite and (2) pins the contract so
+    this test breaks first at removal time.
     """
     spec_path = tmp_path / "spec.yaml"
     _ = spec_path.write_text(
@@ -268,7 +269,7 @@ exports:
 
 
 def test_parse_spec_rejects_removed_transforms_field() -> None:
-    """transforms 필드는 제거됨 (#438). 키를 만나면 명시적 에러 (조용히 무시 방지)."""
+    """transforms field removed (#438). Explicit error on key (prevent silent ignore)."""
     payload = _valid_payload()
     payload["transforms"] = ["normalize"]
     with pytest.raises(SpecLoadError, match="transforms"):
@@ -276,7 +277,7 @@ def test_parse_spec_rejects_removed_transforms_field() -> None:
 
 
 def test_parse_spec_rejects_removed_normalization_mode_field() -> None:
-    """sources[].normalization_mode 필드는 제거됨 (#438). 키를 만나면 에러."""
+    """sources[].normalization_mode field removed (#438). Error on key."""
     payload = _valid_payload()
     sources = payload["sources"]
     assert isinstance(sources, list)
@@ -286,7 +287,7 @@ def test_parse_spec_rejects_removed_normalization_mode_field() -> None:
 
 
 def test_parse_spec_rejects_removed_top_level_normalization_mode_field() -> None:
-    """top-level normalization_mode도 canonical BuildSpec 필드가 아니므로 거부한다 (#485)."""
+    """Top-level normalization_mode also not canonical BuildSpec field, reject (#485)."""
     payload = _valid_payload()
     payload["normalization_mode"] = "canonical"
 
@@ -301,7 +302,7 @@ def _spec_with_schema(schema: dict[str, object]) -> BuildSpec:
 
 
 def test_coalesce_and_zfill_round_trip_through_the_loader() -> None:
-    """#620 선언이 SchemaContract로 파싱되는지."""
+    """#620 declaration parses to SchemaContract."""
     spec = _spec_with_schema(
         {
             "coalesce": {"move_meter": ["이동거리", "이동거리(M)"]},
@@ -323,10 +324,10 @@ def test_zfill_width_must_be_an_integer() -> None:
 
 
 def test_coalesce_and_zfill_move_the_spec_digest() -> None:
-    """선언이 canonical mapping에서 빠지면 변환 규칙을 바꿔도 digest가 그대로다.
+    """Missing declaration from canonical mapping → digest unchanged even if transform rule changes.
 
-    그 상태에서 R1의 "같은 recipe는 같은 output"을 주장하면, 정작 Silver를 만든
-    규칙이 recipe 밖에 남는다.
+    In that state, claiming R1's "same recipe means same output" leaves the
+    rules that actually produced Silver outside the recipe.
     """
     base = _spec_with_schema({"casts": {"amount": "int"}})
     with_coalesce = _spec_with_schema({"casts": {"amount": "int"}, "coalesce": {"m": ["a", "b"]}})
@@ -341,7 +342,7 @@ def test_coalesce_and_zfill_move_the_spec_digest() -> None:
 
 
 def test_coalesce_candidate_order_is_part_of_the_recipe() -> None:
-    """후보 순서가 바뀌면 어느 값이 이기는지가 달라질 수 있다."""
+    """Candidate order changes which value wins."""
     forward = _spec_with_schema({"coalesce": {"m": ["a", "b"]}})
     reversed_ = _spec_with_schema({"coalesce": {"m": ["b", "a"]}})
 
@@ -351,7 +352,7 @@ def test_coalesce_candidate_order_is_part_of_the_recipe() -> None:
 
 
 def test_column_null_tokens_round_trip_and_move_the_digest() -> None:
-    """#623 — 컬럼별 결측 선언이 recipe identity에 들어간다."""
+    """#623 — per-column missing declaration enters recipe identity."""
     base = _spec_with_schema({"null_tokens": ["TOKEN"]})
     scoped = _spec_with_schema(
         {"null_tokens": ["TOKEN"], "column_null_tokens": {"gender": ["", "TOKEN"]}}
@@ -368,7 +369,7 @@ def test_column_null_tokens_round_trip_and_move_the_digest() -> None:
 
 
 def test_column_null_tokens_accepts_the_expanded_form() -> None:
-    """#623 — 목록 shorthand와 on_absent를 붙인 확장형을 모두 받는다."""
+    """#623 — accept both list shorthand and expanded form with on_absent."""
     spec = _spec_with_schema(
         {"column_null_tokens": {"gender": {"tokens": [""], "on_absent": "ignore"}}}
     )
@@ -379,7 +380,7 @@ def test_column_null_tokens_accepts_the_expanded_form() -> None:
 
 
 def test_on_absent_is_part_of_the_recipe() -> None:
-    """어느 컬럼이 optional인지가 바뀌면 같은 원천에서 다른 결과가 나올 수 있다."""
+    """Which column is optional changes output even from same source."""
     strict = _spec_with_schema({"column_null_tokens": {"gender": [""]}})
     lenient = _spec_with_schema(
         {"column_null_tokens": {"gender": {"tokens": [""], "on_absent": "ignore"}}}

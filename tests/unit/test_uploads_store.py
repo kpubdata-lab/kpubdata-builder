@@ -1,4 +1,4 @@
-"""uploads.store: SQLite 업로드 저장소의 owner 격리·크기 상한 검증 (#498)."""
+"""uploads.store: SQLite   owner ·   (#498)."""
 
 from __future__ import annotations
 
@@ -53,12 +53,12 @@ def test_get_metadata_and_content_isolated_by_owner(tmp_path: Path) -> None:
         "owner-1", content=b"data", format="csv", encoding="utf-8", original_filename=None
     )
 
-    # 다른 owner는 존재 자체를 모른다 — None(=404)만 볼 수 있다(fail-closed).
+    #  owner    — None(=404)   (fail-closed).
     assert repo.get_metadata("owner-2", metadata.upload_id) is None
     assert repo.get_content("owner-2", metadata.upload_id) is None
     assert repo.delete("owner-2", metadata.upload_id) is False
 
-    # 진짜 owner는 정상 접근 가능하다.
+    #  owner   .
     assert repo.get_metadata("owner-1", metadata.upload_id) is not None
 
 
@@ -75,7 +75,7 @@ def test_delete_removes_upload_and_is_idempotent(tmp_path: Path) -> None:
 
     assert repo.delete("owner-1", metadata.upload_id) is True
     assert repo.get_metadata("owner-1", metadata.upload_id) is None
-    # 두 번째 삭제는 아무것도 지울 게 없어 False.
+    #        False.
     assert repo.delete("owner-1", metadata.upload_id) is False
 
 
@@ -129,7 +129,7 @@ def test_put_sanitizes_display_filename_to_basename(tmp_path: Path) -> None:
         original_filename="../../etc/passwd",
     )
 
-    # basename만 남는다 — 이 값은 표시 전용이며 파일시스템 경로로 쓰이지 않는다.
+    # basename  —        .
     assert metadata.original_filename == "passwd"
 
 
@@ -155,12 +155,12 @@ def test_repository_persists_across_reopen(tmp_path: Path) -> None:
 
 
 class TestLargePayloadsSpillToFiles:
-    """큰 payload 를 SQLite BLOB 이 아니라 파일로 쓴다 (#622).
+    """ payload  SQLite BLOB     (#622).
 
-    SQLite 의 기본 ``SQLITE_MAX_LENGTH`` 는 약 953 MiB 다. 실제로 945.6 MiB 는
-    통과하고 1,444 MiB 는 ``string or blob too big`` 으로 실패한 사례가 있었다.
-    문제는 한계의 크기가 아니라 **업로드 상한이 SQLite 의 단일 value 한계라는
-    구현 세부로 우연히 정해졌다** 는 점이다.
+    SQLite   ``SQLITE_MAX_LENGTH``   953 MiB .  945.6 MiB 
+     1,444 MiB  ``string or blob too big``    .
+        **  SQLite   value 
+       **  .
     """
 
     THRESHOLD = 1024
@@ -177,7 +177,7 @@ class TestLargePayloadsSpillToFiles:
         return tmp_path / "uploads.sqlite.blobs"
 
     def test_a_small_upload_still_lives_in_the_database(self, tmp_path: Path) -> None:
-        # 기존 동작이 회귀하지 않아야 한다 — 작은 업로드는 예전 경로 그대로다.
+        #      —     .
         repo = self._repo(tmp_path)
 
         meta = repo.put(
@@ -206,7 +206,7 @@ class TestLargePayloadsSpillToFiles:
         assert repo.get_metadata("owner", meta.upload_id).size_bytes == len(content)
 
     def test_another_owner_cannot_read_a_spilled_payload(self, tmp_path: Path) -> None:
-        # 파일로 나갔다고 해서 소유권 게이트가 느슨해지면 안 된다.
+        #        .
         repo = self._repo(tmp_path)
         meta = repo.put(
             "owner",
@@ -232,8 +232,8 @@ class TestLargePayloadsSpillToFiles:
         assert list(self._blob_dir(tmp_path).glob("*.bin")) == []
 
     def test_a_tampered_payload_is_refused(self, tmp_path: Path) -> None:
-        # 조용히 다른 바이트를 돌려주면, 그것으로 만든 Bronze 가 무엇이었는지
-        # 아무도 알 수 없다.
+        #    ,   Bronze  
+        #    .
         repo = self._repo(tmp_path)
         meta = repo.put(
             "owner",
@@ -262,7 +262,7 @@ class TestLargePayloadsSpillToFiles:
             repo.get_content("owner", meta.upload_id)
 
     def test_the_max_size_policy_still_applies(self, tmp_path: Path) -> None:
-        # 상한이 없어야 한다는 이야기가 아니다 — 정책으로 정해져야 한다는 것이다.
+        #      —    .
         repo = SQLiteUploadRepository(
             tmp_path / "uploads.sqlite", max_bytes=2048, spill_threshold_bytes=self.THRESHOLD
         )
@@ -277,7 +277,7 @@ class TestLargePayloadsSpillToFiles:
             )
 
     def test_an_existing_database_gains_the_new_columns(self, tmp_path: Path) -> None:
-        # 기존 배포의 DB 를 열었을 때 마이그레이션이 조용히 돌아야 한다.
+        #   DB       .
         db = tmp_path / "uploads.sqlite"
         first = SQLiteUploadRepository(db, spill_threshold_bytes=self.THRESHOLD)
         meta = first.put(

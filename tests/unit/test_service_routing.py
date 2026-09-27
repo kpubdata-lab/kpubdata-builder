@@ -1,4 +1,4 @@
-"""Service dispatch와 route adapter 경계 회귀 테스트 (#522)."""
+"""Service dispatch route adapter    (#522)."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from kpubdata_builder.spec import JsonValue
 
 
 class _RoutingStub:
-    """dispatch()의 latency recording wrapper가 _latency_recorder에 기록하고 인증
-    게이트가 _auth_throttle을 참조하므로, 라우팅 구조 검증용 dummy에도 실물을 제공한다."""
+    """dispatch() latency recording wrapper _latency_recorder  
+     _auth_throttle ,    dummy  ."""
 
     _latency_recorder = LatencyRecorder()
     _auth_throttle = AuthFailureThrottle()

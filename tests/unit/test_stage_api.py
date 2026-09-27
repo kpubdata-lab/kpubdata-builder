@@ -1,8 +1,8 @@
-"""Bronze/Silver/Gold stage summary/detail HTTP API 테스트 (#488).
+"""Bronze/Silver/Gold stage summary/detail HTTP API  (#488).
 
-실제 BuilderService.build() 파이프라인을 통해 만들어진 run을 대상으로 라우팅,
-ownership, path-safety, preview cap, secret 비노출을 검증한다. 순수 상태 판정
-로직(partial/failed 조합)은 test_stage_reader.py가 직접 담당한다.
+ BuilderService.build()    run  ,
+ownership, path-safety, preview cap, secret  .   
+(partial/failed ) test_stage_reader.py  .
 """
 
 from __future__ import annotations
@@ -37,13 +37,13 @@ VALID_SPEC_YAML = (
     "      kaggle_key: SUPER-SECRET-EXPORT-KEY\n"
 )
 
-# Silver validation이 실패하도록 존재하지 않는 컬럼을 필수로 선언한 spec.
+# Silver validation       spec.
 SILVER_FAILURE_SPEC_YAML = VALID_SPEC_YAML.replace(
     "    alias: air\n",
     "    alias: air\n    schema:\n      required: [does_not_exist]\n",
 )
 
-# fetch 자체가 실패하는 spec (FakeClient가 모르는 dataset).
+# fetch   spec (FakeClient  dataset).
 FETCH_FAILURE_SPEC_YAML = VALID_SPEC_YAML.replace("dataset: air_quality", "dataset: missing")
 
 
@@ -123,7 +123,7 @@ class TestListRunStages:
         assert cast(dict[str, object], entry["gold"])["status"] == "not_run"
 
     def test_legacy_manifest_without_inputs_returns_empty_sources(self, tmp_path: Path) -> None:
-        """inputs 필드가 없는 아주 오래된 manifest도 크래시 없이 빈 목록을 반환한다."""
+        """inputs     manifest     ."""
         run_dir = tmp_path / "legacy"
         run_dir.mkdir()
         (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
@@ -258,8 +258,8 @@ class TestSilverDetail:
         assert capped.status_code == 200
         assert len(cast(list[object], capped.body["sample"])) == 2
 
-        # persist 시점에 DEFAULT_PREVIEW_LIMIT(5)행만 저장되므로, limit을 크게
-        # 요청해도 5행을 넘어설 수 없다 (parquet 전체를 읽지 않는다).
+        # persist  DEFAULT_PREVIEW_LIMIT(5) , limit 
+        #  5    (parquet   ).
         generous = dispatch(
             service, "GET", "/builds/r1/stages/silver", None, query="source=air&limit=100"
         )
@@ -314,7 +314,7 @@ class TestGoldDetail:
 
 
 class TestStageOwnership:
-    """ownership 403이 sidecar read보다 먼저 일어나야 한다 (#488)."""
+    """ownership 403 sidecar read    (#488)."""
 
     def test_stages_list_403_before_sidecar_read(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -332,9 +332,9 @@ class TestStageOwnership:
         resp = dispatch(service, "GET", "/builds/r1/stages", None)
         assert resp.status_code == 403
 
-        # ownership 거부 시 stage sidecar 조회 로직까지 도달하지 않는다. (manifest.json의
-        # created_by 자체는 ownership 판정에 필요해 그전에 읽히므로, 판정 *이후* 단계인
-        # stage summary 계산 진입점을 직접 감시한다.)
+        # ownership   stage sidecar    . (manifest.json
+        # created_by  ownership    ,  ** 
+        # stage summary    .)
         monkeypatch.setattr(
             stages_api_module.stages_service,
             "list_run_stages",

@@ -1,8 +1,8 @@
-"""상태 백엔드 선택, CUBRID URL 정규화, serve 기동 게이트 (ADR 0016).
+"""  , CUBRID URL , serve   (ADR 0016).
 
-여기서는 SQLAlchemy 도 CUBRID 도 필요 없다 — 백엔드 선택과 URL 계약, 그리고
-``validate_storage_config()`` 가 **실 연결에 도달하기 전에** 거부하는 분기만
-검증한다. 연결까지 가는 경로는 ``tests/cubrid/test_cubrid_fail_closed.py``.
+ SQLAlchemy  CUBRID    —   URL , 
+``validate_storage_config()``  **   **  
+.    ``tests/cubrid/test_cubrid_fail_closed.py``.
 """
 
 from __future__ import annotations
@@ -45,12 +45,12 @@ class TestStorageBackendSelection:
 
 
 class TestCubridUrlDriver:
-    """URL 은 항상 pycubrid 드라이버로 해석돼야 한다 (ADR 0016).
+    """URL   pycubrid    (ADR 0016).
 
-    sqlalchemy-cubrid 는 `cubrid`/`cubrid.cubrid`/`cubrid.cubriddb` 를 legacy
-    C-extension(`CUBRIDdb`) dialect 로, `cubrid.pycubrid` 만 순수 파이썬 드라이버로
-    등록한다. `[cubrid]` extra 는 pycubrid 만 설치하므로 나머지 경로는 연결 시점에
-    ImportError 로 죽는다 — 기동 시 걸러야 한다.
+    sqlalchemy-cubrid  `cubrid`/`cubrid.cubrid`/`cubrid.cubriddb`  legacy
+    C-extension(`CUBRIDdb`) dialect , `cubrid.pycubrid`    
+    . `[cubrid]` extra  pycubrid      
+    ImportError   —    .
     """
 
     def test_pycubrid_url_passes_through(self) -> None:
@@ -60,7 +60,7 @@ class TestCubridUrlDriver:
     def test_bare_cubrid_url_is_normalized(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.WARNING):
             assert normalize_cubrid_url(f"cubrid://{_TAIL}") == f"cubrid+pycubrid://{_TAIL}"
-        # 조용히 바꾸지 않는다 — 설정이 보정됐다는 사실이 로그에 남아야 한다.
+        #    —      .
         assert any("pycubrid" in record.getMessage() for record in caplog.records)
 
     @pytest.mark.parametrize("driver", ["cubriddb", "cubrid"])
@@ -69,7 +69,7 @@ class TestCubridUrlDriver:
             normalize_cubrid_url(f"cubrid+{driver}://{_TAIL}")
 
     def test_rejects_async_driver(self) -> None:
-        # Engine 은 동기다 — async dialect 는 첫 연결에서야 터진다.
+        # Engine   — async dialect    .
         with pytest.raises(RuntimeError, match="synchronous"):
             normalize_cubrid_url(f"cubrid+aiopycubrid://{_TAIL}")
 
@@ -95,15 +95,15 @@ class TestCubridUrlFromEnv:
 
 
 class TestValidateStorageConfig:
-    """``serve()`` 기동 게이트의 계약 (#587, ADR 0016).
+    """``serve()``    (#587, ADR 0016).
 
-    여기서 검증하는 분기는 전부 **실 연결 이전**에 끝난다 — 기본 dev 환경
-    (sqlalchemy 미설치 가능)에서도 돌아야 하므로, 연결까지 가는 경로는
-    ``tests/cubrid/test_cubrid_fail_closed.py`` 로 분리했다.
+        **  **  —  dev 
+    (sqlalchemy  )  ,   
+    ``tests/cubrid/test_cubrid_fail_closed.py``  .
     """
 
     def test_is_noop_for_the_default_backend(self) -> None:
-        # sqlite 기본 경로는 optional 의존성 없이 통과해야 한다(무외부의존 계약).
+        # sqlite   optional    ( ).
         assert validate_storage_config() is None
 
     def test_is_noop_for_explicit_sqlite(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +119,7 @@ class TestValidateStorageConfig:
     def test_refuses_to_start_on_an_unsupported_driver(
         self, driver: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 드라이버 거부는 URL 정규화 단계에서 끝나므로 서버도 sqlalchemy 도 필요 없다.
+        #   URL     sqlalchemy   .
         monkeypatch.setenv(_BACKEND_ENV, "cubrid")
         monkeypatch.setenv(_URL_ENV, f"cubrid+{driver}://{_TAIL}")
         with pytest.raises(RuntimeError):

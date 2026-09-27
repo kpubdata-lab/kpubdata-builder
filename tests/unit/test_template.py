@@ -1,4 +1,4 @@
-"""재사용 가능한 빌드 템플릿(#14) 렌더링·로딩을 검증한다."""
+"""Validate rendering and loading of reusable build templates (#14)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def test_render_uses_defaults_when_no_params(tmp_path: Path) -> None:
     data = yaml.safe_load(rendered)
     assert data["dataset_id"] == "air_quality_종로구"
     assert data["exports"][0]["kind"] == "jsonl"
-    # _template 메타 블록은 제거되어야 한다.
+    # _template metadata block must be removed.
     assert "_template" not in data
 
 
@@ -67,7 +67,7 @@ def test_load_template_returns_valid_build_spec(tmp_path: Path) -> None:
 
 
 def test_render_raises_on_missing_parameter(tmp_path: Path) -> None:
-    # 기본값도 없고 제공되지도 않은 플레이스홀더가 있으면 오류.
+    # Error if placeholder has neither default value nor provided value.
     path = tmp_path / "t.yaml"
     path.write_text(
         '_template:\n  name: t\ndataset_id: "{{ missing }}"\ntitle: t\n', encoding="utf-8"
@@ -86,10 +86,11 @@ def test_render_rejects_non_mapping_template(tmp_path: Path) -> None:
 
 
 def test_load_template_avoids_yaml_reparse(tmp_path: Path) -> None:
-    # #225: load_template이 render_template을 통해 YAML을 문자열로 직렬화한 뒤
-    # yaml.safe_load로 재파싱하지 않고, 치환된 메모리 구조를 직접 parse_spec에 전달해
-    # 불필요한 직렬화·역직렬화 왕복을 제거한다.
-    # 정수처럼 보이는 파라미터 값이 문자열로 보존되는지 검증한다.
+    # #225: load_template calls render_template to serialize YAML to string,
+    # but passes substituted in-memory structure directly to parse_spec
+    # without reparsing via yaml.safe_load, eliminating unnecessary
+    # serialization/deserialization roundtrips. Verify that parameter values
+    # appearing integer-like are preserved as strings.
     path = tmp_path / "tmpl.yaml"
     path.write_text(
         '_template:\n  parameters:\n    version:\n      default: "v1"\n'
@@ -103,9 +104,9 @@ def test_load_template_avoids_yaml_reparse(tmp_path: Path) -> None:
 
     spec = load_template(path, {"version": "v2"})
 
-    # 파라미터 치환이 올바르게 작동하고 BuildSpec이 파싱된다.
+    # Parameter substitution works correctly and BuildSpec is parsed.
     assert spec.sources[0].params["version"] == "v2"
     assert isinstance(spec.sources[0].params["version"], str)
-    # 두 번 호출해도 동일한 결과를 반환한다(결정적).
+    # Calling twice returns identical result (deterministic).
     spec2 = load_template(path, {"version": "v2"})
     assert spec.sources[0].params == spec2.sources[0].params
