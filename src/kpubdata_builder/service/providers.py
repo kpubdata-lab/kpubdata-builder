@@ -1,4 +1,4 @@
-"""Provider credential resolution과 connection test 서비스."""
+"""Provider credential resolution and connection test service."""
 
 from __future__ import annotations
 
@@ -28,8 +28,9 @@ CredentialSource = Literal["user", "server", "none"]
 ProviderState = Literal["connected", "failed", "not_configured"]
 ProviderErrorCategory = Literal["auth", "network", "timeout", "provider", "unknown"]
 
-# kpubdata가 동일 data.go.kr key slot을 쓰는 Provider 이름. Builder에서는 API key를
-# 요청 경로의 provider로 저장하되 요청별 Client 생성 시 공개 provider_keys slot으로 변환한다.
+# kpubdata uses the same data.go.kr key slot as this Provider name. In Builder,
+# we save the API key by the provider name in the request path, but when creating
+# a per-request Client we convert it to the public provider_keys slot.
 _CLIENT_KEY_SLOT: dict[str, str] = {
     "localdata": "datago",
     "lofin": "datago",
@@ -39,7 +40,7 @@ _CLIENT_KEY_SLOT: dict[str, str] = {
 
 @dataclass(frozen=True)
 class ResolvedCredential:
-    """해석된 credential. API 응답 모델로 사용하지 않는다."""
+    """Interpreted credential. Not used as an API response model."""
 
     source: CredentialSource
     value: str | None
@@ -47,7 +48,7 @@ class ResolvedCredential:
 
 @dataclass(frozen=True)
 class ProviderDescriptor:
-    """런타임 Provider 메타데이터."""
+    """Runtime Provider metadata."""
 
     name: str
     requires_credential: bool
@@ -55,7 +56,7 @@ class ProviderDescriptor:
 
 @dataclass(frozen=True)
 class RuntimeProviderCatalog:
-    """격리해 해석한 단일 runtime Provider와 그 dataset 목록."""
+    """Isolated parsed single runtime Provider and its dataset list."""
 
     descriptor: ProviderDescriptor
     datasets: tuple[DatasetRef, ...]
@@ -63,7 +64,7 @@ class RuntimeProviderCatalog:
 
 @dataclass(frozen=True)
 class ProviderTestResult:
-    """원문 예외/credential을 포함하지 않는 connection test 결과."""
+    """Connection test result without raw exceptions/credentials."""
 
     provider: str
     status: ProviderState
@@ -75,17 +76,17 @@ class ProviderTestResult:
 
 
 class ProviderCredentialConflictError(ValueError):
-    """한 Client key slot에 서로 다른 user credential이 필요한 경우."""
+    """Different user credentials required for one Client key slot."""
 
 
 class ProviderTestOperation(Protocol):
-    """주입 가능한 lightweight connection test operation."""
+    """Injected lightweight connection test operation."""
 
     def __call__(self, client: SourceClient, provider: str) -> None: ...
 
 
 class CredentialResolver:
-    """user credential > server default > not configured 순서를 단일화한다."""
+    """Unify order: user credential > server default > not configured."""
 
     def __init__(self, repository: CredentialRepository | None) -> None:
         self._repository = repository
@@ -109,7 +110,7 @@ class CredentialResolver:
         return ResolvedCredential("none", None)
 
     def provider_keys(self, owner_id: str | None, providers: Iterable[str]) -> dict[str, str]:
-        """요청에 필요한 provider만 해석해 새 Client용 key mapping을 만든다."""
+        """Create new Client key mapping from only the providers needed for the request."""
         resolved: dict[str, str] = {}
         for provider in providers:
             credential = self.resolve(owner_id, provider)
@@ -131,7 +132,7 @@ class CredentialResolver:
 
 
 def runtime_provider_catalog(client: SourceClient) -> tuple[RuntimeProviderCatalog, ...]:
-    """Provider별 catalog를 해석하되 명시된 optional dependency만 격리한다."""
+    """Parse provider catalogs, isolating only explicitly declared optional dependencies."""
     typed_client = cast(Client, client)
     # Built-in adapters are registered lazily.  Resolve them one at a time so an
     # optional dependency of one adapter (for example KRX -> pandas) cannot make
@@ -170,12 +171,12 @@ def runtime_provider_catalog(client: SourceClient) -> tuple[RuntimeProviderCatal
 
 
 def provider_descriptors(client: SourceClient) -> tuple[ProviderDescriptor, ...]:
-    """kpubdata runtime catalog에서 Provider 목록과 인증 필요 여부를 얻는다."""
+    """Get Provider list and authentication requirements from kpubdata runtime catalog."""
     return tuple(item.descriptor for item in runtime_provider_catalog(client))
 
 
 def default_provider_test(client: SourceClient, provider: str) -> None:
-    """Provider의 첫 LIST dataset을 1행 조회하는 lightweight test."""
+    """Lightweight test: fetch first row of the provider's first LIST dataset."""
     typed_client = cast(Client, client)
     refs = [ref for ref in typed_client.datasets.list() if ref.provider == provider]
     if not refs:
@@ -191,7 +192,7 @@ def run_provider_test(
     client: SourceClient | None,
     operation: ProviderTestOperation = default_provider_test,
 ) -> ProviderTestResult:
-    """Connection test를 실행하고 안정적인 범주의 비밀 없는 결과로 변환한다."""
+    """Run connection test and convert to stable secret-free result categories."""
     started = time.perf_counter()
     checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if not configured or client is None:
@@ -216,7 +217,7 @@ def run_provider_test(
 
 
 def categorize_provider_error(exc: Exception) -> ProviderErrorCategory:
-    """kpubdata/stdlib 예외를 Issue #492 error category로 매핑한다."""
+    """Map kpubdata/stdlib exceptions to Issue #492 error categories."""
     if isinstance(exc, (TransportTimeoutError, TimeoutError, socket.timeout)):
         return "timeout"
     if isinstance(exc, (AuthError, ConfigError)):
@@ -229,7 +230,7 @@ def categorize_provider_error(exc: Exception) -> ProviderErrorCategory:
 
 
 def reliable_response_code(exc: Exception) -> int | None:
-    """kpubdata가 구조적으로 제공한 HTTP status만 반환한다."""
+    """Return only HTTP status codes that kpubdata structurally provides."""
     if not isinstance(exc, PublicDataError):
         return None
     status_code = exc.status_code
@@ -237,7 +238,7 @@ def reliable_response_code(exc: Exception) -> int | None:
 
 
 def test_result_body(result: ProviderTestResult) -> dict[str, object]:
-    """optional 필드를 성공적으로 얻은 경우에만 포함하는 wire body."""
+    """Wire body including optional fields only if successfully obtained."""
     body: dict[str, object] = {
         "provider": result.provider,
         "status": result.status,

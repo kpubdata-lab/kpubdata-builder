@@ -1,20 +1,21 @@
-"""Publish 도메인 서비스 (#596 후속, #637).
+"""Publish domain service (#596 follow-up, #637).
 
-readiness / publish / receipt / reconcile / audit 과 원격 존재 조사(probe)를 담는다.
+Encapsulates readiness/publish/receipt/reconcile/audit and remote existence probe.
 
-이 영역에서 최근 두 건의 결함이 나왔고, 둘 다 **판정과 호출이 한 클래스 안에 묻혀
-있어서** 눈에 띄지 않았다. #634 는 publish 경로가 manifest 상태를 자체적으로
-파생시켜 취소된 run 을 succeeded 로 읽었다 — 정본 규칙 ``status_from_manifest`` 가
-이미 있었는데도 닿지 않았다. #632 는 원격 probe 가 존재하지 않는 인자로
-``dataset_info`` 를 부르고 있었는데, 기존 테스트가 그 메서드를 통째로 monkeypatch
-해서 아무도 본문을 보지 않았다.
+Two recent defects occurred in this area, and both went unnoticed because
+**decision-making and invocation were buried in a single class**. #634: the publish
+path derived manifest status independently, causing cancelled runs to be read as
+succeeded — the canonical rule ``status_from_manifest`` already existed but was
+unreachable. #632: the remote probe called ``dataset_info`` with a non-existent
+argument; existing tests monkeypatched the method entirely, so no one reviewed the
+body.
 
-도메인을 떼면 둘 다 구조적으로 어려워진다. 필요한 입력이 생성자에 드러나고
-(``output_root``, receipt 저장소, async job registry), probe 를 stub 하지 않고도
-서비스를 만들 수 있다.
+Separating the domain makes both structurally harder to miss. Required inputs are
+exposed in the constructor (``output_root``, receipt repository, async job registry),
+and the service can be instantiated without stubbing probes.
 
-**wire 계약은 바뀌지 않는다.** ``BuilderService`` 가 같은 이름의 메서드를 그대로
-두고 여기로 위임하므로 route adapter 와 dispatch 는 아무것도 모른다.
+**wire contract is unchanged.** ``BuilderService`` delegates to this module using
+the same method names, so route adapters and dispatch remain unaware.
 """
 
 from __future__ import annotations
@@ -39,9 +40,10 @@ from kpubdata_builder.spec import BuildSpec, JsonValue
 
 logger = logging.getLogger(__name__)
 
-#: manifest 상태 어휘(ok/failed/cancelled) → publish 상태 어휘 (#481, #491).
-#: 두 어휘를 잇는 자리를 하나로 두어, publish 경로가 상태를 따로 파생시키다
-#: 정본과 어긋나는 일을 막는다.
+#: Manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary.
+#: (#481, #491). Maintains one place to bridge vocabularies, preventing the
+#: publish path from deriving status independently and diverging from the
+#: canonical rule.
 _MANIFEST_TO_PUBLISH_STATUS: dict[str, publish_service.RunStatus] = {
     "ok": "succeeded",
     "failed": "failed",
@@ -53,7 +55,7 @@ def _publish_receipt_response(
     claim_status: publish_service.PublishClaimStatus,
     receipt: publish_service.PublishReceipt,
 ) -> ServiceResponse | None:
-    """기존 receipt 상태를 replay/409 wire response로 변환한다."""
+    """Convert existing receipt state to replay/409 wire response."""
     if claim_status == "claimed":
         return None
     if claim_status == "replay" and receipt.result is not None:
@@ -79,7 +81,7 @@ def _publish_receipt_response(
 
 
 class PublishApiService:
-    """publish readiness/실행/receipt/reconcile/audit (#491, #551, #563)."""
+    """Publish readiness/execution/receipt/reconcile/audit (#491, #551, #563)."""
 
     def __init__(
         self,
@@ -97,23 +99,23 @@ class PublishApiService:
     def _publish_context(
         self, run_id: str
     ) -> tuple[publish_service.RunStatus, dict[str, JsonValue] | None, BuildSpec | None]:
-        """publish readiness/POST가 공유하는 (status, manifest, spec) 조회.
+        """Retrieve (status, manifest, spec) shared by readiness/POST.
 
-        route adapter가 이미 존재/ownership을 판정했다는 전제 아래(``/stages``,
-        ``/quality``와 동일한 패턴) 호출된다. manifest가 있으면 그것이 정본
-        (terminal run)이고, 없으면 async job registry(#482)에서 active/terminal
-        상태를 읽는다 — ``routes._guards.check_active_run_access``와 동일한
-        두 소스를 쓴다(#496 follow-up 패턴 재사용).
+        Called assuming route adapter has already determined existence/ownership
+        (same pattern as ``/stages``, ``/quality``). If manifest exists, it is
+        the canonical source (terminal run); otherwise, active/terminal status is
+        read from async job registry (#482) — the same two sources used by
+        ``routes._guards.check_active_run_access`` (#496 follow-up pattern reused).
         """
         manifest = cast(
             "dict[str, JsonValue] | None", datasets_service.read_manifest(self._output_root, run_id)
         )
         if manifest is not None:
-            # 상태 판정은 manifest 패키지의 정본 규칙에 맡긴다 (#481). 여기서
-            # errors 유무만 보던 시절에는 취소된 run이 succeeded로 읽혔다 —
-            # 취소는 errors를 남기지 않기 때문이다. run_status_blocker의
-            # ``run_cancelled``는 이미 있었지만 이 경로에서는 닿지 않았고,
-            # 그래서 중간에 끊긴 partial 산출물이 HF/Kaggle에 게시될 수 있었다.
+            # Status determination is delegated to the manifest package's canonical
+            # rule (#481). When only checking errors presence, cancelled runs were
+            # read as succeeded — cancellation leaves no errors. run_status_blocker's
+            # ``run_cancelled`` was already present but unreachable in this path,
+            # allowing partial artifacts to be published to HF/Kaggle.
             status = _MANIFEST_TO_PUBLISH_STATUS[
                 status_from_manifest(cast("dict[str, object]", manifest))
             ]
@@ -122,8 +124,8 @@ class PublishApiService:
         snapshot = self._async_builds.get(run_id)
         if snapshot is not None:
             return snapshot.status, None, None
-        # route adapter의 check_active_run_access가 이미 존재를 보장했으므로
-        # 이론상 도달하지 않는다 — fail-closed로 failed 취급한다.
+        # route adapter's check_active_run_access already guarantees existence —
+        # theoretically unreachable; fail-closed to failed.
         return "failed", None, None
 
     def publish_readiness(
@@ -135,13 +137,13 @@ class PublishApiService:
     ) -> ServiceResponse:
         """GET /builds/{run_id}/publish/readiness (#491).
 
-        side-effect-free다 — Publisher를 호출하거나 원격 dataset을 만들지
-        않는다. ready == blockers가 하나도 없음으로 deterministic하게 계산한다.
+        Side-effect-free — does not call Publisher or create remote datasets.
+        ready == no blockers present; computed deterministically.
 
-        ``owner_id`` 는 credential blocker 판정에만 쓴다. 이게 없으면 readiness
-        는 서버 환경변수만 보고 ready 를 답했다 — 정작 POST 는 요청자 기준으로
-        판정하므로, 폴백을 닫아 둔 배포에서 readiness 와 publish 가 서로 다른
-        답을 냈다.
+        ``owner_id`` is used only for credential blocker determination. Without it,
+        readiness only consulted server environment variables and returned ready —
+        but actual POST validation is per-requester, so in deployments with closed
+        fallback, readiness and publish would give different answers.
         """
         resolved_target, error = publish_service.resolve_target(target)
         if resolved_target is None:
@@ -183,10 +185,9 @@ class PublishApiService:
     ) -> ServiceResponse:
         """POST /builds/{run_id}/publish (#491).
 
-        readiness와 완전히 같은 deterministic 검사를 다시 수행한다 — 호출자가
-        먼저 GET readiness를 불렀다고 신뢰하지 않는다(TOCTOU: readiness 통과
-        이후 상태가 바뀌어도 여기서 다시 막힌다). blocker가 하나라도 있으면
-        기존 Publisher를 절대 호출하지 않는다.
+        Performs the same deterministic checks as readiness — does not trust that
+        the caller ran GET readiness first (TOCTOU: state can change after readiness
+        passes). If any blocker exists, Publisher is never called.
         """
         if not isinstance(body, Mapping):
             return ServiceResponse(400, {"error": "request body must be a JSON object"})
@@ -247,11 +248,11 @@ class PublishApiService:
             if existing_response is not None:
                 return existing_response
 
-        # credential 해석을 readiness **앞**으로 옮긴다. 예전에는 publisher 를
-        # 부르기 직전에 해석했는데, 그 자리에서는 이미 receipt 를 claim 한
-        # 뒤라 거절해도 claim 이 남는다. 그리고 결과가 비면 kwarg 를 생략해서
-        # publisher 가 ``os.environ`` 으로 내려갔다 — 그래서
-        # ``REQUIRE_OWN_PUBLISH_CREDENTIAL`` 이 아무 일도 하지 않았다.
+        # Move credential interpretation before readiness. Previously, it was
+        # interpreted right before calling publisher; at that point, receipt was
+        # already claimed, so rejection left the claim. Empty results omitted the
+        # kwarg, causing publisher to fall back to ``os.environ`` — so
+        # ``REQUIRE_OWN_PUBLISH_CREDENTIAL`` had no effect.
         credentials = resolve_publish_credentials(
             self._credential_repository, principal.owner_id, resolved_target
         )
@@ -303,9 +304,9 @@ class PublishApiService:
             return claimed_response
 
         publisher = PUBLISHER_REGISTRY[resolved_target]
-        # local target은 destination을 publish-root 안의 절대 경로로 해석해
-        # 넘긴다(#550). readiness가 이미 통과했어도 여기서 다시 해석·검증한다
-        # (TOCTOU 재검증, #491과 동일 원칙).
+        # local target: interpret destination as absolute path within publish-root
+        # (#550). Re-interpret and validate here even if readiness passed (TOCTOU
+        # re-validation, same principle as #491).
         effective_destination: str = destination
         if resolved_target == "local":
             resolved_local = publish_service.resolve_local_destination(destination)
@@ -319,23 +320,23 @@ class PublishApiService:
                 )
             effective_destination = str(resolved_local[1])
         publish_kwargs: dict[str, object] = {"destination": effective_destination, **options}
-        # 값이 비어 있어도 항상 넘긴다. publisher 는 ``credentials=None`` 만
-        # "호출자가 정하지 않았다"(CLI 경로)로 보고 환경변수를 읽는다 — 서비스
-        # 경로는 언제나 정한다. 여기서 생략하면 그 구분이 무너진다.
+        # Always pass even if empty. Publisher interprets ``credentials=None`` as
+        # "caller did not set it" (CLI path) and reads environment variables —
+        # service path always sets it. Omitting it here breaks that distinction.
         if not credentials.not_required:
             publish_kwargs["credentials"] = dict(credentials.values)
         try:
             result = publisher.publish(readiness.artifacts.paths, **publish_kwargs)  # type: ignore[arg-type]
         except Exception as exc:
-            # Publisher가 던지는 예외(PublishError, credential/dependency
-            # RuntimeError, 그 외 검토하지 않은 예외 포함)는 어떤 것도 "안전한
-            # known exception"으로 취급하지 않는다 — 외부 SDK 예외 메시지에는
-            # 원격 응답 원문이나(#491 지침 1) 로컬 filesystem 절대 경로가 섞일
-            # 수 있다. client에는 항상 stable generic 메시지만 보낸다.
+            # Exceptions from Publisher (PublishError, credential/dependency
+            # RuntimeError, and other unreviewed exceptions) are not treated as
+            # "safe known exceptions" — external SDK messages may contain raw
+            # remote responses (#491 guideline 1) or local filesystem absolute paths.
+            # Client always receives only stable generic messages.
             #
-            # 서버 log도 str(exc)/repr(exc)나 traceback(로그에 다시 raw
-            # message를 남기는 logger.exception())을 쓰지 않는다 — exception
-            # type과 이미 안전하다고 확인된 context만 남긴다.
+            # Server logs do not use str(exc)/repr(exc) or traceback (logger.exception()
+            # re-logs raw message to log) — only exception type and already-vetted
+            # context are logged.
             logger.error(
                 "publish failed: run_id=%s target=%s error_type=%s",
                 run_id,
@@ -395,8 +396,9 @@ class PublishApiService:
     ) -> ServiceResponse:
         """GET /builds/{run_id}/publish/receipt (#551).
 
-        unknown receipt로 영구 차단된 운영자가 상태를 조회한다. 소유자 불일치는
-        404로 응답해 다른 owner의 receipt 존재 자체를 노출하지 않는다.
+        An operator permanently blocked on unknown receipt queries its state.
+        Mismatched owner returns 404; does not expose existence of different
+        owner's receipt.
         """
         owner_key = principal.owner_id or principal.label
         receipt = self._publish_receipts.get_by_key(
@@ -422,9 +424,9 @@ class PublishApiService:
     def publish_audit_log(self, run_id: str, *, principal: Principal) -> ServiceResponse:
         """GET /builds/{run_id}/publish/audit (#563).
 
-        reconcile/reset 감사 이력을 소유자 단위로 반환한다 — receipt가 이미
-        reset으로 삭제된 경우도 포함한다. 항목은 최소 필드(fingerprint/action/
-        actor/recorded_at)만 담고 credential·경로 원문은 없다.
+        Returns reconcile/reset audit history per owner — includes cases where
+        receipt was already deleted by reset. Entries contain only minimal fields
+        (fingerprint/action/actor/recorded_at); no credentials or path originals.
         """
         owner_key = principal.owner_id or principal.label
         entries = self._publish_receipts.audit_entries(owner_key=owner_key, run_id=run_id)
@@ -445,9 +447,10 @@ class PublishApiService:
     ) -> ServiceResponse:
         """POST /builds/{run_id}/publish/reconcile (#551).
 
-        unknown receipt를 원격 상태 확인으로 확정한다. 원격에 결과가 있으면
-        succeeded로 확정하고, 확실히 없으면 receipt를 reset해 재게시(새 claim)를
-        허용한다. 원격 확인 자체가 불가능하면 503 — 아무 것도 변경하지 않는다.
+        Confirms unknown receipt by checking remote state. If results exist
+        remotely, confirms as succeeded; if absent, resets receipt to allow
+        re-publish (new claim). If remote check itself is impossible, returns 503
+        — no changes are made.
         """
         if not isinstance(body, Mapping):
             return ServiceResponse(400, {"error": "request body must be a JSON object"})
@@ -479,7 +482,7 @@ class PublishApiService:
             )
 
         if receipt.state == "succeeded":
-            # 이미 확정된 receipt는 멱등하게 그 상태를 돌려준다(원격 재조회 없음).
+            # Idempotently return already-confirmed receipt state (no remote re-query).
             body_out: dict[str, JsonValue] = {
                 "run_id": run_id,
                 "state": "succeeded",
@@ -535,8 +538,9 @@ class PublishApiService:
                 },
             )
 
-        # 원격에 결과가 없다 — 게시가 실제로 일어나지 않았다고 확정할 수 없어도
-        # receipt를 reset해 운영자 판단으로 재게시를 허용한다(감사 로그에 남긴다).
+        # No remote results — cannot confirm publishing actually happened;
+        # nonetheless reset receipt to allow re-publish at operator discretion
+        # (logged in audit trail).
         reset_ok = self._publish_receipts.reset(
             receipt.fingerprint, action="reconcile_absent_reset"
         )
@@ -567,10 +571,10 @@ class PublishApiService:
         *,
         principal: Principal,
     ) -> ServiceResponse:
-        """DELETE /builds/{run_id}/publish/receipt (#551) — 명시적 reset.
+        """DELETE /builds/{run_id}/publish/receipt (#551) — explicit reset.
 
-        어떤 상태든 receipt를 삭제해 새 claim을 허용한다. 원격 부작용은 전혀
-        발생하지 않는다(이미 게시된 결과를 되돌리지 않는다). 감사 로그에 남긴다.
+        Deletes receipt in any state, allowing new claim. No remote side effects
+        occur (already-published results are not reverted). Logged in audit trail.
         """
         owner_key = principal.owner_id or principal.label
         receipt = self._publish_receipts.get_by_key(
@@ -600,10 +604,11 @@ class PublishApiService:
         )
 
     def _probe_remote_publish_target(self, target: str, destination: str) -> bool | None:
-        """원격에 publish 결과가 존재하는지 조사한다 (#551).
+        """Check if publish result exists remotely (#551).
 
-        반환값: True(존재)/False(부재)/None(판단 불가 — credential·네트워크 문제).
-        조사 자체가 credential을 소비하거나 원격을 변경하지 않는 read-only다.
+        Returns: True (exists)/False (absent)/None (cannot determine —
+        credential/network issue). Probe is read-only; does not consume credentials
+        or mutate remote state.
         """
         if target == "huggingface":
             token = os.environ.get("HF_TOKEN", "").strip()
@@ -625,15 +630,15 @@ class PublishApiService:
                 # surface instead of masquerading as an unreachable remote.
                 raise
             except Exception as exc:
-                # repo 부재(gated 401/404 계열)와 접근 실패를 구분한다 —
-                # huggingface_hub는 부재를 RepositoryNotFoundError로 알려준다.
+                # Distinguish repo absence (gated 401/404 variants) from access
+                # failure — huggingface_hub reports absence as RepositoryNotFoundError.
                 name = type(exc).__name__
                 if name in ("RepositoryNotFoundError", "GatedRepoError"):
                     return False
                 if getattr(exc, "status_code", None) in (401, 403):
-                    # 존재하지 않는 private repo도 401로 보이는 HF 특성상
-                    # 소유자라면 부재로 간주한다(asset이 내 credential로
-                    # 생성됐다면 접근 가능해야 하기 때문).
+                    # Non-existent private repos also appear as 401 due to HF;
+                    # if owner, treat as absent (asset created with my credential
+                    # should be accessible).
                     return False
                 if getattr(exc, "status_code", None) == 404:
                     return False

@@ -1,4 +1,4 @@
-"""Build publish readiness/실행 route adapter (#491)."""
+"""Build publish readiness/execution route adapter (#491)."""
 
 from __future__ import annotations
 
@@ -45,19 +45,19 @@ def route(
         if not target_values or not target_values[-1]:
             return ServiceResponse(400, {"error": "'target' query parameter is required"})
         target = target_values[-1]
-        # destination은 선택(#550) — kaggle metadata 정합 등 destination 의존
-        # 검사는 제공된 경우에만 readiness에 반영되고, POST가 최종 재검증한다.
+        # destination is optional (#550) — destination-dependent checks like kaggle metadata
+        # matching only appear in readiness if provided, and POST does final re-validation.
         destination_values = query_params.get("destination")
         destination = destination_values[-1] if destination_values else None
-        # #496 follow-up과 동일하게 manifest 유무와 무관하게(queued/running도)
-        # 존재/소유권을 판정한다 — publish readiness는 running/queued run도
-        # 404가 아니라 "아직 안 끝남" blocker로 보고해야 한다(#491).
+        # Same as #496 follow-up: determine existence/ownership regardless of manifest presence
+        # (queued/running too) — publish readiness should report running/queued runs as
+        # "not yet complete" blocker, not 404 (#491).
         access_error = check_active_run_access(service, run_id, principal)
         if access_error is not None:
             return access_error
-        # credential blocker 를 요청자 기준으로 판정하려면 owner_id 가 필요하다.
-        # 넘기지 않으면 readiness 는 서버 환경변수만 보고, 정작 POST 는 요청자
-        # 기준으로 막는다 — 두 답이 갈린다.
+        # To determine credential blocker per-requestor requires owner_id. Without it,
+        # readiness sees only server environment variables, but POST blocks per-requestor
+        # — two answers diverge.
         return service.publish_readiness(
             run_id, target, destination=destination, owner_id=principal.owner_id
         )

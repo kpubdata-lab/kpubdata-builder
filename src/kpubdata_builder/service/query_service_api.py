@@ -1,16 +1,17 @@
-"""Query 도메인 서비스 (#596, providers·uploads 에 이은 세 번째 조각).
+"""Query domain service (#596, third segment after providers/uploads).
 
-``POST /query`` 한 엔드포인트지만 **오류 분류가 이 도메인의 본체**다: 권한·아티팩트
-부재·문맥 오류·안전하지 않은 SQL·혼잡·타임아웃·실행 실패를 각각 다른 상태 코드와
-``code`` 로 내보낸다. 한 클래스에 묶여 있을 때보다 여기 모여 있는 편이 "어떤 실패가
-어떤 응답이 되는가"를 확인하기 쉽다.
+One ``POST /query`` endpoint, but **error classification is the core** — permission,
+artifact absence, context error, unsafe SQL, congestion, timeout, execution failure
+each map to different status codes and ``code`` values. Keeping this classification
+in one place rather than scattered in a class makes it easier to review "what failure
+maps to what response".
 
-앞선 두 조각과 같은 규칙: **자기 의존성만 받고**, wire 계약(상태 코드·``code`` 값·본문
-키)은 그대로다.
+Same rule as the two prior segments: **takes only self-dependencies**, wire contract
+(status codes, ``code`` values, body keys) unchanged.
 
-이름이 ``query_service_api`` 인 이유: ``kpubdata_builder.query.service`` 에 이미 실행
-엔진 쪽 ``QueryService`` 가 있다. 이 모듈은 그 엔진을 쓰는 **HTTP 도메인 서비스**라,
-import 할 때 둘이 헷갈리지 않도록 이름을 분리했다.
+Named ``query_service_api`` because ``kpubdata_builder.query.service`` already has
+the execution engine's ``QueryService``. This module is the **HTTP domain service**
+that uses that engine; the name is separated to avoid import confusion.
 """
 
 from __future__ import annotations
@@ -36,10 +37,10 @@ _ALLOWED_FIELDS = {"dataset_id", "run_id", "stage", "source", "sql", "limit"}
 
 
 def query_request_from_body(body: Mapping[str, JsonValue] | None) -> QueryRequest:
-    """요청 본문을 ``QueryRequest`` 로 검증·변환한다.
+    """Validate and convert request body to ``QueryRequest``.
 
-    알 수 없는 필드를 거부한다 — 오타를 조용히 무시하면 사용자는 자기 의도와 다른
-    쿼리가 돈 것을 모른다.
+    Rejects unknown fields — silently ignoring typos would let users not notice
+    they sent a query different from their intent.
     """
     if body is None:
         raise ValueError("request body is required")
@@ -74,7 +75,7 @@ def query_request_from_body(body: Mapping[str, JsonValue] | None) -> QueryReques
 
 
 class QueryApiService:
-    """서버가 resolve 한 stage 테이블에 대한 읽기 전용 SQL 실행."""
+    """Read-only SQL execution against server-resolved stage tables."""
 
     def __init__(self, *, output_root: Path, engine: QueryService) -> None:
         self._output_root = output_root
@@ -83,7 +84,7 @@ class QueryApiService:
     def query(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
     ) -> ServiceResponse:
-        """서버가 resolve한 stage 테이블에 대해 검증된 SQL 쿼리 1건을 실행한다."""
+        """Execute one validated SQL query against server-resolved stage tables."""
         try:
             request = query_request_from_body(body)
             context = resolve_query_context(self._output_root, request, principal)

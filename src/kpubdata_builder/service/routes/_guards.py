@@ -1,4 +1,4 @@
-"""Run route가 공유하는 존재·소유권 guard."""
+"""Run route existence and ownership guard shared by all."""
 
 from __future__ import annotations
 
@@ -47,43 +47,41 @@ def check_run_exists(service: BuilderService, run_id: str) -> ServiceResponse | 
 def check_active_run_access(
     service: BuilderService, run_id: str, principal: Principal
 ) -> ServiceResponse | None:
-    """manifest 이전(queued/running) 구간까지 다루는 존재·소유권 판정 (#496 follow-up).
+    """Existence and ownership decision through pre-manifest (queued/running) phase (#496
+    follow-up).
 
-    ``/builds/{run_id}/events``에서 출발했고, 이후 ``GET /builds/{run_id}``(#480)와
-    ``POST /builds/{run_id}/cancel``(#481)이 같은 규칙을 재사용한다 — active job을
-    다루는 route가 서로 다른 404/403 semantics를 갖지 않게 하기 위해서다.
+    Started in ``/builds/{run_id}/events``, later ``GET /builds/{run_id}`` (#480) and
+    ``POST /builds/{run_id}/cancel`` (#481) reuse the same rules — to avoid routes
+    handling active jobs having different 404/403 semantics.
 
-    ``check_run_exists``/``check_ownership``은 run directory와 manifest.json이
-    이미 있다고 가정한다 - 하지만 async job은 ``run_submitted``가 worker
-    enqueue *이전에* event store에 기록되고(``BuilderService.submit_build``의
-    ``on_accept`` hook), run directory는 worker가 ``BuildContext.create()``에서,
-    manifest는 run이 끝나야 비로소 만들어진다. 그 사이(queued/running) 구간에는
-    ``check_run_exists``가 404를, ownership이 켜져 있으면 ``check_ownership``이
-    (manifest 부재로 created_by/owner_id 둘 다 None) fail-closed 403을 반환해
-    events polling이 아예 불가능해진다.
+    ``check_run_exists``/``check_ownership`` assume run directory and manifest.json
+    already exist — but async jobs record ``run_submitted`` in event store *before*
+    worker enqueue (``BuilderService.submit_build`` ``on_accept`` hook), run directory
+    is created by worker at ``BuildContext.create()``, and manifest only after run
+    finishes. In between (queued/running), ``check_run_exists`` returns 404, and if
+    ownership is on, ``check_ownership`` returns fail-closed 403 (due to missing manifest,
+    both created_by/owner_id are None), making events polling impossible.
 
-    판정 순서(run directory 존재 여부는 전환 기준으로 쓰지 않는다 - manifest만
-    본다):
-        1. manifest.json이 있으면 기존 ``check_ownership``(manifest 기반,
-           stable ``owner_id`` 우선) 경로를 그대로 쓴다 - completed run은
-           registry에 terminal entry가 남아있어도 이 경로로만 판정한다.
-        2. manifest가 없고 async job registry(``AsyncBuildExecutor``, 프로세스
-           메모리 상주)에 snapshot이 있으면(active든, enqueue 실패 등으로
-           manifest 없이 종결된 terminal이든) 그 snapshot의 stable
-           ``owner_id``로 ownership을 판정한다(#505 canonical identity -
-           ``created_by``/``Principal.label``은 legacy fallback일 뿐이고,
-           ``ownership_allows``에 그대로 넘겨 우선순위 판단을 위임한다).
-        3. 둘 다 없으면 404.
+    Decision order (run directory existence is not used as transition criterion — only
+    manifest):
+        1. If manifest.json exists, use existing ``check_ownership`` path (manifest-based,
+           prefers stable ``owner_id``) — completed runs are decided by this path only,
+           even if registry has terminal entry.
+        2. If no manifest and async job registry (``AsyncBuildExecutor``, in-process
+           memory) has snapshot (active or terminal ended without manifest due to
+           enqueue failure), decide ownership by that snapshot's stable ``owner_id``
+           (#505 canonical identity — ``created_by``/``Principal.label`` are legacy
+           fallbacks only; we pass them as-is to ``ownership_allows`` for priority).
+        3. If neither exist, 404.
 
-    snapshot의 ``owner_id``는 ``BuilderService.submit_build``가 registry에
-    보존해 둔 값이다 - wire 응답에는 노출되지 않는다(``BuildJobSnapshot.to_body()``
-    가 절대 내보내지 않는다). ``_run_build_job``이 이 값을 persisted
-    manifest/BuildIndex(#505 SSOT) 기록에도 재사용하지만, ``kind="file"``
-    source resolver(#498)에는 여전히 전달하지 않는다 - async file-backed
-    source owner propagation 한계는 그대로 유지된다.
+    Snapshot ``owner_id`` is the value ``BuilderService.submit_build`` preserved in
+    registry — not exposed in wire response (``BuildJobSnapshot.to_body()`` never exports
+    it). ``_run_build_job`` reuses this value in persisted manifest/BuildIndex (#505 SSOT)
+    record, but still does not pass it to ``kind="file"`` source resolver (#498) — async
+    file-backed source owner propagation limit remains.
 
-    ``/manifest``, ``/stages`` 등 다른 route는 여전히 persisted run만 다루므로
-    이 함수를 쓰지 않는다 - 영향 범위를 active job을 다루는 route로 좁게 유지한다.
+    Other routes like ``/manifest``, ``/stages`` still handle only persisted runs; they
+    do not use this function — keeping impact scope narrow to active-job-handling routes.
     """
     run_dir = service._output_root / run_id
     ensure_within(service._output_root, run_dir, label="run directory")
@@ -103,16 +101,15 @@ def check_active_run_access(
 def check_existing_run_access(
     service: BuilderService, run_id: str, principal: Principal
 ) -> ServiceResponse | None:
-    """호출자가 지정한 run_id 가 **이미 존재한다면** 그 소유자인지 확인한다 (#635).
+    """If the caller-specified run_id **already exists**, verify ownership (#635).
 
-    ``check_active_run_access`` 와 판정 규칙은 같고 없는 run 을 다루는 방식만
-    다르다. 그쪽은 조회 route 용이라 run 이 없으면 404 지만, 여기서는 없는
-    run_id 가 정상이다 — 새 빌드를 그 이름으로 시작하겠다는 뜻이기 때문이다.
+    Decision rules match ``check_active_run_access``; only how missing runs are
+    handled differs. That is for query routes: if run is missing, 404. Here, missing
+    run_id is normal — means starting a new build with that name.
 
-    이 게이트가 없던 시절, 동기 ``POST /build`` 는 호출자가 준 run_id 가 누구
-    것인지 확인하지 않았다. 남의 run_id 를 주면 그 run 의 산출물을 덮어쓰고 응답
-    으로 결과까지 돌려받았다. 비동기 ``POST /builds`` 는 같은 상황에서 409 로
-    막는다.
+    Without this gate, sync ``POST /build`` did not verify who owned the caller's
+    run_id. Giving someone else's run_id would overwrite that run's output and return
+    results in response. Async ``POST /builds`` blocks with 409 in the same situation.
     """
     run_dir = service._output_root / run_id
     ensure_within(service._output_root, run_dir, label="run directory")
@@ -120,7 +117,7 @@ def check_existing_run_access(
         return check_ownership(service, run_id, principal)
     snapshot = service._async_builds.get(run_id)
     if snapshot is None:
-        # 아직 없는 run_id — 새 빌드다.
+        # run_id does not exist yet — new build.
         return None
     if ownership_module.ownership_allows(
         created_by=snapshot.created_by, owner_id=snapshot.owner_id, principal=principal

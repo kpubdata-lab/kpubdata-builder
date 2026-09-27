@@ -1,20 +1,20 @@
-"""Build publish readiness/실행 서비스 로직 (#491).
+"""Build publish readiness/execution service logic (#491).
 
-Studio가 완료된 Gold build를 바로 게시하지 않고, readiness(ready/blockers/
-warnings)를 먼저 확인한 뒤 실제 publish를 요청할 수 있게 하는 순수 로직을
-담는다. 새 Publisher는 만들지 않는다 — HTTP에서는
-``publishers.PUBLISHER_REGISTRY``의 기존 Hugging Face publisher만 재사용한다.
-Kaggle/Local registry와 CLI 동작은 유지하되 HTTP target에서는 제외한다(#28/#491).
+Contains pure logic that allows Studio to check readiness (ready/blockers/warnings)
+of completed Gold builds before requesting actual publish, rather than publishing
+immediately. Does not create new Publishers - HTTP reuses only the existing Hugging Face
+publisher from ``publishers.PUBLISHER_REGISTRY``. Maintains Kaggle/Local registry and CLI
+behavior but excludes them from HTTP targets (#28/#491).
 
-핵심 원칙:
-    - readiness(GET)는 side-effect-free다: Publisher를 호출하거나 원격
-      dataset을 만들지 않는다.
-    - POST도 readiness와 완전히 같은 deterministic 검사를 서버에서 다시
-      수행한다 — 호출자가 GET을 먼저 불렀다고 신뢰하지 않는다(TOCTOU 방지).
-    - Publisher에 넘기는 artifact 목록은 항상 ``manifest.outputs``(정본,
-      pipeline이 실제로 쓴 파일만 기록)와 ``gold_source_dir``(정본 stage
-      경로 helper, #488)의 교집합에서만 만든다 — 임의 디렉터리를 glob하지
-      않는다.
+Core principles:
+    - readiness (GET) is side-effect-free: does not call Publisher or create remote
+      datasets.
+    - POST performs the exact same deterministic checks on the server - does not trust
+      that caller ran GET first (TOCTOU prevention).
+    - artifact list passed to Publisher always comes from intersection of
+      ``manifest.outputs`` (source of truth: only files actually used by pipeline) and
+      ``gold_source_dir`` (authoritative stage path helper, #488) - does not glob
+      arbitrary directories.
 """
 
 from __future__ import annotations
@@ -41,28 +41,27 @@ from ..stages._stage_reader import gold_source_dir
 from . import stages as stages_service
 from .publish_credentials import PublishCredentialResolution
 
-# HTTP로 안전하게 노출 가능한 publish target. PUBLISHER_REGISTRY에는 "local"도
-# 있지만, LocalPublisher는 caller-provided destination을 그대로 로컬
-# 파일시스템 Path로 써서 복사한다(publishers/local.py) — HTTP 노출은
-# ``KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT``로 지정된 publish-root 안의 상대
-# 경로로 한정할 때만 허용한다(#550). Kaggle은 packaging이 기록한
-# ``dataset-metadata.json``의 ``id``가 destination과 일치할 때만 허용한다
-# (#550 정합화 규칙 — 기존 CLI 의미론과 동일).
+# HTTP-safe publish targets. PUBLISHER_REGISTRY also has "local", but LocalPublisher
+# uses caller-provided destination directly as a local filesystem Path (publishers/local.py)
+# - HTTP exposure is only allowed as relative paths within publish-root specified by
+# ``KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`` (#550). Kaggle is only allowed when the ``id``
+# in ``dataset-metadata.json`` recorded by packaging matches destination (#550
+# reconciliation rule - same as existing CLI semantics).
 HTTP_PUBLISH_TARGETS: tuple[str, ...] = ("huggingface", "kaggle", "local")
 
 RunStatus = Literal["queued", "running", "cancelling", "succeeded", "failed", "cancelled"]
 
-# Local publish-root 절대 경로를 지정하는 서버 설정(#550). 미설정이면 local
-# target의 readiness가 credential/게시 경계 미구성 blocker를 보고한다(fail-closed).
+# Local publish-root absolute path configuration for server (#550). If not set,
+# readiness of local target reports credential/publish boundary misconfiguration issue.
 _LOCAL_PUBLISH_ROOT_ENV = "KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT"
 
 _DESTINATION_PATTERN = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
 )
 
-# target별로 실제 Publisher.publish()가 받는 kwarg만 허용한다. Hugging Face는
-# 신규 repo visibility를 위한 private만, Kaggle은 신규 dataset 공개 여부의
-# public만 노출하고 그 밖의 option은 거부한다. Local은 노출 option이 없다.
+# Allow only kwargs that actual Publisher.publish() receives per target. Hugging Face allows
+# only 'private' for new repo visibility, Kaggle allows only 'public' for new dataset
+# public status, and rejects other options. Local has no exposed options.
 _ALLOWED_OPTIONS: dict[str, dict[str, type]] = {
     "huggingface": {"private": bool},
     "kaggle": {"public": bool},
@@ -81,7 +80,7 @@ PublishClaimStatus = Literal["claimed", "replay", "in_progress", "state_unknown"
 
 @dataclass(frozen=True)
 class PublishReceipt:
-    """credential/path를 포함하지 않는 durable publish operation 영수증."""
+    """Durable publish operation receipt without credential/path."""
 
     fingerprint: str
     state: PublishReceiptState
@@ -92,11 +91,11 @@ class PublishReceipt:
 
 
 class PublishReceiptStore:
-    """SQLite UNIQUE claim으로 duplicate remote side effect를 막는 receipt 저장소.
+    """Receipt store that prevents duplicate remote side effects via SQLite UNIQUE claim.
 
-    DB는 ``output_root/_publish_receipts.sqlite``에 있으며 run workspace 밖의 내부
-    service state다. artifact API는 run 디렉터리만 열거하므로 public artifact나
-    ``manifest.outputs``에 포함되지 않는다.
+    DB at ``output_root/_publish_receipts.sqlite``, internal service state outside
+    run workspace. Artifact API lists only run directory, so not included in public
+    artifacts or ``manifest.outputs``.
     """
 
     _FILENAME = "_publish_receipts.sqlite"
@@ -136,9 +135,10 @@ class PublishReceiptStore:
                     )
                     """
                 )
-                # reconcile/reset 감사 로그(#551) — credential/path/원문을 담지
-                # 않는 최소 필드만 append한다. owner_key/run_id를 행에 직접
-                # 저장해 receipt가 reset으로 삭제돼도 감사 이력이 조회되게 한다(#563).
+                # reconcile/reset audit log (#551) - append only minimal fields without
+                # credential/path/raw value.
+                # Store owner_key/run_id directly in row so audit history is queryable
+                # even if receipt is deleted by reset (#563).
                 connection.execute(
                     """
                     CREATE TABLE IF NOT EXISTS publish_receipt_audit (
@@ -152,9 +152,9 @@ class PublishReceiptStore:
                     )
                     """
                 )
-                # #557 시점 스키마(owner/run 컬럼 없음)에서 만든 DB 호환 마이그레이션.
+                # Database-compatible migration created from #557 schema (no owner/run columns).
                 for column in ("owner_key", "run_id"):
-                    # 컬럼이 이미 존재하면 ALTER가 OperationalError로 실패한다.
+                    # If column already exists, ALTER fails with OperationalError.
                     with suppress(sqlite3.OperationalError):
                         connection.execute(
                             f"ALTER TABLE publish_receipt_audit ADD COLUMN {column} TEXT"
@@ -208,7 +208,7 @@ class PublishReceiptStore:
         destination: str,
         options: dict[str, object],
     ) -> tuple[PublishClaimStatus, PublishReceipt]:
-        """operation을 durable pending으로 선점하거나 기존 상태를 반환한다."""
+        """Preempt operation to durable pending or return existing state."""
         self._initialize()
         fingerprint = self.fingerprint(
             owner_key=owner_key,
@@ -279,7 +279,7 @@ class PublishReceiptStore:
         destination: str,
         options: dict[str, object],
     ) -> tuple[PublishClaimStatus, PublishReceipt] | None:
-        """side effect 없이 기존 operation receipt와 replay 결정을 조회한다."""
+        """Query existing operation receipt and replay decision side-effect-free."""
         self._initialize()
         fingerprint = self.fingerprint(
             owner_key=owner_key,
@@ -323,7 +323,7 @@ class PublishReceiptStore:
         target: str,
         destination: str,
     ) -> PublishReceipt | None:
-        """operation key로 receipt를 직접 조회한다(#551 조회 API용, side effect 없음)."""
+        """Query receipt directly by operation key (#551 query API, side-effect-free)."""
         self._initialize()
         with self._connect() as connection:
             row = connection.execute(
@@ -340,7 +340,7 @@ class PublishReceiptStore:
         return self._row_to_receipt(cast(tuple[object, ...], row))
 
     def reconcile_succeeded(self, fingerprint: str, result: dict[str, object]) -> None:
-        """원격 상태 확인으로 unknown을 succeeded로 확정한다(#551). 감사 로그를 남긴다."""
+        """Confirm unknown as succeeded via remote status check (#551). Record audit log."""
         self._initialize()
         self._set_terminal(
             fingerprint,
@@ -352,11 +352,11 @@ class PublishReceiptStore:
         self._append_audit(fingerprint, "reconcile_succeeded", owner_key=owner_key, run_id=run_id)
 
     def reset(self, fingerprint: str, *, action: str = "reset") -> bool:
-        """receipt를 삭제해 재시도(새 claim)를 허용한다(#551). 감사 로그를 남긴다.
+        """Delete receipt to allow retry (new claim) (#551). Record audit log.
 
-        삭제가 실제로 일어났으면 True, 해당 fingerprint가 없으면 False.
-        감사 행에는 receipt의 owner/run을 옮겨 적는다(#563) — receipt 삭제 후에도
-        이력이 소유자·run 단위로 조회되어야 하기 때문이다.
+        Return True if delete actually happened, False if fingerprint not found.
+        Audit row carries receipt owner/run (#563) so history remains queryable
+        by owner-run even after receipt deletion.
         """
         self._initialize()
         connection = self._connect()
@@ -386,7 +386,7 @@ class PublishReceiptStore:
             connection.close()
 
     def _receipt_owner_run(self, fingerprint: str) -> tuple[str | None, str | None]:
-        """fingerprint에서 receipt의 (owner_key, run_id)를 읽는다(#563)."""
+        """Read receipt (owner_key, run_id) from fingerprint (#563)."""
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT owner_key, run_id FROM publish_receipts WHERE fingerprint = ?",
@@ -432,10 +432,10 @@ class PublishReceiptStore:
         )
 
     def audit_entries(self, *, owner_key: str, run_id: str) -> list[dict[str, str]]:
-        """해당 owner/run의 감사 로그를 시간순으로 반환한다.
+        """Return audit log for owner/run in time order.
 
-        receipt가 삭제(reset)된 이후의 행도 포함한다(#563) — 감사 행이 owner/run을
-        스스로 들고 있으므로 JOIN이 필요 없다.
+        Includes rows after receipt deletion/reset (#563) - audit row carries owner/run
+        itself, no JOIN needed.
         """
         self._initialize()
         with self._connect() as connection:
@@ -472,8 +472,8 @@ class PublishReceiptStore:
             if result is not None
             else None
         )
-        # BEGIN IMMEDIATE로 전환 순간까지 쓰기 잠금을 잡아 claim()과 같은
-        # 직렬화 수준에서 상태 전이를 확정한다(#564).
+        # Hold write lock until transition to BEGIN IMMEDIATE ensures state
+        # transitions are confirmed at serialization level like claim() (#564).
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -505,7 +505,7 @@ class PublishReceiptStore:
 
 @dataclass(frozen=True)
 class PublishIssue:
-    """구조화된 blocker/warning. UI가 문자열 파싱을 하지 않도록 code+message로 나눈다."""
+    """Structured blocker/warning. Separate code+message so UI does not parse strings."""
 
     code: str
     message: str
@@ -516,11 +516,11 @@ class PublishIssue:
 
 @dataclass(frozen=True)
 class ResolvedArtifacts:
-    """target에 실제로 전달할 canonical Gold artifact 경로.
+    """Canonical Gold artifact path to actually pass to target.
 
-    ``paths``는 항상 manifest.outputs(정본)에 실제로 기록된, 그리고 이 run의
-    gold_source_dir 아래에 있는 파일만 담는다 — BuildSpec snapshot, credential,
-    임시 파일, silver/bronze 파일은 절대 섞이지 않는다.
+    ``paths`` always contains only files actually recorded in manifest.outputs (source
+    of truth) and under this run gold_source_dir - BuildSpec snapshot, credential,
+    temp files, silver/bronze files never mixed.
     """
 
     paths: tuple[Path, ...]
@@ -537,7 +537,7 @@ class ReadinessResult:
 
 
 def resolve_target(value: object) -> tuple[str | None, str | None]:
-    """(target, error_message) — target이 None이면 error_message가 채워진다."""
+    """(target, error_message) - if target is None, error_message is filled."""
     if not isinstance(value, str) or not value:
         return None, "'target' must be a non-empty string"
     if value in HTTP_PUBLISH_TARGETS:
@@ -548,7 +548,7 @@ def resolve_target(value: object) -> tuple[str | None, str | None]:
 
 
 def run_status_blocker(status: RunStatus) -> PublishIssue | None:
-    """Run 상태 자체가 publish를 막는지 판정한다. 기존 상태 어휘만 쓴다."""
+    """Determine whether run status itself blocks publish. Use only existing status vocabulary."""
     if status in ("queued", "running", "cancelling"):
         return PublishIssue("run_not_terminal", f"run is not finished yet (status={status})")
     if status == "failed":
@@ -559,16 +559,16 @@ def run_status_blocker(status: RunStatus) -> PublishIssue | None:
 
 
 def license_blocker(spec: BuildSpec | None) -> PublishIssue | None:
-    """#443 license/redistribution gate를 재사용한다 — 새 license 정책을 만들지 않는다.
+    """Reuse #443 license/redistribution gate - do not create new license policy.
 
-    BuildSpec.license가 선언되어 있지 않으면(빈 문자열 포함) publish를 막는다.
-    unknown license를 자동 허용하지 않는다 — 선언 자체가 유일한 재배포
-    가능성 근거다(#443 원칙 그대로).
+    If BuildSpec.license not declared (including empty string), block publish.
+    Do not auto-allow unknown license - declaration itself is sole redistribution
+    basis (#443 principle as-is).
 
-    ``spec.license``가 whitespace만으로 이루어진 문자열(spec loader는 이를
-    타입 검사만 하고 통과시킨다, spec/loader.py)이면 사람이 실제로 아무것도
-    선언하지 않은 것과 같으므로 "선언됨"으로 인정하지 않는다(#491 지침 4) —
-    새 SPDX allowlist/registry는 추가하지 않는다, blank 판정만 보강한다.
+    If ``spec.license`` is whitespace-only string (spec loader type-checks only,
+    passes through; spec/loader.py), treat same as no actual declaration, so not
+    recognized as "declared" (#491 guideline 4) - do not add new SPDX allowlist/registry,
+    only enhance blank determination.
     """
     if spec is None or not spec.license or not spec.license.strip():
         return PublishIssue(
@@ -579,11 +579,11 @@ def license_blocker(spec: BuildSpec | None) -> PublishIssue | None:
 
 
 def effective_publish_policy_blockers(spec: BuildSpec | None) -> tuple[PublishIssue, ...]:
-    """저장된 spec을 실제 외부 publish와 같은 ``publish=True``로 재검증한다.
+    """Re-validate stored spec with ``publish=True`` as if actual external publish.
 
-    PII/license 규칙을 service에 복제하지 않고 canonical ``validate_spec``의
-    structured problems를 사용한다. whitespace-only license는 validator의 기존
-    truthiness 검사보다 엄격한 #491 gate인 ``license_blocker``가 보완한다.
+    Do not replicate PII/license rules in service, use canonical ``validate_spec``
+    structured problems. Whitespace-only license supplemented by stricter #491 gate
+    ``license_blocker`` beyond validator truthiness check.
     """
     if spec is None:
         return ()
@@ -608,7 +608,7 @@ def _kaggle_credential_configured() -> bool:
 
 
 def local_publish_root() -> Path | None:
-    """설정된 local publish-root 절대 경로(#550). 미설정/불완전이면 None."""
+    """Configured local publish-root absolute path (#550). None if not set/incomplete."""
     raw = os.environ.get(_LOCAL_PUBLISH_ROOT_ENV, "").strip()
     if not raw:
         return None
@@ -616,11 +616,10 @@ def local_publish_root() -> Path | None:
 
 
 def resolve_local_destination(destination: str) -> tuple[Path, Path] | PublishIssue:
-    """local target의 destination을 publish-root 안의 절대 경로로 해석한다.
+    """Interpret local target destination as absolute path within publish-root.
 
-    반환값: ``(publish_root, absolute_destination)`` 또는 blocker.
-    destination은 항상 상대 ``owner/name`` 형태여야 하고, root를 벗어나는
-    경로는 fail-closed다(#550).
+    Return: ``(publish_root, absolute_destination)`` or blocker. Destination must
+    always be relative ``owner/name`` form, paths escaping root fail-closed (#550).
     """
     root = local_publish_root()
     if root is None:
@@ -640,16 +639,16 @@ def resolve_local_destination(destination: str) -> tuple[Path, Path] | PublishIs
 
 
 def kaggle_package_id(artifacts: ResolvedArtifacts) -> tuple[Path, str] | PublishIssue | None:
-    """Kaggle packaging을 해석한다 (#550).
+    """Interpret Kaggle packaging (#550).
 
-    반환값:
-        ``(package_dir, metadata_id)`` — 정확히 하나의 dataset-metadata.json이
-        있고 id를 읽을 수 있을 때(KagglePublisher는 디렉터리 artifact를
-        받는다). ``None`` — packaging이 아예 없을 때. :class:`PublishIssue` —
-        packaging이 여러 개(모호)거나 id를 읽을 수 없을 때.
+    Return:
+        ``(package_dir, metadata_id)`` - when exactly one dataset-metadata.json exists
+        and id readable (KagglePublisher receives directory artifact). ``None`` - when
+        no packaging at all. :class:`PublishIssue` - when packaging multiple (ambiguous)
+        or id not readable.
     """
-    # dataset-metadata.json은 exporter가 기록하는 sidecar라 manifest.outputs에
-    # 들어가지 않는다 — 해석된 gold artifact의 형제 디렉터리에서 찾는다(#550).
+    # dataset-metadata.json is exporter-recorded sidecar not in manifest.outputs -
+    # find in sibling dir of interpreted gold artifact (#550).
     package_dirs: list[Path] = []
     for artifact_path in artifacts.paths:
         candidate = artifact_path.parent / "dataset-metadata.json"
@@ -687,18 +686,18 @@ def kaggle_package_id(artifacts: ResolvedArtifacts) -> tuple[Path, str] | Publis
 def credential_blocker(
     target: str, resolution: PublishCredentialResolution | None = None
 ) -> PublishIssue | None:
-    """이 게시에 실제로 쓸 credential 이 있는지 확인한다.
+    """Check whether this publish has credential actually to use.
 
-    원문 credential은 절대 읽거나 반환하지 않는다. 설정 여부를 확인할 수 없으면
-    (지원 불가능한 credential shape 포함) ready=true로 추정하지 않고 명시적으로
-    unavailable로 처리한다(#491 지침 7). local target의 "credential"은
-    publish-root 설정이다(#550).
+    Never read or return raw credential. If unable to verify if set (including
+    unsupported credential shapes), do not assume ready=true, explicitly mark
+    unavailable (#491 guideline 7). Local target's "credential" is publish-root
+    config (#550).
 
-    ``resolution`` 이 주어지면 그것이 정답이다 — 요청자 credential 과 서버 폴백
-    정책(#635)을 이미 반영한 결과이기 때문이다. 예전에는 이 함수가 서버
-    환경변수만 봤다. 그래서 ``REQUIRE_OWN_PUBLISH_CREDENTIAL=true`` 로 폴백을
-    닫아 둔 배포에서도, 저장된 credential 이 없는 principal 에게 readiness 가
-    ready 를 답했다 — 서버에 토큰이 있다는 이유 하나로.
+    If ``resolution`` given, that is the answer - requester credential and server
+    fallback policy (#635) already reflects result. Previously function only looked at
+    server env vars. So even deployments with fallback closed via
+    ``REQUIRE_OWN_PUBLISH_CREDENTIAL=true``, principals without stored credential got
+    ready answer - only because server had token.
     """
     if target == "local":
         if local_publish_root() is not None:
@@ -722,7 +721,7 @@ def credential_blocker(
             f"no credential is available for target {target!r}",
         )
 
-    # resolution 을 주지 않는 호출자(CLI/테스트)는 예전처럼 서버 환경만 본다.
+    # Callers without resolution (CLI/tests) see only server environment as before.
     if target == "huggingface" and _huggingface_credential_configured():
         return None
     if target == "kaggle" and _kaggle_credential_configured():
@@ -736,23 +735,22 @@ def credential_blocker(
 def resolve_gold_artifacts(
     output_root: Path, run_id: str, manifest: dict[str, object]
 ) -> ResolvedArtifacts | PublishIssue:
-    """이 run의 canonical Gold artifact 파일을 해석한다.
+    """Interpret canonical Gold artifact files of this run.
 
-    ``manifest.outputs``에 실제로 기록된 파일 중, 알려진(실패하지 않은)
-    source의 ``gold_source_dir`` 아래에 있는 파일만 후보로 삼는다(#488 stage
-    helper 재사용) — output_root를 recursive glob하지 않는다.
+    Among files actually recorded in ``manifest.outputs``, consider only those
+    under known (non-failed) source ``gold_source_dir`` as candidates (#488 stage
+    helper reuse) - do not recursive glob output_root.
 
-    manifest.outputs에는 gold 산출물뿐 아니라 이 run의 bronze/silver 원본,
-    dataset card, BuildSpec snapshot 등 다른 stage의 정당한 산출물도 함께
-    기록된다(pipeline/orchestrator.py `_record_output_paths` 호출부 참고) —
-    이런 항목은 gold_source_dir 밖에 있는 것이 "정상"이므로 조용히 후보에서
-    제외한다(publish 대상은 gold 파일만). 반면 canonical manifest.outputs
-    항목이 이 run 자신의 workspace(``{output_root}/{run_id}``) 밖을
-    가리키면(gold root escape, symlink escape, invalid/resolve 불가 경로
-    포함) — 그건 정당한 다른 stage 산출물일 수 없으므로 fail-closed다(#491
-    지침 2). 유효한 gold artifact가 함께 있어도 그 무효 항목만 조용히
-    건너뛰고 나머지만 publish하지 않는다 — canonical publish artifact set
-    전체가 유효해야 한다.
+    manifest.outputs records not just gold outputs but also this run bronze/silver
+    originals, dataset card, BuildSpec snapshot and other stage legitimate outputs
+    (see pipeline/orchestrator.py `_record_output_paths` call) - such items outside
+    gold_source_dir is "normal" so silently exclude from candidates (gold files only).
+    However if canonical manifest.outputs entry points outside this run own workspace
+    (``{output_root}/{run_id}``) (gold root escape, symlink escape, invalid/unresolvable
+    path included) - that cannot be legitimate other stage output, so fail-closed
+    (#491 guideline 2). Even if valid gold artifact present, silently skip only that
+    invalid entry and do not publish rest - entire canonical publish artifact set must
+    be valid.
     """
     known = stages_service.known_source_keys(manifest)
     failed = stages_service.failed_source_keys(manifest)
@@ -781,9 +779,9 @@ def resolve_gold_artifacts(
             "gold_unavailable", "no successful Gold output is available for this run"
         )
 
-    # 모든 output path를 이 run에 실제로 존재하는 gold_dir 전체에 대해
-    # 먼저 분류한다(source별로 nested 검사하지 않는다) — 그래야 source A의
-    # gold_dir과 비교할 때 source B 소유 경로가 "무효"로 오판되지 않는다.
+    # Classify all output paths against all actually-existing gold_dirs in this run
+    # first (no nested per-source check) - so source B owned path not misclassified
+    # as "invalid" when compared against source A gold_dir.
     gold_files: list[Path] = []
     for path in output_paths:
         matched = False
@@ -795,11 +793,11 @@ def resolve_gold_artifacts(
             matched = True
             break
         if matched:
-            # 디렉터리도 정당한 Gold artifact 다. ``kind: huggingface`` export 는
-            # 파일 하나가 아니라 레이아웃 디렉터리를 만들고 manifest 의 output
-            # path 도 그 디렉터리를 가리킨다 — ``is_file()`` 로만 보던 시절에는
-            # 정상적으로 끝난 빌드가 artifact_missing 으로 막혔다.
-            # HuggingFacePublisher 는 이미 디렉터리를 upload_folder 로 처리한다.
+            # Directory is also valid Gold artifact. ``kind: huggingface`` export creates
+            # layout directory not single file, manifest output path also points to
+            # directory - when only checking ``is_file()`` normally-finished builds
+            # blocked as artifact_missing. HuggingFacePublisher already handles
+            # directory as upload_folder.
             if not path.is_file() and not path.is_dir():
                 return PublishIssue(
                     "artifact_missing",
@@ -811,17 +809,17 @@ def resolve_gold_artifacts(
         try:
             ensure_within(run_dir, path, label="run output")
         except ValueError:
-            # 이 run 자신의 workspace 밖을 가리키는 canonical output이다
-            # (경로 정책 위반, symlink escape, resolve 불가 포함) — 정당한
-            # 다른 stage 산출물일 수 없으므로 조용히 건너뛰지 않고 즉시
-            # fail-closed 처리한다.
+            # Canonical output pointing outside this run own workspace
+            # (path policy violation, symlink escape, unresolvable included) - cannot
+            # be legitimate other stage output, so not silently skipped, immediately
+            # fail-closed.
             return PublishIssue(
                 "artifact_invalid",
                 "a canonical manifest output failed the path-safety check and cannot be published",
             )
-        # run_dir 안에는 있지만 어느 gold_dir에도 속하지 않는다 — bronze/
-        # silver 산출물, dataset card, BuildSpec snapshot 등 정당한 비-gold
-        # 산출물이다. publish 대상이 아니므로(gold만) 조용히 제외한다.
+        # Inside run_dir but belongs to no gold_dir - legitimate non-gold
+        # outputs like bronze/silver, dataset card, BuildSpec snapshot etc.
+        # Not publish target (gold only) so silently exclude.
 
     if not gold_files:
         return PublishIssue(
@@ -834,10 +832,11 @@ def resolve_gold_artifacts(
 
 
 def validate_destination(target: str, destination: object) -> str | None:
-    """target이 요구하는 canonical 'owner/name' identifier 형태만 허용한다.
+    """Allow only canonical 'owner/name' identifier form required by target.
 
-    filesystem path로 절대 해석하지 않는다 — URL, scheme, 절대/상대 경로,
-    상위 이동(``..``), 제어 문자, 앞뒤 공백을 모두 거부한다(#491 지침 6).
+    Never interpret as filesystem path - reject URL, scheme, absolute/relative
+    paths, parent traversal (``..``), control chars, leading/trailing space
+    (#491 guideline 6).
     """
     if not isinstance(destination, str):
         return "'destination' must be a string"
@@ -859,7 +858,7 @@ def validate_destination(target: str, destination: object) -> str | None:
 
 
 def validate_options(target: str, options: object) -> tuple[str | None, dict[str, object]]:
-    """(error_message, normalized_options). 미지원 option은 조용히 무시하지 않는다."""
+    """(error_message, normalized_options). Do not silently ignore unsupported options."""
     if options is None:
         return None, dict(_DEFAULT_OPTIONS.get(target, {}))
     if not isinstance(options, dict):
@@ -887,10 +886,11 @@ def build_readiness(
     output_root: Path,
     credentials: PublishCredentialResolution | None = None,
 ) -> ReadinessResult:
-    """readiness/POST가 공유하는 단일 deterministic 판정.
+    """Single deterministic decision shared by readiness/POST.
 
-    ``ready``는 항상 ``not blockers``다 — 별도 계산 경로가 없다. GET과 POST
-    모두 이 함수 하나만 호출해 같은 결론에 도달한다(TOCTOU 재검증, #491 지침 3/4).
+    ``ready`` is always ``not blockers`` - no separate calculation path. Both GET
+    and POST call only this function to reach same conclusion (TOCTOU re-verification,
+    #491 guideline 3/4).
     """
     blockers: list[PublishIssue] = []
 
@@ -901,7 +901,7 @@ def build_readiness(
     artifacts: ResolvedArtifacts | None = None
     if manifest is None:
         if status_issue is None:
-            # 비정상 상태: terminal(succeeded)인데 manifest가 없음 — fail-closed.
+            # Abnormal state: terminal (succeeded) but no manifest - fail-closed.
             blockers.append(PublishIssue("gold_unavailable", "run manifest is unavailable"))
     else:
         resolved = resolve_gold_artifacts(output_root, run_id, manifest)
@@ -911,12 +911,12 @@ def build_readiness(
             artifacts = resolved
 
             if target == "kaggle":
-                # Kaggle packaging의 dataset-metadata.json id가 destination과
-                # 일치해야 하고(#550), KagglePublisher는 패키지 디렉터리를
-                # 받으므로 artifact 묶음을 디렉터리 형태로 바꾼다. packaging
-                # 부재는 destination과 무관한 blocker지만 id 불일치 검사는
-                # destination이 주어진 경우에만 한다(GET readiness는 선택
-                # 파라미터, POST가 최종 재검증한다).
+                # Kaggle packaging's dataset-metadata.json id must match destination (#550).
+                # KagglePublisher receives package directory, convert artifact bundle to
+                # directory form.
+                # packaging absence is destination-independent blocker, but id mismatch
+                # check only
+                # when destination is provided (GET readiness optional, POST final re-validates).
                 package = kaggle_package_id(resolved)
                 if isinstance(package, PublishIssue):
                     blockers.append(package)

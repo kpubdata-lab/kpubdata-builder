@@ -1,4 +1,4 @@
-"""Route 입력 파싱 helpers."""
+"""Route input parsing helpers."""
 
 from __future__ import annotations
 
