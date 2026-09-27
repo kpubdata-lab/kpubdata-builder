@@ -25,13 +25,14 @@ _CODE_ENV_SOURCES = [
 ]
 
 _README = _REPO_ROOT / "README.md"
+_DOCS = _REPO_ROOT / "docs" / "deployment.md"
 
 _ENV_PATTERN = re.compile(r"KPUBDATA_BUILDER_[A-Z_]+")
 _QUOTED_PATTERN = re.compile(r'"(KPUBDATA_BUILDER_[A-Z_]+)"')
 
 
 def _readme_env_vars() -> set[str]:
-    text = _README.read_text(encoding="utf-8")
+    text = _README.read_text(encoding="utf-8") + "\n" + _DOCS.read_text(encoding="utf-8")
     return set(_ENV_PATTERN.findall(text))
 
 
