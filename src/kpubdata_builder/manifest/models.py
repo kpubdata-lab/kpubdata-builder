@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from ..quality.models import QualityCheckResult, SchemaDriftFinding
+from ..quality.models import DriftEvaluation, QualityCheckResult, SchemaDriftFinding
 from .composition import CompositionProvenance
 from .environment import BuildEnvironment
 from .provenance import SourceProvenance
@@ -69,7 +69,13 @@ class BuildManifest:
             해석하면 안 된다.
         schema_drift: source_key별 구조화된 SchemaDriftFinding 목록 (#486, additive).
             drift 자체는 deterministic 감지 결과이며 PASS/WARN/FAIL 게이트에는
-            관여하지 않는다.
+            관여하지 않는다. **빈 목록을 "정상"으로 읽으면 안 된다** — 비교할
+            baseline 이 없었던 경우와 구별되지 않는다. 그 구별은 아래
+            ``drift_evaluation``이 한다.
+        drift_evaluation: source_key별 axis(schema/volume) 평가 여부 (#700, additive).
+            ``schema_drift``가 무엇이 바뀌었는지 말한다면 이 필드는 **누가 보기는
+            했는지**를 말한다. legacy manifest는 이 필드가 없다 — reader는 부재를
+            "알 수 없음"으로 해석해야 하며 "정상"으로 해석하면 안 된다.
         composition: BuildSpec.composition으로 두 source를 join한 결과의 출처
             추적 정보 (#506, additive). composition이 없거나 실행되지 않았으면
             None이다 — legacy manifest reader는 이 필드가 없거나 null이면
@@ -95,6 +101,7 @@ class BuildManifest:
     owner_id: str | None = None
     quality_results: dict[str, tuple[QualityCheckResult, ...]] = field(default_factory=dict)
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = field(default_factory=dict)
+    drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = field(default_factory=dict)
     composition: CompositionProvenance | None = None
 
 

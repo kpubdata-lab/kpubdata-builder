@@ -12,9 +12,15 @@ Preview/Build가 공유하는 단일 evaluator(``evaluate_quality``)와 그 결�
 from __future__ import annotations
 
 from .evaluator import evaluate_quality
-from .models import QualityCheckResult, QualityStatus, SchemaDriftFinding
+from .models import (
+    DriftEvaluation,
+    QualityCheckResult,
+    QualityStatus,
+    SchemaDriftFinding,
+)
 
 __all__ = [
+    "DriftEvaluation",
     "QualityCheckResult",
     "QualityStatus",
     "SchemaDriftFinding",

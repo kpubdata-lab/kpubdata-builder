@@ -68,6 +68,12 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         "schema_drift": {
             key: [asdict(f) for f in findings] for key, findings in manifest.schema_drift.items()
         },
+        # additive (#700): whether each axis was evaluated. This key is what tells an
+        # empty schema_drift list apart from "there was nothing to compare against" —
+        # they are not the same answer.
+        "drift_evaluation": {
+            key: [asdict(e) for e in entries] for key, entries in manifest.drift_evaluation.items()
+        },
         # additive (#506): composition(join) 실행 결과의 출처. composition 미사용
         # run은 null이다 — legacy 소비자가 이 키를 몰라도 무해하다.
         "composition": asdict(manifest.composition) if manifest.composition is not None else None,

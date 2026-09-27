@@ -7,7 +7,12 @@ from pathlib import Path
 
 from kpubdata_builder.spec import BuildSpec, ExportTarget, SourceRef
 from kpubdata_builder.spec.serializer import write_buildspec_snapshot
-from kpubdata_builder.stages.silver.drift import detect_drift, find_previous_silver
+from kpubdata_builder.stages.silver.drift import (
+    NoSilverBaseline,
+    SilverBaseline,
+    detect_drift,
+    find_previous_silver,
+)
 from kpubdata_builder.tabular import SchemaInfo, TableStatistics
 from kpubdata_builder.tabular.types import ColumnInfo
 
@@ -76,6 +81,7 @@ def _write_run(
     row_count: int = 10,
     finished_at: str = "2025-01-01T00:05:00+00:00",
     errors: tuple[str, ...] = (),
+    owner_id: str | None = None,
 ) -> None:
     """buildspec.yaml snapshot + manifest.json + silver/{source_key}/schema+stats.json을 기록한다.
 
@@ -91,11 +97,13 @@ def _write_run(
     )
     write_buildspec_snapshot(spec, output_root=output_root, run_id=run_id)
     run_dir = output_root / run_id
-    manifest = {
+    manifest: dict[str, object] = {
         "started_at": "2025-01-01T00:00:00+00:00",
         "finished_at": finished_at,
         "errors": list(errors),
     }
+    if owner_id is not None:
+        manifest["owner_id"] = owner_id
     (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     silver_dir = run_dir / "silver" / source_key.replace("/", "_")
@@ -115,15 +123,17 @@ class TestFindPreviousSilverScoping:
     """직전 아무 run이 아니라 동일 dataset_id·source_key의 직전 "성공" run만 찾는다 (#486)."""
 
     def test_returns_none_when_no_candidates(self, tmp_path: Path) -> None:
-        assert find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key="s") is None
+        outcome = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key="s")
+        assert isinstance(outcome, NoSilverBaseline)
+        assert outcome.reason
 
     def test_finds_matching_previous_run(self, tmp_path: Path) -> None:
         _write_run(tmp_path, "run0", dataset_id="d.a", row_count=5)
 
         found = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key=_APT_TRADE)
 
-        assert found is not None
-        _schema, stats = found
+        assert isinstance(found, SilverBaseline)
+        stats = found.stats
         assert stats.row_count == 5
 
     def test_does_not_compare_across_datasets(self, tmp_path: Path) -> None:
@@ -135,8 +145,8 @@ class TestFindPreviousSilverScoping:
             tmp_path, "a-run2", dataset_id="dataset.a", source_key=_APT_TRADE
         )
 
-        assert found is not None
-        _schema, stats = found
+        assert isinstance(found, SilverBaseline)
+        stats = found.stats
         assert stats.row_count == 10  # dataset.b(999)가 아니라 dataset.a의 이전 run.
 
     def test_does_not_compare_across_sources(self, tmp_path: Path) -> None:
@@ -144,21 +154,21 @@ class TestFindPreviousSilverScoping:
 
         found = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key=_APT_TRADE)
 
-        assert found is None
+        assert isinstance(found, NoSilverBaseline)
 
     def test_excludes_failed_runs(self, tmp_path: Path) -> None:
         _write_run(tmp_path, "run0", dataset_id="d.a", row_count=10, errors=("boom",))
 
         found = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key=_APT_TRADE)
 
-        assert found is None
+        assert isinstance(found, NoSilverBaseline)
 
     def test_excludes_current_run(self, tmp_path: Path) -> None:
         _write_run(tmp_path, "run1", dataset_id="d.a", row_count=10)
 
         found = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key=_APT_TRADE)
 
-        assert found is None
+        assert isinstance(found, NoSilverBaseline)
 
     def test_picks_most_recent_by_finished_at(self, tmp_path: Path) -> None:
         _write_run(
@@ -180,8 +190,8 @@ class TestFindPreviousSilverScoping:
             tmp_path, "run-latest", dataset_id="d.a", source_key=_APT_TRADE
         )
 
-        assert found is not None
-        _schema, stats = found
+        assert isinstance(found, SilverBaseline)
+        stats = found.stats
         assert stats.row_count == 2
 
     def test_missing_snapshot_or_stats_are_skipped(self, tmp_path: Path) -> None:
@@ -195,4 +205,120 @@ class TestFindPreviousSilverScoping:
 
         found = find_previous_silver(tmp_path, "run1", dataset_id="d.a", source_key=_APT_TRADE)
 
-        assert found is None
+        assert isinstance(found, NoSilverBaseline)
+
+
+_ALICE = "oidc:issuer|alice"
+_BOB = "oidc:issuer|bob"
+
+
+class TestBaselineOwnerScoping:
+    """A baseline never crosses owners (#700).
+
+    Row count, schema and distribution changes are metadata about someone else's
+    data, and drift is exactly what reports them. These are negative tests: a drift
+    check reading the wrong baseline still produces numbers, so only asserting the
+    absence catches it.
+    """
+
+    def test_another_owners_run_is_not_the_baseline(self, tmp_path: Path) -> None:
+        """Alice's run must not become Bob's baseline."""
+        _write_run(tmp_path, "alice-1", dataset_id="d.a", row_count=1000, owner_id=_ALICE)
+
+        found = find_previous_silver(
+            tmp_path, "bob-1", dataset_id="d.a", source_key=_APT_TRADE, owner_id=_BOB
+        )
+
+        assert isinstance(found, NoSilverBaseline)
+        assert _BOB in found.detail
+
+    def test_the_same_owner_still_gets_a_baseline(self, tmp_path: Path) -> None:
+        """Scoping must not break the case it is meant to preserve."""
+        _write_run(tmp_path, "alice-1", dataset_id="d.a", row_count=7, owner_id=_ALICE)
+
+        found = find_previous_silver(
+            tmp_path, "alice-2", dataset_id="d.a", source_key=_APT_TRADE, owner_id=_ALICE
+        )
+
+        assert isinstance(found, SilverBaseline)
+        assert found.stats.row_count == 7
+        assert found.run_id == "alice-1"
+
+    def test_a_run_without_an_owner_is_not_assumed_to_be_ours(self, tmp_path: Path) -> None:
+        """A run that recorded no owner drops out rather than counting as a match."""
+        _write_run(tmp_path, "legacy-1", dataset_id="d.a", row_count=5, owner_id=None)
+
+        found = find_previous_silver(
+            tmp_path, "alice-1", dataset_id="d.a", source_key=_APT_TRADE, owner_id=_ALICE
+        )
+
+        assert isinstance(found, NoSilverBaseline)
+        assert found.reason == "owner_unknown"
+        assert "recorded no owner" in found.detail
+
+    def test_no_owner_argument_keeps_the_previous_behaviour(self, tmp_path: Path) -> None:
+        """Single-user deployments are unaffected: without an owner, nothing filters."""
+        _write_run(tmp_path, "run-0", dataset_id="d.a", row_count=5, owner_id=None)
+
+        found = find_previous_silver(tmp_path, "run-1", dataset_id="d.a", source_key=_APT_TRADE)
+
+        assert isinstance(found, SilverBaseline)
+        assert found.stats.row_count == 5
+
+    def test_somebody_elses_run_does_not_hide_our_own(self, tmp_path: Path) -> None:
+        """A newer run by another owner must not displace ours."""
+        _write_run(
+            tmp_path,
+            "alice-1",
+            dataset_id="d.a",
+            row_count=7,
+            owner_id=_ALICE,
+            finished_at="2025-01-01T00:00:00+00:00",
+        )
+        _write_run(
+            tmp_path,
+            "bob-1",
+            dataset_id="d.a",
+            row_count=9999,
+            owner_id=_BOB,
+            finished_at="2025-06-01T00:00:00+00:00",
+        )
+
+        found = find_previous_silver(
+            tmp_path, "alice-2", dataset_id="d.a", source_key=_APT_TRADE, owner_id=_ALICE
+        )
+
+        assert isinstance(found, SilverBaseline)
+        assert found.stats.row_count == 7
+
+
+class TestAbsenceIsNotHealth:
+    """ "No baseline" must not be reportable as "no drift" (#700)."""
+
+    def test_the_outcome_is_never_none(self, tmp_path: Path) -> None:
+        """There is no ``None`` for a caller to write ``if x is None: healthy`` against.
+
+        That optional return is what let the orchestrator leave schema_drift empty,
+        which manifest writing then dropped, making "no baseline" and "compared,
+        nothing changed" the same absent key on the wire.
+        """
+        found = find_previous_silver(
+            tmp_path / "missing", "run-1", dataset_id="d.a", source_key=_APT_TRADE
+        )
+
+        assert found is not None
+        assert isinstance(found, NoSilverBaseline)
+        assert not isinstance(found, SilverBaseline)
+
+    def test_every_rejection_carries_a_reason(self, tmp_path: Path) -> None:
+        """A report needs to say why, not just show nothing."""
+        _write_run(tmp_path, "other", dataset_id="dataset.b", row_count=1)
+
+        found = find_previous_silver(
+            tmp_path, "run-1", dataset_id="dataset.a", source_key=_APT_TRADE
+        )
+
+        assert isinstance(found, NoSilverBaseline)
+        assert found.reason
+        assert found.detail
+        assert "dataset.a" in found.detail

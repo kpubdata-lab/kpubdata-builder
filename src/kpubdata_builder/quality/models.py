@@ -71,4 +71,42 @@ class SchemaDriftFinding:
     detail: str
 
 
-__all__ = ["QualityCheckResult", "QualityStatus", "SchemaDriftFinding"]
+@dataclass(frozen=True)
+class DriftEvaluation:
+    """Whether a drift comparison actually happened, per source and axis (#700).
+
+    ``SchemaDriftFinding`` says what changed. This says whether anyone looked.
+
+    They are not the same question, and conflating them is the defect this exists
+    to remove: an empty finding list used to mean both "compared, nothing changed"
+    and "there was nothing to compare against", and the manifest dropped the key in
+    both cases. A quality screen then showed a table as clean that had never been
+    checked.
+
+    An absent ``drift_evaluation`` key means a run from before this field existed —
+    unknown, not healthy.
+
+    Attributes:
+        axis: ``schema`` or ``volume``. They do not share a baseline: a coverage
+            change should not alter the column set, but it does make row counts
+            incomparable.
+        evaluated: Whether a baseline was found and the comparison ran.
+        reason: When ``evaluated`` is false, why — the value of
+            ``warehouse.baseline.NotEvaluatedReason``.
+        baseline_snapshot_id: The snapshot compared against, when there was one.
+        detail: Human-readable context, safe to show in a report.
+    """
+
+    axis: str
+    evaluated: bool
+    reason: str | None = None
+    baseline_snapshot_id: str | None = None
+    detail: str | None = None
+
+
+__all__ = [
+    "DriftEvaluation",
+    "QualityCheckResult",
+    "QualityStatus",
+    "SchemaDriftFinding",
+]
