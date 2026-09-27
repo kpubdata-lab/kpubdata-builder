@@ -1,11 +1,11 @@
-"""브론즈 단계 소스 가져오기 도우미.
+"""Bronze stage source fetch helper.
 
-이 모듈은 kpubdata 호환 클라이언트에서 원시 레코드를 가져와
-BronzeArtifact와 provenance 정보를 구성하는 최소 fetch 계층을 제공한다.
+This module fetches raw records from kpubdata-compatible clients and
+provides minimal fetch layer to construct BronzeArtifact and provenance info.
 
-주요 구성:
-    - DatasetResult / SourceDataset / SourceClient: 필요한 최소 Protocol 계약
-    - build_bronze_artifact: 원시 fetch 결과를 브론즈 산출물로 변환
+Main components:
+    - DatasetResult / SourceDataset / SourceClient: required minimum Protocol contract
+    - build_bronze_artifact: convert raw fetch result to bronze output
 """
 
 from __future__ import annotations
@@ -19,38 +19,38 @@ from .models import BronzeArtifact, ProvenanceEvent, require_timezone_aware, utc
 
 
 class DatasetResult(Protocol):
-    """호환되는 kpubdata 데이터셋이 반환하는 최소 결과 형태.
+    """Minimum result shape returned by compatible kpubdata dataset.
 
-    속성:
-        items: fetch된 원시 레코드 iterable.
+    Attributes:
+        items: fetched raw records iterable.
     """
 
     @property
     def items(self) -> Iterable[dict[str, JsonValue]]:
-        """가져온 레코드를 반환한다."""
+        """Return fetched records."""
         ...
 
 
 class SourceDataset(Protocol):
-    """브론즈 단계에서 사용하는 최소 데이터셋 형태."""
+    """Minimum dataset shape used in bronze stage."""
 
     def list(self, **params: JsonValue) -> DatasetResult:
-        """하나의 파라미터 집합에 대해 레코드를 가져온다."""
+        """Fetch records for one parameter set."""
         ...
 
 
 @runtime_checkable
 class PaginatedSourceDataset(SourceDataset, Protocol):
-    """kpubdata Dataset.list_all() pagination 계약."""
+    """kpubdata Dataset.list_all() pagination contract."""
 
     def list_all(self, **params: JsonValue) -> Iterable[DatasetResult]: ...
 
 
 class SourceClient(Protocol):
-    """브론즈 단계에서 사용하는 최소 클라이언트 형태."""
+    """Minimum client shape used in bronze stage."""
 
     def dataset(self, source_key: str) -> SourceDataset:
-        """소스 키에 대한 데이터셋 객체를 반환한다."""
+        """Return dataset object for source_key."""
         ...
 
 
@@ -62,24 +62,24 @@ def build_bronze_artifact(
     fetched_at: datetime | None = None,
     param_combinations: Sequence[dict[str, JsonValue]] | None = None,
 ) -> BronzeArtifact:
-    """호환 클라이언트에서 원시 레코드를 가져와 브론즈 산출물을 반환한다.
+    """Fetch raw records from compatible client and return bronze output.
 
-    매개변수:
-        client: dataset(source_key)를 제공하는 클라이언트.
-        source_key: provider.dataset 형태의 소스 식별자.
-        fetch_params: dataset.list 호출에 전달할 파라미터. ``param_combinations``
-            가 있으면 이 값은 호출에 쓰이지 않고 provenance 에만 남는다 —
-            공통 파라미터는 이미 각 조합에 병합되어 있기 때문이다.
-        param_combinations: 여러 호출 조합 (#613). 주어지면 조합마다 한 번씩
-            호출하고 결과를 **선언된 순서 그대로** 이어붙여 하나의 artifact 로
-            만든다. 순서는 계약이다 — 바뀌면 artifact_id 가 바뀐다.
-        fetched_at: fetch 완료 시각. 생략 시 현재 UTC 시각 사용.
+    Args:
+        client: client providing dataset(source_key).
+        source_key: source identifier in provider.dataset form.
+        fetch_params: parameters passed to dataset.list call. if ``param_combinations``
+            exists, this value is not used in calls but only preserved in provenance—
+            common parameters are already merged into each combination.
+        param_combinations: multiple call combinations (#613). if given, call once per
+            combination and concatenate results **in declared order** into single artifact.
+            Order is contract—if changed, artifact_id changes.
+        fetched_at: fetch completion time; uses current UTC if omitted.
 
-    반환값:
-        BronzeArtifact: 원시 레코드와 provenance를 담은 산출물.
+    Returns:
+        BronzeArtifact: output containing raw records and provenance.
 
-    예외:
-        ValueError: fetched_at에 timezone 정보가 없을 때.
+    Raises:
+        ValueError: if fetched_at lacks timezone info.
     """
     resolved_params = dict(fetch_params or {})
     resolved_fetched_at = fetched_at or utc_now()
@@ -87,16 +87,16 @@ def build_bronze_artifact(
 
     combinations = tuple(param_combinations) if param_combinations is not None else None
     if combinations is not None and not combinations:
-        # 빈 전개는 호출을 한 번도 하지 않고 빈 Bronze 를 성공으로 만든다.
-        # validator 가 선언 시점에 막지만, 라이브러리 직접 호출 경로도 막는다.
+        # Empty expansion succeeds as empty Bronze without any calls.
+        # validator blocks at declaration, but also block direct library call path.
         raise ValueError("param_combinations must not be empty")
     calls = combinations if combinations is not None else (resolved_params,)
 
     dataset = client.dataset(source_key)
     records: list[dict[str, JsonValue]] = []
     for call_params in calls:
-        # 조합 순서대로 이어붙인다. 순서가 바뀌면 raw_records.jsonl 의 바이트가
-        # 바뀌고 artifact_id 가 따라 바뀐다 — R1 의 재빌드 결정성이 그 위에 있다.
+        # Concatenate in combination order. Order change alters raw_records.jsonl
+        # bytes and artifact_id follows—R1 rebuild determinism depends on it.
         if isinstance(dataset, PaginatedSourceDataset):
             records.extend(
                 record for batch in dataset.list_all(**call_params) for record in batch.items
@@ -105,9 +105,9 @@ def build_bronze_artifact(
             records.extend(dataset.list(**call_params).items)
     raw_records = tuple(records)
 
-    # 전개된 조합 전체를 provenance 에 남긴다. 어떤 조합으로 만든 Bronze 인지가
-    # 남지 않으면 재현성 실험이 근거를 잃는다 (#613). 단일 호출이면 기존과 같은
-    # 모양을 유지한다 — 쓰지 않는 기능이 provenance 를 바꾸지 않게 한다.
+    # Preserve all combinations in provenance. Without record of which
+    # combination made Bronze, reproducibility loses grounding (#613). Single
+    # call maintains legacy shape—unused features do not change provenance.
     provenance_params: dict[str, JsonValue] = dict(resolved_params)
     if combinations is not None:
         provenance_params = {

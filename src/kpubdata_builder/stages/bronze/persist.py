@@ -1,12 +1,4 @@
-"""브론즈 단계 산출물을 실행 워크스페이스에 저장한다.
-
-이 모듈은 BronzeArtifact를 실행 워크스페이스 아래의 결정적 경로에 저장하고,
-raw_records JSONL과 metadata JSON을 함께 기록한다.
-
-주요 구성:
-    - BronzePersistResult: 저장 경로 결과 객체
-    - persist_bronze_artifact: 브론즈 산출물 파일 기록 함수
-"""
+"""persists Bronze stage artifacts to the execution workspace."""
 
 from __future__ import annotations
 
@@ -23,13 +15,7 @@ from .models import BronzeArtifact, ProvenanceEvent
 
 @dataclass(frozen=True)
 class BronzePersistResult:
-    """브론즈 산출물을 위해 기록된 파일시스템 경로.
-
-    속성:
-        bronze_dir: 산출물이 저장된 브론즈 디렉터리.
-        records_path: raw_records JSONL 파일 경로.
-        metadata_path: 메타데이터 JSON 파일 경로.
-    """
+    """filesystem path recorded for Bronze artifacts."""
 
     bronze_dir: Path
     records_path: Path
@@ -37,11 +23,7 @@ class BronzePersistResult:
 
 
 def _artifact_id(artifact: BronzeArtifact) -> str:
-    """source_key와 fetch_params로부터 짧은 결정적 ID를 생성한다.
-
-    동일한 소스와 동일한 fetch_params 조합은 항상 같은 artifact_id를 갖게 되어
-    결과 경로를 예측 가능하게 유지한다.
-    """
+    """generates a short deterministic ID from source_key and fetch_params."""
     key_material = json.dumps(
         {"source_key": artifact.source_key, "fetch_params": artifact.fetch_params},
         sort_keys=True,
@@ -55,14 +37,10 @@ def persist_bronze_artifact(
     output_root: Path,
     run_id: str,
 ) -> BronzePersistResult:
-    """원시 레코드와 메타데이터를 output_root/{run_id}/bronze/{source_key}/{artifact_id}
-    아래에 기록한다.
-
-    run_id 또는 source_key에 안전하지 않은 경로 문자가 포함되면 ValueError를 발생시킨다.
-    """
+    """records raw records and metadata to output_root/{run_id}/bronze/{source_key}/{artifact_id}"""
     validate_path_segment(run_id, field_name="run_id")
 
-    # 파일시스템용으로 source_key를 정리한다(예: "datago.apt_trade" → "datago.apt_trade").
+    # normalizes source_key for filesystem (e.g., "datago.apt_trade" -> "datago.apt_trade").
     source_key_segment = artifact.source_key.replace("/", "_")
     validate_path_segment(source_key_segment, field_name="source_key")
 
@@ -89,8 +67,8 @@ def persist_bronze_artifact(
 
         with tmp_records.open("w", encoding="utf-8") as f:
             for record in artifact.raw_records:
-                # allow_nan=False: NaN/Infinity는 비표준 JSON 토큰이 되므로 조용히 기록하지
-                # 않고 ValueError로 실패시킨다 (#201).
+                # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail recording
+                # instead raise ValueError (#201).
                 f.write(json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False))
                 f.write("\n")
 
@@ -106,7 +84,7 @@ def persist_bronze_artifact(
             encoding="utf-8",
         )
 
-        # Atomic swap: 기존 디렉터리가 있어도 데이터 유실 없이 교체한다 (#180).
+        # Atomic swap: replaces existing directory without data loss (#180).
         atomic_replace_dir(tmp_dir, bronze_dir)
     except BaseException:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -126,7 +104,7 @@ def _metadata_for_artifact(
     metadata_path: Path,
     bronze_dir: Path,
 ) -> dict[str, JsonValue]:
-    """BronzeArtifact에 대한 메타데이터 payload를 구성한다."""
+    """constructs metadata payload for BronzeArtifact."""
     provenance = artifact.provenance
     return {
         "source_key": artifact.source_key,
@@ -142,7 +120,7 @@ def _metadata_for_artifact(
 
 
 def _provenance_to_dict(provenance: ProvenanceEvent) -> dict[str, JsonValue]:
-    """ProvenanceEvent를 JSON 직렬화 가능한 dict로 바꾼다."""
+    """converts ProvenanceEvent to JSON-serializable dict."""
     return {
         "operation": provenance.operation,
         "source_key": provenance.source_key,
@@ -152,5 +130,5 @@ def _provenance_to_dict(provenance: ProvenanceEvent) -> dict[str, JsonValue]:
 
 
 def _format_datetime(value: datetime) -> str:
-    """datetime 값을 ISO 8601 문자열로 변환한다."""
+    """converts datetime values to ISO 8601 strings."""
     return value.isoformat()

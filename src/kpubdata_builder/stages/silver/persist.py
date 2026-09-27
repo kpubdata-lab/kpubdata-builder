@@ -1,11 +1,11 @@
-"""Silver 단계 산출물을 실행 워크스페이스에 저장한다 (#46).
+"""persists Silver stage artifacts to the execution workspace (#46).
 
-SilverDataset을 output_root/{run_id}/silver/{source_key}/ 아래에 저장한다. 테이블은
-parquet으로, 스키마/통계/미리보기/검증 정보는 결정적 JSON으로 기록한다.
+Persist SilverDataset under output_root/{run_id}/silver/{source_key}/. Table saved as
+parquet; schema/statistics/preview/validation info recorded as deterministic JSON.
 
-주요 구성:
-    - SilverPersistResult: 저장 경로 결과 객체
-    - persist_silver_dataset: Silver 산출물 파일 기록 함수
+Main components:
+    - SilverPersistResult: persist path result object
+    - persist_silver_dataset: Silver output file recording function
 """
 
 from __future__ import annotations
@@ -21,15 +21,15 @@ from .models import SilverDataset
 
 @dataclass(frozen=True)
 class SilverPersistResult:
-    """Silver 산출물을 위해 기록된 파일시스템 경로.
+    """filesystem path recorded for Silver artifacts.
 
-    속성:
-        silver_dir: 산출물이 저장된 Silver 디렉터리.
-        table_path: 정제 테이블 parquet 파일 경로.
-        schema_path: 스키마 요약 JSON 경로.
-        stats_path: 통계 요약 JSON 경로.
-        preview_path: 미리보기 JSON 경로.
-        validation_path: 검증 결과 JSON 경로.
+    Attributes:
+        silver_dir: Silver directory where artifacts were saved.
+        table_path: refined table parquet file path.
+        schema_path: schema summary JSON path.
+        stats_path: statistics summary JSON path.
+        preview_path: preview JSON path.
+        validation_path: validation result JSON path.
     """
 
     silver_dir: Path
@@ -41,18 +41,14 @@ class SilverPersistResult:
 
 
 def _json_default(value: object) -> str:
-    """JSON 기본 직렬화기. date/datetime은 ISO 문자열로 변환한다.
-
-    preview 행은 Date/Datetime으로 캐스팅된 컬럼을 포함할 수 있어 plain
-    json.dumps가 TypeError를 낼 수 있으므로, 결정적 ISO 문자열로 변환한다.
-    """
+    """default JSON serializer. converts date/datetime to ISO strings."""
     if isinstance(value, datetime | date):
         return value.isoformat()
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _write_json(path: Path, payload: object) -> None:
-    """payload를 결정적 JSON으로 기록한다 (date/datetime은 ISO 문자열)."""
+    """writes payload as deterministic JSON (date/datetime as ISO strings)."""
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=_json_default)
         + "\n",
@@ -66,19 +62,7 @@ def persist_silver_dataset(
     output_root: Path,
     run_id: str,
 ) -> SilverPersistResult:
-    """Silver 산출물을 output_root/{run_id}/silver/{source_key}/ 아래에 기록한다.
-
-    run_id 또는 source_key에 안전하지 않은 경로 문자가 포함되면 ValueError를
-    발생시킨다.
-
-    매개변수:
-        dataset: 저장할 Silver 산출물.
-        output_root: 실행 워크스페이스 루트.
-        run_id: 빌드 실행 식별자.
-
-    반환값:
-        SilverPersistResult: 기록된 파일 경로 모음.
-    """
+    """records Silver artifacts under output_root/{run_id}/silver/{source_key}/."""
     validate_path_segment(run_id, field_name="run_id")
 
     source_key_segment = dataset.source_bronze.replace("/", "_")
@@ -109,7 +93,7 @@ def persist_silver_dataset(
         _write_json(tmp_dir / "preview.json", asdict(dataset.preview))
         _write_json(tmp_dir / "validation.json", asdict(dataset.validation))
 
-        # Atomic swap: 기존 디렉터리가 있어도 데이터 유실 없이 교체한다 (#180).
+        # Atomic swap: replaces existing directory without data loss (#180).
         atomic_replace_dir(tmp_dir, silver_dir)
     except BaseException:
         shutil.rmtree(tmp_dir, ignore_errors=True)

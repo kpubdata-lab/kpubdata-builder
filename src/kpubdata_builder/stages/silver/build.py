@@ -1,9 +1,9 @@
-"""Silver 단계 오케스트레이션 (#46).
+"""Silver stage orchestration (#46).
 
-BronzeArtifact를 받아 normalize → validate → summarize → preview 순서로
-처리하고 SilverDataset으로 조립한다.
+Take BronzeArtifact and process through normalize → validate → summarize → preview
+sequence, then assemble into SilverDataset.
 
-주요 함수:
+Main functions:
     - build_silver_dataset: BronzeArtifact → SilverDataset
 """
 
@@ -37,28 +37,28 @@ def build_silver_dataset(
     column_dtypes: Mapping[str, DtypeSpec] | None = None,
     preview_limit: int = DEFAULT_PREVIEW_LIMIT,
 ) -> SilverDataset:
-    """Bronze 산출물을 Silver 데이터셋으로 변환한다.
+    """Transform Bronze artifacts into Silver datasets.
 
-    매개변수:
-        bronze: 원천 Bronze 산출물.
-        required_columns: 검증에 사용할 필수 컬럼 목록.
-        casts: 정규화 시 적용할 컬럼별 dtype 캐스팅 규칙.
-        rename: 원 필드명 → canonical 컬럼명 매핑 (#611).
-        derived: 기존 컬럼에서 새 컬럼을 만드는 규칙 (#611).
-        read_as: 원천 컬럼을 읽을 타입 선언.
-        null_tokens: 결측을 나타내는 원천 표기.
-        column_null_tokens: 특정 컬럼에서만 인정하는 결측 표기 (#623).
-        coalesce: 세대별 alias 컬럼을 하나로 모으는 규칙 (#620).
-        zfill: canonical 식별자를 선언된 폭으로 채우는 규칙 (#620).
-        column_dtypes: 검증에 사용할 코럼별 기대 dtype 규칙. 키는 코럼명,
-            값은 DtypeSpec(str | pl.DataType | type[pl.DataType]).
-        preview_limit: 미리보기에 포함할 최대 행 수.
+    Args:
+        bronze: source Bronze output.
+        required_columns: required columns list for validation.
+        casts: per-column dtype casting rules applied during normalization.
+        rename: original field name -> canonical column name mapping (#611).
+        derived: rule creating new column from existing (#611).
+        read_as: type declaration for reading source columns.
+        null_tokens: source notations representing missing values.
+        column_null_tokens: missing notation recognized only in specific column (#623).
+        coalesce: rule collecting per-generation alias columns into one (#620).
+        zfill: rule padding canonical identifiers to declared width (#620).
+        column_dtypes: per-column expected dtype rules for validation. Keys are column names,
+            values are DtypeSpec(str | pl.DataType | type[pl.DataType]).
+        preview_limit: maximum rows to include in preview.
 
-    반환값:
-        SilverDataset: 정제 테이블과 스키마/통계/미리보기/검증 정보.
+    Returns:
+        SilverDataset: refined table and schema/statistics/preview/validation info.
 
-    예외:
-        ValueError: preview_limit이 음수인 경우 (#190).
+    Raises:
+        ValueError if preview_limit negative (#190).
     """
     if preview_limit < 0:
         raise ValueError(f"preview_limit must be >= 0, got {preview_limit}")

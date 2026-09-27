@@ -1,9 +1,9 @@
-"""드리프트 원인 해석 (AI-3, #448).
+"""drift root cause interpretation (AI-3, #448).
 
-DRIFT-1(detect_drift)이 감지한 드리프트의 원인 가설을 LLM에 요청하는 프롬프트를
-구성한다. 감지는 결정적으로 하고 해석만 LLM이 붙인다.
+requests root cause hypotheses from LLM for drift detected by DRIFT-1(detect_drift).
+detection is deterministic; only interpretation from LLM is added.
 
-제안은 알림 메시지에 참고로만 표시된다 — 게이트 판정에 영향을 주지 않는다.
+suggestions are shown as advisory only in alert message — does not affect gate decision.
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from .drift import DriftFinding
 
 
 def build_drift_advisory_prompt(findings: list[DriftFinding]) -> str:
-    """드리프트 감지 결과를 LLM에 전달해 원인 가설을 요청하는 프롬프트 (#448).
+    """prompt that passes drift detection results to LLM and requests root cause hypotheses (#448).
 
-    "컬럼명이 바뀐 상류 스키마 변경" vs "새 지역 코드가 추가된 정상 변화"를
-    구분해주면 알림 피로가 줄어든다.
+    distinguishing "upstream schema change with different column names" vs "normal changes with
+    new region codes" reduces alert fatigue.
     """
     if not findings:
         return ""

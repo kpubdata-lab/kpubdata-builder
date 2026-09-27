@@ -1,24 +1,4 @@
-"""Source kind resolver — public_api/file/url을 동일한 BronzeArtifact로 만든다 (#498).
-
-새 pipeline이 아니라 기존 Bronze→Silver→Gold pipeline 앞에 붙는 resolver
-layer다. ``kind`` 에 따라 서로 다른 방식으로 원시 레코드를 얻지만, 세 경로 모두
-``build.build_bronze_artifact`` 와 동일한 ``BronzeArtifact`` 모양(raw_records/
-fetch_params/fetched_at/provenance)으로 수렴한다 — Silver 이후 단계는 소스가
-어떤 kind였는지 전혀 알 필요가 없다.
-
-기존 ``provider.dataset`` provenance 모양을 그대로 재사용한다(#498, "모든
-source가 동일 Bronze artifact contract 사용"): file은 ``("file", upload_id)``,
-url은 ``("url", <host+path 기반 안전한 slug>)`` 를 provider/dataset 자리에
-채운다. manifest/provenance 모델에 새 필드를 추가하지 않고 기존 계약을 그대로
-쓴다.
-
-이 ``(provider, dataset)`` 쌍은 provenance 식별자일 뿐 아니라 alias가 없을 때
-``pipeline.orchestrator``/``service.stages`` 가 그대로 output/persist 디렉터리
-세그먼트(``stages._path_safety.validate_path_segment``)로도 쓴다 — 그래서 url
-kind의 dataset은 사람이 읽기보다 "항상 안전한 경로 세그먼트"를 우선한다. 원본
-endpoint(query 제거)는 ``sanitize_endpoint_identity()`` 로 별도 계산해
-fetch_params/provenance.params에만 담는다(경로에는 쓰이지 않음).
-"""
+"""source kind resolver—creates identical BronzeArtifacts from public_api/file/url (#498)."""
 
 from __future__ import annotations
 
@@ -39,12 +19,7 @@ _NON_SLUG_CHARS = re.compile(r"[^a-zA-Z0-9]+")
 
 
 def source_identity(source: SourceRef) -> tuple[str, str]:
-    """모든 kind에 대해 (provider, dataset) 자리를 채우는 canonical identity.
-
-    기존 provenance/manifest/output-path 코드가 이미 ``"{provider}.{dataset}"``
-    형태를 source identity(및 alias 없을 때의 output 디렉터리 세그먼트)로
-    쓰므로, file/url kind도 그 모양에 맞춰 항상 경로로 안전한 값을 만든다.
-    """
+    """canonical identity that fills (provider, dataset) slots for all kinds."""
     if source.kind == "file":
         return "file", source.upload_id
     if source.kind == "url":
@@ -53,14 +28,7 @@ def source_identity(source: SourceRef) -> tuple[str, str]:
 
 
 def _url_path_safe_identity(endpoint: str) -> str:
-    """endpoint를 ``validate_path_segment`` 를 항상 통과하는 slug로 줄인다.
-
-    URL은 ``:``/``/`` 등 경로 세그먼트로 쓸 수 없는 문자를 포함하므로, host를
-    영숫자-하이픈 slug로 정규화하고 (query 제거된) endpoint 전체의 SHA-256
-    앞 12자리를 붙여 서로 다른 경로가 우연히 같은 slug로 뭉치지 않게 한다.
-    사람이 읽는 endpoint는 이 값이 아니라 ``sanitize_endpoint_identity()`` 가
-    fetch_params/provenance.params에 별도로 담는다.
-    """
+    """endpoint to `validate_path_segment` always-passing slug."""
     sanitized = sanitize_endpoint_identity(endpoint)
     host = urlsplit(sanitized).hostname or "host"
     slug = _NON_SLUG_CHARS.sub("-", host).strip("-") or "host"
@@ -69,13 +37,7 @@ def _url_path_safe_identity(endpoint: str) -> str:
 
 
 def sanitize_endpoint_identity(endpoint: str) -> str:
-    """endpoint에서 query string/userinfo/fragment를 제거한 사람이 읽는 identity를 만든다.
-
-    url source의 P0는 Auth=None이라 endpoint 자체에 secret이 실릴 일이 적지만,
-    query string에 우연히 token 등이 섞였을 때도 provenance/manifest에 남지
-    않도록 방어적으로 제거한다("provenance endpoint secret 제거", #498). 경로
-    세그먼트로 쓰기에는 안전하지 않다 — 그 용도는 ``_url_path_safe_identity``.
-    """
+    """creates human-readable identity from endpoint with query/userinfo/fragment removed."""
     parts = urlsplit(endpoint)
     netloc = parts.hostname or ""
     if parts.port:
@@ -91,22 +53,7 @@ def build_bronze_artifact_for_source(
     owner_id: str | None = None,
     fetched_at: datetime | None = None,
 ) -> BronzeArtifact:
-    """source.kind에 맞는 방식으로 fetch해 BronzeArtifact를 만든다 (#498).
-
-    매개변수:
-        source: canonical source 참조 (public_api/file/url).
-        client: public_api kind에서만 쓰이는 kpubdata 호환 client.
-        upload_repository: file kind에서 업로드 content를 조회할 저장소.
-        owner_id: file kind에서 업로드 소유권을 확인할 principal의 stable id.
-        fetched_at: fetch 완료 시각. 생략 시 현재 UTC.
-
-    반환값:
-        BronzeArtifact: kind와 무관하게 동일한 모양의 산출물.
-
-    예외:
-        IngestionError: file/url fetch·파싱 실패, 소유권 없음, 저장소 미설정,
-            알 수 없는 source.kind(fail-closed, #538 review).
-    """
+    """fetches per source.kind and creates BronzeArtifact (#498)."""
     if source.kind == "file":
         return _build_from_upload(
             source, upload_repository=upload_repository, owner_id=owner_id, fetched_at=fetched_at
@@ -115,8 +62,8 @@ def build_bronze_artifact_for_source(
         return _build_from_url(source, fetched_at=fetched_at)
     if source.kind == "public_api":
         provider, dataset = source_identity(source)
-        # param_grid 가 없으면 조합 목록을 넘기지 않는다 — 단일 호출 경로와
-        # provenance 모양이 예전 그대로 유지된다 (#613).
+        # if no param_grid, do not pass cartesian product list — single call path and
+        # provenance shape preserved as before (#613).
         combinations = (
             expand_param_grid(dict(source.params), dict(source.param_grid))
             if source.param_grid
@@ -129,10 +76,10 @@ def build_bronze_artifact_for_source(
             fetched_at=fetched_at,
             param_combinations=combinations,
         )
-    # validate_spec이 loader를 거치지 않은 BuildSpec(직접 SourceRef 구성)도
-    # 이미 거부하지만, resolver 스스로도 "그 외는 public_api"라는 implicit
-    # fallback을 두지 않는다 — canonical kind 계약(public_api|file|url) 밖의
-    # 값은 여기서도 fail-closed로 막는다(BLOCKER, #538 review).
+    # BuildSpec that bypassed loader validation (direct SourceRef construction) also
+    # already rejected, but, resolver itself "else is public_api"implicit
+    # does not have fallback — canonical kind contract(public_api|file|url) outside
+    # values also blocked fail-closed here(BLOCKER, #538 review).
     raise IngestionError(
         f"unsupported source kind: {source.kind!r} (canonical kinds: {SOURCE_KINDS})"
     )
@@ -162,11 +109,7 @@ def _finalize(
 
 
 def _declared_read_as(source: SourceRef) -> dict[str, str]:
-    """소스에 선언된 ``schema.read_as``를 꺼낸다 (#613).
-
-    CSV는 파싱이 곧 타입 추론이라 이 선언이 Silver까지 늦게 도착하면 늦다 —
-    ``00123``이 정수 ``123``으로 추론된 뒤에는 앞자리 0을 복구할 방법이 없다.
-    """
+    """source's declared ``schema.read_as``extracted (#613)."""
     return dict(source.schema.read_as) if source.schema else {}
 
 
@@ -183,9 +126,9 @@ def _build_from_upload(
         raise IngestionError("file source requires an authenticated, stable principal owner")
     metadata = upload_repository.get_metadata(owner_id, source.upload_id)
     if metadata is None:
-        # 존재하지 않는 upload_id와 "principal 소유가 아닌" upload_id를
-        # 구분하지 않는다 — 다른 사용자의 upload 존재 여부를 흘리지 않는다
-        # (fail-closed, #505의 ownership 패턴과 동일).
+        # non-existent upload_id and "not owned by principal" upload_id
+        # not distinguished — do not leak whether other user's upload exists
+        # (fail-closed, #505 same as ownership pattern).
         raise IngestionError(f"upload not found: {source.upload_id}")
     if metadata.format != source.format or metadata.encoding != source.encoding:
         raise IngestionError(
@@ -226,8 +169,8 @@ def _build_from_url(source: SourceRef, *, fetched_at: datetime | None) -> Bronze
         read_as=_declared_read_as(source),
     )
     provider, dataset = source_identity(source)
-    # fetch_params.endpoint는 사람이 읽는 (query 제거된) 원본 endpoint다 — path
-    # 세그먼트로 쓰이는 `dataset`(slug+hash, source_identity 참고)과는 다른 값이다.
+    # fetch_params.endpoint is human-readable (query stripped) original endpoint — path
+    # segments used as `dataset` (slug+hash, see source_identity) are different values.
     fetch_params: dict[str, JsonValue] = {
         "endpoint": sanitize_endpoint_identity(source.endpoint),
         "method": source.method,
@@ -242,7 +185,7 @@ def _build_from_url(source: SourceRef, *, fetched_at: datetime | None) -> Bronze
 
 
 def _infer_format(content_type: str) -> str | None:
-    """명시적 ``source.format`` 이 없을 때만 Content-Type로 포맷을 추정한다."""
+    """infers format from Content-Type only when explicit `source.format` absent."""
     normalized = content_type.split(";", 1)[0].strip().lower()
     if normalized == "application/json":
         return "json"

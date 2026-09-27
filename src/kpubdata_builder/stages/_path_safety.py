@@ -1,11 +1,11 @@
-"""stage 산출물 영속화를 위한 공용 경로 안전성 유틸 (#46/#47 review).
+"""shared path safety utilities for stage artifact persistence (#46/#47 review).
 
-bronze/silver/gold persist가 공유하던 경로 세그먼트 검증과 워크스페이스 포함
-검사를 한곳에 모은다. 세그먼트 규칙이 바뀌어도 한 곳만 수정하면 된다.
+consolidates path segment validation and workspace containment checks shared by
+bronze/silver/gold persist. segment rules changes only need one edit location.
 
-주요 함수:
-    - validate_path_segment: 워크스페이스를 벗어날 수 있는 세그먼트 거부
-    - ensure_within: 해석된 경로가 루트 아래에 있는지 검증
+main functions:
+    - validate_path_segment: reject segments that could escape workspace
+    - ensure_within: verify resolved path is under root
 """
 
 from __future__ import annotations
@@ -20,14 +20,14 @@ _SAFE_PATH_SEGMENT = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
 def validate_path_segment(value: str, *, field_name: str) -> None:
-    """워크스페이스를 벗어날 수 있는 경로 세그먼트를 거부한다.
+    """Reject path segments that could escape the workspace.
 
-    매개변수:
-        value: 검증할 경로 세그먼트.
-        field_name: 오류 메시지에 사용할 필드명.
+    Args:
+        value: path segment to validate.
+        field_name: field name for error messages.
 
-    예외:
-        ValueError: 비어 있거나 허용되지 않은 문자가 포함된 경우.
+    Raises:
+        ValueError: if empty or contains disallowed characters.
     """
     if not value:
         raise ValueError(f"{field_name} must not be empty")
@@ -41,16 +41,17 @@ def validate_path_segment(value: str, *, field_name: str) -> None:
 
 
 def _strip_windows_extended_prefix(path: Path) -> Path:
-    """Windows ``\\\\?\\`` 확장 경로 프리픽스를 제거해 일관되게 비교할 수 있게 한다.
+    """Remove Windows ``\\\\?\\`` extended path prefix for consistent comparison.
 
-    Windows에서 ``Path.resolve()``는 대상에 대한 파일 핸들을 열 수 있으면
-    ``\\\\?\\`` 프리픽스가 붙은 확장 경로를 돌려주고, 동시 디스크 I/O로 핸들
-    열기가 일시적으로 실패하면 프리픽스 없는 수동 정규화 경로로 폴백한다.
-    같은 실제 경로인데도 어느 쪽이 폴백을 탔는지에 따라 문자열이 달라져,
-    여러 source를 스레드 풀에서 동시에 쓰는 상황(#247)에서
-    ``is_relative_to`` 비교가 간헐적으로 잘못된 traversal 오탐을 냈다(#506
-    composition 작업 중 재현·확인). POSIX에서는 경로가 이 프리픽스로
-    시작할 수 없으므로 no-op이다.
+    On Windows, ``Path.resolve()`` returns an extended path with ``\\\\?\\``
+    prefix if a file handle can be opened to the target. When concurrent
+    disk I/O temporarily fails handle opening, it falls back to a prefix-free
+    manually normalized path. Although the logical path is identical, different
+    fallback outcomes produce different strings. In multi-threaded scenarios
+    (#247) writing multiple sources concurrently, ``is_relative_to`` comparisons
+    occasionally reported false-positive traversal violations (#506, confirmed
+    during composition work). On POSIX, paths never start with this prefix,
+    so this is a no-op.
     """
     text = str(path)
     if text.startswith("\\\\?\\UNC\\"):
@@ -61,18 +62,19 @@ def _strip_windows_extended_prefix(path: Path) -> Path:
 
 
 def ensure_within(root: Path, target: Path, *, label: str) -> None:
-    """target(해석 후)이 root(해석 후) 아래에 포함되는지 검증한다.
+    """Verify that resolved target is contained under resolved root.
 
-    문자열 prefix 비교(`startswith`)는 `/tmp/root2`가 `/tmp/root`를 통과시키는
-    오탐이 가능하므로, 해석된 경로에 ``Path.is_relative_to``를 사용한다.
+    String prefix comparison (`startswith`) can falsely pass `/tmp/root2` as
+    under `/tmp/root`, so resolved paths use ``Path.is_relative_to`` for
+    accurate containment checks.
 
-    매개변수:
-        root: 허용된 루트 디렉터리.
-        target: 검증할 대상 경로.
-        label: 오류 메시지에 사용할 대상 설명.
+    Args:
+        root: allowed root directory.
+        target: target path to validate.
+        label: target description for error messages.
 
-    예외:
-        ValueError: target이 root 밖으로 벗어나는 경우.
+    Raises:
+        ValueError: if target escapes root.
     """
     resolved_root = _strip_windows_extended_prefix(root.resolve())
     resolved_target = _strip_windows_extended_prefix(target.resolve())
@@ -81,22 +83,23 @@ def ensure_within(root: Path, target: Path, *, label: str) -> None:
 
 
 def safe_output_path(base_dir: Path, relative_path: str | os.PathLike[str]) -> Path:
-    """base_dir 아래로 한정된 출력 경로를 만들어 반환한다 (#210).
+    """Create and return an output path constrained under base_dir (#210).
 
-    exporter는 spec에서 온 사용자 제어 output_path로 파일을 기록한다. 절대 경로
-    (``/etc/passwd``)나 상위 이동(``../../etc``)이 섞이면 build 워크스페이스 밖
-    임의 위치에 파일이 생성/덮어쓰기될 수 있으므로, 결합·해석된 경로가 base_dir
-    내부인지 확인한 뒤에만 경로를 돌려준다.
+    Exporters write files to user-controlled output_path from spec. If
+    absolute paths (``/etc/passwd``) or parent traversal (``../../etc``) are
+    mixed in, files can be created/overwritten at arbitrary locations outside
+    the build workspace. Only return the path after verifying combined and
+    resolved path is inside base_dir.
 
-    매개변수:
-        base_dir: 출력이 반드시 머물러야 하는 기준 디렉터리.
-        relative_path: base_dir 기준의 (사용자 제어) 출력 경로.
+    Args:
+        base_dir: base directory that output must remain under.
+        relative_path: user-controlled output path relative to base_dir.
 
-    반환값:
-        Path: base_dir 아래에 있음이 검증된 결합 경로(원본 형태 그대로).
+    Returns:
+        Path: combined path verified to be under base_dir (original form).
 
-    예외:
-        PathTraversalError: 결합·해석된 경로가 base_dir를 벗어나는 경우.
+    Raises:
+        PathTraversalError: if resolved path escapes base_dir.
     """
     candidate = base_dir / relative_path
     resolved_base = _strip_windows_extended_prefix(base_dir.resolve())

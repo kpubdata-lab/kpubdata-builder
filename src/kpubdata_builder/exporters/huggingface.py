@@ -1,10 +1,10 @@
-"""Hugging Face Hub 레이아웃 내보내기 도구 (#9).
+"""Hugging Face Hub layout exporter (#9).
 
-이 모듈은 ArtifactDataset을 Hugging Face Hub 업로드 규격의 디렉터리 레이아웃으로
-내보낸다. 데이터 파일(data/), 데이터셋 카드(README.md, YAML front matter 포함),
-메타데이터(dataset_infos.json)를 생성한다. 실제 업로드는 수행하지 않는다.
+This module exports ArtifactDataset to Hugging Face Hub upload specification directory
+layout. Generates data files (data/), dataset card (README.md with YAML front matter),
+and metadata (dataset_infos.json). Does not perform actual upload.
 
-레이아웃::
+Layout::
 
     {output_path}/
     ├── data/
@@ -35,7 +35,7 @@ _SUPPORTED_FORMATS = ("parquet", "jsonl")
 
 
 def _resolve_format(target: ExportTarget) -> str:
-    """target.options에서 데이터 파일 형식을 결정한다(기본 parquet)."""
+    """Determine data file format from target.options (default parquet)."""
     raw = target.options.get("format", "parquet")
     fmt = raw if isinstance(raw, str) else "parquet"
     if fmt not in _SUPPORTED_FORMATS:
@@ -47,19 +47,19 @@ def _resolve_format(target: ExportTarget) -> str:
 
 
 def _write_data_file(artifact: ArtifactDataset, data_dir: Path, fmt: str) -> Path:
-    """data/ 아래에 단일 shard 데이터 파일을 기록하고 경로를 반환한다."""
+    """Write single shard data file under data/ and return path."""
     data_path = data_dir / f"train-00000-of-00001.{fmt}"
     if fmt == "parquet":
         records_to_dataframe(list(artifact.records)).write_parquet(data_path)
     else:
-        # allow_nan=False: NaN/Infinity는 비표준 JSON 토큰이 되므로 조용히 기록하지 않고
-        # ValueError로 실패시킨다 (#217).
+        # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail with
+        # ValueError (#217).
         #
-        # json_safe 는 jsonl exporter 와 같은 이유로 필요하다 (#629). Gold 테이블은
-        # Polars 에서 오므로 ``casts: {deal_date: date}`` 를 선언하면 레코드에
-        # ``date``/``Decimal`` 객체가 그대로 담기고, ``json.dumps`` 는 그걸
-        # 직렬화하지 못한다. 그 수정이 jsonl 쪽에만 적용돼서, 같은 spec 이 jsonl
-        # 로는 나가고 huggingface 로는 TypeError 로 죽었다.
+        # json_safe needed for same reason as jsonl exporter (#629). Gold tables come from
+        # Polars, so if declared `casts: {deal_date: date}`, records contain
+        # `date`/`Decimal` objects as-is, and `json.dumps` cannot
+        # serialize them. that fix applied only to jsonl, so same spec works in jsonl
+        # but fails with TypeError in huggingface.
         content = "\n".join(
             json.dumps(json_safe(record), ensure_ascii=False, sort_keys=True, allow_nan=False)
             for record in artifact.records
@@ -69,7 +69,7 @@ def _write_data_file(artifact: ArtifactDataset, data_dir: Path, fmt: str) -> Pat
 
 
 def _render_card(artifact: ArtifactDataset) -> str:
-    """YAML front matter + Markdown 본문의 데이터셋 카드를 만든다."""
+    """Create dataset card with YAML front matter and Markdown body."""
     metadata = artifact.metadata
     front_matter: dict[str, object] = {
         "language": [metadata.get("language", "ko")],
@@ -91,14 +91,14 @@ def _render_card(artifact: ArtifactDataset) -> str:
         body.append("공공데이터포털 (data.go.kr)")
     attribution = metadata.get("attribution")
     if isinstance(attribution, str) and attribution.strip():
-        # 공공누리 출처표시는 카드 본문에 그대로 실려야 의무가 충족된다 —
-        # front matter 의 license 식별자만으로는 부족하다 (ADR 0018).
+        # Public License attribution must appear in card body to fulfill obligation—
+        # license identifier in front matter alone is insufficient (ADR 0018).
         body += ["", attribution.strip()]
     return "\n".join(body) + "\n"
 
 
 def _dataset_infos(artifact: ArtifactDataset) -> dict[str, object]:
-    """HF dataset_infos.json에 실을 메타데이터를 구성한다."""
+    """Construct metadata to be included in HF dataset_infos.json."""
     return {
         "features": dict(artifact.schema),
         "num_examples": len(artifact.records),
@@ -108,42 +108,41 @@ def _dataset_infos(artifact: ArtifactDataset) -> dict[str, object]:
 
 
 class HuggingFaceExporter(BaseExporter):
-    """ArtifactDataset을 Hugging Face Hub 레이아웃으로 내보낸다.
+    """Export ArtifactDataset to Hugging Face Hub layout.
 
-    예시:
+    Example:
         >>> HuggingFaceExporter().name
         'huggingface'
     """
 
     @property
     def name(self) -> str:
-        """내보내기 도구 이름을 반환한다."""
+        """Return exporter tool name."""
         return "huggingface"
 
     def export(
         self, artifact: ArtifactDataset, target: ExportTarget, output_dir: Path
     ) -> ExportResult:
-        """ArtifactDataset을 HF 디렉터리 레이아웃으로 내보낸다.
+        """Export ArtifactDataset to HF directory layout.
 
-        매개변수:
-            artifact: 내보낼 산출물.
-            target: output_path(레이아웃 루트)와 options(format)을 담은 대상.
-            output_dir: 빌드 기준 출력 디렉터리.
+        Args:
+            artifact: output to export.
+            target: target with output_path (layout root) and options (format).
+            output_dir: build-based output directory.
 
-        반환값:
-            ExportResult: 레이아웃 루트 디렉터리와 총 바이트 크기.
+        Returns:
+            ExportResult: layout root directory and total byte size.
 
-        예외:
-            ExportError: 지원하지 않는 형식이거나 파일 쓰기에 실패한 경우.
+        Raises:
+            ExportError: if unsupported format or file write fails.
         """
         fmt = _resolve_format(target)
-        # 사용자 제어 output_path가 build 워크스페이스를 벗어나지 못하게 한다 (#210).
+        # prevent user-controlled output_path from escaping build workspace (#210).
         hf_dir = safe_output_path(output_dir, target.output_path)
         hf_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        # 레이아웃을 임시 디렉터리에 전부 쓴 뒤 atomic하게 교체한다. in-place 갱신은
-        # 포맷 변경(JSONL→Parquet) 재실행 시 이전 shard 파일을 남겨 레이아웃이 spec과
-        # 불일치하게 만든다 (#203).
+        # write layout entirely to temp directory then atomically replace. in-place updates
+        # leave old shard files on format change (JSONL->Parquet), causing layout mismatch (#203).
         tmp_dir = Path(tempfile.mkdtemp(dir=hf_dir.parent, prefix=".hf_tmp_"))
         try:
             data_dir = tmp_dir / "data"
@@ -169,9 +168,9 @@ class HuggingFaceExporter(BaseExporter):
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise
         except ValueError:
-            # allow_nan=False가 NaN/Infinity에 대해 던지는 ValueError는 비표준 JSON
-            # 토큰 거부 계약(#217)이므로 ExportError로 감싸지 않고 그대로 전파한다.
-            # (단, 임시 디렉터리는 정리한다.)
+            # ValueError raised by allow_nan=False for NaN/Infinity is non-standard JSON
+            # token rejection contract (#217) so propagate as-is without wrapping in ExportError.
+            # (but clean up temp directory.)
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise
         except Exception as exc:

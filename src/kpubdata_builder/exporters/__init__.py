@@ -1,13 +1,13 @@
-"""내장 내보내기 구현과 플러그인 레지스트리.
+"""built-in exporter implementations and plugin registry.
 
-내장 exporter를 import 시점에 레지스트리에 등록하고, 제3자 exporter 등록·발견을
-위한 플러그인 API(registry.py)를 함께 노출한다.
+Registers built-in exporters to registry at import time and also exposes plugin API
+(registry.py) for third-party exporter registration and discovery.
 
-주요 구성:
-    - _EXPORTER_FACTORIES: kind -> factory 매핑 (ADR 0004)
-    - EXPORTER_REGISTRY: kind -> exporter 인스턴스 매핑 (레거시 호환)
-    - register_exporter_factory / register_exporter_instance: 등록 API
-    - get_exporter / load_entry_point_exporters: 조회/발견 API
+Main components:
+    - _EXPORTER_FACTORIES: kind -> factory mapping (ADR 0004)
+    - EXPORTER_REGISTRY: kind -> exporter instance mapping (legacy compatibility)
+    - register_exporter_factory / register_exporter_instance: registration API
+    - get_exporter / load_entry_point_exporters: lookup/discovery API
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from .registry import (
     register_exporter_instance,
 )
 
-# 내장 exporter 등록 (ADR 0004 권고: factory 방식).
-# override=True는 재import 시 덮어쓰기 위함 (개발 중 편의).
-# 인스턴스 레지스트리에도 등록하여 하위 호환성 보장 (#325).
+# register built-in exporters (ADR 0004 recommendation: factory pattern).
+# override=True allows overwriting on re-import (development convenience).
+# register to instance registry for backward compatibility (#325).
 register_exporter_factory("csv", CsvExporter, override=True)
 register_exporter_factory("huggingface", HuggingFaceExporter, override=True)
 register_exporter_factory("jsonl", JsonlExporter, override=True)
@@ -40,7 +40,7 @@ register_exporter_factory("markdown", MarkdownExporter, override=True)
 register_exporter_factory("kaggle", KaggleExporter, override=True)
 register_exporter_factory("parquet", ParquetExporter, override=True)
 
-# 레거시 코드가 EXPORTER_REGISTRY를 직접 조회하는 경우를 위해 인스턴스도 등록
+# register instance for legacy code that directly queries EXPORTER_REGISTRY
 register_exporter_instance(CsvExporter(), override=True)
 register_exporter_instance(HuggingFaceExporter(), override=True)
 register_exporter_instance(JsonlExporter(), override=True)

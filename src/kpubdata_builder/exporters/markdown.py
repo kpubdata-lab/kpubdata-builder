@@ -1,4 +1,4 @@
-"""마크다운 내보내기 도구: ArtifactDataset을 사람이 읽기 좋은 문서로 변환한다."""
+"""markdown exporter: converts ArtifactDataset to human-readable documentation."""
 
 from __future__ import annotations
 
@@ -16,17 +16,17 @@ SAMPLE_ROW_LIMIT = 5
 
 
 class MarkdownExporter(BaseExporter):
-    """데이터셋을 README 형태의 마크다운 문서로 출력하는 내보내기 도구."""
+    """exporter that outputs dataset as README-style markdown documentation."""
 
     @property
     def name(self) -> str:
-        """내보내기 도구 이름을 반환한다."""
+        """returns exporter name."""
         return "markdown"
 
     def export(
         self, artifact: ArtifactDataset, target: ExportTarget, output_dir: Path
     ) -> ExportResult:
-        """아티팩트를 사람이 읽기 좋은 마크다운 문서로 내보낸다."""
+        """exports artifact to human-readable markdown document."""
         destination = ensure_output_dir(output_dir, target.output_path)
         content = _render_markdown(artifact)
         try:
@@ -49,7 +49,7 @@ class MarkdownExporter(BaseExporter):
 
 
 def _render_markdown(artifact: ArtifactDataset) -> str:
-    """아티팩트의 각 섹션을 조립해 마크다운 문서를 만든다."""
+    """assembles each artifact section into markdown document."""
     lines: list[str] = []
     lines.extend(_title_section(artifact))
     lines.extend(_schema_section(artifact))
@@ -59,7 +59,7 @@ def _render_markdown(artifact: ArtifactDataset) -> str:
 
 
 def _title_section(artifact: ArtifactDataset) -> list[str]:
-    """메타데이터의 제목과 설명, 레코드 수를 출력한다."""
+    """outputs metadata title, description, and record count."""
     title = artifact.metadata.get("title", "Dataset Artifact")
     lines = [f"# {title}", ""]
     description = artifact.metadata.get("description")
@@ -70,7 +70,7 @@ def _title_section(artifact: ArtifactDataset) -> list[str]:
 
 
 def _column_names(artifact: ArtifactDataset) -> list[str]:
-    """스키마의 컬럼명을 반환하고, 없으면 모든 레코드의 키를 합산한다."""
+    """returns schema column names, or union of all record keys if absent."""
     if artifact.schema:
         return list(artifact.schema.keys())
     if artifact.records:
@@ -83,7 +83,7 @@ def _column_names(artifact: ArtifactDataset) -> list[str]:
 
 
 def _schema_section(artifact: ArtifactDataset) -> list[str]:
-    """스키마를 마크다운 테이블(field | type)로 출력한다."""
+    """outputs schema as markdown table (field | type)."""
     lines = ["## Schema", ""]
     columns = _column_names(artifact)
     if not columns:
@@ -99,7 +99,7 @@ def _schema_section(artifact: ArtifactDataset) -> list[str]:
 
 
 def _sample_section(artifact: ArtifactDataset) -> list[str]:
-    """최대 SAMPLE_ROW_LIMIT개의 레코드를 마크다운 테이블로 출력한다."""
+    """outputs up to SAMPLE_ROW_LIMIT records as markdown table."""
     lines = ["## Sample Rows", ""]
     if not artifact.records:
         lines.extend(["_No records available._", ""])
@@ -115,7 +115,7 @@ def _sample_section(artifact: ArtifactDataset) -> list[str]:
 
 
 def _provenance_section(artifact: ArtifactDataset) -> list[str]:
-    """provenance 항목(출처 이름)을 불릿 목록으로 출력한다."""
+    """outputs provenance items (source names) as bullet list."""
     lines = ["## Provenance", ""]
     if not artifact.provenance:
         lines.extend(["_No provenance recorded._", ""])
@@ -127,7 +127,7 @@ def _provenance_section(artifact: ArtifactDataset) -> list[str]:
 
 
 def _format_cell(value: object) -> str:
-    """마크다운 테이블 셀 값을 안전하게 문자열로 변환한다."""
+    """safely converts markdown table cell values to strings."""
     if value is None:
         return ""
     return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
