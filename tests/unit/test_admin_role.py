@@ -253,6 +253,38 @@ class TestAudit:
             "action=admin.runs.list target=limit=50 outcome=allowed"
         )
 
+    def test_audit_records_are_emitted_at_the_default_threshold(self) -> None:
+        """The service configures no logging at all, so the root threshold is
+        WARNING and an INFO audit record would be discarded entirely. An audit
+        trail that silently vanishes is worse than none -- it makes you believe
+        there is one."""
+        from kpubdata_builder.service import admin_audit
+
+        assert admin_audit._audit_logger.isEnabledFor(logging.INFO)
+
+    def test_audit_output_exists_without_deployment_configuration(self) -> None:
+        """Somewhere up the chain there has to be a handler, or the record goes
+        nowhere even when the level allows it."""
+        from kpubdata_builder.service import admin_audit
+
+        logger: logging.Logger | None = admin_audit._audit_logger
+        while logger is not None:
+            if logger.handlers:
+                return
+            if not logger.propagate:
+                break
+            logger = logger.parent
+        pytest.fail("no handler anywhere on the audit logger chain")
+
+    def test_ensuring_output_twice_does_not_duplicate_handlers(self) -> None:
+        """Duplicated handlers would write each audit record more than once,
+        which makes the records uncountable."""
+        from kpubdata_builder.service import admin_audit
+
+        before = len(admin_audit._audit_logger.handlers)
+        admin_audit._ensure_audit_output()
+        assert len(admin_audit._audit_logger.handlers) == before
+
     def test_missing_target_renders_as_placeholder(self, caplog: pytest.LogCaptureFixture) -> None:
         principal = Principal(kind="dev", owner_id="dev:x", is_admin=True)
         with caplog.at_level(logging.INFO, logger="kpubdata_builder.admin_audit"):

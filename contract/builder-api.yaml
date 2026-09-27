@@ -1,7 +1,8 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.27.0"
+  version: 1.28.0
+
   description: >-
     Builder 중심 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을

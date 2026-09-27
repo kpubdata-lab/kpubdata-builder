@@ -54,7 +54,13 @@ _ENFORCE_OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 # 허용 목록을 "필수"로 되돌리는 스위치. 미설정이면 공개 가입(제한 없음)이 기본이다.
 _OIDC_REQUIRE_ALLOWLIST_ENV = "OIDC_LEGACY_REQUIRE_ALLOWLIST"
 
-#: 관리자로 대우할 OIDC ``sub`` 목록 (#679). 쉼표/공백 구분.
+#: 관리자로 대우할 ``<issuer>|<sub>`` 목록 (#679). 쉼표 구분.
+#:
+#: **issuer 를 반드시 함께 적는다.** OIDC ``sub`` 는 issuer 안에서만 유일하고,
+#: ``OIDC_ISSUER`` 는 쉼표 구분 복수를 허용한다. ``sub`` 만 비교하면 issuer B 의
+#: 계정이 issuer A 를 대상으로 지정한 관리자 항목에 걸린다. 그래서 owner_id 도
+#: ``compute_owner_id("oidc", issuer, sub)`` 로 둘을 묶는다 — 관리자 판정이 그보다
+#: 느슨하면 신원 모델이 두 갈래가 된다.
 #:
 #: 관리자는 **설정으로만** 지정한다. 런타임에 API 로 관리자를 늘릴 수 있으면
 #: 관리자 하나가 탈취됐을 때 되돌릴 방법이 없다 — 설정 파일과 재시작이
@@ -270,10 +276,30 @@ def _oidc_allowlists() -> tuple[set[str], set[str], set[str]]:
     )
 
 
-def _admin_subjects() -> set[str]:
-    """관리자로 대우할 OIDC ``sub`` 집합 (#679). 미설정이면 빈 집합."""
+def _admin_identities() -> set[tuple[str, str]]:
+    """관리자로 대우할 ``(issuer, sub)`` 집합 (#679). 미설정이면 빈 집합.
+
+    ``issuer|sub`` 형식만 받는다. issuer 가 빠진 항목은 **조용히 무시하지 않고
+    경고를 남기고 버린다** — 관리자 권한 부여가 오타 때문에 조용히 사라지는 것과
+    오타 때문에 조용히 생기는 것 둘 다 피해야 한다.
+    """
     raw = os.environ.get(_ADMIN_SUBJECTS_ENV, "")
-    return {s.strip() for s in raw.replace(" ", ",").split(",") if s.strip()}
+    identities: set[tuple[str, str]] = set()
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        issuer, separator, subject = entry.partition("|")
+        if not separator or not issuer.strip() or not subject.strip():
+            _logger.warning(
+                "ignoring a malformed %s entry: expected '<issuer>|<subject>'. "
+                "An OIDC subject is only unique within its issuer, so a bare "
+                "subject cannot grant administrator rights.",
+                _ADMIN_SUBJECTS_ENV,
+            )
+            continue
+        identities.add((issuer.strip(), subject.strip()))
+    return identities
 
 
 def validate_oidc_config() -> None:
@@ -451,13 +477,14 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     owner_id = compute_owner_id("oidc", issuer, sub)
     # 로그 추적용 식별자로 sub 앞 8자만(전체 sub 노출 최소화).
     #
-    # 관리자 판정은 **전체 sub** 로 한다. 앞 8자로 비교하면 접두사가 같은 다른
-    # 계정이 관리자가 된다.
+    # 관리자 판정은 **(issuer, 전체 sub)** 로 한다. sub 앞 8자로 비교하면 접두사가
+    # 같은 다른 계정이 관리자가 되고, issuer 를 빼면 다른 issuer 의 같은 sub 가
+    # 관리자가 된다 — owner_id 가 둘을 묶는 것과 같은 이유다.
     return Principal(
         kind="oidc",
         identifier=sub[:8],
         owner_id=owner_id,
-        is_admin=sub in _admin_subjects(),
+        is_admin=(issuer, sub) in _admin_identities(),
     )
 
 

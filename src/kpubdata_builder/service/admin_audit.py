@@ -22,6 +22,40 @@ __all__ = ["record_admin_action"]
 #: 감사 전용 logger. 배포가 이것만 따로 수집·보관할 수 있게 이름을 분리한다.
 _audit_logger = logging.getLogger("kpubdata_builder.admin_audit")
 
+# 이 서비스에는 logging 설정이 없다(``basicConfig``/``dictConfig`` 호출 0건).
+# 그래서 root logger 의 기본 임계값 WARNING 이 적용되고, INFO 로 남긴 감사
+# 기록은 **한 줄도 나가지 않는다.** 실측으로 확인했다.
+#
+# 감사 기록이 조용히 사라지는 것은 감사 기록이 없는 것보다 나쁘다 — 있다고
+# 믿게 만든다. 그래서 이 logger 만은 스스로 임계값을 정하고, 배포가 아무
+# handler 도 붙이지 않았을 때에 한해 stderr 로 내보낸다.
+#
+# 배포가 자체 handler 를 붙였으면 건드리지 않는다. 그쪽이 수집·보관 정책을
+# 아는 주체다.
+_audit_logger.setLevel(logging.INFO)
+
+
+def _ensure_audit_output() -> None:
+    """handler 가 아무 데도 없을 때만 stderr handler 를 하나 붙인다.
+
+    호출될 때마다 확인하지 않고 import 시 한 번만 한다 — 여러 번 붙으면 같은
+    감사 기록이 여러 줄로 남아 개수를 셀 수 없게 된다.
+    """
+    logger: logging.Logger | None = _audit_logger
+    while logger is not None:
+        if logger.handlers:
+            return
+        if not logger.propagate:
+            break
+        logger = logger.parent
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+    _audit_logger.addHandler(handler)
+
+
+_ensure_audit_output()
+
 
 def record_admin_action(
     principal: Principal,
