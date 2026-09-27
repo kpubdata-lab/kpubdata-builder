@@ -1,15 +1,15 @@
-"""Build 산출물 조회 서비스 (#596 후속, #637).
+"""Build artifact query service (follow-up to #596, #637).
 
-완료된 run 의 **읽기 표면** 이다 — artifacts 목록, manifest, spec 스냅샷, 파일
-서빙, build 목록, event timeline.
+Provides **read-only surface** for completed runs — artifacts list, manifest, spec
+snapshot, file serving, build list, event timeline.
 
-빌드를 *실행하는* 쪽(``build``/``submit_build``/``cancel_build``)은 남겨 두었다.
-그쪽은 client factory, credential resolver, upload repository, spec 검증까지 열한
-가지를 쥐고 있어서, 지금 함께 떼면 새 서비스의 생성자가 사실상 ``BuilderService``
-전체를 다시 받게 된다 — #596 이 없애려던 모양 그대로다. 읽기 경로는 네 가지만
-쓰므로 경계가 실제로 좁아진다.
+Execution-side methods (``build``/``submit_build``/``cancel_build``) are kept separate.
+That side holds eleven concerns (client factory, credential resolver, upload repository,
+spec validation, etc.), so extracting it now would make the new service's constructor
+receive essentially all of ``BuilderService`` again — exactly what #596 tried to remove.
+Read paths use only four dependencies, so the boundary is genuinely narrower here.
 
-**wire 계약은 바뀌지 않는다.** ``BuilderService`` 가 같은 시그니처로 위임한다.
+**Wire contract unchanged.** ``BuilderService`` delegates with same signature.
 """
 
 from __future__ import annotations
@@ -43,15 +43,15 @@ _BuildListEntry = dict[str, str | None]
 def _apply_ownership(
     entries: list[_BuildListEntry], principal: Principal | None
 ) -> list[_BuildListEntry]:
-    """list_builds 응답에서 본인 소유 run만 남긴다 (#433, #505).
+    """Keep only own runs in list_builds response (#433, #505).
 
-    ENFORCE_OWNERSHIP+oidc principal일 때만 필터링. dev/service principal과
-    principal=None은 통과 (관리자 권한 + 하위 호환). 인덱스 분기와 파일시스템
-    폴백 양쪽에서 공통으로 적용해 폴백 경로가 필터를 우회하지 않게 한다.
+    Filter only when ENFORCE_OWNERSHIP+oidc principal. Dev/service principals and
+    principal=None pass through (admin privilege + backward compatibility). Apply
+    to both index branch and filesystem fallback so fallback path doesn't bypass
+    filter.
 
-    각 entry는 판정용으로 내부 전용 "owner_id" 키를 담고 있어야 한다 — 응답
-    직전에 ``_strip_internal_fields``로 제거되므로 wire 응답 shape는 바뀌지
-    않는다.
+    Each entry must carry internal-only "owner_id" key for decision — removed by
+    ``_strip_internal_fields`` before response, so wire shape unchanged.
     """
     if not (ownership_module.enforce_ownership() and principal and principal.kind == "oidc"):
         return entries
@@ -68,16 +68,16 @@ def _apply_ownership(
 
 
 def _strip_internal_fields(entries: list[_BuildListEntry]) -> list[_BuildListEntry]:
-    """ownership 판정에만 쓰인 내부 전용 필드를 응답 직전에 제거한다 (#505).
+    """Remove internal-only ownership fields from response before sending (#505).
 
-    ``owner_id``는 canonical hash일 뿐 클라이언트에 의미가 없고, 이를 노출하면
-    ``/builds`` 응답 wire shape가 바뀐다 — 계약 변경 없이 내부적으로만 쓴다.
+    ``owner_id`` is a canonical hash meaningless to clients. Exposing it changes
+    ``/builds`` response wire shape — use internally only, without contract change.
     """
     return [{k: v for k, v in e.items() if k != "owner_id"} for e in entries]
 
 
 class BuildArtifactsApiService:
-    """완료된 run 의 산출물·manifest·spec·event 조회 (#433, #487, #496)."""
+    """Query artifacts/manifest/spec/events for completed runs (#433, #487, #496)."""
 
     def __init__(
         self,
@@ -90,9 +90,8 @@ class BuildArtifactsApiService:
         self._output_root = output_root
         self._store = store
         self._build_index = build_index
-        # event store 는 지연 생성된다(#496) — preview 만 하는 워크스페이스에
-        # sqlite 파일을 남기지 않기 위해서다. 그 성질을 유지하려고 값이 아니라
-        # 접근자를 받는다.
+        # Event store is lazily created (#496) — avoid sqlite file in preview-only
+        # workspaces. Preserve this behavior by accepting accessor, not value.
         self._event_store_factory = event_store
 
     @property
@@ -100,7 +99,7 @@ class BuildArtifactsApiService:
         return self._event_store_factory()
 
     def artifacts(self, run_id: str) -> ServiceResponse:
-        """실행 워크스페이스의 산출물 파일 목록을 반환한다."""
+        """Return list of artifact files in execution workspace."""
         try:
             validate_path_segment(run_id, field_name="run_id")
         except ValueError as exc:
@@ -111,28 +110,28 @@ class BuildArtifactsApiService:
         if not run_dir.exists():
             return ServiceResponse(404, {"error": f"run not found: {run_id}"})
 
-        # wire에는 항상 run 디렉터리 기준 POSIX 상대 경로만 노출한다 — output_root 절대
-        # 경로나 OS별 구분자를 드러내지 않는다. `serve_artifact_file`이 받는 canonical
-        # artifact identifier가 바로 이 값이다(클라이언트는 storage layout을 알 필요 없다).
+        # Wire always exposes POSIX relative paths from run directory — never absolute
+        # path or OS-specific separators. `serve_artifact_file` receives this canonical
+        # artifact identifier (clients don't need to know storage layout).
         files = sorted(
             path.relative_to(run_dir).as_posix() for path in run_dir.rglob("*") if path.is_file()
         )
         return ServiceResponse(200, {"run_id": run_id, "files": list(files)})
 
     def manifest(self, run_id: str) -> ServiceResponse:
-        """persisted manifest를 읽되 내부 ownership 필드는 wire에서 제거한다.
+        """Read persisted manifest but remove internal ownership fields from wire.
 
-        ``owner_id``는 디스크의 ``manifest.json``과 BuildIndex에만 저장되는 내부
-        식별자다(#505). OpenAPI ``BuildManifest``는 실제 HTTP 응답의 SSOT이므로
-        이 메서드에서 명시적으로 제거해 공개 API 필드가 되지 않게 한다.
+        ``owner_id`` is stored only on disk in ``manifest.json`` and BuildIndex (#505).
+        OpenAPI ``BuildManifest`` is SSOT for actual HTTP response, so remove it here
+        explicitly to prevent becoming public API field.
         """
         try:
             validate_path_segment(run_id, field_name="run_id")
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc)})
 
-        # ADR 0016: manifest 정본은 store 를 통해 조회한다(cubrid=CUBRID 행 우선, FS 폴백;
-        # local=FS). get_manifest 는 경로 안전·손상·미존재를 모두 None 으로 합친다.
+        # ADR 0016: Query manifest canonical through store (CUBRID rows first, FS fallback;
+        # local=FS). get_manifest normalizes path safety, corruption, nonexistence to None.
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
             return ServiceResponse(404, {"error": f"manifest not found: {run_id}"})
@@ -140,7 +139,7 @@ class BuildArtifactsApiService:
         return ServiceResponse(200, cast(dict[str, JsonValue], manifest))
 
     def spec(self, run_id: str) -> ServiceResponse:
-        """run에서 실제 사용한 canonical BuildSpec snapshot과 digest를 반환한다."""
+        """Return canonical BuildSpec snapshot and digest actually used in run."""
         try:
             validate_path_segment(run_id, field_name="run_id")
         except ValueError as exc:
@@ -161,9 +160,9 @@ class BuildArtifactsApiService:
             payload = snapshot_path.read_bytes()
             spec_text = payload.decode("utf-8")
         except (OSError, UnicodeDecodeError):
-            # 예외 문자열을 그대로 돌려주면 OSError 가 서버의 절대 경로를 실어
-            # 보낸다 — 호출자가 알 필요도 없고 알아서도 안 되는 정보다.
-            # 진단에 필요한 내용은 traceback 째로 로그에 남긴다.
+            # Returning exception string as-is exposes OSError with server absolute paths —
+            # info callers don't need and shouldn't know. Diagnostic details logged as
+            # full traceback; response includes only type name and safe message.
             logger.exception("failed to read BuildSpec snapshot for run %s", run_id)
             return ServiceResponse(500, {"error": "failed to read BuildSpec snapshot"})
         return ServiceResponse(
@@ -176,39 +175,40 @@ class BuildArtifactsApiService:
         )
 
     def serve_artifact_file(self, run_id: str, file_path: str) -> ServiceResponse | FileResponse:
-        """실행 워크스페이스의 특정 파일을 제공한다 (#323).
+        """Serve specific file from execution workspace (#323).
 
-        경로 트래버설 공격을 방지하기 위해 run_id와 file_path 모두
-        검증하며, 심볼릭 링크를 따르지 않는다.
+        Prevent path traversal by validating both run_id and file_path; don't follow
+        symlinks.
 
-        매개변수:
-            run_id: 실행 식별자.
-            file_path: 요청된 파일 경로 (run_id 하위의 상대 경로).
+        Args:
+            run_id: Execution identifier.
+            file_path: Requested file path (relative path under run_id).
 
-        반환값:
-            FileResponse (파일 발견 시) 또는 ServiceResponse (오류 시).
+        Returns:
+            FileResponse (file found) or ServiceResponse (error).
         """
-        # run_id 검증
+        # Validate run_id
         try:
             validate_path_segment(run_id, field_name="run_id")
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc)})
 
-        # run_dir 확인
+        # Check run_dir
         run_dir = self._output_root / run_id
         ensure_within(self._output_root, run_dir, label="run directory")
         if not run_dir.exists():
             return ServiceResponse(404, {"error": f"run not found: {run_id}"})
 
-        # file_path 검증 (경로 트래버설 방지).
+        # Validate file_path (prevent traversal).
         #
-        # canonical artifact identifier는 `GET /artifacts/{run_id}`가 돌려주는 run
-        # 디렉터리 기준 POSIX 상대 경로(예: "silver/datago.air_quality/table.parquet")다.
-        # HTTP 라우트는 이 경로를 URL segment 사이의 "/"로만 넘기고 각 segment는 percent
-        # 인코딩될 수 있으므로(브라우저가 non-ASCII/특수문자를 %XX로 바꾼다), 먼저 한 번
-        # percent-decode한다. decode 후에는 반드시 다시 검증한다 — "%2e%2e"/"%2f"/"%5c"
-        # 같은 인코딩된 트래버설이 decode되어 성분 검사에 걸리고, 이중 인코딩("%252e")은
-        # decode 후에도 "%"가 남아 성분 규칙에서 거부된다.
+        # Canonical artifact identifier is POSIX relative path from run directory
+        # (e.g., "silver/datago.air_quality/table.parquet") returned by
+        # `GET /artifacts/{run_id}`. HTTP route passes this path only via "/" between
+        # segments; each segment can be percent-encoded (browsers convert non-ASCII/
+        # special chars to %XX), so decode first. Must re-validate after decode —
+        # encoded traversals like "%2e%2e"/"%2f"/"%5c" decode to components caught by
+        # component checks; double-encoding "%252e" leaves "%" after decode, rejected
+        # by component rules.
         decoded_path = unquote(file_path)
         segments = decoded_path.replace("\\", "/").split("/")
         if not decoded_path.strip() or any(seg in ("", ".", "..") for seg in segments):
@@ -221,9 +221,10 @@ class BuildArtifactsApiService:
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc)})
 
-        # 요청된 파일의 전체 경로 계산 (성분 검증을 통과한 상대 경로만 결합)
+        # Compute full path of requested file (only relative path passing component
+        # validation combined).
         requested_file = run_dir.joinpath(*segments)
-        # 경로가 run_dir 내에 있는지 확인 (심볼릭 링크도 해석하여 안전 검사)
+        # Verify path is within run_dir (symlink resolution for safety check).
         ensure_within(run_dir, requested_file, label="artifact file")
 
         if not requested_file.exists():
@@ -231,7 +232,7 @@ class BuildArtifactsApiService:
         if not requested_file.is_file():
             return ServiceResponse(400, {"error": f"not a file: {file_path}"})
 
-        # 파일명 추출 (Content-Disposition용)
+        # Extract filename (for Content-Disposition).
         filename = requested_file.name
 
         return FileResponse(status_code=200, file_path=requested_file, filename=filename)
@@ -239,13 +240,13 @@ class BuildArtifactsApiService:
     def list_builds(
         self, *, limit: int = 50, principal: Principal | None = None
     ) -> ServiceResponse:
-        """실행 이력 목록을 최신 완료 시각 기준 내림차순 반환한다.
+        """Return execution history list sorted descending by latest completion time.
 
-        ADR 0003에 따라 SQLite 인덱스를 우선 조회하고, 인덱스가 없거나
-        비어있으면 파일시스템 스캔으로 폴백한다. ENFORCE_OWNERSHIP+oidc일 때는
-        두 경로 모두 _apply_ownership으로 본인 소유 run만 노출한다 (#433).
+        Per ADR 0003, query SQLite index first; fall back to filesystem scan if index
+        missing or empty. When ENFORCE_OWNERSHIP+oidc, both paths apply _apply_ownership
+        to expose only own runs (#433).
         """
-        # 인덱스 우선 조회
+        # Query index first
         try:
             entries = self._build_index.list_builds(limit=limit)
             if entries:
@@ -263,9 +264,9 @@ class BuildArtifactsApiService:
                 filtered = _strip_internal_fields(_apply_ownership(index_builds, principal))
                 return ServiceResponse(200, {"builds": cast(list[JsonValue], filtered)})
         except Exception:
-            # 인덱스 조회 실패. ENFORCE_OWNERSHIP+oidc면 타인 run이 폴백으로
-            # 새어나갈 수 있으므로 fail-closed로 빈 배열을 반환한다 (#433).
-            # 일반 모드는 기존대로 파일시스템 폴백으로 진행한다 (ADR 0003).
+            # Index query failed. When ENFORCE_OWNERSHIP+oidc, other users' runs could
+            # leak via fallback, so return empty array fail-closed (#433). Normal mode
+            # proceeds to filesystem fallback as before (ADR 0003).
             if ownership_module.enforce_ownership() and principal and principal.kind == "oidc":
                 logger.warning(
                     "build index query failed; returning empty list "
@@ -274,7 +275,7 @@ class BuildArtifactsApiService:
                 )
                 return ServiceResponse(200, {"builds": []})
 
-        # 폴백: 파일시스템 스캔
+        # Fallback: filesystem scan
         if not self._output_root.exists():
             return ServiceResponse(200, {"builds": []})
 
@@ -295,9 +296,9 @@ class BuildArtifactsApiService:
             fs_builds.append(
                 {
                     "run_id": run_dir.name,
-                    # manifest.json이 정본이므로 파생 규칙은 한 곳에만 둔다
-                    # (#481) — cancelled run은 errors가 비어 있을 수 있어
-                    # 기존 "errors 유무" 파생만으로는 ok로 잘못 보고된다.
+                    # manifest.json is SSOT so derive status rule in one place only
+                    # (#481) — cancelled run may have empty errors, so presence check alone
+                    # wrongly reports ok.
                     "status": status_from_manifest(manifest),
                     "started_at": manifest.get("started_at"),
                     "finished_at": manifest.get("finished_at"),
@@ -309,12 +310,12 @@ class BuildArtifactsApiService:
         return ServiceResponse(200, {"builds": cast(list[JsonValue], filtered)})
 
     def get_build_events(self, run_id: str, *, limit: int, tail: bool) -> ServiceResponse:
-        """run의 append-only structured event timeline을 조회한다 (#496).
+        """Query run's append-only structured event timeline (#496).
 
-        호출 전에 run_id 검증·존재 확인·ownership 게이팅이 끝나 있어야 한다
-        (``/builds/{run_id}/stages``와 동일하게 dispatch route adapter가 먼저
-        처리한다). 반환은 항상 chronological ascending이다 — ``tail=True``도
-        최신 ``limit``개를 고르되 정렬 자체는 뒤집지 않는다(#496 ordering 정책).
+        run_id validation, existence check, and ownership gating must complete before
+        calling (dispatch route adapter handles first, same as ``/builds/{run_id}/stages``).
+        Returns always chronological ascending — ``tail=True`` selects latest ``limit``
+        items but doesn't reverse sort itself (#496 ordering policy).
         """
         events = self._event_store.list_for_run(run_id, limit=limit, tail=tail)
         body: dict[str, JsonValue] = {

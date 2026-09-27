@@ -1,20 +1,20 @@
-"""System Resource·Build Statistics 조회 로직 (#516).
+"""System Resource·Build Statistics query logic (#516).
 
-Studio Monitoring 화면에 필요한 Builder API/Queue/Worker/Artifact Store 상태와
-BuildIndex 기반 시간대별 build 통계를 제공한다. Run 단위 이벤트는 #496이
-담당하며 이 모듈은 시스템/집계 observability만 다룬다.
+Provides Builder API/Queue/Worker/Artifact Store status and BuildIndex-based
+hourly build statistics for the Studio Monitoring screen. Run-level events
+are handled by #496; this module only deals with system/aggregate observability.
 
-핵심 원칙("없는 상태를 만들어내지 말 것"):
-    - 측정된 적 없는 값은 0/healthy 등으로 위장하지 않고 ``null``/``unavailable``로
-      표현한다.
-    - ``Availability`` vocabulary는 ``quality.py``가 이미 정의한 것을 그대로
-      재사용한다(``available``/``partial``/``unavailable``).
+Core principle ("do not fabricate missing state"):
+    - Values never measured are represented as ``null``/``unavailable``, not
+      disguised as 0/healthy.
+    - ``Availability`` vocabulary is reused as already defined in ``quality.py``
+      (``available``/``partial``/``unavailable``).
 
-Async build 실행 모델(queued/running worker pool)은 ``jobs.AsyncBuildExecutor``/
-``AsyncBuildJobRegistry``(#511/#513)로 이미 구현되어 있고 ``BuilderService``가
-항상 생성해 사용한다 — queue/worker 상태는 그 실행기의 read-only snapshot을
-그대로 반영한다. 존재하지 않는 실행기를 흉내 내 값을 위장하지도, 실행기가
-없는 구성을 새로 만들지도 않는다.
+Async build execution model (queued/running worker pool) is already implemented
+via ``jobs.AsyncBuildExecutor``/``AsyncBuildJobRegistry`` (#511/#513) and is
+always created and used by ``BuilderService`` — queue/worker state directly
+reflects the read-only snapshot of that executor. We don't pretend to have
+non-existent executors or create new configurations without executors.
 """
 
 from __future__ import annotations
@@ -32,12 +32,13 @@ from .auth import Principal, principal_owns
 from .jobs import AsyncBuildExecutor
 from .quality import Availability
 
-# Latency 표본은 시간창이 아니라 최근 최대 N개 요청의 고정 크기 ring buffer다
-# (#516) — 메모리 상한이 목적이며 "지난 X분" 같은 시간 기반 window가 아니다.
+# Latency samples use a fixed-size ring buffer of the most recent N requests,
+# not a time window (#516) — memory upper bound is the goal, not time-based
+# windowing like "last X minutes".
 _LATENCY_WINDOW_SIZE = 1000
 
-# recent runs는 Monitoring 카드용 미리보기이므로 /builds처럼 클라이언트가
-# limit을 조정하게 하지 않고 작은 고정 개수만 노출한다 (#516).
+# Recent runs are a Monitoring card preview, so we expose only a small fixed
+# count like /builds, not letting clients adjust the limit (#516).
 _RECENT_RUNS_LIMIT = 10
 
 BuildBucketWindow = Literal["24h"]
@@ -48,10 +49,11 @@ _SUPPORTED_BUCKETS: dict[str, int] = {"hour": 3600}
 
 
 class LatencyRecorder:
-    """Bounded, thread-safe in-memory Builder API 요청 latency 기록기 (#516).
+    """Bounded, thread-safe in-memory Builder API request latency recorder (#516).
 
-    ``dispatch()`` 전체 실행 시간(라우팅+인증+비즈니스 로직)을 ms 단위로
-    기록한다. 실제 HTTP 소켓 I/O는 포함하지 않는다(그건 http.py 계층).
+    Records the entire ``dispatch()`` execution time (routing+auth+business logic)
+    in milliseconds. Does not include actual HTTP socket I/O (that is the http.py
+    layer).
     """
 
     def __init__(self, *, max_samples: int = _LATENCY_WINDOW_SIZE) -> None:
@@ -59,21 +61,21 @@ class LatencyRecorder:
         self._lock = threading.Lock()
 
     def record(self, latency_ms: float) -> None:
-        """표본을 기록한다. 실패해도 예외를 전파하지 않는다(#516 요구사항)."""
+        """Record a sample. Does not propagate exceptions even if recording fails (#516)."""
         try:
             with self._lock:
                 self._samples.append(latency_ms)
         except Exception:
-            # metric collection 실패가 요청 실패로 전파되면 안 된다 (#516).
+            # Metric collection failure must not propagate to request failure (#516).
             pass
 
     def snapshot(self) -> tuple[int, float | None] | None:
-        """``(sample_count, p95_latency_ms)``를 반환한다. 표본이 없으면 p95는 None.
+        """Return ``(sample_count, p95_latency_ms)``. If no samples, p95 is None.
 
-        collector 자체가 실패하면(lock 손상 등) ``None``을 반환한다(#527) —
-        "정상 무표본"(``(0, None)``)과 "측정 subsystem 실패"를 같은 값으로
-        뭉개지 않기 위함이며, 이 실패가 예외로 전파되지도 않는다(호출자인
-        ``api_status()``가 ``None``을 ``unavailable``로 구분해 매핑한다).
+        Returns ``None`` if the collector itself fails (e.g., lock corruption) (#527) —
+        to distinguish "valid zero samples" (``(0, None)``) from "measurement
+        subsystem failure". This failure does not propagate as an exception; the
+        caller (``api_status()``) maps ``None`` to ``unavailable``.
         """
         try:
             with self._lock:
@@ -84,10 +86,10 @@ class LatencyRecorder:
 
 
 def _p95(samples: list[float]) -> tuple[int, float | None]:
-    """nearest-rank 방식으로 p95를 계산한다 (#516, 보간 없음).
+    """Compute p95 using nearest-rank method (#516, no interpolation).
 
-    ``rank = clamp(ceil(0.95 * n), 1, n)`` 을 오름차순 정렬된 표본의 1-indexed
-    순위로 사용한다. 예: n=1 -> rank=1(그 표본 자체), n=20 -> rank=19.
+    Uses ``rank = clamp(ceil(0.95 * n), 1, n)`` as the 1-indexed position in the
+    sorted samples. Examples: n=1 -> rank=1 (that sample itself), n=20 -> rank=19.
     """
     n = len(samples)
     if n == 0:
@@ -105,19 +107,21 @@ class ApiStatus:
 
 
 def api_status(recorder: LatencyRecorder) -> ApiStatus:
-    """Builder API 상태를 반환한다.
+    """Return Builder API status.
 
-    ``dispatch()``가 실행되어 이 함수가 호출된다는 사실 자체는 프로세스가
-    응답 중임을 증명하지만, latency collector(``LatencyRecorder``) 자체가
-    손상되어 표본을 읽을 수 없는 경우(#527)까지 ``available``로 위장하지
-    않는다 — ``recorder.snapshot()``이 ``None``을 반환하면(collector 실패)
-    ``unavailable`` + ``sample_count=None`` + ``p95_latency_ms=None``이고,
-    정상적으로 무표본이면(``(0, None)``) ``available`` + ``sample_count=0`` +
-    ``p95_latency_ms=None``이다 — "0표본"과 "측정 불가"를 구분한다. 이
-    subsystem 판정 실패는 원 요청(dispatch)이나 이 monitoring 요청 자체를
-    실패시키지 않는다(``snapshot()``이 예외를 전파하지 않으므로). Healthy/
-    Degraded 같은 latency 임계값 판정은 근거(ADR/config)가 없어 이번 PR에서
-    발명하지 않는다 — raw ``sample_count``/``p95_latency_ms``만 제공한다.
+    The fact that ``dispatch()`` ran and this function was called proves the
+    process is responding. However, we do not disguise as ``available`` even
+    if the latency collector (``LatencyRecorder``) itself is corrupted and
+    cannot read samples (#527) — if ``recorder.snapshot()`` returns ``None``
+    (collector failure), status is ``unavailable`` + ``sample_count=None`` +
+    ``p95_latency_ms=None``; if it is legitimately zero-sampled (``(0, None)``),
+    status is ``available`` + ``sample_count=0`` + ``p95_latency_ms=None`` —
+    distinguishing "zero samples" from "measurement unavailable". This subsystem
+    judgment failure does not fail the original request (``dispatch``) or this
+    monitoring request itself (``snapshot()`` does not propagate exceptions).
+    Latency threshold judgments (Healthy/Degraded) lack justification
+    (ADR/config), so they are not invented in this PR — only raw
+    ``sample_count``/``p95_latency_ms`` are provided.
     """
     snapshot = recorder.snapshot()
     if snapshot is None:
@@ -143,14 +147,14 @@ class WorkerStatus:
 
 
 def queue_status(async_builds: AsyncBuildExecutor) -> QueueStatus:
-    """Async build queue 상태 (#516).
+    """Async build queue status (#516).
 
-    ``BuilderService``가 항상 생성하는 ``AsyncBuildExecutor``(#511/#513)의
-    read-only snapshot(``stats()``)을 그대로 반영한다 — 이 서비스에서 async
-    build는 항상 지원되므로 availability는 항상 ``available``이다.
-    ``total``은 ``waiting + running``이다(terminal succeeded/failed/cancelled
-    history는 workload 상태가 아니므로 섞지 않는다 — registry가 이들을 메모리에
-    계속 보존하더라도 ``stats()``가 이미 제외한다).
+    Directly reflects the read-only snapshot (``stats()``) of the
+    ``AsyncBuildExecutor`` (#511/#513) that ``BuilderService`` always creates —
+    async build is always supported in this service, so availability is always
+    ``available``. ``total`` is ``waiting + running`` (terminal succeeded/failed/
+    cancelled history is not workload state, so we exclude it — the registry may
+    preserve these in memory, but ``stats()`` already excludes them).
     """
     stats = async_builds.stats()
     return QueueStatus(
@@ -162,12 +166,12 @@ def queue_status(async_builds: AsyncBuildExecutor) -> QueueStatus:
 
 
 def worker_status(async_builds: AsyncBuildExecutor) -> WorkerStatus:
-    """Async build worker pool 상태. 근거는 ``queue_status`` 문서 참조 (#516).
+    """Async build worker pool status. See ``queue_status`` documentation for justification (#516).
 
-    ``active``는 현재 running job 수(워커 하나가 job 하나를 실행하므로
-    running == active), ``capacity``는 실행기 생성 시 보존한 ``max_workers``다.
-    ``ThreadPoolExecutor``의 private field는 직접 읽지 않는다 —
-    ``AsyncBuildExecutor.stats()``가 이미 capacity를 노출한다.
+    ``active`` is the current running job count (one worker per job, so
+    running == active), ``capacity`` is the ``max_workers`` preserved at executor
+    creation. We do not directly read private fields of ``ThreadPoolExecutor`` —
+    ``AsyncBuildExecutor.stats()`` already exposes capacity.
     """
     stats = async_builds.stats()
     utilization = (stats.running / stats.capacity) if stats.capacity > 0 else 0.0
@@ -186,13 +190,15 @@ class ArtifactStoreStatus:
 
 
 def artifact_store_status(output_root: Path, build_index: BuildIndex) -> ArtifactStoreStatus:
-    """Artifact Store 상태 (#516).
+    """Artifact Store status (#516).
 
-    폴더 존재만으로 healthy로 간주하지 않는다 — ``output_root``가 디렉터리로
-    접근 가능하고 BuildIndex 쿼리도 성공해야 ``available``이다.
-    ``last_write_at``은 BuildIndex에 실제로 기록된 가장 최근 성공(``ok``) 빌드의
-    ``finished_at``에서만 얻는다(성공 기록이 없으면 ``available``이되 ``null``
-    — "0건"과 "확인 불가"를 구분).
+    We do not consider the folder existing alone as healthy — ``output_root``
+    must be accessible as a directory and BuildIndex query must also succeed
+    for status to be ``available``. ``last_write_at`` is obtained only from
+    ``finished_at`` of the most recent successful (``ok``) build actually
+    recorded in BuildIndex; if no success record exists, status is ``available``
+    but ``last_write_at`` is ``null`` — distinguishing "zero records" from
+    "unable to verify".
     """
     if not output_root.exists() or not output_root.is_dir():
         return ArtifactStoreStatus(availability="unavailable", last_write_at=None)
@@ -213,19 +219,20 @@ def aggregate_status(
     workers: WorkerStatus,
     artifact_store: ArtifactStoreStatus,
 ) -> MonitoringAggregateStatus:
-    """Required subsystem availability로부터 deterministic aggregate status를 판정한다 (#516).
+    """Determine deterministic aggregate status from required subsystem availability (#516).
 
-    latency threshold(SLA)는 근거(ADR/config)가 없어 사용하지 않는다 —
-    ``sample_count=0``/``p95_latency_ms=None``은 startup/무표본 상태일 수 있으므로
-    그 자체로는 degraded 근거가 아니다(``api.availability``만 본다). Provider
-    status는 #516에서 optional이라 이 판정에 포함하지 않는다(호출자가 아예
-    전달하지 않는다).
+    Latency thresholds (SLA) are not used due to lack of justification (ADR/config) —
+    ``sample_count=0``/``p95_latency_ms=None`` could be startup/zero-sample state,
+    so these are not degraded reasons by themselves (only ``api.availability`` is
+    considered). Provider status is optional per #516, so it is not included in
+    this judgment (the caller does not pass it at all).
 
-    required subsystem(api/queue/workers/artifact_store) availability가 모두
-    ``available``이면 ``healthy``, 하나라도 ``partial``/``unavailable``이면
-    ``degraded``. queue/workers의 실제 0(waiting/running/active=0)은
-    availability와 무관한 값이므로 이 판정에 영향을 주지 않는다 — availability
-    자체가 unavailable일 때만 degraded로 반영된다.
+    If all required subsystems (api/queue/workers/artifact_store) have
+    availability ``available``, status is ``healthy``; if any has
+    ``partial``/``unavailable``, status is ``degraded``. Actual zero (waiting/running/
+    active=0) for queue/workers is independent of availability, so it does not
+    affect this judgment — only when availability itself is unavailable is it
+    reflected as degraded.
     """
     required_availabilities = (
         api.availability,
@@ -240,12 +247,12 @@ def aggregate_status(
 
 @dataclass(frozen=True)
 class BuildBucket:
-    """시간 bucket당 build 카운트 (#516 wire 계약: total/success/failed/cancelled).
+    """Build count per hourly bucket (#516 wire contract: total/success/failed/cancelled).
 
-    ``success``는 ``BuildIndex``/``BuildEntry.status``의 내부 값 ``"ok"``를
-    외부 Monitoring API 명명으로 매핑한 것이다(#527) — 내부 BuildIndex status
-    vocabulary(``ok``/``failed``/``cancelled``)는 그대로 두고, 이 wire 필드
-    이름만 계약에 맞춘다.
+    ``success`` maps the internal BuildIndex/BuildEntry.status value ``"ok"``
+    to external Monitoring API naming (#527) — internal BuildIndex status
+    vocabulary (``ok``/``failed``/``cancelled``) is kept as-is; only the wire
+    field name is changed to match the contract.
     """
 
     bucket_start: str
@@ -275,20 +282,21 @@ class BuildStatistics:
 
 
 def validate_window(window: str) -> BuildBucketWindow | None:
-    """지원하는 window 값이면 그대로, 아니면 None (#516 — 범위를 넓히지 않음)."""
+    """Return the window value if supported, else None (#516 — not broadening scope)."""
     return "24h" if window == "24h" else None
 
 
 def validate_bucket(bucket: str) -> BuildBucketGranularity | None:
-    """지원하는 bucket 값이면 그대로, 아니면 None (#516 — 범위를 넓히지 않음)."""
+    """Return the bucket value if supported, else None (#516 — not broadening scope)."""
     return "hour" if bucket == "hour" else None
 
 
 def _parse_iso_utc(value: str | None) -> datetime | None:
-    """ISO 8601 문자열을 UTC ``datetime``으로 파싱한다. 실패/None이면 None.
+    """Parse ISO 8601 string to UTC ``datetime``. Return None if invalid or None.
 
-    malformed/legacy timestamp를 조용히 포함시키지 않기 위한 엄격한 검증 —
-    파싱 실패 행은 호출자가 ``excluded_count``로 집계해 partial 판정에 반영한다.
+    Strict validation to avoid silently including malformed/legacy timestamps —
+    the caller counts excluded rows as ``excluded_count``, which reflects in the
+    partial judgment.
     """
     if not value:
         return None
@@ -313,13 +321,13 @@ def _isoformat_z(dt: datetime) -> str:
 
 
 def _should_enforce_ownership(principal: Principal | None, *, enforce: bool) -> bool:
-    """ownership 필터를 적용해야 하는지 판정한다 (#516, #505).
+    """Determine whether to apply ownership filter (#516, #505).
 
-    ``app._apply_ownership``/``datasets.filter_ownership``과 동일한 정책 —
-    ENFORCE_OWNERSHIP+oidc principal일 때만 필터링하며, dev/service/None은
-    관리자 권한으로 통과한다. ``_filter_ownership``(Python 사후 필터)와
-    ``BuildIndex.list_recent_owned``(SQL push-down, #527) 양쪽이 이 판정을
-    공유해 정책이 어긋나지 않게 한다.
+    Same policy as ``app._apply_ownership``/``datasets.filter_ownership`` —
+    filter only when ENFORCE_OWNERSHIP + oidc principal; dev/service/None bypass
+    as admin. Both ``_filter_ownership`` (Python post-filter) and
+    ``BuildIndex.list_recent_owned`` (SQL push-down, #527) share this judgment
+    to keep policy aligned.
     """
     return enforce and principal is not None and principal.kind == "oidc"
 
@@ -327,17 +335,17 @@ def _should_enforce_ownership(principal: Principal | None, *, enforce: bool) -> 
 def _filter_ownership(
     entries: list[BuildEntry], principal: Principal | None, *, enforce: bool
 ) -> list[BuildEntry]:
-    """BuildEntry 목록에 기존 ownership 정책을 적용한다 (#516, #505).
+    """Apply existing ownership policy to BuildEntry list (#516, #505).
 
-    Monitoring 집계·recent runs가 다른 principal의 run metadata를 노출하는
-    side channel이 되지 않도록 한다. bucket 집계(``raw_entries``)처럼 이미
-    전체 window를 로드한 뒤라 LIMIT 손실 우려가 없는 경우에만 쓴다 —
-    LIMIT이 걸린 recent runs 조회는 대신 ``BuildIndex.list_recent_owned``로
-    필터를 먼저 SQL에서 적용한다(#527, 아래 ``build_statistics`` 참조).
+    Prevent monitoring aggregates and recent runs from becoming a side channel
+    exposing other principals' run metadata. Used only after loading the full
+    window (e.g., ``raw_entries``) where LIMIT loss is not a concern — recent
+    runs queries with LIMIT use ``BuildIndex.list_recent_owned`` instead to apply
+    the filter first in SQL (#527, see ``build_statistics`` below).
     """
     if not _should_enforce_ownership(principal, enforce=enforce):
         return entries
-    assert principal is not None  # _should_enforce_ownership이 이미 보장
+    assert principal is not None  # _should_enforce_ownership already guarantees
     return [
         e
         for e in entries
@@ -354,21 +362,23 @@ def build_statistics(
     enforce_ownership: bool,
     now: datetime | None = None,
 ) -> BuildStatistics:
-    """window/bucket에 따른 build 통계와 recent runs를 집계한다 (#516).
+    """Aggregate build statistics and recent runs by window/bucket (#516).
 
-    timezone: UTC. bucket 경계는 ``[start, end)`` 반열린. bucket 기준
-    timestamp는 ``finished_at``(BuildIndex는 완료된 빌드만 기록, ADR 0003).
+    Timezone: UTC. Bucket boundaries are ``[start, end)`` half-open. Bucket
+    reference timestamp is ``finished_at`` (BuildIndex records only completed
+    builds, ADR 0003).
 
-    - BuildIndex 쿼리 자체가 실패하면 ``unavailable`` (buckets 비어있음).
-    - 쿼리는 성공했지만 malformed timestamp로 일부 행이 제외되면 ``partial``.
-    - 쿼리 성공 + 제외 없음이면 ``available`` (0건이어도 유효한 available).
+    - If BuildIndex query itself fails, ``unavailable`` (empty buckets).
+    - If query succeeds but some rows excluded due to malformed timestamp,
+      ``partial``.
+    - If query succeeds + no exclusions, ``available`` (valid even at zero count).
 
-    recent runs는 ``_RECENT_RUNS_LIMIT``(10)으로 bounded된 조회다. ownership을
-    강제해야 하면(#505) 그 필터를 LIMIT **이전에** SQL에서 적용한다(#527) —
-    먼저 전역 최신 10건을 가져온 뒤 Python에서 걸러내면, 다른 principal의
-    최신 run들이 LIMIT을 다 채워 정작 요청자 본인의 recent run이 잘릴 수
-    있다. bucket 집계(``raw_entries``)는 이미 window 전체를 LIMIT 없이
-    가져오므로 이 문제가 없어 기존처럼 사후(Python) 필터링한다.
+    Recent runs are bounded by ``_RECENT_RUNS_LIMIT`` (10). If ownership must be
+    enforced (#505), that filter is applied **before** LIMIT in SQL (#527) — if
+    we fetch the global latest 10 first and filter in Python, other principals'
+    recent runs can fill the LIMIT, cutting off the requester's recent run.
+    Bucket aggregates (``raw_entries``) already load the full window without LIMIT,
+    so this problem does not occur; they use post-filter (Python) as before.
     """
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     window_seconds = _SUPPORTED_WINDOWS[window]
@@ -379,7 +389,7 @@ def build_statistics(
     try:
         raw_entries = build_index.list_between(_isoformat_z(window_start), _isoformat_z(window_end))
         if _should_enforce_ownership(principal, enforce=enforce_ownership):
-            assert principal is not None  # _should_enforce_ownership이 이미 보장
+            assert principal is not None  # _should_enforce_ownership already guarantees
             recent_entries = build_index.list_recent_owned(
                 limit=_RECENT_RUNS_LIMIT,
                 principal_owner_id=principal.owner_id,
@@ -398,9 +408,9 @@ def build_statistics(
         )
 
     scoped_entries = _filter_ownership(raw_entries, principal, enforce=enforce_ownership)
-    # recent_entries는 이미 위에서 필요 시 SQL push-down으로 걸러졌다(#527) —
-    # 여기서 다시 Python 필터를 적용하지 않는다(중복도 아니고, LIMIT이 이미
-    # 걸린 뒤라 손실을 되돌릴 수도 없다).
+    # recent_entries were already filtered above by SQL push-down if needed (#527) —
+    # do not apply Python filter again here (not a duplicate anyway, and with LIMIT
+    # already applied, we cannot recover lost records).
     scoped_recent = recent_entries
 
     bucket_count = window_seconds // bucket_seconds
@@ -421,8 +431,8 @@ def build_statistics(
         key = _isoformat_z(_bucket_start(parsed, bucket_seconds))
         counter = counters.get(key)
         if counter is None:
-            # window 쿼리 자체가 [start,end)로 한정하므로 정상적으로는 발생하지
-            # 않지만, 경계 근처 부동소수/파싱 편차에 대비한 방어적 처리.
+            # Window query itself limits to [start,end), so this normally does not occur,
+            # but defensive handling for floating-point/parsing variance near boundaries.
             excluded_count += 1
             continue
         counter["total"] += 1
@@ -434,7 +444,7 @@ def build_statistics(
             bucket_start=_isoformat_z(start),
             bucket_end=_isoformat_z(start + timedelta(seconds=bucket_seconds)),
             total=counters[_isoformat_z(start)]["total"],
-            # 내부 BuildIndex status "ok" -> 외부 wire 필드 "success" (#527).
+            # Internal BuildIndex status "ok" -> external wire field "success" (#527).
             success=counters[_isoformat_z(start)]["ok"],
             failed=counters[_isoformat_z(start)]["failed"],
             cancelled=counters[_isoformat_z(start)]["cancelled"],

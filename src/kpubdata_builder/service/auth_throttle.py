@@ -1,23 +1,24 @@
-"""인증 실패 스로틀 — 실패한 인증 시도의 반복 비용을 클라이언트에게 지운다.
+"""Authentication failure throttle — push the cost of repeated failed auth attempts onto the client.
 
-인증 게이트(``dispatch``)는 요청마다 API 키 비교 또는 ID token의 RS256 서명 검증을
-수행한다. 실패한 시도를 무제한으로 받아주면 두 가지가 공짜가 된다:
+The auth gate (``dispatch``) performs API key comparison or ID token RS256 signature
+verification on every request. If we accept unlimited failed attempts, two things become free:
 
-1. 인스턴스당 하나뿐인 정적 ``X-API-Key`` 에 대한 추측 시도 (ADR 0006).
-2. 무효 토큰을 던져 JWKS 서명 검증 CPU를 소모시키는 행위 — 검증 자체는 오프라인이라
-   외부 호출은 없지만 공개 엔드포인트에서 반복되면 CPU가 그대로 나간다.
+1. Guessing attempts against the single static ``X-API-Key`` per instance (ADR 0006).
+2. Throwing invalid tokens to consume JWKS signature verification CPU — verification itself
+   is offline so no external calls, but repeated on public endpoints means raw CPU burn.
 
-같은 클라이언트가 윈도 안에서 한도를 넘게 실패하면 **인증을 시도하기 전에** 429로
-끊는다. 성공한 인증은 그 클라이언트의 실패 기록을 즉시 비운다 — 정상 사용자가
-토큰 만료로 몇 번 401을 받는 것은 카운터에 누적되지 않는다.
+When the same client exceeds the limit within a window, we cut it with 429 **before
+attempting authentication**. Successful authentication immediately clears that client's
+failure record — a normal user experiencing token expiry with a few 401s is not counted
+toward the limit.
 
-기본값은 정상 클라이언트가 닿을 수 없게 넉넉히 잡았다(60초에 60회 실패). 배포에서
-조정하거나 끄려면 ``KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT`` 를 쓴다(0 이하이면 비활성).
+Default is generous, unreachable by normal clients (60 failures within 60 seconds). To
+adjust or disable, use ``KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT`` (≤0 disables).
 
-**클라이언트 식별은 TCP peer 주소다.** ``X-Forwarded-For`` 는 위조 가능하므로 읽지
-않는다. 따라서 Builder가 클라이언트 IP를 보존하지 않는 리버스 프록시 뒤에 있으면 모든
-요청이 한 버킷을 공유한다 — 그런 배포에서는 스로틀을 프록시 계층에서 걸고 여기서는
-비활성화하는 편이 낫다(deploy.md).
+**Client identification is TCP peer address.** ``X-Forwarded-For`` is forgeable, so we
+don't read it. So if Builder is behind a reverse proxy that doesn't preserve client IP,
+all requests share one bucket — in such deployments, better to gate throttle at proxy
+layer and disable it here (see deploy.md).
 """
 
 from __future__ import annotations
@@ -34,13 +35,14 @@ _WINDOW_ENV = "KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS"
 
 _DEFAULT_LIMIT = 60
 _DEFAULT_WINDOW_SECONDS = 60.0
-# 추적 대상 클라이언트 수 상한 — 스로틀 자체가 메모리 증폭 벡터가 되지 않게 한다.
-# 서로 다른 IP로 실패를 뿌리는 공격자가 임의 크기의 dict를 만들지 못한다.
+# Upper bound on tracked client count — prevent the throttle itself from becoming a
+# memory amplification vector. An attacker spreading failures across arbitrary IPs
+# cannot create an unbounded dict.
 _DEFAULT_MAX_CLIENTS = 4096
 
 
 def _positive_int_env(name: str, default: int) -> int:
-    """env를 int로 읽되, 비거나 형식이 틀리면 기본값을 쓴다(기동 실패로 만들지 않는다)."""
+    """Read env as int; use default if empty or malformed (don't fail startup)."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return default
@@ -62,11 +64,11 @@ def _positive_float_env(name: str, default: float) -> float:
 
 
 class AuthFailureThrottle:
-    """클라이언트별 인증 실패를 슬라이딩 윈도로 세는 in-process 스로틀.
+    """In-process throttle counting authentication failures per-client in sliding window.
 
-    ``BuilderService`` 인스턴스마다 하나씩 두어 테스트 간 상태가 섞이지 않게 한다
-    (``LatencyRecorder`` 와 동일한 이유). 프로세스 로컬이라 다중 인스턴스 배포에서는
-    인스턴스별로 카운트된다 — 정확한 전역 한도가 아니라 남용 완화가 목적이다.
+    One instance per ``BuilderService`` to keep test state separate (same reason as
+    ``LatencyRecorder``). Process-local, so multi-instance deployments count per
+    instance — not exact global limit, but designed for abuse mitigation.
     """
 
     def __init__(
@@ -90,14 +92,15 @@ class AuthFailureThrottle:
 
     @property
     def enabled(self) -> bool:
-        """한도가 0 이하이면 비활성 — 모든 호출이 no-op이 된다."""
+        """If limit ≤0, disabled — all calls become no-op."""
         return self._limit > 0
 
     def retry_after(self, client_id: str | None) -> int | None:
-        """지금 이 클라이언트를 막아야 하면 남은 대기 시간(초, 올림)을 반환한다.
+        """If client should be blocked now, return remaining wait time (seconds, ceiling).
 
-        막을 필요가 없으면 ``None``. 클라이언트를 식별할 수 없으면(``client_id`` 가
-        ``None``) 스로틀하지 않는다 — 식별 불가를 이유로 정상 요청을 막지 않는다.
+        Return None if no blocking needed. If client cannot be identified (``client_id``
+        is ``None``), do not throttle — don't block legitimate requests due to
+        identification failure.
         """
         if not self.enabled or client_id is None:
             return None
@@ -112,12 +115,12 @@ class AuthFailureThrottle:
                 return None
             if len(timestamps) < self._limit:
                 return None
-            # 가장 오래된 실패가 윈도 밖으로 나가야 다시 여유가 생긴다.
+            # The oldest failure must exit the window before capacity frees up.
             remaining = timestamps[0] + self._window - now
             return max(1, math.ceil(remaining))
 
     def record_failure(self, client_id: str | None) -> None:
-        """인증 실패 1건을 기록한다(401 계열만 — 403/503은 호출부에서 제외한다)."""
+        """Record one auth failure (401 class only — 403/503 excluded by caller)."""
         if not self.enabled or client_id is None:
             return
         with self._lock:
@@ -131,7 +134,7 @@ class AuthFailureThrottle:
             timestamps.append(now)
 
     def record_success(self, client_id: str | None) -> None:
-        """인증 성공 — 해당 클라이언트의 실패 기록을 비운다."""
+        """Authentication success — clear failure record for this client."""
         if not self.enabled or client_id is None:
             return
         with self._lock:
@@ -143,7 +146,7 @@ class AuthFailureThrottle:
             timestamps.popleft()
 
     def _evict_if_needed(self, now: float) -> None:
-        """추적 대상이 상한에 닿으면 만료분을 먼저 버리고, 그래도 넘치면 가장 오래된 것을 버린다."""
+        """Evict expired entries first when limit hit; if still over, evict oldest."""
         if len(self._failures) < self._max_clients:
             return
         cutoff = now - self._window
