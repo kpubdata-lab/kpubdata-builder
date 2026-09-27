@@ -232,13 +232,13 @@ class TestInFlightRuns:
         assert "run-live" in ids
         assert {"run-a", "run-b"} <= ids
 
-    def test_a_running_job_has_no_finished_at(self) -> None:
-        """Passing updated_at through would read as "this run just finished"."""
+    def test_a_running_job_has_no_invented_timestamps(self) -> None:
+        """Registry snapshots contain neither a real start nor finish timestamp."""
         jobs = [_Job("run-live", "running", "2026-09-27T01:00:00Z", "2026-09-27T01:00:30Z", None)]
         response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
         live = next(r for r in response.body["runs"] if r["run_id"] == "run-live")
         assert live["finished_at"] is None
-        assert live["started_at"] == "2026-09-27T01:00:00Z"
+        assert live["started_at"] is None
 
     def test_a_queued_job_has_no_started_at(self) -> None:
         """created_at is when the request was accepted, not when the run began."""
@@ -252,6 +252,7 @@ class TestInFlightRuns:
         jobs = [_Job("run-done", "failed", "2026-09-27T01:00:00Z", "2026-09-27T01:02:00Z", None)]
         response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN)
         done = next(r for r in response.body["runs"] if r["run_id"] == "run-done")
+        assert done["started_at"] is None
         assert done["finished_at"] == "2026-09-27T01:02:00Z"
 
     def test_the_index_entry_wins_for_the_same_run(self) -> None:
@@ -275,6 +276,31 @@ class TestInFlightRuns:
         jobs = [_Job(f"j{i}", "queued", f"2026-09-27T02:{i:02d}:00Z", "x", None) for i in range(10)]
         response = _call(_service(jobs=jobs), "/admin/runs", _ADMIN, "limit=3")
         assert response.body["count"] == 3
+
+    def test_index_rows_remain_ordered_by_finished_at(self) -> None:
+        entries = [
+            _Entry(
+                "finished-new",
+                "succeeded",
+                "2026-09-27T01:00:00Z",
+                "2026-09-27T03:00:00Z",
+                None,
+                None,
+            ),
+            _Entry(
+                "started-new",
+                "succeeded",
+                "2026-09-27T02:00:00Z",
+                "2026-09-27T02:30:00Z",
+                None,
+                None,
+            ),
+        ]
+        response = _call(_service(entries), "/admin/runs", _ADMIN, "limit=2")
+        assert [run["run_id"] for run in response.body["runs"]] == [
+            "finished-new",
+            "started-new",
+        ]
 
 
 class TestIndexFailure:

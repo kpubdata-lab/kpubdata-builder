@@ -40,10 +40,6 @@ _MAX_LIMIT = 200
 #: 비공개라 여기서 다시 적는다.
 _TERMINAL_JOB_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
-#: 아직 실행이 시작되지 않은 job 상태. 상태 어휘를 한곳에 모아 둔다.
-_QUEUED_JOB_STATUS = "queued"
-
-
 def _forbidden(principal: Principal, action: str) -> ServiceResponse:
     """관리자가 아닌 요청. **거부도 기록한다** — 누가 관리 경로를 두드렸는지가
     허용된 요청만큼 중요하다."""
@@ -78,11 +74,9 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         record_admin_action(principal, "admin.runs.list", outcome="index_unavailable")
         return ServiceResponse(503, {"error": "build index unavailable"})
 
-    # run_id -> (정렬 키, 응답 행). 정렬 키를 응답과 따로 든다 — queued job 은
-    # started_at 이 비어 있는데(아직 시작하지 않았다) 그 빈 값으로 정렬하면
-    # **방금 들어온 job 이 목록 맨 뒤로 밀려 limit 에 먼저 잘린다.** 보이게
-    # 하려고 넣은 항목이 정렬 때문에 사라지는 셈이다. 접수 시각은 순서를
-    # 정하는 데만 쓰고 응답에는 넣지 않는다.
+    # run_id -> (정렬 키, 응답 행). registry job 은 실제 시작 시각이 없으므로
+    # 접수 시각을 순서에만 쓰고 응답에는 넣지 않는다. 완료된 index row 는
+    # BuildIndex 의 계약과 같이 완료 시각으로 정렬한다.
     rows: dict[str, tuple[str, dict[str, JsonValue]]] = {}
     # 진행 중인 run 을 먼저 넣는다. BuildIndex 는 manifest 가 생긴 뒤에만
     # 채워지므로 queued/running job 은 인덱스에 아예 없다 — 그런데 멈춘 run 이
@@ -93,23 +87,19 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         # 종결된 job 에만 의미가 있으므로 진행 중이면 비워 둔다 — updated_at 을
         # 그대로 넣으면 "아직 도는 run 이 방금 끝났다" 로 읽힌다.
         finished = job.updated_at if job.status in _TERMINAL_JOB_STATUSES else None
-        # created_at 은 요청을 **접수한** 시각이다. 아직 실행 대기 중이라면
-        # 시작 시각이 아니므로 비워 둔다 — 그대로 넣으면 아직 돌지도 않은 job 이
-        # 이미 시작한 것으로 읽힌다.
-        started = None if job.status == _QUEUED_JOB_STATUS else job.created_at
         rows[job.run_id] = (
             job.created_at,
             {
                 "run_id": job.run_id,
                 "status": job.status,
-                "started_at": started,
+                "started_at": None,
                 "finished_at": finished,
                 "owner_id": job.owner_id,
             },
         )
     for entry in entries:
         rows[entry.run_id] = (
-            entry.started_at or "",
+            entry.finished_at or "",
             {
                 "run_id": entry.run_id,
                 "status": entry.status,

@@ -2440,14 +2440,11 @@ components:
               status:
                 type: string
               started_at:
-                type: string
-                nullable: true
+                type: [string, "null"]
               finished_at:
-                type: string
-                nullable: true
+                type: [string, "null"]
               owner_id:
-                type: string
-                nullable: true
+                type: [string, "null"]
                 description: 되돌릴 수 없는 소유자 해시. 사용자 신원을 담지 않는다.
     AdminConfigResponse:
       type: object
