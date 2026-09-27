@@ -26,11 +26,10 @@ pytestmark = pytest.mark.skipif(not _HAS_VERIFY, reason="verify module not avail
 class TestVerifyWithRealSpecs:
     """Verify engine integration with real kpubdata spec definitions.
 
-    ``network`` 로 표시된 두 테스트는 실제 data.go.kr 을 호출한다. 기본 실행에서
-    제외한다 — 제3자 서비스가 응답하지 않거나 러너 위치에 따라 다른 상태 코드를
-    주면, 우리 코드와 무관하게 CI 가 빨개진다. 어떤 상태 코드를 reachable 로 볼지
-    같은 규칙은 ``tests/unit/test_verify_runner.py`` 가 fake 로 남김없이 고정한다.
-    실제 호출이 필요하면 ``pytest -m network`` 로 실행한다.
+    Tests marked with ``network`` make real data.go.kr calls. Excluded from default runs —
+    third-party service unresponsiveness or varying status codes by runner location cause
+    CI to fail independent of our code. Which status codes count as reachable is fixed by
+    ``tests/unit/test_verify_runner.py`` via fake. Run with ``pytest -m network`` if needed.
     """
 
     def test_discover_specs_returns_nonempty(self) -> None:
@@ -47,25 +46,25 @@ class TestVerifyWithRealSpecs:
 
     @pytest.mark.network
     def test_check_endpoint_returns_a_verdict_for_a_real_spec(self) -> None:
-        """실제 spec으로 endpoint 검사가 판정을 낸다. (network)
+        """Real spec endpoint check returns a verdict. (network)
 
-        살아있는 제3자 endpoint의 응답을 단언하지 않는다 — data.go.kr이 러너 위치나
-        시점에 따라 다른 상태 코드를 주면 이 테스트가 코드와 무관하게 깨진다. 어떤
-        상태 코드를 reachable로 볼지는 fake로 고정한 단위 테스트
-        (``tests/unit/test_verify_runner.py``)가 남김없이 다룬다. 여기서는 실제
-        spec을 읽어 검사가 판정과 근거를 낸다는 것만 확인한다.
+        Do not assert on third-party endpoint responses — data.go.kr may give different
+        status codes by runner location/time, breaking this independent of our code.
+        What status codes count as reachable is fully covered by unit test
+        (``tests/unit/test_verify_runner.py``) with fake. Here we only verify that reading
+        real spec produces check verdict and rationale.
         """
         spec = find_spec("datago.apt_trade")
         assert spec is not None
         result = _check_endpoint(spec)
         assert result.name == CheckName.ENDPOINT
         assert isinstance(result.passed, bool)
-        # 실패했다면 왜인지 말해야 한다 — 통과한 경우에는 latency가 기록된다.
+        # On failure, must explain why — passed case records latency.
         assert result.passed or result.detail
 
     @pytest.mark.network
     def test_verify_without_key_returns_non_healthy(self) -> None:
-        """API 키 없이 verify하면 HEALTHY가 아닌 상태가 된다."""
+        """Verify without API key results in non-HEALTHY status."""
         spec = find_spec("datago.apt_trade")
         assert spec is not None
         result = verify_dataset(spec, api_key="INVALID_TEST_KEY_12345", page_size=1)
