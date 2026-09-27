@@ -1,4 +1,4 @@
-"""빌드 매니페스트 모델과 파일 기록 동작을 검증한다."""
+"""Verify build manifest model and file recording behavior."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from kpubdata_builder.manifest import (
 
 
 def test_build_manifest_instantiation() -> None:
-    """필수 필드만으로 BuildManifest를 생성할 수 있어야 한다."""
+    """Must be able to create BuildManifest with required fields only."""
     started_at = datetime.now(tz=timezone.utc)
     finished_at = datetime.now(tz=timezone.utc)
 
@@ -55,8 +55,8 @@ def test_manifest_writer_wraps_io_failures(tmp_path: Path, monkeypatch: pytest.M
     )
     output_path = tmp_path / "manifest.json"
 
-    # 매니페스트 쓰기는 이제 temp 파일 + os.replace로 원자적이다 (#204). atomic 교체
-    # 단계의 OSError가 ManifestError로 감싸지는지 검증한다.
+    # Manifest write is now atomic via temp file + os.replace (#204). atomic replacement
+    # step's OSError is wrapped as ManifestError verification.
     def raise_io_error(src: object, dst: object) -> None:
         del src, dst
         raise OSError("disk full")
@@ -66,7 +66,7 @@ def test_manifest_writer_wraps_io_failures(tmp_path: Path, monkeypatch: pytest.M
     with pytest.raises(ManifestError):
         manifest_writer(manifest, output_path)
 
-    # 실패 시 임시 파일을 남기지 않는다.
+    # Temporary files not left on failure.
     assert list(tmp_path.glob(".manifest_*.tmp")) == []
 
 
@@ -252,10 +252,10 @@ def test_manifest_writer_emits_existing_created_by_as_additive_field(tmp_path: P
 
 
 def test_manifest_writer_emits_owner_id_as_additive_field(tmp_path: Path) -> None:
-    """owner_id는 created_by와 나란히 기록되는 additive 필드다 (#505).
+    """owner_id is additive field recorded alongside created_by (#505).
 
-    MANIFEST_SCHEMA_VERSION은 바뀌지 않는다 — 형식이 호환 불가하게 바뀐 것이
-    아니라(#211) 기존 소비자가 몰라도 무해한 필드가 추가됐을 뿐이다.
+    MANIFEST_SCHEMA_VERSION doesn't change — format didn't change incompatibly;
+    only a harmless field added that existing consumers can ignore (#211).
     """
     manifest = BuildManifest(
         build_id="build-owner-id",
@@ -277,7 +277,7 @@ def test_manifest_writer_emits_owner_id_as_additive_field(tmp_path: Path) -> Non
 def test_manifest_writer_owner_id_defaults_to_null_for_legacy_style_manifest(
     tmp_path: Path,
 ) -> None:
-    """owner_id를 지정하지 않으면 null로 기록된다 — legacy(#505 이전) 호출부와 동일한 shape."""
+    """owner_id recorded as null if not specified — same shape as legacy (#505 pre) callers."""
     manifest = BuildManifest(
         build_id="build-no-owner-id",
         started_at=datetime(2026, 5, 26, 1, 0, 0, tzinfo=timezone.utc),
@@ -294,7 +294,7 @@ def test_manifest_writer_owner_id_defaults_to_null_for_legacy_style_manifest(
 
 def test_capture_build_environment_reports_python_and_builder_version() -> None:
     env = capture_build_environment()
-    # builder는 설치되어 있으므로 실제 버전을, kpubdata도 의존성이므로 버전 문자열을 가진다.
+    # builder is installed so has actual version; kpubdata is dependency so has version string.
     assert env.python_version[0].isdigit()
     assert env.builder_version != ""
     assert env.kpubdata_version != ""
@@ -356,9 +356,11 @@ def test_compute_inputs_fingerprint_is_order_independent_and_reproducible() -> N
 
     assert fp_ab is not None
     assert fp_ab.startswith("sha256:")
-    assert fp_ab == fp_ba  # 소스 순서와 무관
+    assert fp_ab == fp_ba  # regardless of source order
     assert compute_inputs_fingerprint([]) is None
-    assert compute_inputs_fingerprint([p1]) != fp_ab  # 입력 집합이 다르면 지문도 다름
+    assert (
+        compute_inputs_fingerprint([p1]) != fp_ab
+    )  # different input set means different fingerprint
 
 
 # --- serialization contract tests (#7) ---

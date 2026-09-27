@@ -1,4 +1,4 @@
-"""기본 exporter 구현의 오류 래핑과 결과 메타데이터를 검증한다."""
+"""Verify error wrapping and result metadata of base exporter implementation."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def test_jsonl_exporter_raises_export_error_on_io_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # 파일 쓰기 실패가 ExportError로 일관되게 래핑되는지 확인한다.
+    # Verify file write failures are consistently wrapped as ExportError.
     artifact = ArtifactDataset(records=({"id": "1"},), provenance=("datago.air_quality",))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
@@ -52,7 +52,7 @@ def test_markdown_exporter_raises_export_error_on_io_failure(
 
 @pytest.mark.parametrize("evil", ["../escape.jsonl", "../../tmp/evil.jsonl", "/tmp/abs.jsonl"])
 def test_exporter_rejects_output_path_traversal(tmp_path: Path, evil: str) -> None:
-    # 악의적 output_path가 build 워크스페이스 밖으로 파일을 쓰지 못하게 거부 (#210).
+    # Reject malicious output_path from writing files outside build workspace (#210).
     artifact = ArtifactDataset(records=({"id": "1"},), provenance=("datago.air_quality",))
     target = ExportTarget(kind="jsonl", output_path=evil)
 
@@ -61,7 +61,7 @@ def test_exporter_rejects_output_path_traversal(tmp_path: Path, evil: str) -> No
 
 
 def test_markdown_exporter_returns_export_metadata(tmp_path: Path) -> None:
-    # Markdown exporter가 실제 파일 경로와 메타데이터를 반환하는지 검증한다.
+    # Verify Markdown exporter returns actual file path and metadata.
     artifact = ArtifactDataset(records=({"id": "1"},), provenance=("datago.air_quality",))
     target = ExportTarget(kind="markdown", output_path="out/README.md")
 
@@ -85,7 +85,7 @@ def test_exporter_leaves_no_temp_file_on_failure(
     exporter_cls: str,
     output_path: str,
 ) -> None:
-    # 쓰기 실패 시 임시 파일(.tmp)이 남지 않아야 한다 (#220).
+    # Temporary files (.tmp) must not remain on write failure (#220).
     from kpubdata_builder.exporters import JsonlExporter, MarkdownExporter  # noqa: F401
 
     cls = JsonlExporter if exporter_cls == "JsonlExporter" else MarkdownExporter
@@ -101,7 +101,7 @@ def test_exporter_leaves_no_temp_file_on_failure(
     with pytest.raises(ExportError):
         cls().export(artifact, target, tmp_path)
 
-    # 임시 파일이 남아 있으면 안 된다.
+    # Temporary files must not remain.
     out_dir = tmp_path / "out"
     if out_dir.exists():
         leftovers = [p.name for p in out_dir.iterdir() if p.suffix == ".tmp"]

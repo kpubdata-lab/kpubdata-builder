@@ -1,7 +1,7 @@
-"""OIDC Bearer 인증 테스트 (#385, B3).
+"""OIDC Bearer authentication test (#385, B3).
 
-로컬 RSA 키쌍으로 서명한 ID token을 검증한다 — 외부 IdP에 의존하지 않는다.
-JWKS 조회는 _get_jwks_client를 mock해 네트워크 없이 검증 로직만 테스트한다.
+Verify ID token signed with local RSA keypair — no external IdP dependency.
+JWKS lookup is mocked to test verification logic without network.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _AUDIENCE = "builder-test-client"
 
 @pytest.fixture(autouse=True)
 def _clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """각 테스트 전에 인증 관련 환경변수를 초기화한다 — dev-mode 등 누출 차단."""
+    """Initialize auth-related env vars before each test — prevent dev-mode leaks."""
     for key in (
         "KPUBDATA_BUILDER_DEV_MODE",
         "KPUBDATA_BUILDER_API_KEY",
@@ -45,14 +45,14 @@ def _clean_auth_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _FakeSigningKey:
-    """PyJWKClient.get_signing_key_from_jwt의 반환을 흉내낸다."""
+    """Mock PyJWKClient.get_signing_key_from_jwt return."""
 
     def __init__(self, key: object) -> None:
         self.key = key
 
 
 class _FakeJWKSClient:
-    """JWKS 조회 mock — 네트워크 없이 public key를 반환한다."""
+    """JWKS lookup mock — return public key without network."""
 
     def __init__(self, public_key: object) -> None:
         self._pubkey = public_key
@@ -62,14 +62,14 @@ class _FakeJWKSClient:
 
 
 class _FailingJWKSClient:
-    """JWKS 조회 실패를 시뮬레이션 (503 검증용)."""
+    """Simulate JWKS lookup failure (for 503 verification)."""
 
     def get_signing_key_from_jwt(self, token: str) -> _FakeSigningKey:
         raise ConnectionError("jwks endpoint unreachable")
 
 
 class _ParsingJWKSClient(_FakeJWKSClient):
-    """PyJWKClient처럼 키 선택 전에 JWT header를 파싱한다."""
+    """Parse JWT header before key selection, like PyJWKClient."""
 
     def get_signing_key_from_jwt(self, token: str) -> _FakeSigningKey:
         jwt.get_unverified_header(token)
@@ -89,7 +89,7 @@ def rsa_keypair() -> tuple[bytes, object]:
 
 @pytest.fixture()
 def oidc_env(monkeypatch: pytest.MonkeyPatch, rsa_keypair: tuple[bytes, object]) -> bytes:
-    """OIDC 활성 + JWKS mock. 토큰 서명용 private PEM을 반환한다."""
+    """OIDC active + JWKS mock. Return private PEM for token signing."""
     private_pem, public_key = rsa_keypair
     monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
     monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
@@ -121,7 +121,7 @@ class TestValidBearerToken:
         result = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(result, Principal)
         assert result.kind == "oidc"
-        # 식별자는 sub 앞 8자
+        # Identifier is first 8 chars of sub
         assert result.identifier == "user-123"
 
     def test_case_insensitive_bearer_prefix(self, oidc_env: bytes) -> None:
@@ -132,10 +132,10 @@ class TestValidBearerToken:
 
 
 class TestAdminRole:
-    """OIDC principal 의 관리자 역할 (#679).
+    """OIDC principal admin role (#679).
 
-    예전에는 ``kind in ("dev", "service")`` 가 곧 관리자였다 — 즉 **관리자가
-    되는 유일한 방법이 OIDC 로 로그인하지 않는 것**이었다.
+    Previously ``kind in ("dev", "service")`` meant admin — i.e., the **only way
+    to become admin was NOT to log in with OIDC**.
     """
 
     def test_oidc_principal_is_not_admin_by_default(self, oidc_env: bytes) -> None:
@@ -191,9 +191,9 @@ class TestAdminRole:
     def test_match_uses_the_full_subject_not_the_truncated_identifier(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``identifier`` 는 sub 앞 8자다. 그것으로 비교하면 접두사가 같은 다른
-        계정이 관리자가 된다 — 이 토큰의 sub 는 ``user-1234567890`` 이고
-        identifier 는 ``user-123`` 이다."""
+        """``identifier`` is first 8 chars of sub. Comparing by it means different
+        accounts with same prefix become admin — this token's sub is ``user-1234567890`` and
+        identifier is ``user-123``."""
         monkeypatch.setenv("KPUBDATA_BUILDER_ADMIN_SUBJECTS", "user-123")
         result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
         assert isinstance(result, Principal)
@@ -252,7 +252,7 @@ class TestInvalidTokens:
         assert result == AuthError(reason="invalid token", status_code=401)
 
     def test_invalid_signature(self, oidc_env: bytes) -> None:
-        # 다른 키로 서명 → fixture의 public key로 검증 실패
+        # signed with different key → verification fails with fixture's public key
         other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         other_pem = other.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -316,7 +316,7 @@ class TestFallbackToApiKey:
     def test_oidc_disabled_ignores_bearer(
         self, monkeypatch: pytest.MonkeyPatch, rsa_keypair: tuple[bytes, object]
     ) -> None:
-        # OIDC_ISSUER 미설정 → Bearer 무시, API key 경로로
+        # OIDC_ISSUER not set → ignore Bearer, API key path
         monkeypatch.delenv("OIDC_ISSUER", raising=False)
         monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret")
         result = authenticate(api_key="secret", bearer_token="Bearer some.jwt.token")
@@ -335,7 +335,7 @@ class TestFallbackToApiKey:
 class TestValidateOidcConfig:
     def test_no_op_when_oidc_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OIDC_ISSUER", raising=False)
-        validate_oidc_config()  # 예외 없음
+        validate_oidc_config()  # no exception
 
     def test_rejects_when_audience_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
@@ -346,7 +346,7 @@ class TestValidateOidcConfig:
     def test_accepts_no_allowlist_for_valid_oidc_configuration(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 공개 가입이 기본 정책이다 — 허용 목록이 없어도 기동한다.
+        # Public signup is default policy — starts even without allowlist.
         monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
         validate_oidc_config()
@@ -354,7 +354,7 @@ class TestValidateOidcConfig:
     def test_require_allowlist_switch_rejects_empty_allowlist(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 제한 배포는 이 스위치로 허용 목록 누락을 기동 실패로 잡는다.
+        # Restricted deploy uses this switch to catch missing allowlist as startup failure.
         monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
         monkeypatch.setenv("OIDC_LEGACY_REQUIRE_ALLOWLIST", "true")
@@ -372,7 +372,7 @@ class TestValidateOidcConfig:
 
 
 class TestValidateDevMode:
-    """dev-mode 기동 가드 — 인증을 통째로 끄는 플래그가 배포로 새지 않게 한다."""
+    """dev-mode startup guard — prevent auth-off flag from leaking into deploy."""
 
     def test_no_op_when_dev_mode_disabled(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -402,7 +402,7 @@ class TestValidateDevMode:
     def test_refuses_to_start_when_oidc_is_also_configured(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 사용자 인증을 구성해두고 인증을 우회하는 조합 — 배포에 dev 플래그가 남은 전형적 사고.
+        # Configured auth + auth bypass combo — classic incident of forgotten dev flag in deploy.
         monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
         monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
@@ -411,7 +411,7 @@ class TestValidateDevMode:
 
 
 class TestAllowlistGate:
-    """허용 목록 게이트 (#386) — 설정된 배포에서만 적용되는 선택적 2차 인가."""
+    """Allowlist gate (#386) — optional second authorization applied only in configured deploy."""
 
     def test_hd_allowlist_match(self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OIDC_ALLOWED_HD", "example.com")
@@ -461,7 +461,7 @@ class TestAllowlistGate:
 
 
 class _FakeDiscoveryResp:
-    """urllib urlopen 반환 흉내 (context manager + read)."""
+    """Mock urllib urlopen return (context manager + read)."""
 
     def __init__(self, body: bytes) -> None:
         self._body = body
@@ -477,10 +477,10 @@ class _FakeDiscoveryResp:
 
 
 class TestJwksDiscovery:
-    """OIDC discovery (RFC 8414) 기반 JWKS URL 해석 (#435).
+    """OIDC discovery (RFC 8414) based JWKS URL resolution (#435).
 
-    기존 ``issuer + /.well-known/jwks.json`` 추정이 Google에서 404 → 503 실패를
-    일으킨 문제 수정. discovery 문서의 jwks_uri를 읽고 TTL 캐시한다.
+    Old assumption ``issuer + /.well-known/jwks.json`` failed 404 → 503 on Google;
+    fixed by reading jwks_uri from discovery doc and TTL caching.
     """
 
     def _clear_cache(self) -> None:
@@ -489,7 +489,7 @@ class TestJwksDiscovery:
         auth_module._discovery_cache.clear()
 
     def test_discover_reads_jwks_uri(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """discovery 문서의 jwks_uri 필드를 반환한다 (Google 경로)."""
+        """Return jwks_uri field from discovery doc (Google path)."""
         import urllib.request
 
         import kpubdata_builder.service.auth as auth_module
@@ -511,14 +511,14 @@ class TestJwksDiscovery:
     def test_oidc_jwks_url_explicit_bypasses_discovery(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """OIDC_JWKS_URL 명시 시 discovery를 건너뛴다 (override)."""
+        """When OIDC_JWKS_URL explicit, skip discovery (override)."""
         import kpubdata_builder.service.auth as auth_module
 
         monkeypatch.setenv("OIDC_JWKS_URL", "http://explicit/jwks.json")
         assert auth_module._oidc_jwks_url() == "http://explicit/jwks.json"
 
     def test_discover_caches_within_ttl(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """동일 issuer는 TTL 내 재조회 시 urlopen을 한 번만 부른다."""
+        """Same issuer calls urlopen only once within TTL on re-lookup."""
         import urllib.request
 
         import kpubdata_builder.service.auth as auth_module
@@ -538,7 +538,7 @@ class TestJwksDiscovery:
         assert call_count[0] == 1, "캐시 hit면 urlopen을 다시 부르지 않는다"
 
     def test_discover_raises_when_jwks_uri_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """discovery 문서에 jwks_uri 필드가 없으면 RuntimeError."""
+        """RuntimeError if discovery doc lacks jwks_uri field."""
         import urllib.request
 
         import kpubdata_builder.service.auth as auth_module
@@ -556,7 +556,7 @@ class TestJwksDiscovery:
     def test_oidc_jwks_url_raises_when_no_issuer_no_explicit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """OIDC_ISSUER 미설정 + OIDC_JWKS_URL 미설정 → RuntimeError (방어)."""
+        """OIDC_ISSUER not set + OIDC_JWKS_URL not set → RuntimeError (defensive)."""
         import kpubdata_builder.service.auth as auth_module
 
         monkeypatch.delenv("OIDC_ISSUER", raising=False)
@@ -566,11 +566,11 @@ class TestJwksDiscovery:
 
 
 def test_pyjwt_supports_issuer_list() -> None:
-    """pyjwt >=2.9만 issuer=list 지원 (#434). auth.py:_verify_bearer_token 참조.
+    """Only pyjwt >=2.9 supports issuer=list (#434). See auth.py:_verify_bearer_token.
 
-    auth.py 가 ``jwt.decode(..., issuer=_oidc_issuers())`` 로 list를 넘기는데,
-    2.8.x 는 ``payload["iss"] != issuer`` 단순 비교라 모든 토큰이 거부된다.
-    하한을 ``>=2.9`` 로 올린 것(#434)을 설치 환경에서 재확인한다 (#431 교집합 패턴).
+    auth.py passes list to ``jwt.decode(..., issuer=_oidc_issuers())``, but
+    2.8.x uses simple ``payload["iss"] != issuer`` comparison rejecting all tokens.
+    Verify floor raised to ``>=2.9`` (#434) in installed environment (#431 intersection pattern).
     """
     import jwt
 
@@ -582,11 +582,11 @@ def test_pyjwt_supports_issuer_list() -> None:
 
 
 class TestStableOwnerId:
-    """canonical owner_id 계산 (#505).
+    """Canonical owner_id calculation (#505).
 
-    display identity(identifier/label)와 persistent ownership identity(owner_id)를
-    분리하고, OIDC subject 트렁케이션/concatenation collision이 owner_id에는
-    영향을 주지 않음을 검증한다.
+    Separate display identity (identifier/label) from persistent ownership identity (owner_id),
+    and verify OIDC subject truncation/concatenation collision doesn't affect owner_id.
+
     """
 
     def test_same_issuer_same_subject_same_owner_id(self, oidc_env: bytes) -> None:
@@ -601,7 +601,7 @@ class TestStableOwnerId:
     def test_different_issuer_same_subject_different_owner_id(
         self, monkeypatch: pytest.MonkeyPatch, rsa_keypair: tuple[bytes, object]
     ) -> None:
-        """동일 subject라도 issuer가 다르면 owner_id는 달라야 한다 (#505 완료 조건)."""
+        """Same subject but different issuer must have different owner_id (#505)."""
         private_pem, public_key = rsa_keypair
         other_issuer = "https://other-issuer.example.com"
         monkeypatch.setenv("OIDC_ISSUER", f"{_ISSUER},{other_issuer}")
@@ -617,9 +617,9 @@ class TestStableOwnerId:
         rb = authenticate(bearer_token=f"Bearer {token_b}")
         assert isinstance(ra, Principal)
         assert isinstance(rb, Principal)
-        # 동일 subject → 표시용 identifier(트렁케이션)는 같지만
+        # same subject → display identifier (truncation) is same but
         assert ra.identifier == rb.identifier
-        # owner_id는 issuer가 다르므로 반드시 달라야 한다.
+        # owner_id must differ because issuer differs.
         assert ra.owner_id != rb.owner_id
 
     def test_same_issuer_different_subject_different_owner_id(self, oidc_env: bytes) -> None:
@@ -634,9 +634,8 @@ class TestStableOwnerId:
     def test_concatenation_collision_prevented(
         self, monkeypatch: pytest.MonkeyPatch, rsa_keypair: tuple[bytes, object]
     ) -> None:
-        """issuer="ab"+subject="c" 와 issuer="a"+subject="bc" 는 구분자 없이
-        이어붙이면 같은 문자열이 되지만, ``\\0`` 구분자 덕분에 owner_id가
-        달라야 한다 (#505: prefix/concatenation collision 불가)."""
+        """issuer="ab"+subject="c" and issuer="a"+subject="bc" concatenate to same string
+        without delimiter, but ``\0`` separator prevents collision (#505)."""
         private_pem, public_key = rsa_keypair
         monkeypatch.setenv("OIDC_ISSUER", "ab,a")
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
@@ -654,21 +653,21 @@ class TestStableOwnerId:
         assert r1.owner_id != r2.owner_id
 
     def test_owner_id_does_not_contain_raw_subject_or_email(self, oidc_env: bytes) -> None:
-        """owner_id/로그에 raw claim을 직접 노출하지 않는다 (#505)."""
+        """Don't expose raw claims directly in owner_id/logs (#505)."""
         token = _make_token(oidc_env, sub="super-secret-subject-value", email="victim@example.com")
         principal = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(principal, Principal)
         assert principal.owner_id is not None
         assert "super-secret-subject-value" not in principal.owner_id
         assert "victim@example.com" not in principal.owner_id
-        # 표시용 identifier는 sub 앞 8자만 담아 로그 노출을 최소화한다 (기존 동작 불변).
+        # Display identifier: first 8 chars of sub to minimize log exposure (behavior unchanged).
         assert principal.identifier == "super-se"
 
     def test_display_identifier_change_does_not_affect_owner_id_matching(
         self, oidc_env: bytes
     ) -> None:
-        """display 라벨(identifier)이 바뀌어도(예: 향후 프로필 이름 갱신) 동일
-        owner_id를 가진 principal은 여전히 같은 owner로 판정되어야 한다 (#505)."""
+        """Even if display label (identifier) changes (e.g., future profile name update), principal
+        with same owner_id must still be judged as same owner (#505)."""
         token = _make_token(oidc_env)
         principal = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(principal, Principal)
@@ -678,8 +677,8 @@ class TestStableOwnerId:
         assert principal_owns(created_by=None, owner_id=principal.owner_id, principal=renamed)
 
     def test_empty_subject_rejected(self, oidc_env: bytes) -> None:
-        """빈 sub claim은 거부한다 — 여러 토큰이 같은 (issuer, "") owner_id로
-        수렴해 ownership이 섞이는 것을 막는다 (#505, fail-closed)."""
+        """Empty sub claim rejected — multiple tokens converge to same (issuer, "") owner_id,
+        mixing ownership (#505, fail-closed)."""
         token = _make_token(oidc_env, sub="")
         result = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(result, AuthError)
@@ -704,24 +703,24 @@ class TestStableOwnerId:
         assert r1.owner_id.startswith("dev:")
 
     def test_cross_kind_owner_id_never_collides(self) -> None:
-        """dev/service/oidc owner_id는 동일 material이어도 kind로 domain
-        separation되어 절대 같아지지 않는다 (#505)."""
+        """dev/service/oidc owner_ids differ by kind even with same material
+        separation ensures they never coincide (#505)."""
         dev_id = compute_owner_id("dev", "local")
         service_id = compute_owner_id("service", "local")
         oidc_id = compute_owner_id("oidc", "local")
         assert len({dev_id, service_id, oidc_id}) == 3
 
     def test_owner_id_field_boundary_is_unambiguous(self) -> None:
-        """필드에 "\\0"이 포함돼도 결합이 모호해지지 않는다 (#505 review).
+        """Combination is unambiguous even with "\0" in field (#505 review).
 
-        구분자 기반 결합이라면 (issuer="a", sub="b\\0c")와 (issuer="a\\0b",
-        sub="c")가 같은 material로 수렴해 owner_id가 같아진다 — length-prefix
-        framing은 필드 경계를 고정하므로 충돌하지 않는다."""
+        With separator-based combination, (issuer="a", sub="b\0c") and (issuer="a\0b",
+        sub="c") converge to same material making owner_id identical — length-prefix
+        framing fixes field boundaries so no collision occurs."""
         assert compute_owner_id("oidc", "a", "b\0c") != compute_owner_id("oidc", "a\0b", "c")
 
 
 class TestPrincipalOwns:
-    """principal_owns() — 모든 ownership consumer가 공유하는 단일 canonical 판정 (#505)."""
+    """principal_owns() — single canonical judgment shared by all ownership consumers (#505)."""
 
     def test_matches_by_owner_id_when_both_present(self) -> None:
         principal = Principal(kind="oidc", identifier="a", owner_id="oidc:deadbeef")
@@ -730,22 +729,22 @@ class TestPrincipalOwns:
         )
 
     def test_mismatched_owner_id_denied_even_if_label_matches(self) -> None:
-        """label이 같아도(트렁케이션 충돌 등) owner_id가 다르면 거부한다."""
+        """Even if labels match (truncation collision etc), reject if owner_id differs."""
         principal = Principal(kind="oidc", identifier="a", owner_id="oidc:deadbeef")
         assert not principal_owns(created_by="oidc:a", owner_id="oidc:other", principal=principal)
 
     def test_legacy_record_falls_back_to_label(self) -> None:
-        """owner_id가 없는(#505 이전) 레코드는 created_by/label로 폴백한다."""
+        """Records without owner_id (#505 pre) fall back to created_by/label."""
         principal = Principal(kind="oidc", identifier="a", owner_id="oidc:deadbeef")
         assert principal_owns(created_by="oidc:a", owner_id=None, principal=principal)
 
     def test_legacy_principal_falls_back_to_label(self) -> None:
-        """owner_id가 없는 principal(예: 구성 경로)도 label 폴백으로 동작한다."""
+        """Principals without owner_id (e.g., config path) also work via label fallback."""
         principal = Principal(kind="oidc", identifier="a")
         assert principal_owns(created_by="oidc:a", owner_id="oidc:deadbeef", principal=principal)
 
     def test_ambiguous_record_with_neither_field_fails_closed(self) -> None:
-        """owner_id도 created_by도 없는 레코드는 "누구나 접근 가능"이 아니라 거부한다."""
+        """Records with neither owner_id nor created_by are rejected, not publicly accessible."""
         principal = Principal(kind="oidc", identifier="a", owner_id="oidc:deadbeef")
         assert not principal_owns(created_by=None, owner_id=None, principal=principal)
 

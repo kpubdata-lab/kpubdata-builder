@@ -1,9 +1,9 @@
-"""``param_grid`` 선언과 전개 (#613).
+"""``param_grid`` declaration and expansion (#613).
 
-한 source 가 단 한 번의 호출 조합만 표현할 수 있어서 논문 실험의 3개 dataset 중
-어느 것도 BuildSpec 만으로는 수집할 수 없었다. source 1,500 개로 쓰는 것은 우회가
-아니다 — source 마다 별도 Silver/Gold 산출물이 되어 하나의 dataset 으로 합쳐지지
-않는다.
+One source can express only one call combination, so of three paper experiment datasets,
+none could be collected with BuildSpec alone. Writing 1,500 sources isn't
+workaround — each source becomes separate Silver/Gold output, won't merge into one
+dataset.
 """
 
 from __future__ import annotations
@@ -37,10 +37,10 @@ def _spec(source: SourceRef) -> BuildSpec:
 
 
 class TestExpansionOrderIsAContract:
-    """전개 순서가 바뀌면 concat 된 Bronze 바이트가 바뀐다.
+    """If expansion order changes, concatenated Bronze bytes change.
 
-    ``artifact_id`` 가 따라 바뀌고, R1 의 "같은 스냅샷·계약·빌더로 재빌드하면 같은
-    결과" 주장이 깨진다. 그래서 순서는 구현 세부가 아니라 계약이다.
+    artifact_id changes with it, and R1's claim "same snapshot·contract·builder rebuilds to
+    same result" breaks. So order is contract, not implementation detail.
     """
 
     GRID = {"DEAL_YMD": ("202001", "202002"), "LAWD_CD": ("11110", "11140")}
@@ -54,14 +54,14 @@ class TestExpansionOrderIsAContract:
         )
 
     def test_declaration_key_order_does_not_change_the_result(self) -> None:
-        # canonical_spec_mapping() 이 스냅샷을 쓸 때 키를 정렬하므로, 선언 순서에
-        # 기대면 같은 digest 의 spec 이 다른 순서로 호출하게 된다.
+        # canonical_spec_mapping() sorts keys when writing snapshot, so declaration order
+        # would make same digest spec call in different order.
         reversed_declaration = {"LAWD_CD": ("11110", "11140"), "DEAL_YMD": ("202001", "202002")}
 
         assert expand_param_grid({}, reversed_declaration) == expand_param_grid({}, self.GRID)
 
     def test_values_keep_their_declared_order(self) -> None:
-        # 값은 정렬하지 않는다 — 연월 목록처럼 사람이 의도한 순서가 있다.
+        # Values are not sorted — declaration order matters (e.g., month lists have intent).
         assert [
             c["DEAL_YMD"] for c in expand_param_grid({}, {"DEAL_YMD": ("202012", "202001")})
         ] == [
@@ -107,8 +107,8 @@ class TestParamGridParsing:
         assert spec.sources[0].params == {"numOfRows": 100}
 
     def test_a_scalar_axis_is_rejected_at_parse_time(self) -> None:
-        # 값 하나짜리 축과 공통 파라미터는 의미가 다르다 — 후자는 params 가 표현한다.
-        # parse_spec 은 구조 오류를 SpecLoadError 로 감싼다.
+        # Single-value axis differs from shared params — latter expressed via params.
+        # parse_spec wraps structural errors in SpecLoadError.
         with pytest.raises(SpecLoadError, match="must be a list"):
             parse_spec(
                 {
@@ -129,8 +129,7 @@ class TestParamGridParsing:
 
 class TestParamGridValidation:
     def test_an_empty_axis_is_rejected(self) -> None:
-        # 빈 축 하나가 곱 전체를 0 으로 만든다 — 호출이 한 번도 일어나지 않고
-        # 빈 Bronze 가 성공으로 기록된다.
+        # Empty axis makes product zero — no calls ever happen, empty Bronze recorded as success.
         spec = _spec(SourceRef(provider="datago", dataset="apt_trade", param_grid={"LAWD_CD": ()}))
 
         with pytest.raises(ValidationError) as exc:
@@ -156,7 +155,7 @@ class TestParamGridValidation:
         }
 
     def test_a_nested_value_is_rejected(self) -> None:
-        # 요청 파라미터는 스칼라다. 중첩 값은 URL 로 나갈 수 없다.
+        # Request params are scalar; nested values cannot go in URL.
         spec = _spec(
             SourceRef(provider="datago", dataset="apt_trade", param_grid={"x": ({"a": 1},)})
         )
@@ -181,8 +180,8 @@ class TestParamGridValidation:
 
 class TestParamGridIsPartOfTheRecipe:
     def test_changing_the_grid_moves_the_digest(self) -> None:
-        # grid 가 곧 어떤 데이터를 가져왔는지를 정한다. digest 에 없으면 grid 를
-        # 바꿔도 "같은 recipe" 로 보인다.
+        # grid determines what data was fetched; if not in digest, changing grid still looks
+        # like "same recipe".
         first = _spec(
             SourceRef(provider="datago", dataset="apt_trade", param_grid={"LAWD_CD": ("11110",)})
         )
@@ -195,7 +194,7 @@ class TestParamGridIsPartOfTheRecipe:
         )
 
     def test_no_grid_leaves_the_digest_untouched(self) -> None:
-        # 쓰지 않는 기능 때문에 기존 spec 의 recipe identity 가 움직이면 안 된다.
+        # Unused feature must not move existing spec recipe identity.
         without = _spec(SourceRef(provider="datago", dataset="apt_trade"))
         empty = _spec(SourceRef(provider="datago", dataset="apt_trade", param_grid={}))
 
@@ -221,7 +220,7 @@ class TestParamGridIsPartOfTheRecipe:
 
 
 class TestBronzeCollectionAcrossCombinations:
-    """조합마다 호출하고 하나의 Bronze 로 이어붙인다 (#613)."""
+    """Call per combination and concatenate into single Bronze (#613)."""
 
     class _Dataset:
         def __init__(self, calls: list[dict[str, object]]) -> None:
@@ -266,8 +265,8 @@ class TestBronzeCollectionAcrossCombinations:
         ]
 
     def test_records_concatenate_in_combination_order(self) -> None:
-        # 순서가 바뀌면 raw_records.jsonl 의 바이트가 바뀌고 artifact_id 가 따라
-        # 바뀐다 — R1 의 재빌드 결정성이 그 위에 있다.
+        # If order changes, raw_records.jsonl bytes change and artifact_id follows —
+        # R1's rebuild determinism rests on this.
         first, _ = self._build(
             SourceRef(
                 provider="datago",
@@ -286,7 +285,7 @@ class TestBronzeCollectionAcrossCombinations:
         assert first.raw_records == second.raw_records  # type: ignore[attr-defined]
 
     def test_the_expansion_is_recorded_in_provenance(self) -> None:
-        # 어떤 조합으로 만든 Bronze 인지가 남지 않으면 재현성 실험이 근거를 잃는다.
+        # Without recording combination that produced Bronze, reproducibility loses grounding.
         artifact, _ = self._build(
             SourceRef(
                 provider="datago",
@@ -299,7 +298,7 @@ class TestBronzeCollectionAcrossCombinations:
         assert recorded == [{"LAWD_CD": "11110"}, {"LAWD_CD": "11140"}]
 
     def test_a_source_without_a_grid_keeps_the_old_shape(self) -> None:
-        # 쓰지 않는 기능이 provenance 모양을 바꾸면 안 된다.
+        # Unused feature must not change provenance shape.
         artifact, calls = self._build(
             SourceRef(provider="datago", dataset="apt_trade", params={"numOfRows": 100})
         )

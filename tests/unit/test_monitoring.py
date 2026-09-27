@@ -1,7 +1,7 @@
-"""Monitoring API 단위 테스트 (#516).
+"""Monitoring API unit test (#516).
 
-``service/monitoring.py``의 순수 로직(latency/p95, queue/worker, artifact
-store, build 통계 집계)과 dispatch 레벨 ownership 격리를 검증한다.
+Pure logic from ``service/monitoring.py`` (latency/p95, queue/worker, artifact
+store, build statistics aggregation) and dispatch-level ownership isolation verification.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class _FakeDataset:
 
 
 class _FakeClient:
-    """service.build()이 요구하는 최소 SourceClient 흉내."""
+    """Minimal SourceClient mock required by service.build()."""
 
     datasets = _FakeCatalog()
 
@@ -129,7 +129,7 @@ class TestLatencyRecorder:
         assert p95 == 42.0
 
     def test_p95_nearest_rank_boundary(self) -> None:
-        # n=20, rank = ceil(0.95*20) = 19 -> 1-indexed 19번째(오름차순) = 값 19.
+        # n=20, rank = ceil(0.95*20) = 19 -> 1-indexed 19th (ascending) = value 19.
         recorder = LatencyRecorder()
         for value in range(1, 21):
             recorder.record(float(value))
@@ -141,7 +141,7 @@ class TestLatencyRecorder:
         recorder = LatencyRecorder()
         for value in [50.0, 10.0, 30.0, 20.0, 40.0]:
             recorder.record(value)
-        # n=5, rank=ceil(0.95*5)=5 -> 오름차순 5번째(최댓값) = 50.
+        # n=5, rank=ceil(0.95*5)=5 -> 5th ascending (max value) = 50.
         sample_count, p95 = recorder.snapshot()
         assert sample_count == 5
         assert p95 == 50.0
@@ -151,7 +151,7 @@ class TestLatencyRecorder:
         for value in [1.0, 2.0, 3.0, 4.0]:
             recorder.record(value)
         sample_count, p95 = recorder.snapshot()
-        # 최근 3개만 남는다: [2, 3, 4]. rank=ceil(0.95*3)=3 -> 최댓값 4.
+        # Only last 3 remain: [2, 3, 4]. rank=ceil(0.95*3)=3 -> max value 4.
         assert sample_count == 3
         assert p95 == 4.0
 
@@ -182,10 +182,10 @@ class TestLatencyRecorder:
 
         assert not errors
         sample_count, _ = recorder.snapshot()
-        assert sample_count == 800  # 4 writer * 200 (bounded 10_000이므로 소실 없음)
+        assert sample_count == 800  # 4 writers * 200 (bounded 10_000 so no loss)
 
     def test_record_failure_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """metric 기록 실패가 요청 실패로 전파되면 안 된다 (#516)."""
+        """Metric recording failure must not propagate to request failure (#516)."""
         recorder = LatencyRecorder()
 
         class _BrokenLock:
@@ -196,13 +196,13 @@ class TestLatencyRecorder:
                 return None
 
         monkeypatch.setattr(recorder, "_lock", _BrokenLock())
-        recorder.record(10.0)  # 예외를 던지지 않아야 한다.
+        recorder.record(10.0)  # must not raise exception.
 
     def test_snapshot_failure_returns_none_not_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """collector 실패는 (0, None)이 아니라 None으로 구분된다 (#527).
+        """collector failure is distinguished as None, not (0, None) (#527).
 
-        (0, None)은 "정상 무표본"이고, None은 "측정 자체가 불가"다 — 이 둘을
-        같은 값으로 뭉개면 api_status()가 항상 available로 위장하게 된다.
+        (0, None) is "normal un-sampled"; None is "measurement itself impossible" —
+        conflating them makes api_status() always masquerade as available.
         """
         recorder = LatencyRecorder()
 
@@ -214,7 +214,7 @@ class TestLatencyRecorder:
                 return None
 
         monkeypatch.setattr(recorder, "_lock", _BrokenLock())
-        assert recorder.snapshot() is None  # 예외를 던지지 않되, (0, None)도 아니다.
+        assert recorder.snapshot() is None  # doesn't raise exception, but also not (0, None).
 
 
 class TestApiStatus:
@@ -233,7 +233,7 @@ class TestApiStatus:
         assert status.p95_latency_ms == 5.0
 
     def test_unavailable_when_collector_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """collector 실패(#527)는 available+0으로 위장하지 않고 unavailable+null+null이다."""
+        """collector failure (#527) is unavailable+null+null, not masked as available+0."""
         recorder = LatencyRecorder()
 
         class _BrokenLock:
@@ -251,13 +251,13 @@ class TestApiStatus:
 
 
 # =============================================================================
-# Queue / Worker — 실제 AsyncBuildExecutor/Registry(#511/#513)의 read-only
-# snapshot을 반영한다 (#516). 항상 생성되는 실행기이므로 available이 정상이다.
+# Queue / Worker — read-only snapshot of actual AsyncBuildExecutor/Registry (#511/#513)
+# (#516). Always-created executor is normally available.
 # =============================================================================
 
 
 class _StubResponse:
-    """AsyncBuildExecutor.submit()이 요구하는 최소 BuildJobResponse 흉내."""
+    """Minimal BuildJobResponse mock required by AsyncBuildExecutor.submit()."""
 
     def __init__(self, status_code: int = 200, body: dict[str, JsonValue] | None = None) -> None:
         self.status_code = status_code
@@ -265,10 +265,10 @@ class _StubResponse:
 
 
 def _blocking_runner(entered: threading.Event, release: threading.Event):  # type: ignore[no-untyped-def]
-    """runner가 실행 중임을 ``entered``로 알리고 ``release``까지 대기한다.
+    """Signal runner is running via ``entered`` and wait until ``release``.
 
-    큐/워커 상태를 결정론적으로 관찰하기 위해 job을 원하는 시점에 "running"
-    상태로 묶어두는 테스트 헬퍼(#516).
+    Test helper to deterministically observe queue/worker state by holding jobs in "running"
+    state at desired points (#516).
     """
 
     def _runner(
@@ -397,7 +397,7 @@ class TestQueueWorkerStatus:
         assert queue.running == 0
         assert queue.total == 0
         assert workers.active == 0
-        assert executor.get("run-ok") is not None  # registry는 terminal job도 보존한다.
+        assert executor.get("run-ok") is not None  # registry preserves terminal jobs too.
         assert executor.get("run-failed") is not None
 
     def test_capacity_matches_configured_max_workers(self) -> None:
@@ -506,7 +506,9 @@ class TestQueueWorkerStatus:
 class TestArtifactStoreStatus:
     def test_missing_output_root_is_unavailable(self, tmp_path: Path) -> None:
         missing = tmp_path / "does-not-exist"
-        index = SqliteBuildIndex(tmp_path)  # index는 tmp_path에, output_root만 없는 경로로.
+        index = SqliteBuildIndex(
+            tmp_path
+        )  # index in tmp_path, output_root to non-existent path only.
         status = artifact_store_status(missing, index)
         assert status.availability == "unavailable"
         assert status.last_write_at is None
@@ -515,7 +517,7 @@ class TestArtifactStoreStatus:
         index = SqliteBuildIndex(tmp_path)
         status = artifact_store_status(tmp_path, index)
         assert status.availability == "available"
-        assert status.last_write_at is None  # 0건이지 확인 불가가 아님.
+        assert status.last_write_at is None  # zero count, not unconfirmable.
 
     def test_available_with_last_write_evidence(self, tmp_path: Path) -> None:
         index = SqliteBuildIndex(tmp_path)
@@ -562,8 +564,8 @@ class TestArtifactStoreStatus:
 
 
 # =============================================================================
-# Aggregate status (#516 최종 점검) — required subsystem availability로부터
-# healthy/degraded를 판정한다. latency threshold는 절대 쓰지 않는다.
+# Aggregate status (#516 final check) — from required subsystem availability
+# determines healthy/degraded; latency threshold is never used.
 # =============================================================================
 
 
@@ -606,7 +608,7 @@ class TestAggregateStatus:
         assert status == "healthy"
 
     def test_queue_actually_zero_is_still_healthy(self) -> None:
-        """queue waiting/running=0은 available+0이며 degraded 근거가 아니다."""
+        """queue waiting/running=0 is available+0 and not grounds for degraded."""
         status = aggregate_status(
             api=_api(),
             queue=_queue(waiting=0, running=0),
@@ -616,7 +618,7 @@ class TestAggregateStatus:
         assert status == "healthy"
 
     def test_workers_actually_zero_is_still_healthy(self) -> None:
-        """workers active=0은 available+0이며 degraded 근거가 아니다."""
+        """workers active=0 is available+0 and not grounds for degraded."""
         status = aggregate_status(
             api=_api(),
             queue=_queue(),
@@ -635,7 +637,7 @@ class TestAggregateStatus:
         assert status == "degraded"
 
     def test_api_unavailable_is_degraded(self) -> None:
-        """api collector 실패(#527)로 availability=unavailable이면 aggregate도 degraded."""
+        """api collector failure (#527) with availability=unavailable makes aggregate degraded."""
         status = aggregate_status(
             api=_api(availability="unavailable", sample_count=None, p95=None),
             queue=_queue(),
@@ -645,7 +647,7 @@ class TestAggregateStatus:
         assert status == "degraded"
 
     def test_required_subsystem_partial_is_degraded(self) -> None:
-        """api/queue/workers/artifact_store 중 하나라도 partial이면 degraded."""
+        """If any of api/queue/workers/artifact_store is partial, aggregate is degraded."""
         status = aggregate_status(
             api=_api(availability="partial"),
             queue=_queue(),
@@ -673,7 +675,7 @@ class TestAggregateStatus:
         assert status == "degraded"
 
     def test_no_samples_with_rest_available_is_healthy(self) -> None:
-        """sample_count=0/p95=null은 startup/무표본 상태일 수 있으므로 degraded 근거가 아니다."""
+        """sample_count=0/p95=null can be startup/unsampled state, not grounds for degraded."""
         status = aggregate_status(
             api=_api(sample_count=0, p95=None),
             queue=_queue(),
@@ -683,7 +685,7 @@ class TestAggregateStatus:
         assert status == "healthy"
 
     def test_provider_has_no_parameter_and_no_influence(self) -> None:
-        """Provider status는 #516에서 optional이므로 판정 함수는 이를 아예 받지 않는다."""
+        """Provider status is optional in #516 so determination function doesn't take it at all."""
         import inspect
 
         params = inspect.signature(aggregate_status).parameters
@@ -712,7 +714,7 @@ class TestValidation:
 
 
 # =============================================================================
-# Build statistics 집계
+# Build statistics aggregation
 # =============================================================================
 
 
@@ -753,14 +755,14 @@ class TestBuildStatistics:
         )
         bucket_09 = next(b for b in stats.buckets if b.bucket_start == "2026-08-15T09:00:00Z")
         assert bucket_09.total == 3
-        # 내부 BuildIndex status "ok"는 wire 필드 "success"로 매핑된다 (#527).
+        # internal BuildIndex status "ok" maps to wire field "success" (#527).
         assert bucket_09.success == 1
         assert bucket_09.failed == 1
         assert bucket_09.cancelled == 1
         assert bucket_09.bucket_end == "2026-08-15T10:00:00Z"
 
     def test_bucket_boundary_is_half_open(self, tmp_path: Path) -> None:
-        """정각 timestamp는 다음 bucket에 속한다([start, end) 반열린)."""
+        """On-the-hour timestamp belongs to next bucket ([start, end) half-open)."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="on-boundary",
@@ -778,7 +780,7 @@ class TestBuildStatistics:
 
     def test_entries_outside_window_are_excluded(self, tmp_path: Path) -> None:
         index = SqliteBuildIndex(tmp_path)
-        # window는 [2026-08-14T11:00, 2026-08-15T11:00) — 하루 전은 window 밖.
+        # window is [2026-08-14T11:00, 2026-08-15T11:00) — day before is outside window.
         index.insert_or_replace(
             run_id="too-old",
             status="ok",
@@ -791,7 +793,7 @@ class TestBuildStatistics:
         assert all(b.total == 0 for b in stats.buckets)
 
     def test_malformed_timestamp_excluded_and_marks_partial(self, tmp_path: Path) -> None:
-        """날짜 prefix는 정상이지만 시각 부분이 손상된 legacy 값(#516)."""
+        """Date prefix is normal but time portion is corrupted legacy value (#516)."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="good", status="ok", started_at=None, finished_at="2026-08-15T09:00:00Z"
@@ -805,10 +807,10 @@ class TestBuildStatistics:
         assert stats.availability == "partial"
         assert stats.excluded_count == 1
         total = sum(b.total for b in stats.buckets)
-        assert total == 1  # malformed 행은 어떤 bucket에도 세지 않는다.
+        assert total == 1  # malformed row is not counted in any bucket.
 
     def test_null_finished_at_excluded_and_marks_partial(self, tmp_path: Path) -> None:
-        """finished_at NULL 행도 침묵하며 누락되지 않고 partial로 집계된다 (#516)."""
+        """finished_at NULL rows are silently excluded, not lost, and counted as partial (#516)."""
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="good", status="ok", started_at=None, finished_at="2026-08-15T09:00:00Z"
@@ -894,17 +896,16 @@ class TestBuildStatistics:
     def test_recent_run_survives_limit_when_older_than_other_users_runs(
         self, tmp_path: Path
     ) -> None:
-        """#527: 다른 사용자의 최신 run 10건이 있어도 그보다 오래된 내 recent run이
-
-        ownership 필터 이전에 걸린 전역 LIMIT(10)에 밀려 잘리지 않는다 —
-        필터가 LIMIT보다 먼저 SQL에서 적용돼야 한다(``BuildIndex.list_recent_owned``).
+        """#527: even with latest 10 runs of other users, my older recent run
+        is not cut by global LIMIT(10) applied before ownership filter —
+        filter must be applied in SQL before LIMIT (``BuildIndex.list_recent_owned``).
         """
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="mine-old",
             status="ok",
             started_at=None,
-            finished_at="2020-01-01T00:00:00Z",  # 아래 다른 사용자 run 10건보다 모두 오래됨.
+            finished_at="2020-01-01T00:00:00Z",  # all older than 10 other user runs below.
             created_by="oidc:userA",
         )
         for i in range(10):
@@ -912,7 +913,7 @@ class TestBuildStatistics:
                 run_id=f"theirs-{i:02d}",
                 status="ok",
                 started_at=None,
-                finished_at=f"2026-08-15T{i:02d}:00:00Z",  # 전부 mine-old보다 최신.
+                finished_at=f"2026-08-15T{i:02d}:00:00Z",  # all newer than mine-old.
                 created_by="oidc:userB",
             )
         principal = Principal(kind="oidc", identifier="userA")
@@ -979,7 +980,7 @@ class TestBuildStatistics:
 
 
 # =============================================================================
-# dispatch 레벨: route wiring, ownership 격리, secret 미노출
+# dispatch level: route wiring, ownership isolation, secret non-exposure
 # =============================================================================
 
 
@@ -1000,7 +1001,7 @@ class TestMonitoringDispatch:
     def test_summary_status_is_degraded_when_artifact_store_unavailable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """artifact_store BuildIndex 쿼리가 실패해 unavailable이면 전체 status는 degraded."""
+        """artifact_store BuildIndex query failure makes unavailable, which makes overall status degraded."""
         service = _service(tmp_path)
         monkeypatch.setattr(
             service._build_index,

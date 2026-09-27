@@ -1,4 +1,4 @@
-"""OpenAPI named example의 schema, 추출 형식, runtime serializer 드리프트 방지."""
+"""Prevent schema, extraction format, runtime serializer drift of OpenAPI named examples."""
 
 from __future__ import annotations
 
@@ -176,15 +176,15 @@ def test_extraction_script_emits_documented_json_shape() -> None:
         check=True,
         capture_output=True,
         text=True,
-        # 스크립트가 ensure_ascii=False(한글 원문)로 출력하므로 Windows cp949
-        # 기본 디코딩을 쓰지 않는다(#553).
+        # Script outputs with ensure_ascii=False (Korean originals), so Windows cp949
+        # default decoding is not used (#553).
         encoding="utf-8",
         env=env,
     )
     payload = json.loads(completed.stdout)
     assert "—" in completed.stdout
-    # 정본에서 가져온다. 리터럴로 적어 두면 계약 버전을 올릴 때마다 여기가
-    # 뒤처지고, 실패가 "버전을 올렸다" 는 사실만 알려 준다 — 그건 이미 안다.
+    # Sourced from canonical. Hard-coding causes this to lag every contract version bump,
+    # with failure saying only "version bumped" — we already know that.
     assert payload["contract_version"] == API_CONTRACT_VERSION
     assert len(payload["examples"]) >= 50
     assert set(payload["examples"][0]) == {
@@ -289,8 +289,8 @@ def test_dataset_detail_example_matches_service_serializer(
         ],
     )
     service = BuilderService(output_root=tmp_path, client_factory=lambda: cast(object, None))
-    # dataset record 수집은 datasets 도메인 서비스로 옮겨갔다 (#596) — BuilderService 의
-    # 동명 메서드는 위임일 뿐이라, 그쪽을 patch 하면 호출 경로에서 빠진다.
+    # dataset record collection moved to datasets domain service (#596) — BuilderService's
+    # same-name method only delegates, so patching it misses the call path.
     monkeypatch.setattr(
         service._datasets_api,
         "dataset_records_for",

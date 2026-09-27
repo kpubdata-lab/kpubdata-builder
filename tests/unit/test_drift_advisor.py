@@ -1,4 +1,4 @@
-"""드리프트 해석 테스트 (AI-3, #448)."""
+"""Drift interpretation test (AI-3, #448)."""
 
 from __future__ import annotations
 

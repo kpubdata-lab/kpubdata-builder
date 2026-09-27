@@ -1,8 +1,7 @@
-"""BuildEvent 모델/BuildEventStore 저장소 단위 테스트 (#496).
+"""BuildEvent model/BuildEventStore repository unit test (#496).
 
-HTTP API/파이프라인 연동은 각각 test_events_api.py/test_pipeline_events.py가
-다룬다. 이 파일은 store 자체의 append-only 계약, ordering, 동시성, bounded
-query, timezone-aware timestamp를 순수하게 검증한다.
+HTTP API/pipeline integration is covered by test_events_api.py/test_pipeline_events.py respectively.
+This file purely verifies store's append-only contract, ordering, concurrency, bounded query, and timezone-aware timestamps.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from kpubdata_builder.events import BuildEvent, BuildEventStore
 
 
 class _FailingConnection:
-    """``execute``가 항상 실패하는 가짜 연결 (sqlite3.Connection은 immutable)."""
+    """Fake connection that always fails ``execute`` (sqlite3.Connection is immutable)."""
 
     def execute(self, *_args: object, **_kwargs: object) -> object:
         raise sqlite3.OperationalError("simulated append failure")
@@ -31,7 +30,7 @@ class _FailingConnection:
 
 
 class _SpyConnection:
-    """실제 연결에 위임하며 실행된 SQL 텍스트만 기록하는 wrapper."""
+    """Wrapper that delegates to real connection and records only executed SQL text."""
 
     def __init__(self, real: sqlite3.Connection) -> None:
         self._real = real
@@ -89,7 +88,7 @@ class TestAppend:
         assert [e.message for e in events] == [f"event-{i}" for i in range(50)]
 
     def test_append_does_not_overwrite_previous_events(self, tmp_path: Path) -> None:
-        """append는 절대 기존 행을 덮어쓰지 않는다 — 매번 새 행이 추가된다."""
+        """append never overwrites existing rows — a new row is added each time."""
         store = BuildEventStore(tmp_path)
         store.append(_event(message="first"))
         store.append(_event(message="second"))
@@ -105,7 +104,7 @@ class TestAppend:
 
     def test_naive_timestamp_is_rejected(self, tmp_path: Path) -> None:
         store = BuildEventStore(tmp_path)
-        naive = _event(timestamp=datetime.now())  # noqa: DTZ005 - 의도적으로 naive
+        naive = _event(timestamp=datetime.now())  # noqa: DTZ005 - intentionally naive
         with pytest.raises(ValueError, match="timezone-aware"):
             store.append(naive)
 
@@ -122,16 +121,14 @@ class TestAppend:
         assert event.metrics is None
 
     def test_append_failure_propagates_not_swallowed(self, tmp_path: Path) -> None:
-        """store.append()는 event timeline의 유일한 정본이라 실패를 삼키지 않는다.
+        """store.append() is the single source of truth for event timeline; does not swallow failures.
 
-        BuildIndex(ADR 0003, 파생 인덱스)와 달리, 이 store는 실패해도 조용히
-        넘어가지 않고 예외를 그대로 전파한다 — recorder(파이프라인 쪽 wrapper)가
-        그 실패를 어떻게 다룰지 결정한다 (#496, test_pipeline_events.py의
-        recorder swallow 테스트와 짝을 이룬다).
+        Unlike BuildIndex (ADR 0003, derived index), this store does not silently
+        swallow failures but propagates exceptions directly — the recorder (pipeline-side wrapper)
+        decides how to handle that failure (#496, paired with recorder swallow test in test_pipeline_events.py).
 
-        ``sqlite3.Connection``/``Cursor``는 C 확장 타입이라 속성을 직접
-        monkeypatch할 수 없으므로(immutable type), thread-local 연결 슬롯을
-        가짜 연결로 교체해 실패를 주입한다.
+        ``sqlite3.Connection``/``Cursor`` are C extension types and cannot be monkeypatched directly
+        (immutable type), so thread-local connection slots are replaced with fake connections to inject failures.
         """
         store = BuildEventStore(tmp_path)
         store._local.conn = _FailingConnection()
@@ -159,9 +156,9 @@ class TestOrdering:
         assert [e.message for e in r1_events] == ["r1-a", "r1-b"]
 
     def test_concurrent_append_no_lost_events(self, tmp_path: Path) -> None:
-        """여러 스레드가 동시에 append해도 event가 유실되지 않는다 (#496).
+        """Events are not lost even when multiple threads append concurrently (#496).
 
-        ThreadPoolExecutor로 병렬 실행되는 source worker(#247)를 흉내낸다.
+        Simulates source workers (#247) executed in parallel via ThreadPoolExecutor.
         """
         store = BuildEventStore(tmp_path)
         threads_count = 8
@@ -172,7 +169,7 @@ class TestOrdering:
             try:
                 for i in range(events_per_thread):
                     store.append(_event(message=f"w{worker_id}-{i}", source_key=f"w{worker_id}"))
-            except BaseException as exc:  # noqa: BLE001 - 스레드에서 발생한 예외를 수집
+            except BaseException as exc:  # noqa: BLE001 - collect exception raised in thread
                 errors.append(exc)
 
         threads = [threading.Thread(target=_worker, args=(i,)) for i in range(threads_count)]
@@ -185,8 +182,8 @@ class TestOrdering:
         events = store.list_for_run("r1", limit=10_000, tail=False)
         assert len(events) == threads_count * events_per_thread
         seqs = [e.seq for e in events]
-        assert len(seqs) == len(set(seqs))  # 모든 seq가 유일하다 — 유실/중복 없음
-        assert seqs == sorted(seqs)  # append 순서(전역 monotonic order)가 보존된다
+        assert len(seqs) == len(set(seqs))  # All seqs are unique — no loss/duplication
+        assert seqs == sorted(seqs)  # append order (global monotonic order) is preserved
 
         for worker_id in range(threads_count):
             worker_messages = [e.message for e in events if e.source_key == f"w{worker_id}"]
@@ -223,11 +220,11 @@ class TestLimitAndTail:
         assert events == ()
 
     def test_bounded_query_uses_sql_limit(self, tmp_path: Path) -> None:
-        """큰 run이어도 limit이 SQL 레벨에서 적용되어 전체 테이블을 읽지 않는다.
+        """Even in large runs, limit is applied at SQL level without reading entire table.
 
-        ``sqlite3.Connection``이 immutable C 타입이라 직접 monkeypatch할 수
-        없으므로, 실제 연결에 위임하며 실행된 SQL만 기록하는 spy로 thread-local
-        연결 슬롯을 교체한다.
+        ``sqlite3.Connection`` is an immutable C type and cannot be monkeypatched directly,
+        so thread-local connection slots are replaced with a spy that delegates to the real connection
+        and records only executed SQL.
         """
         store = BuildEventStore(tmp_path)
         self._seed(store, 500)

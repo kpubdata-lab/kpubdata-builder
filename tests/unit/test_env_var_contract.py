@@ -1,8 +1,8 @@
-"""README 환경변수 ↔ 코드 상수 교집합 검사 테스트 (#424).
+"""README environment variable ↔ code constant intersection test (#424).
 
-README에 등장하는 환경변수명이 코드의 상수와 정합하는지 검증한다.
-코드에 있으면서 README에 없으면 신규 기여자가 발견하지 못하고,
-README에 있으면서 코드에 없으면 잘못된 안내가 된다.
+Verifies that environment variable names appearing in README match code constants.
+If a variable exists in code but not in README, new contributors won't discover it.
+If a variable exists in README but not in code, it provides incorrect guidance.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# src/ 전체를 훑는다. 예전에는 파일 목록을 손으로 유지했는데, 그 목록 자체가
-# 드리프트했다 — uploads/store.py 와 ingestion/url_fetch.py 의 env var 가
-# 스캔되지 않아 README 와의 대조가 양방향 모두 거짓 통과했다. 이 테스트가 막으려던
-# 것이 정확히 그것이므로, 대상은 손으로 고르지 않는다.
+# Scan all src/. Previously file list was maintained manually, but that list itself
+# drifted — env vars of uploads/store.py and ingestion/url_fetch.py
+# weren't scanned, so README comparison passed falsely both ways. What this test prevents
+# is exactly that, so targets are not manually selected.
 _CODE_ENV_SOURCES = [
     *sorted((_REPO_ROOT / "src" / "kpubdata_builder").rglob("*.py")),
     _REPO_ROOT / "docker-entrypoint.sh",
@@ -47,7 +47,7 @@ def _code_env_vars() -> set[str]:
 
 
 class TestEnvVarContract:
-    """README 환경변수 표와 코드 상수의 정합성을 검증한다 (#424)."""
+    """Verify consistency between README environment variable table and code constants (#424)."""
 
     def test_all_code_env_vars_are_in_readme(self) -> None:
         code_vars = _code_env_vars()

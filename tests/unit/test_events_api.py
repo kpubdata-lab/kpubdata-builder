@@ -1,9 +1,8 @@
-"""``GET /builds/{run_id}/events`` HTTP API 테스트 (#496).
+"""``GET /builds/{run_id}/events`` HTTP API test (#496).
 
-Event 방출 자체(어느 boundary에서 어떤 event가 나오는지)는
-test_pipeline_events.py가 다룬다. 이 파일은 route adapter 계층 — 존재/
-ownership/bounded query(limit/tail)/secret 비노출 — 을 실제
-``BuilderService.build()``/``dispatch``를 통해 검증한다.
+Event emission itself (which boundary emits which event) is covered by test_pipeline_events.py.
+This file verifies the route adapter layer — existence/ownership/bounded query (limit/tail)/secret non-exposure —
+via actual ``BuilderService.build()``/``dispatch``.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ VALID_SPEC_YAML = (
     "      kaggle_key: SUPER-SECRET-EXPORT-KEY\n"
 )
 
-# fetch 자체가 실패하는 spec (FakeClient가 모르는 dataset).
+# spec where fetch itself fails (dataset unknown to FakeClient).
 FETCH_FAILURE_SPEC_YAML = VALID_SPEC_YAML.replace("dataset: air_quality", "dataset: missing")
 
 
@@ -101,9 +100,9 @@ exports:
 
 
 class _ObservedAsyncService(BuilderService):
-    """``_run_build_job``(``build()`` 호출 + owner_id manifest 보정까지 전부)이
-    끝난 뒤 ``completed``를 set한다 — async build가 실제로 완료된(manifest 보정
-    까지 반영된) 시점을 폴링/sleep 없이 결정론적으로 기다리기 위한 헬퍼다."""
+    """``_run_build_job`` (all of ``build()`` call + owner_id manifest correction)
+    completion; sets ``completed`` — helper to deterministically await the actual async build completion
+    (manifest correction reflected) without polling/sleep."""
 
     def __init__(
         self,
@@ -134,15 +133,14 @@ class _ObservedAsyncService(BuilderService):
 
 
 class _BlockingAsyncService(BuilderService):
-    """async worker를 ``release``까지 붙잡아둔다.
+    """holds async worker until ``release``.
 
-    ``_run_build_job``(worker pool의 실제 실행 진입점)이 ``entered``를 set한
-    뒤 ``release``를 기다린다 — 그 사이 registry 상태는 이미 "running"이지만
-    (``AsyncBuildExecutor._run``이 runner 호출 *전에* ``begin_run``으로 전이시킨다)
-    run directory/manifest는 아직 만들어지지 않는다(``BuilderService.build()``
-    가 아직 호출되지 않았으므로). ``release`` 이후에는 실제 ``build()``를
-    그대로 호출해 정상적으로 완료시키고 ``completed``를 set한다 — active
-    상태와 완료 상태 둘 다 이 클래스 하나로 결정론적으로 재현한다(#496
+    ``_run_build_job`` (actual entry point of worker pool execution) sets ``entered``
+    then waits for ``release`` — meanwhile registry state is already "running"
+    (``AsyncBuildExecutor._run`` transitions via ``begin_run`` *before* calling runner)
+    but run directory/manifest are not yet created (``BuilderService.build()`` not yet called).
+    After ``release``, actually calls ``build()`` to complete normally and sets ``completed`` —
+    both active and completed states are deterministically reproduced by this single class (#496
     follow-up).
     """
 
@@ -207,7 +205,7 @@ class TestGetBuildEventsRouting:
         assert events[-1]["status"] == "fail"
 
     def test_partial_run_shows_success_then_failure(self, tmp_path: Path) -> None:
-        """실패했다고 이전 성공 event가 사라지지 않는다(append-only, #496)."""
+        """Previous success events do not disappear on failure (append-only, #496)."""
         service = _service(tmp_path)
         spec_yaml = (
             "dataset_id: dataset.partial\n"
@@ -235,7 +233,7 @@ class TestGetBuildEventsRouting:
         assert "stage_failed" in bad_events
 
     def test_empty_timeline_for_run_with_no_events(self, tmp_path: Path) -> None:
-        """BuilderService.build()를 거치지 않고 만들어진 run(존재하지만 event 없음)."""
+        """Run created without going through BuilderService.build() (exists but no events)."""
         run_dir = tmp_path / "legacy"
         run_dir.mkdir()
         (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
@@ -253,7 +251,7 @@ class TestGetBuildEventsRouting:
         assert resp.status_code == 400
 
     def test_does_not_shadow_other_builds_subroutes(self, tmp_path: Path) -> None:
-        """다른 /builds/{run_id}/* route(예: manifest)가 여전히 정상 동작한다."""
+        """Other /builds/{run_id}/* routes (e.g., manifest) still work normally."""
         service = _service(tmp_path)
         assert _build(service, "r1") == 200
         resp = dispatch(service, "GET", "/builds/r1/manifest", None)
@@ -322,8 +320,8 @@ class TestLimitAndTail:
         assert resp.status_code == 400
 
     def test_bool_as_int_limit_is_rejected_like_other_routes(self, tmp_path: Path) -> None:
-        """query string은 항상 문자열이라 bool 우회는 애초에 불가능하지만,
-        비정상 문자열이 그대로 400이 되는지 다른 route와 동일하게 확인한다."""
+        """query strings are always strings so bool bypass is impossible anyway, but
+        abnormal strings are rejected as 400 like other routes."""
         service = _service(tmp_path)
         assert _build(service, "r1") == 200
         resp = dispatch(service, "GET", "/builds/r1/events", None, query="limit=true")
@@ -347,7 +345,7 @@ class TestOwnership:
         resp = dispatch(service, "GET", "/builds/r1/events", None)
         assert resp.status_code == 403
 
-        # ownership 거부 시 event store 조회 로직까지 도달하지 않는다.
+        # when ownership is denied, event store lookup logic is not reached.
         monkeypatch.setattr(
             service._event_store,
             "list_for_run",
@@ -373,7 +371,7 @@ class TestOwnership:
     def test_unknown_run_404_before_ownership_leak(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """존재하지 않는 run은 cross-owner와 구분 없이 404다(존재 여부 미노출)."""
+        """Non-existent run returns 404 without distinguishing cross-owner (existence not exposed)."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         monkeypatch.setattr(
@@ -408,7 +406,7 @@ class TestSecurityNoSecretLeak:
 
     def test_no_credential_leak_even_on_failed_source(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
-        # silver 검증 실패를 유발해 stage_failed event에 실린 message도 확인한다.
+        # cause silver validation failure to also verify message carried in stage_failed event.
         silver_failure_spec = VALID_SPEC_YAML.replace(
             "    alias: air\n",
             "    alias: air\n    schema:\n      required: [does_not_exist]\n",
@@ -422,14 +420,13 @@ class TestSecurityNoSecretLeak:
 
 
 class TestActiveAsyncRunEvents:
-    """``POST /builds``(비동기)로 제출된 run의 events를 실행 중에도 조회할 수
-    있는지 검증한다 (#496 follow-up: BLOCKER).
+    """events of runs submitted via ``POST /builds`` (async) can be queried even during execution
+    (#496 follow-up: BLOCKER).
 
-    ``check_run_exists``/``check_ownership``은 run directory·manifest.json이
-    이미 있다고 가정하지만, async run은 worker가 시작하기 전까지 run
-    directory조차 없고 manifest는 run이 끝나야 생긴다. 그 구간(queued/running)
-    에도 event store에는 이미 ``run_submitted``(및 이후 event)가 쌓여있으므로
-    이 endpoint가 404/403을 내면 안 된다.
+    ``check_run_exists``/``check_ownership`` assume run directory·manifest.json already exist,
+    but async run has no run directory until worker starts and manifest appears only after run ends.
+    During that span (queued/running), event store already has ``run_submitted`` (and subsequent events),
+    so this endpoint must not return 404/403.
     """
 
     def _submit(
@@ -440,7 +437,7 @@ class TestActiveAsyncRunEvents:
         return resp
 
     def test_queued_run_returns_200_with_run_submitted(self, tmp_path: Path) -> None:
-        """단일 worker가 다른 run으로 이미 바쁠 때 큐잉된 run도 조회 가능해야 한다."""
+        """Queued run is queryable even when single worker is busy with another run."""
         entered = threading.Event()
         release = threading.Event()
         completed = threading.Event()
@@ -454,12 +451,12 @@ class TestActiveAsyncRunEvents:
         )
         first = self._submit(service, "run1")
         assert first.status_code == 202
-        assert entered.wait(timeout=5)  # worker가 run1을 붙잡고 있다.
+        assert entered.wait(timeout=5)  # worker is holding run1.
 
         second = self._submit(service, "run2")
         assert second.status_code == 202
         assert second.body["status"] == "queued"
-        # run2는 아직 run directory조차 없다 — 기존 check_run_exists라면 404.
+        # run2 doesn't even have run directory yet — old check_run_exists would return 404.
         assert not (tmp_path / "run2").exists()
 
         resp = dispatch(service, "GET", "/builds/run2/events", None)
@@ -548,7 +545,7 @@ class TestActiveAsyncRunEvents:
         assert completed.wait(timeout=5)
 
     def test_unknown_run_still_404_when_not_in_async_registry(self, tmp_path: Path) -> None:
-        """async registry에도 persisted run에도 없으면 여전히 404다."""
+        """Still 404 if in neither async registry nor persisted run."""
         service = _service(tmp_path)
         resp = dispatch(service, "GET", "/builds/nope/events", None)
         assert resp.status_code == 404
@@ -556,8 +553,8 @@ class TestActiveAsyncRunEvents:
     def test_completed_async_run_still_uses_manifest_ownership_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """완료된 run은 async registry에 terminal entry로 남아있어도, 기존
-        completed persisted run 조회(#496 원래 API)가 계속 정상 동작해야 한다."""
+        """Completed run remains as terminal entry in async registry, but existing
+        completed persisted run retrieval (#496 original API) must continue working normally."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         entered = threading.Event()
         release = threading.Event()
@@ -590,9 +587,8 @@ class TestActiveAsyncRunEvents:
     def test_same_label_different_owner_id_active_run_returns_403(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """created_by/label(legacy)이 같아도 stable owner_id(#505)가 다르면
-        거부해야 한다 — active run access가 owner_id를 우선 비교해야 하는
-        핵심 사례."""
+        """Even with same created_by/label (legacy), different stable owner_id (#505)
+        must be rejected — core case where active run access must prioritize owner_id comparison."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         entered = threading.Event()
         release = threading.Event()
@@ -613,7 +609,7 @@ class TestActiveAsyncRunEvents:
         assert submitted.status_code == 202
         assert entered.wait(timeout=5)
 
-        # label("oidc:same")은 앞의 principal과 동일하지만 owner_id는 다르다.
+        # label("oidc:same") is same as previous principal but owner_id differs.
         monkeypatch.setattr(
             app_module,
             "authenticate",
@@ -691,10 +687,9 @@ class TestActiveAsyncRunEvents:
     def test_enqueue_failed_terminal_without_manifest_only_owner_can_read(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """worker pool enqueue 자체가 실패해 manifest 없이 종결된 terminal job도
-        (build()가 전혀 호출되지 않아 run directory조차 없다) 소유자만
-        조회할 수 있어야 한다 — registry snapshot의 owner_id가 유일한
-        판정 근거다."""
+        """Even terminal job terminated without manifest due to worker pool enqueue failure
+        (build() never called, no run directory exists), only owner can query — registry snapshot's owner_id is sole
+        determination ground."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = BuilderService(
             output_root=tmp_path,
@@ -735,16 +730,14 @@ class TestActiveAsyncRunEvents:
 
 
 class TestAsyncManifestOwnerIdPropagation:
-    """async run 완료 후 persisted manifest.owner_id가 제출 principal의 stable
-    owner_id를 담아야 한다 (#496 follow-up: security BLOCKER).
+    """After async run completion, persisted manifest.owner_id contains submitting principal's stable
+    owner_id (#496 follow-up: security BLOCKER).
 
-    수정 전에는 ``_run_build_job``이 ``build()``에 owner_id를 전혀 넘기지
-    않아 async run의 manifest.owner_id가 항상 None이었다 — manifest가 써지는
-    순간 ``check_active_run_access``가 manifest 경로로 전환되면서 stable
-    owner_id 비교(#505) 대신 legacy created_by/label 비교로 되돌아갔다. 같은
-    label(OIDC sub 앞 8자 truncation 충돌 등)을 쓰는 서로 다른 owner_id의
-    principal 두 명이 있으면, "완료된" run에서만 그 fallback이 cross-owner
-    접근을 허용해버릴 수 있었다 — 아래 A/B 시나리오가 그 재현이다.
+    Before fix, ``_run_build_job`` passed no owner_id to ``build()``, so async run's manifest.owner_id was always None —
+    the moment manifest was written, ``check_active_run_access`` switched to manifest path, reverting from stable
+    owner_id comparison (#505) to legacy created_by/label comparison. With two principals using same
+    label (OIDC sub 8-char truncation collision etc.), that fallback could only on completed runs permit cross-owner
+    access — the A/B scenarios below reproduce that.
     """
 
     def _submit(
@@ -757,9 +750,9 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_completed_manifest_records_submitting_principals_stable_owner_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A(``oidc:same``/``oidc:owner-A``)가 async build → 완료 → manifest 생성.
+        """A (``oidc:same``/``oidc:owner-A``) async build → completion → manifest creation.
 
-        요구사항 시나리오 1: persisted manifest 내부 owner_id == oidc:owner-A.
+        Requirement scenario 1: persisted manifest's owner_id == oidc:owner-A.
         """
         completed = threading.Event()
         service = _ObservedAsyncService(
@@ -782,7 +775,7 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_completed_run_owner_gets_200_other_same_label_principal_gets_403(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """요구사항 시나리오 2/3: A는 200, 같은 label을 쓰는 B(다른 owner_id)는 403."""
+        """Requirement scenarios 2/3: A gets 200, B (different owner_id) using same label gets 403."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         completed = threading.Event()
         service = _ObservedAsyncService(
@@ -792,7 +785,9 @@ class TestAsyncManifestOwnerIdPropagation:
         )
         principal_a = Principal(kind="oidc", identifier="same", owner_id="oidc:owner-A")
         principal_b = Principal(kind="oidc", identifier="same", owner_id="oidc:owner-B")
-        assert principal_a.label == principal_b.label  # 회귀의 전제조건: legacy label이 같다.
+        assert (
+            principal_a.label == principal_b.label
+        )  # regression prerequisite: legacy labels are same.
 
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: principal_a)
         submitted = self._submit(service, "run1")
@@ -810,8 +805,8 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_active_same_label_different_owner_still_returns_403(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """회귀 방지: manifest가 아직 없는 active 구간(#496 이전 라운드 fix)도
-        여전히 동작해야 한다 — 이번 수정이 그 경로를 깨지 않았는지 확인."""
+        """Regression prevention: even active period without manifest yet (#496 previous round fix)
+        must still work — verify this fix doesn't break that path."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         entered = threading.Event()
         release = threading.Event()
@@ -846,8 +841,8 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_owner_id_not_exposed_via_wire_after_completion(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """manifest 보정 이후에도 owner_id는 build_status/events/manifest 응답
-        어디에도 노출되지 않는다 — public API/OpenAPI 계약은 바뀌지 않는다."""
+        """Even after manifest correction, owner_id in build_status/events/manifest response
+        is never exposed — public API/OpenAPI contract unchanged."""
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
@@ -881,11 +876,10 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_async_file_source_resolver_still_does_not_receive_owner_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#498 known limitation 유지 확인: async 경로로 제출된 ``kind=file``
-        build는, manifest owner_id가 이제 올바르게 채워지더라도, 여전히 file
-        source resolver에는 owner_id를 넘기지 않는다 — 업로드 소유자 본인이
-        제출해도 async 경로에서는 그 업로드를 찾지 못해 build가 실패해야
-        한다(동기 ``/build``와 달리)."""
+        """#498 known limitation persistence check: ``kind=file`` submitted via async path
+        even though manifest owner_id is now correctly filled, still does not pass owner_id to file
+        source resolver — if upload owner themselves submit, async path cannot find that upload and build must fail
+        (unlike sync ``/build``)."""
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
@@ -910,9 +904,9 @@ class TestAsyncManifestOwnerIdPropagation:
         assert submitted.status_code == 202
         assert completed.wait(timeout=5)
 
-        # manifest ownership은 이번 수정으로 정확하다 — 그러나 file resolver는
-        # 여전히 owner_id를 받지 않으므로 업로드를 찾지 못해 build 자체는 실패한다
-        # (#498 async limitation, 그대로 유지).
+        # manifest ownership is now correct — but file resolver
+        # still doesn't receive owner_id so can't find upload; build itself fails
+        # (#498 async limitation, maintained as-is).
         manifest_data = json.loads(
             (tmp_path / "run1" / "manifest.json").read_text(encoding="utf-8")
         )
@@ -925,9 +919,8 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_completed_run_build_index_records_stable_owner_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """manifest뿐 아니라 BuildIndex(#505 SSOT, ``GET /builds`` 목록이 우선
-        조회하는 경로)도 같은 stable owner_id를 가져야 한다 — 두 저장소가
-        서로 다른 값을 갖는 SSOT 불일치를 만들지 않는다."""
+        """Not just manifest but also BuildIndex (#505 SSOT, ``GET /builds`` listing path)
+        must carry same stable owner_id — two repositories must not create SSOT mismatch with different values."""
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
@@ -952,8 +945,8 @@ class TestAsyncManifestOwnerIdPropagation:
     def test_build_list_hides_completed_run_from_different_owner_with_same_label(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """BuildIndex를 사용하는 persisted ownership 경로(``GET /builds`` 목록)도
-        같은 label의 다른 owner_id principal을 통과시키지 않는다."""
+        """persisted ownership path using BuildIndex (``GET /builds`` listing) also
+        must not permit different owner_id principal with same label."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         completed = threading.Event()
         service = _ObservedAsyncService(

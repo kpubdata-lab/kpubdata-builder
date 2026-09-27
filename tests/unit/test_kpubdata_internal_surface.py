@@ -1,16 +1,16 @@
-"""``verify/runner.py`` 가 의존하는 kpubdata **내부** 심볼을 고정한다.
+"""Pin kpubdata **internal** symbols that ``verify/runner.py`` depends on.
 
-builder 의 verify 는 kpubdata 의 ``make verify`` 를 재구현하면서 공개 API 가 아닌
-것들을 직접 import 한다 — executor 의 함수들, spec 모델, transport, config. 이들은
-``kpubdata.__all__`` 에 없으므로 minor 릴리스에서 이름이나 위치가 바뀌어도
-kpubdata 쪽에서는 파괴적 변경이 아니다.
+builder's verify re-implements kpubdata's ``make verify`` and directly imports non-public
+things — executor functions, spec model, transport, config. These
+are not in ``kpubdata.__all__`` so name/location changes in minor releases are
+not breaking changes on kpubdata side.
 
-그 경계를 없애는 것은 두 저장소에 걸친 설계 결정이라 여기서 하지 않는다. 대신
-**언제 깨지는지를 앞당긴다** — 업그레이드 후 실제 verify 실행 중에 ImportError 를
-보는 대신, CI 에서 무엇이 움직였는지 이름을 붙여 실패하게 한다.
+Removing that boundary is a cross-repo design decision not made here. Instead,
+**we front-load when it breaks** — catch ImportError in CI with named symbols
+instead of seeing it during verify execution after upgrade.
 
-심볼을 추가로 쓰기 시작하면 이 목록에도 넣는다. 목록에 없는 의존은 이 테스트가
-지켜 주지 않는다.
+Add symbols to this list when additionally used. Dependencies not in this list
+are not protected by this test.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _RUNNER = (
     / "runner.py"
 )
 
-#: (모듈, 이름, 기대 시그니처 또는 None)
+#: (module, name, expected signature or None)
 _PINNED: tuple[tuple[str, str, str | None], ...] = (
     ("kpubdata.core.executor", "SpecExecutor", None),
     (
@@ -79,7 +79,7 @@ class TestThePinnedSymbolsStillExist:
 
 
 class TestTheListMatchesWhatTheRunnerActuallyImports:
-    """목록이 낡으면 이 테스트가 지켜 주는 범위가 조용히 줄어든다."""
+    """If list grows stale, protected scope of this test silently shrinks."""
 
     def _imported_internals(self) -> set[tuple[str, str]]:
         tree = ast.parse(_RUNNER.read_text(encoding="utf-8"))
@@ -89,7 +89,7 @@ class TestTheListMatchesWhatTheRunnerActuallyImports:
                 continue
             if not node.module.startswith("kpubdata."):
                 continue
-            # 공개 예외/모델은 kpubdata.__all__ 에 있으므로 고정 대상이 아니다.
+            # public exceptions/models in kpubdata.__all__ are not pinning targets.
             if node.module == "kpubdata.exceptions" or node.module == "kpubdata.core.models":
                 continue
             for alias in node.names:
