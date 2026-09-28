@@ -523,6 +523,36 @@ class TableCatalog:
         ).fetchall()
         return frozenset(row[0] for row in rows)
 
+    def set_artifact_digest(self, snapshot_id: str, digest: str) -> None:
+        """Record the digest of what was actually written.
+
+        The digest can only be known once the bytes are in staging, so
+        ``begin_snapshot`` cannot take it — a digest recorded before the write
+        describes something that may not have happened. This is the legitimate path
+        for filling it in, and it is refused once the snapshot is committed: a
+        committed snapshot's digest is what ``verify_before_commit`` checks against,
+        and letting it be rewritten would make the check circular.
+
+        Raises:
+            SnapshotStateError: The snapshot is already committed or beyond.
+            SnapshotNotFound: No such snapshot.
+        """
+        with self._immediate() as conn:
+            row = conn.execute(
+                "SELECT state FROM table_snapshots WHERE id = ?", (snapshot_id,)
+            ).fetchone()
+            if row is None:
+                raise SnapshotNotFound(f"no such snapshot: {snapshot_id!r}")
+            if row[0] not in ("staging", "validated"):
+                raise SnapshotStateError(
+                    f"snapshot {snapshot_id!r} is in state {row[0]!r}; its digest is what "
+                    "verification compares against and cannot be rewritten"
+                )
+            conn.execute(
+                "UPDATE table_snapshots SET artifact_digest = ? WHERE id = ?",
+                (digest, snapshot_id),
+            )
+
     def mark_validated(self, snapshot_id: str) -> None:
         """Move ``staging`` -> ``validated``.
 

@@ -67,6 +67,7 @@ from .errors import (
     WarehouseError,
 )
 from .layout import MANIFEST_FILENAME, SnapshotLayout, SnapshotManifest
+from .materialize import MaterializeResult, materialize
 
 __all__ = [
     "CATALOG_FILENAME",
@@ -75,6 +76,7 @@ __all__ = [
     "DEFAULT_LEASE_SECONDS",
     "DriftAxis",
     "MANIFEST_FILENAME",
+    "MaterializeResult",
     "NotEvaluated",
     "NotEvaluatedReason",
     "SCHEMA_VERSION",
@@ -92,5 +94,6 @@ __all__ = [
     "TableNotFound",
     "TableRow",
     "WarehouseError",
+    "materialize",
     "select_baseline",
 ]
