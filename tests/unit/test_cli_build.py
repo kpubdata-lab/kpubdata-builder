@@ -121,3 +121,66 @@ def test_build_reports_spec_load_error(tmp_path: Path, capsys: pytest.CaptureFix
 
     assert exit_code == 1
     assert "failed to load spec" in captured.err
+
+
+class TestTheCliCanMaterialise:
+    """``--warehouse`` exposes the materialise-only end state (#703).
+
+    Without a way to ask for it from the command line, the end state exists only for
+    callers of the Python API.
+    """
+
+    def test_the_flag_commits_a_snapshot_and_says_so(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from kpubdata_builder.warehouse import TableCatalog
+
+        spec_path = _write_spec(tmp_path)
+        client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
+        monkeypatch.setattr(cli, "_create_client", lambda: client)
+        warehouse = tmp_path / "warehouse"
+
+        exit_code = cli.main(
+            [
+                "build",
+                str(spec_path),
+                "--output-dir",
+                str(tmp_path / "out"),
+                "--run-id",
+                "run-cli",
+                "--warehouse",
+                str(warehouse),
+            ]
+        )
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert "snapshot snap_" in captured.out
+        assert "revision 1" in captured.out
+
+        tables = TableCatalog(warehouse).list_tables()
+        assert len(tables) == 1
+        assert tables[0].current_snapshot_id is not None
+
+    def test_without_the_flag_nothing_is_committed_or_claimed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Silence rather than a success line: the two outcomes must not read alike."""
+        spec_path = _write_spec(tmp_path)
+        client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
+        monkeypatch.setattr(cli, "_create_client", lambda: client)
+
+        exit_code = cli.main(
+            ["build", str(spec_path), "--output-dir", str(tmp_path / "out"), "--run-id", "r"]
+        )
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert "snapshot" not in captured.out
+        assert "no table committed" not in captured.out
