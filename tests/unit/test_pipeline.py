@@ -875,3 +875,115 @@ class TestExportsRunExactlyOnce:
         )
 
         assert orchestrator._gold_package_metadata(spec)["license"] == "ODbL-1.0"
+
+
+class TestABuildCanEndAtACommittedTable:
+    """The materialise-only end state, wired through run_build (#703).
+
+    A build reaching a committed table is what makes "collect it into my own
+    environment and query it" true without publishing anything.
+    """
+
+    def test_a_build_with_a_catalog_commits_a_snapshot(self, tmp_path: Path) -> None:
+        from kpubdata_builder.warehouse import TableCatalog
+
+        spec = BuildSpec(
+            dataset_id="apt_trade",
+            title="Apartment Trades",
+            description="seoul apartment trades",
+            sources=(SourceRef(provider="datago", dataset="apt_trade"),),
+            exports=(),
+        )
+        client = _FakeClient({"datago.apt_trade": [{"id": "1", "amount": 1000}]})
+        catalog = TableCatalog(tmp_path / "warehouse")
+
+        result = run_build(
+            spec,
+            client=client,
+            output_root=tmp_path,
+            run_id="run-mat",
+            catalog=catalog,
+            manifest_owner_id="oidc:issuer|alice",
+        )
+
+        assert result.status == "ok"
+        assert set(result.materialized) == {"datago.apt_trade"}
+        committed = result.materialized["datago.apt_trade"]
+        assert committed.snapshot.state == "committed"
+        assert committed.table.current_snapshot_id == committed.snapshot.id
+        assert committed.snapshot.owner_id == "oidc:issuer|alice"
+        assert (committed.snapshot_dir / "table.parquet").exists()
+
+    def test_without_a_catalog_nothing_is_materialised(self, tmp_path: Path) -> None:
+        """An empty mapping means "not attempted", not "nothing to commit".
+
+        Recorded because a caller that reads it as success would report a build as
+        materialised that never touched a catalog.
+        """
+        spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
+        client = _FakeClient({"datago.apt_trade": [{"id": "1", "amount": 1000}]})
+
+        result = run_build(spec, client=client, output_root=tmp_path, run_id="run-nocat")
+
+        assert result.status == "ok"
+        assert result.materialized == {}
+
+    def test_a_failed_build_commits_nothing(self, tmp_path: Path) -> None:
+        """A partial result must not become a table.
+
+        Committing what a failed run produced would replace good data with a fragment,
+        which is worse than leaving the previous snapshot in place.
+        """
+        from kpubdata_builder.warehouse import TableCatalog
+
+        spec = _spec(SourceRef(provider="datago", dataset="missing_dataset"))
+        client = _FakeClient({})  # the source is not there
+        catalog = TableCatalog(tmp_path / "warehouse")
+
+        result = run_build(
+            spec,
+            client=client,
+            output_root=tmp_path,
+            run_id="run-fail",
+            catalog=catalog,
+        )
+
+        assert result.status == "failed"
+        assert result.materialized == {}
+        assert catalog.list_tables() == []
+
+    def test_a_second_build_moves_the_pointer(self, tmp_path: Path) -> None:
+        """A refresh writes a new snapshot and the previous one stays readable."""
+        from kpubdata_builder.warehouse import TableCatalog
+
+        spec = BuildSpec(
+            dataset_id="apt_trade",
+            title="Apartment Trades",
+            description="seoul apartment trades",
+            sources=(SourceRef(provider="datago", dataset="apt_trade"),),
+            exports=(),
+        )
+        catalog = TableCatalog(tmp_path / "warehouse")
+
+        first = run_build(
+            spec,
+            client=_FakeClient({"datago.apt_trade": [{"id": "1", "amount": 1000}]}),
+            output_root=tmp_path,
+            run_id="run-1",
+            catalog=catalog,
+        )
+        second = run_build(
+            spec,
+            client=_FakeClient({"datago.apt_trade": [{"id": "2", "amount": 2000}]}),
+            output_root=tmp_path,
+            run_id="run-2",
+            catalog=catalog,
+        )
+
+        first_snap = first.materialized["datago.apt_trade"]
+        second_snap = second.materialized["datago.apt_trade"]
+        assert first_snap.table.id == second_snap.table.id
+        assert second_snap.table.current_snapshot_id == second_snap.snapshot.id
+        assert second_snap.table.revision == 2
+        # The first snapshot's files are untouched.
+        assert (first_snap.snapshot_dir / "table.parquet").exists()
