@@ -1,7 +1,6 @@
 name: 버그 리포트
 description: 예상과 다르게 동작하는 문제를 신고합니다
-title: "[Bug] "
-labels: ["bug"]
+title: "fix: "
 body:
   - type: markdown
     attributes:

@@ -1,0 +1,123 @@
+# Titles carry the change type; the `type:*` label follows (POLICY 2.1.3).
+#
+#   pull_request   the title must be `type(scope): description`, or this check fails.
+#                  A squash merge turns the title into the commit, and the commit into
+#                  the CHANGELOG entry someone writes from it.
+#   issues         a valid title sets the matching `type:*` label and removes every other
+#                  `type:*` label, including `type:refactor` and `type:architecture` from
+#                  before POLICY 2.1.3, so an issue carries exactly one. An invalid one gets one comment saying what to change, which
+#                  is deleted once the title is fixed. Issues are never failed: the
+#                  person filing a bug should not see a red cross for it.
+#
+# Nobody sets `type:*` by hand. A label set by hand is a second place for the type to
+# live, and POLICY 2.1 says why that goes stale.
+name: Titles
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pull-request:
+    name: PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Parse the title
+        id: title
+        uses: yeongseon/kpubdata/.github/actions/conventional-title@main
+        with:
+          title: ${{ github.event.pull_request.title }}
+
+      - name: The title must follow the convention
+        env:
+          VALID: ${{ steps.title.outputs.valid }}
+          ERROR: ${{ steps.title.outputs.error }}
+          LABEL: ${{ steps.title.outputs.label }}
+        run: |
+          if [ "${VALID}" != "true" ]; then
+            echo "::error::${ERROR}"
+            exit 1
+          fi
+          echo "title ok (${LABEL})"
+
+  issue:
+    name: Issue type label
+    # `edited` also fires for body edits. Only a title change can change the type.
+    if: >-
+      github.event_name == 'issues' &&
+      (github.event.action != 'edited' || github.event.changes.title != null)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Parse the title
+        id: title
+        uses: yeongseon/kpubdata/.github/actions/conventional-title@main
+        with:
+          title: ${{ github.event.issue.title }}
+
+      - name: Set the type label from the title
+        if: steps.title.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          LABEL: ${{ steps.title.outputs.label }}
+        run: |
+          # The four labels POLICY 2.1.3 derives. Created when missing, so a repository
+          # that never had `type:chore` does not fail here — no other label is made.
+          declare -A colour=(
+            [type:bug]=d73a4a [type:feature]=a2eeef [type:docs]=0075ca [type:chore]=cfd3d7
+          )
+          if ! gh label list --repo "${REPO}" --limit 200 --json name -q '.[].name' \
+              | grep -qxF "${LABEL}"; then
+            gh label create "${LABEL}" --repo "${REPO}" --color "${colour[$LABEL]}" \
+              --description "Set from the title prefix (POLICY 2.1.3). Do not set by hand."
+          fi
+
+          args=(--add-label "${LABEL}")
+          while IFS= read -r current; do
+            if [[ "${current}" == type:* ]] && [ "${current}" != "${LABEL}" ]; then
+              args+=(--remove-label "${current}")
+            fi
+          done < <(gh issue view "${NUMBER}" --repo "${REPO}" --json labels -q '.labels[].name')
+          gh issue edit "${NUMBER}" --repo "${REPO}" "${args[@]}"
+          echo "#${NUMBER} → ${LABEL}"
+
+      # One comment, found again by its marker: said once when the title is wrong,
+      # removed when it is right, so a fixed issue carries no stale advice.
+      - name: Say what the title needs, or take the note back
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          VALID: ${{ steps.title.outputs.valid }}
+          ERROR: ${{ steps.title.outputs.error }}
+        run: |
+          marker="<!-- title-check -->"
+          existing=$(gh api "repos/${REPO}/issues/${NUMBER}/comments" --paginate \
+            -q ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -1)
+          if [ "${VALID}" = "true" ]; then
+            if [ -n "${existing}" ]; then
+              gh api -X DELETE "repos/${REPO}/issues/comments/${existing}"
+            fi
+            exit 0
+          fi
+          if [ -z "${existing}" ]; then
+            printf '%s\n' "${marker}" \
+              "이슈 제목은 \`type(scope): 설명\` 형식으로 씁니다 (POLICY 2.1.3)." \
+              "예: \`fix(localdata): empty wrapper becomes a phantom row\`" "" \
+              "> ${ERROR}" "" \
+              "제목을 고치면 \`type:*\` 라벨이 자동으로 붙고 이 댓글은 지워집니다." \
+              > "${RUNNER_TEMP}/comment.md"
+            gh issue comment "${NUMBER}" --repo "${REPO}" --body-file "${RUNNER_TEMP}/comment.md"
+          fi
