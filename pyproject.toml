@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kpubdata-builder"
-version = "0.4.0.dev0"
+version = "0.4.0"
 description = "Dataset artifact pipeline for KPubData — turns normalized records into publishable outputs"
 readme = "README.md"
 requires-python = ">=3.10"
