@@ -106,10 +106,18 @@ def test_a_missing_changelog_heading_fails(tmp_path: Path) -> None:
 def test_the_real_repository_is_self_consistent() -> None:
     """The check passes against this repository as it stands.
 
-    It currently declares a development version, so the sources agree while no tag
-    may be published — exactly the state #690 describes.
+    The second assertion used to be `is_prerelease(...)`, pinning "this repository
+    declares a development version" as though it were an invariant. It was a
+    description of one moment — the state #690 was filed about — and it failed the
+    first time that moment ended, which is the commit that declares a real version
+    (#744). A test that has to be deleted before the thing it guards can happen is
+    not guarding it.
+
+    What is actually invariant is the agreement between the sources, which is what
+    `main([])` checks. Whether the declared version is finished is the *subject* of
+    the gate, not a fact about this repository, and every spelling of it is already
+    covered against fixtures above.
     """
     module = _load(Path(__file__).resolve().parents[2])
 
     assert module.main([]) == 0
-    assert module.is_prerelease(module.pyproject_version())
