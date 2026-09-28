@@ -137,3 +137,27 @@ HTTP 경로는 `PublishCredentialResolution` 으로 막지만, CLI 는 서버 �
 2. **5번(조회 경로 폴백)을 함께 정해야 한다.** 게시만 막는 것은 절반이다.
 3. scheduled build 는 키 저장을 전제한다 — 저장을 금지하면 그 기능이 성립하지
    않는다. 포기할지 예외로 둘지가 결정 항목이다.
+
+## 조회 경로의 폴백 — 스위치가 생겼다 (2026-09-28)
+
+이 문서가 기록한 결함 중 하나가 닫혔다.
+
+> `service/providers.py` 의 `CredentialResolver.resolve` 가 사용자 키가 없으면
+> 운영자 키로 폴백하고, `REQUIRE_OWN_PUBLISH_CREDENTIAL` 에 해당하는 것이 없다.
+
+`KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` 이 그것이다. 기본은 **unset** —
+단일 사용자 배포가 per-user 설정 없이 그대로 동작한다.
+
+| 상태 | 요청자에게 키 있음 | 없음 |
+|---|---|---|
+| 기본 (unset) | 자기 키 | **운영자 키** |
+| 스위치 켬 | 자기 키 | **거부** (`source="none"`) |
+
+`REQUIRE_OWN_PUBLISH_CREDENTIAL` 과 **같은 형태**로 만들었다. 두 스위치가 다르게
+동작하면 하나만 켜 놓고 안전하다고 믿게 된다.
+
+### 이 스위치가 막지 않는 것
+
+`owner_id` 가 아예 없는 요청 — dev mode 의 비인증 호출 — 은 거부하지 않는다.
+**찾아볼 owner 가 없으므로 거부할 대상도 없고**, 거부하면 아무것도 보호하지 못한 채
+dev mode 만 깨진다. 그 문을 닫는 것은 `ENFORCE_OWNERSHIP`(`#635`)이다.
