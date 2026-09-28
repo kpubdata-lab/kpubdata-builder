@@ -59,6 +59,7 @@ from ..uploads import (
     UploadRepository,
     resolve_max_upload_bytes,
 )
+from ..warehouse import TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
@@ -403,6 +404,10 @@ _BuildListEntry = dict[str, str | None]
 # accepted per column: global null_tokens + that column's declaration; per-column
 # declaration does not override global.
 # 1.27.0 -> 1.28.0: Added admin-only GET /admin/runs and GET /admin/config
+# 1.28.0 -> 1.29.0: POST /build gains `materialized` when the deployment has a
+#   warehouse — committed table snapshots per source (#703, additive). Absent, not
+#   empty, when no warehouse is configured: an empty object would claim nothing was
+#   committed, which a caller cannot tell from never having asked.
 # (#679, additive — existing paths·behavior unchanged). Both return metadata only,
 # no artifact bytes or credentials.
 # 1.26.0 -> 1.27.0: Added param_grid to SourceRef (#613, additive — existing
@@ -410,7 +415,7 @@ _BuildListEntry = dict[str, str | None]
 # repeatedly, concatenating results into one dataset. Expansion order is contract
 # (by key name, last key fastest, declaration order within axes) — order changes
 # break Bronze bytes, breaking rebuild determinism.
-API_CONTRACT_VERSION = "1.28.0"
+API_CONTRACT_VERSION = "1.29.0"
 
 
 def _quality_result_to_json(r: QualityCheckResult) -> dict[str, JsonValue]:
@@ -470,8 +475,13 @@ class BuilderService:
         provider_test_timeout: float | None = None,
         async_max_workers: int = 10,
         async_max_queue_size: int = 10,
+        warehouse_root: Path | None = None,
     ) -> None:
         self._output_root = output_root
+        # Configured, never taken from a request: a per-request path would let a
+        # caller write a catalog anywhere the process can reach (#703).
+        self._warehouse_root = warehouse_root
+        self._catalog: TableCatalog | None = None
         self._client_factory = client_factory
         self._build_index = make_build_index(output_root)  # #309, ADR 0003/0016
         self._store = make_artifact_store(output_root)  # ADR 0010/0016 (canonical manifest)
@@ -597,6 +607,20 @@ class BuilderService:
                     max_bytes=resolve_max_upload_bytes(),
                 )
             return self._upload_repository_lazy
+
+    def _table_catalog(self) -> TableCatalog | None:
+        """The table catalog, or None when this deployment has no warehouse.
+
+        Created lazily so a deployment that never materialises does not open a SQLite
+        file it will not use, and returns None rather than a catalog under a default
+        path — writing a catalog somewhere nobody asked for is worse than not writing
+        one.
+        """
+        if self._warehouse_root is None:
+            return None
+        if self._catalog is None:
+            self._catalog = TableCatalog(self._warehouse_root)
+        return self._catalog
 
     def _upload_repository_for(self, spec: BuildSpec) -> UploadRepository | None:
         """Create upload repository only if spec has kind="file" source (#498).
@@ -964,6 +988,7 @@ class BuilderService:
                 upload_repository=self._upload_repository_for(spec_or_error),
                 event_store=self._event_store,
                 cancellation=cancellation,
+                catalog=self._table_catalog(),
             )
         finally:
             _close_request_client(client)
@@ -1014,6 +1039,20 @@ class BuilderService:
             }
         else:
             body["composition"] = None
+        # Committed table snapshots (#703). Absent rather than empty when this
+        # deployment has no warehouse: an empty object would say "nothing was
+        # committed", and a caller cannot tell that from "committing was never
+        # configured". The same distinction #700 drew for drift baselines.
+        if self._warehouse_root is not None:
+            body["materialized"] = {
+                source_key: {
+                    "table_id": committed.table.id,
+                    "logical_name": committed.table.logical_name,
+                    "snapshot_id": committed.snapshot.id,
+                    "revision": committed.table.revision,
+                }
+                for source_key, committed in sorted(result.materialized.items())
+            }
         # Failed build exposes first failed outcome's error as top-level `error`
         # summary, allowing consumers like Studio to surface human-readable reason
         # immediately without parsing outcomes array (#226). Also check

@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..artifact import ArtifactDataset
@@ -74,6 +74,7 @@ from ..stages.silver.pii import scan_pii
 from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..uploads import UploadRepository
+from ..warehouse import MaterializeResult, TableCatalog, materialize
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .context import BuildContext
 from .export import export_gold_package
@@ -198,6 +199,10 @@ class BuildResult:
         manifest_path: persisted build manifest path.
         composition_outcome: composition execution result. None if
             BuildSpec.composition absent (#506).
+        materialized: committed table snapshots, keyed by source key (#703). Empty
+            when no warehouse was given — which means "not attempted", never "nothing
+            to commit". A caller that reads an empty mapping as success would report a
+            build as materialised that never touched a catalog.
     """
 
     context: BuildContext
@@ -206,6 +211,7 @@ class BuildResult:
     manifest_path: Path
     spec_digest: str
     composition_outcome: CompositionOutcome | None = None
+    materialized: dict[str, MaterializeResult] = field(default_factory=dict)
 
 
 def _fetch_source_key(source: SourceRef) -> str:
@@ -856,6 +862,8 @@ def run_build(
     upload_repository: UploadRepository | None = None,
     event_store: BuildEventStore | None = None,
     cancellation: CancellationProbe | None = None,
+    catalog: TableCatalog | None = None,
+    workspace_id: str = "ws_personal",
 ) -> BuildResult:
     """Execute BuildSpec through Medallion pipeline.
 
@@ -1073,6 +1081,32 @@ def run_build(
     manifest_path = context.output_root / context.run_id / "manifest.json"
     manifest_writer(manifest, manifest_path)
 
+    # Materialise after every source is done, in the single-threaded merge. Committing
+    # from the worker pool would put four threads through the same compare-and-swap and
+    # make three of them lose for no reason (#699).
+    materialized: dict[str, MaterializeResult] = {}
+    if catalog is not None and status == "ok":
+        for outcome in outcomes:
+            if outcome.status != "ok":
+                continue
+            gold_dir = context.output_root / context.run_id / "gold" / outcome.source_key
+            if not gold_dir.is_dir():
+                continue
+            materialized[outcome.source_key] = materialize(
+                catalog,
+                workspace_id=workspace_id,
+                logical_name=f"{spec.dataset_id}.{outcome.source_key}",
+                source_dir=gold_dir,
+                run_id=context.run_id,
+                owner_id=effective_manifest_owner_id,
+                row_count=row_counts.get(outcome.source_key),
+            )
+            logger.info(
+                "materialised %s as snapshot %s",
+                outcome.source_key,
+                materialized[outcome.source_key].snapshot.id,
+            )
+
     return BuildResult(
         context=context,
         status=status,
@@ -1080,4 +1114,5 @@ def run_build(
         manifest_path=manifest_path,
         spec_digest=spec_digest,
         composition_outcome=composition_outcome,
+        materialized=materialized,
     )

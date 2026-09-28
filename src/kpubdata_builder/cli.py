@@ -27,6 +27,7 @@ from .spec import load_spec
 from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
 from .tabular import DEFAULT_PREVIEW_LIMIT
+from .warehouse import TableCatalog
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +87,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--run-id",
         default=None,
         help="Run identifier (default: generated timestamp).",
+    )
+    build_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Commit each source's Gold output as a table snapshot under DIR, so the "
+            "build ends at a queryable table. Needs no publish credential. Omitted, "
+            "nothing is written to a catalog."
+        ),
+    )
+    build_cmd.add_argument(
+        "--workspace-id",
+        default="ws_personal",
+        help="Owning workspace for materialised tables (default: ws_personal).",
     )
 
     publish_cmd = subparsers.add_parser(
@@ -324,13 +340,26 @@ def _run_validate(spec_path: str) -> int:
     return 0
 
 
-def _run_build(spec_path: str, *, output_dir: str, run_id: str | None) -> int:
+def _run_build(
+    spec_path: str,
+    *,
+    output_dir: str,
+    run_id: str | None,
+    warehouse: str | None = None,
+    workspace_id: str = "ws_personal",
+) -> int:
     """Load and validate BuildSpec, then execute Medallion pipeline.
 
     Args:
         spec_path: BuildSpec YAML path to build.
         output_dir: Execution workspace root.
         run_id: Execution identifier. If None, generated from timestamp.
+        warehouse: Table catalog root. When given, each successful source's Gold
+            output is committed as a table snapshot and the run ends at a queryable
+            table (#703). Omitted, nothing is written to a catalog — and the output
+            says so, because "nothing was committed" and "committing was not asked
+            for" are different outcomes.
+        workspace_id: Owning workspace for materialised tables.
 
     Returns:
         int: 0 if all sources succeed, 1 on load/validation/build failure.
@@ -348,13 +377,29 @@ def _run_build(spec_path: str, *, output_dir: str, run_id: str | None) -> int:
         return 1
 
     client = _create_client()
-    result = run_build(spec, client=client, output_root=Path(output_dir), run_id=run_id)
+    catalog = TableCatalog(Path(warehouse)) if warehouse else None
+    result = run_build(
+        spec,
+        client=client,
+        output_root=Path(output_dir),
+        run_id=run_id,
+        catalog=catalog,
+        workspace_id=workspace_id,
+    )
 
     print(f"build: {spec.dataset_id} (run {result.context.run_id})")
     for outcome in result.outcomes:
         stages = ", ".join(outcome.stages_completed) or "-"
         print(f"  - {outcome.source_key}: {outcome.status} [{stages}]")
     print(f"manifest: {result.manifest_path}")
+    if catalog is not None:
+        for committed in sorted(result.materialized.values(), key=lambda c: c.table.logical_name):
+            print(
+                f"  table {committed.table.logical_name}: "
+                f"snapshot {committed.snapshot.id} (revision {committed.table.revision})"
+            )
+        if not result.materialized:
+            print("  no table committed")
 
     if result.status != "ok":
         print("error: build failed for one or more sources", file=sys.stderr)
@@ -870,7 +915,13 @@ def dispatch(args: argparse.Namespace) -> int:
     if command == "preview":
         return _run_preview(args.spec, limit=args.limit)
     if command == "build":
-        return _run_build(args.spec, output_dir=args.output_dir, run_id=args.run_id)
+        return _run_build(
+            args.spec,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            warehouse=args.warehouse,
+            workspace_id=args.workspace_id,
+        )
     if command == "publish":
         return _run_publish(
             args.spec,
