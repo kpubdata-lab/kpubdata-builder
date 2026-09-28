@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .catalog import SnapshotRow, TableCatalog, TableRow
+from .errors import SnapshotConflict, SnapshotStateError
 from .layout import SnapshotLayout, SnapshotManifest, content_digest
 
 
@@ -96,6 +97,11 @@ def materialize(
         FileNotFoundError: ``source_dir`` does not exist.
         SnapshotStateError: Verification found the promoted files empty or changed.
         SnapshotConflict: Another refresh committed first. Not a retry.
+
+    When a commit is refused for either reason, the snapshot is marked ``abandoned``
+    before the exception propagates, so garbage collection can reclaim its files. The
+    commit is never retried — see #699 — but leaving the bytes behind for ever is not
+    the alternative.
     """
     if not source_dir.is_dir():
         raise FileNotFoundError(f"no such gold directory: {source_dir}")
@@ -144,11 +150,20 @@ def materialize(
     catalog.mark_validated(snapshot.id)
     promoted = layout.promote(snapshot.id)
 
-    updated = catalog.commit_snapshot(
-        snapshot.id,
-        expected_revision=catalog.get_table(table.id).revision,
-        verify_before_commit=True,
-    )
+    try:
+        updated = catalog.commit_snapshot(
+            snapshot.id,
+            expected_revision=catalog.get_table(table.id).revision,
+            verify_before_commit=True,
+        )
+    except (SnapshotConflict, SnapshotStateError):
+        # The snapshot will never be committed, so mark it reclaimable and let the
+        # exception through. Not retried: #699 documents why — the loser built on a
+        # state that no longer exists, and retrying would overwrite the commit that
+        # won. Without this it stayed `validated` for ever with its files promoted,
+        # and nothing would ever look at it again (#738).
+        catalog.abandon(snapshot.id)
+        raise
     return MaterializeResult(
         table=updated,
         snapshot=catalog.get_snapshot(snapshot.id),
