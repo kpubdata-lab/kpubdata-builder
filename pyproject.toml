@@ -28,9 +28,11 @@ classifiers = [
 ]
 dependencies = [
   # Builder depends on the kpubdata Client API (Client.dataset(...).list, etc.).
-  # kpubdata 0.6.0 removed 141 retired datasets (breaking) — builder references
-  # none of them (verified 2026-09-09). Pin to the 0.6 line; compat policy: #213.
-  "kpubdata>=0.6.0,<0.7",
+  # kpubdata 0.7.0 dropped hospital_info/apt_trade/village_fcst from the datago
+  # catalogue (breaking); they now resolve through the spec executor, and the full
+  # suite passed against kpubdata main with that change (2352 passed, 2026-09-28,
+  # #746). Pin to the 0.7 line; compat policy: #213.
+  "kpubdata>=0.7.0,<0.8",
   "cryptography>=50,<51",
   "polars>=1.0,<2",
   "pyyaml>=6.0,<7",
