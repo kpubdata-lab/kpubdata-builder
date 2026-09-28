@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import socket
 import time
 from collections.abc import Iterable
@@ -23,6 +25,29 @@ from kpubdata.exceptions import (
 
 from ..credentials import CredentialMetadata, CredentialRepository
 from ..stages.bronze.build import SourceClient
+
+logger = logging.getLogger("kpubdata_builder.service.providers")
+
+#: When set, a requester with no stored credential of their own is refused rather than
+#: served with the operator's. Unset by default, so a single-user deployment keeps
+#: working without per-user setup. Same shape as REQUIRE_OWN_PUBLISH_CREDENTIAL (#687):
+#: two switches for the same reasoning that behaved differently would be worse than one.
+_REQUIRE_OWN_PROVIDER_CREDENTIAL_ENV = "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL"
+
+
+def _require_own_provider_credential() -> bool:
+    """Whether the operator credential fallback is switched off.
+
+    Read at call time rather than cached: the value is a policy, and an operator who
+    changes it should not have to restart to find out whether it took.
+    """
+    return os.environ.get(_REQUIRE_OWN_PROVIDER_CREDENTIAL_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
 
 CredentialSource = Literal["user", "server", "none"]
 ProviderState = Literal["connected", "failed", "not_configured"]
@@ -100,10 +125,29 @@ class CredentialResolver:
         return _CLIENT_KEY_SLOT.get(provider, provider)
 
     def resolve(self, owner_id: str | None, provider: str) -> ResolvedCredential:
+        """Find the credential to call ``provider`` with, for this requester.
+
+        The fallback to the operator's key is what makes a single-user deployment work
+        without per-user setup, and what makes a shared one spend the operator's quota
+        on other people's queries. Which of those it is depends on the deployment, so it
+        is a switch rather than a decision taken here (F-07).
+
+        A requester with no ``owner_id`` at all — an unauthenticated call in dev mode —
+        is not refused by the switch. There is no owner to look a credential up for, so
+        refusing would break dev mode without protecting anyone; ``ENFORCE_OWNERSHIP``
+        is the switch that closes that door.
+        """
         if self._repository is not None and owner_id is not None:
             user_value = self._repository.get_secret(owner_id, provider)
             if user_value is not None:
                 return ResolvedCredential("user", user_value)
+            if _require_own_provider_credential():
+                logger.info(
+                    "refusing the operator credential for %s: the requester has none of "
+                    "their own and REQUIRE_OWN_PROVIDER_CREDENTIAL is set",
+                    provider,
+                )
+                return ResolvedCredential("none", None)
         server_value = KPubDataConfig.from_env().get_provider_key(self.client_key_slot(provider))
         if server_value:
             return ResolvedCredential("server", server_value)
