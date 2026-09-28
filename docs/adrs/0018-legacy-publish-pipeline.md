@@ -1,7 +1,7 @@
 # ADR 0018 — 레거시 publish 파이프라인과 BuildSpec 경로의 공존
 
 - 상태: 제안됨(Proposed) — **결정 대기**
-- 관련 문서: [ADR 0003 — ArtifactStore/BuildIndex](./0003-artifact-store.md), [BUILD_SPEC.md](../BUILD_SPEC.md), [DATA_FRESHNESS.md](../DATA_FRESHNESS.md)
+- 관련 문서: [ADR 0003 — persistent build store](./0003-persistent-build-store.md), [BUILD_SPEC.md](../BUILD_SPEC.md), [DATA_FRESHNESS.md](https://github.com/yeongseon/kpubdata-builder/blob/main/DATA_FRESHNESS.md)
 
 ## 맥락
 
