@@ -28,6 +28,16 @@ on:
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
+  # release.yml calls this after it has tagged. A tag pushed with GITHUB_TOKEN does
+  # not fire `push: tags`, so waiting for that trigger would leave the tag created
+  # and the image never built (#718).
+  workflow_call:
+    inputs:
+      ref:
+        description: "Tag to build and publish."
+        required: true
+        type: string
+
 permissions:
   contents: read
   packages: write
@@ -44,14 +54,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       # The image tag comes from the git tag (type=ref,event=tag below) while the
       # version inside the image comes from the package metadata. Nothing kept them
       # in step, so an image labelled v0.1.0 could contain 0.4.0.dev0 (#690). Refuse
       # to publish rather than ship a label that contradicts its contents.
       - name: Version consistency
+        env:
+          CALLED_REF: ${{ inputs.ref }}
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          # When called by release.yml the ref is a tag but GITHUB_REF_TYPE says
+          # `branch`, because that describes the caller. Use the input when there is
+          # one, or the label and the contents can disagree unnoticed (#690).
+          if [ -n "${CALLED_REF}" ]; then
+            python scripts/check_version_consistency.py --tag "${CALLED_REF}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             python scripts/check_version_consistency.py --tag "${GITHUB_REF_NAME}"
           else
             python scripts/check_version_consistency.py
@@ -85,6 +104,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
@@ -102,6 +123,7 @@ jobs:
         with:
           images: ghcr.io/yeongseon/kpubdata-builder
           tags: |
+            type=raw,value=${{ inputs.ref }},enable=${{ inputs.ref != '' }}
             type=ref,event=tag
             type=ref,event=branch
             type=sha,prefix=sha-

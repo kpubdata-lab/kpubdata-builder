@@ -1,0 +1,236 @@
+# Release under branch protection (kpubdata#586, #718).
+#
+# Three ways in, none of which writes to `main`.
+#
+#   workflow_dispatch, mode=prepare         opens a release pull request
+#   workflow_dispatch, mode=release         gates what is declared now, then tags
+#   pull_request closed on `release/*`      the same, for the pull request path
+#
+# `mode=release` exists because a first release is not a bump. This repository and
+# Studio already declare the version their CHANGELOGs say they are preparing, so
+# raising it would leave that version unreleased for ever. The version is read from
+# `pyproject.toml`, never typed, so a wrong number has nowhere to enter.
+#
+# Two GITHUB_TOKEN limits shape this:
+#
+#   - a tag pushed with GITHUB_TOKEN does not fire `push: tags`, so docker.yml is
+#     called rather than waited for. Waiting leaves the tag created and no image.
+#   - a pull request opened with GITHUB_TOKEN does not trigger `pull_request`
+#     workflows, so a release pull request arrives without CI. Correctness does not
+#     depend on it: the gates run below, before anything is tagged.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "prepare = open a release pull request; release = tag what is declared now"
+        required: true
+        type: choice
+        options:
+          - prepare
+          - release
+        default: prepare
+      bump:
+        description: "Which part of the version to raise (mode=prepare only)"
+        required: false
+        type: choice
+        options:
+          - patch
+          - minor
+        default: patch
+
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Open the release pull request
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prepare'
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # One implementation, referenced rather than copied. The first draft of this
+      # step was an inline shell heredoc — the thing kpubdata#588 pulled out of that
+      # repository for being impossible to run without dispatching a real release.
+      - name: Work out the new version
+        id: bump
+        uses: yeongseon/kpubdata/.github/actions/next-version@main
+        with:
+          bump: ${{ inputs.bump }}
+          file: pyproject.toml
+
+      - name: Write the version
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          path = pathlib.Path("pyproject.toml")
+          path.write_text(
+              re.sub(
+                  r'^version = "[^"]+"',
+                  f'version = "{os.environ["NEW_VERSION"]}"',
+                  path.read_text(encoding="utf-8"),
+                  count=1,
+                  flags=re.MULTILINE,
+              ),
+              encoding="utf-8",
+          )
+          PY
+
+      # Before the pull request, not after. One that cannot pass this is one nobody
+      # should be asked to look at.
+      - name: Check the version sources agree
+        run: python3 scripts/check_version_consistency.py --tag "${{ steps.bump.outputs.tag }}"
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release/${TAG}"
+          git add pyproject.toml
+          git commit -m "chore: release ${TAG}"
+          git push origin "release/${TAG}"
+          printf '%s\n' \
+            "\`${TAG}\` 릴리스 준비 (#718)." \
+            "" \
+            "병합되면 게이트가 돌고, **통과한 뒤에** 태그·릴리스·GHCR 이미지가 이어진다." \
+            "실패하면 남는 것이 없다. 다시 눌러도 된다." \
+            > /tmp/release-body.md
+          gh pr create --base main --head "release/${TAG}" \
+            --title "chore: release ${TAG}" --body-file /tmp/release-body.md
+
+  release:
+    name: Gate, tag and release
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       startsWith(github.event.pull_request.head.ref, 'release/'))
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      # On the pull request path, the merge commit itself — not `main`, which by then
+      # may be whatever merged next, a different tree from the one gated below. On a
+      # dispatch it is main's head, pinned immediately so the tag cannot land on
+      # something that merged while the gates ran.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.ref }}
+          fetch-depth: 0
+
+      - name: Pin the commit being released
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Read the version being released
+        id: tag
+        run: |
+          version=$(python3 -c "
+          import pathlib, re
+          text = pathlib.Path('pyproject.toml').read_text(encoding='utf-8')
+          print(re.search(r'^version = \"([^\"]+)\"', text, re.MULTILINE).group(1))
+          ")
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "releasing v${version}"
+
+      # The branch name and the file disagree only if someone edited the pull request.
+      # Tagging the wrong one is how an image ends up labelled with a version it does
+      # not contain (#690).
+      - name: The branch name and the file must agree
+        if: github.event_name == 'pull_request'
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [ "${BRANCH}" != "release/${TAG}" ]; then
+            echo "::error::branch is ${BRANCH} but pyproject.toml says release/${TAG}"
+            exit 1
+          fi
+
+      # Before the gates, not after. kpubdata#586 is about a release that failed with
+      # a tag already created; spending half an hour to then say "tag exists" is the
+      # same waste one step earlier.
+      - name: The tag must not exist yet
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::${TAG} already exists. Nothing to release, or the version was not raised."
+            exit 1
+          fi
+          echo "${TAG} is free"
+
+      - name: Check the version sources agree
+        run: python3 scripts/check_version_consistency.py --tag "${{ steps.tag.outputs.tag }}"
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      # Everything that has to be true before a tag exists. A failure here leaves no
+      # tag, no release and nothing to clean up.
+      - name: Run quality gates
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv run pytest -ra
+
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}"
+          git push origin "${TAG}"
+          gh release create "${TAG}" --title "${TAG}" --generate-notes \
+            --target "${{ steps.commit.outputs.sha }}"
+
+  image:
+    name: Image
+    needs: [release]
+    # A tag pushed with GITHUB_TOKEN does not fire `push: tags`, so the image build is
+    # called rather than waited for. Without this the tag exists and nothing is
+    # published, which is exactly the "declared version points at no artifact" problem
+    # #690 is about.
+    uses: ./.github/workflows/docker.yml
+    with:
+      ref: ${{ needs.release.outputs.tag }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    secrets: inherit
