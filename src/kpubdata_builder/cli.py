@@ -16,6 +16,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -28,6 +29,7 @@ from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
 from .tabular import DEFAULT_PREVIEW_LIMIT
 from .warehouse import TableCatalog
+from .warehouse import gc as warehouse_gc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -102,6 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace-id",
         default="ws_personal",
         help="Owning workspace for materialised tables (default: ws_personal).",
+    )
+    build_cmd.add_argument(
+        "--warehouse-keep",
+        type=int,
+        default=3,
+        metavar="N",
+        help=(
+            "Keep the N most recent snapshots of each table this build commits and "
+            "reclaim the rest (default: 3). Use -1 to keep every snapshot. Ignored "
+            "without --warehouse."
+        ),
     )
 
     publish_cmd = subparsers.add_parser(
@@ -286,6 +299,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually delete matching run workspaces. Without this flag the command is a dry run.",
     )
 
+    gc_cmd = subparsers.add_parser(
+        "warehouse-gc",
+        help="Reclaim snapshots and staging directories nothing needs any more (#738).",
+    )
+    gc_cmd.add_argument(
+        "warehouse",
+        metavar="DIR",
+        help="Table catalog root, the same directory `build --warehouse` was given.",
+    )
+    gc_cmd.add_argument(
+        "--keep",
+        type=int,
+        default=3,
+        metavar="N",
+        help="Committed snapshots to retain per table, newest first (default: 3).",
+    )
+    gc_cmd.add_argument(
+        "--stale-hours",
+        type=float,
+        default=24.0,
+        metavar="H",
+        help=(
+            "Treat an uncommitted snapshot older than H hours as a crashed build and "
+            "mark it reclaimable (default: 24). The catalog cannot tell a crashed "
+            "build from a slow one, so this is a statement about how long a build of "
+            "yours may take, not a fact the catalog knows."
+        ),
+    )
+    gc_cmd.add_argument(
+        "--workspace-id",
+        default=None,
+        help="Only collect tables of this workspace (default: every workspace).",
+    )
+
     return parser
 
 
@@ -347,6 +394,7 @@ def _run_build(
     run_id: str | None,
     warehouse: str | None = None,
     workspace_id: str = "ws_personal",
+    warehouse_keep: int = 3,
 ) -> int:
     """Load and validate BuildSpec, then execute Medallion pipeline.
 
@@ -360,6 +408,10 @@ def _run_build(
             says so, because "nothing was committed" and "committing was not asked
             for" are different outcomes.
         workspace_id: Owning workspace for materialised tables.
+        warehouse_keep: Snapshots to keep per table once this build commits a new
+            one; a negative number keeps every snapshot. Committing without
+            reclaiming grows the warehouse by a whole copy of Gold per refresh
+            (#738).
 
     Returns:
         int: 0 if all sources succeed, 1 on load/validation/build failure.
@@ -385,6 +437,7 @@ def _run_build(
         run_id=run_id,
         catalog=catalog,
         workspace_id=workspace_id,
+        warehouse_keep=None if warehouse_keep < 0 else warehouse_keep,
     )
 
     print(f"build: {spec.dataset_id} (run {result.context.run_id})")
@@ -619,6 +672,70 @@ def _run_rebuild_index(output_dir: str) -> int:
     except Exception as exc:
         print(f"error: failed to rebuild index: {exc}", file=sys.stderr)
         return 1
+
+
+def _run_warehouse_gc(
+    *,
+    warehouse: str,
+    keep: int,
+    stale_hours: float,
+    workspace_id: str | None,
+) -> int:
+    """Reclaim what the warehouse no longer needs, across every table.
+
+    A build reclaims the table it just committed, which is the common case. Two kinds
+    of garbage survive that, and this command is what reaches them:
+
+    * a table nobody has rebuilt since its snapshots went stale — the build never runs,
+      so the build-time pass never runs either;
+    * a crashed build's ``staging`` row, which is age-based and so cannot be judged
+      from inside the build that would have finished it.
+
+    The second is the one that hides: the catalog knows about that directory, so
+    ``collect_orphan_staging`` deliberately leaves it alone, and without a cut-off
+    nothing ever marks it.
+
+    Args:
+        warehouse: Table catalog root.
+        keep: Committed snapshots to retain per table, newest first.
+        stale_hours: How old an uncommitted snapshot must be to count as abandoned.
+        workspace_id: Restrict to one workspace, or every workspace when None.
+
+    Returns:
+        int: 0 always, unless the warehouse directory does not exist. Reclaiming
+        nothing is a normal outcome, not a failure.
+    """
+    root = Path(warehouse)
+    if not root.is_dir():
+        print(f"error: no such warehouse directory: {root}", file=sys.stderr)
+        return 1
+
+    before = (datetime.now(timezone.utc) - timedelta(hours=stale_hours)).isoformat()
+    catalog = TableCatalog(root)
+    tables = catalog.list_tables(workspace_id)
+    if not tables:
+        print(f"warehouse {root}: no tables")
+        return 0
+
+    total_removed = 0
+    for table in sorted(tables, key=lambda t: t.logical_name):
+        marked = warehouse_gc.abandon_stale(catalog, table.id, before=before)
+        report = warehouse_gc.collect(catalog, table.id, keep=keep)
+        total_removed += report.removed_count
+        # Say what was kept and why. A caller who cannot tell "nothing to do" from
+        # "everything was in use" cannot diagnose a warehouse that stops reclaiming.
+        details = [f"removed {report.removed_count}"]
+        if marked:
+            details.append(f"marked {len(marked)} stale")
+        if report.kept_leased:
+            details.append(f"kept {len(report.kept_leased)} leased")
+        if report.kept_current:
+            details.append(f"kept {len(report.kept_current)} current")
+        print(f"  {table.logical_name}: " + ", ".join(details))
+
+    unit = "y" if total_removed == 1 else "ies"
+    print(f"warehouse {root}: reclaimed {total_removed} director{unit}")
+    return 0
 
 
 def _run_prune_cancelled(*, output_dir: str, ttl_hours: float | None, apply: bool) -> int:
@@ -921,6 +1038,7 @@ def dispatch(args: argparse.Namespace) -> int:
             run_id=args.run_id,
             warehouse=args.warehouse,
             workspace_id=args.workspace_id,
+            warehouse_keep=args.warehouse_keep,
         )
     if command == "publish":
         return _run_publish(
@@ -947,6 +1065,13 @@ def dispatch(args: argparse.Namespace) -> int:
         )
     if command == "rebuild-index":
         return _run_rebuild_index(output_dir=args.output_dir)
+    if command == "warehouse-gc":
+        return _run_warehouse_gc(
+            warehouse=args.warehouse,
+            keep=args.keep,
+            stale_hours=args.stale_hours,
+            workspace_id=args.workspace_id,
+        )
     if command == "prune-cancelled":
         return _run_prune_cancelled(
             output_dir=args.output_dir,

@@ -75,6 +75,7 @@ from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..uploads import UploadRepository
 from ..warehouse import MaterializeResult, TableCatalog, materialize
+from ..warehouse import gc as warehouse_gc
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .context import BuildContext
 from .export import export_gold_package
@@ -850,6 +851,46 @@ def _run_composition(
     )
 
 
+def _reclaim(catalog: TableCatalog, table_id: str, keep: int | None) -> None:
+    """Drop the snapshots of ``table_id`` that this commit just superseded.
+
+    A build that commits and never reclaims grows the warehouse by a whole copy of
+    Gold every refresh — a dataset refreshed daily keeps 365 of them in a year
+    (#738). The reclamation existed before this call did; nothing ran it.
+
+    It runs here, in the build, for one reason: there is no scheduler. A CLI command
+    nobody runs is the same defect one level up. The work is bounded — one table, at
+    most ``len(committed) - keep`` directories — and it happens after the pointer has
+    already moved, so a build that got as far as committing is already successful.
+
+    Which is why this never raises. Reclamation failing is a warehouse that uses more
+    disk than it should; a build failing is a dataset the user does not have. The
+    second is worse, and the first is recoverable by running ``warehouse-gc`` later.
+
+    ``keep=None`` turns it off, for a caller that keeps every snapshot on purpose.
+    """
+    if keep is None:
+        return
+    try:
+        report = warehouse_gc.collect(catalog, table_id, keep=keep)
+    except Exception:  # noqa: BLE001 - see docstring: never fail a committed build
+        logger.warning("snapshot reclamation failed for table %s", table_id, exc_info=True)
+        return
+    if report.removed_count:
+        logger.info(
+            "reclaimed %d snapshot director%s from table %s",
+            report.removed_count,
+            "y" if report.removed_count == 1 else "ies",
+            table_id,
+        )
+    if report.kept_leased:
+        logger.info(
+            "kept %d snapshot(s) of table %s: a query still holds a lease",
+            len(report.kept_leased),
+            table_id,
+        )
+
+
 def run_build(
     spec: BuildSpec,
     *,
@@ -864,6 +905,7 @@ def run_build(
     cancellation: CancellationProbe | None = None,
     catalog: TableCatalog | None = None,
     workspace_id: str = "ws_personal",
+    warehouse_keep: int | None = 3,
 ) -> BuildResult:
     """Execute BuildSpec through Medallion pipeline.
 
@@ -1106,6 +1148,7 @@ def run_build(
                 outcome.source_key,
                 materialized[outcome.source_key].snapshot.id,
             )
+            _reclaim(catalog, materialized[outcome.source_key].table.id, warehouse_keep)
 
     return BuildResult(
         context=context,
