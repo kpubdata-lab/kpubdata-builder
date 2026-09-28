@@ -194,7 +194,10 @@ jobs:
       # before it can run a single test. A release must resolve the published
       # dependency, which is the thing users will install.
       - name: Install dependencies
-        run: uv sync --frozen --extra dev --no-sources
+        # No `--frozen`: uv refuses it together with `--no-sources`. ci.yml's line is
+        # `uv sync --extra dev --no-sources`, and the lockfile is held current by the
+        # `uv lock --check` step in its lint job rather than by a flag here.
+        run: uv sync --extra dev --no-sources
 
       # Everything that has to be true before a tag exists. A failure here leaves no
       # tag, no release and nothing to clean up.
