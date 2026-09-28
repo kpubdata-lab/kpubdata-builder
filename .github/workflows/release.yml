@@ -74,24 +74,16 @@ jobs:
           bump: ${{ inputs.bump }}
           file: pyproject.toml
 
+      # Not just pyproject.toml. `uv.lock` repeats the project's own version and
+      # `uv lock --check` in CI compares them — writing one without the other turns
+      # nine checks red, which is how #744 first went.
       - name: Write the version
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
-          python3 - <<'PY'
-          import os, pathlib, re
-          path = pathlib.Path("pyproject.toml")
-          path.write_text(
-              re.sub(
-                  r'^version = "[^"]+"',
-                  f'version = "{os.environ["NEW_VERSION"]}"',
-                  path.read_text(encoding="utf-8"),
-                  count=1,
-                  flags=re.MULTILINE,
-              ),
-              encoding="utf-8",
-          )
-          PY
+        uses: yeongseon/kpubdata/.github/actions/set-version@main
+        with:
+          version: ${{ steps.bump.outputs.new_version }}
+
+      - name: Show what changed
+        run: git --no-pager diff --stat
 
       # Before the pull request, not after. One that cannot pass this is one nobody
       # should be asked to look at.
@@ -106,7 +98,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "release/${TAG}"
-          git add pyproject.toml
+          git add -A
           git commit -m "chore: release ${TAG}"
           git push origin "release/${TAG}"
           printf '%s\n' \
