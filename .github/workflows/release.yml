@@ -187,17 +187,23 @@ jobs:
       - name: Check the version sources agree
         run: python3 scripts/check_version_consistency.py --tag "${{ steps.tag.outputs.tag }}"
 
+      # `--no-sources` on every call, exactly as ci.yml does. `[tool.uv.sources]`
+      # points kpubdata at `../kpubdata` for local development, and a runner has no
+      # sibling checkout — without the flag the release fails with
+      # "Distribution not found at: file:///home/runner/work/kpubdata-builder/kpubdata"
+      # before it can run a single test. A release must resolve the published
+      # dependency, which is the thing users will install.
       - name: Install dependencies
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen --extra dev --no-sources
 
       # Everything that has to be true before a tag exists. A failure here leaves no
       # tag, no release and nothing to clean up.
       - name: Run quality gates
         run: |
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src
-          uv run pytest -ra
+          uv run --no-sources ruff check .
+          uv run --no-sources ruff format --check .
+          uv run --no-sources mypy src
+          uv run --no-sources pytest -ra
 
       - name: Tag and release
         env:
