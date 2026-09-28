@@ -1,6 +1,12 @@
 # 변경 이력
 
-## v0.4
+## [Unreleased]
+
+### Security
+
+- Move to kpubdata 0.7 (`kpubdata>=0.7.0,<0.8`, #746). 0.4.0 was pinned below 0.7 and so installed kpubdata 0.6.x, which can leak provider API keys into logs and tracebacks, disables TLS verification for lofin, and would send a provider key to any host a spec named. See the [kpubdata 0.7.0 release](https://github.com/yeongseon/kpubdata/releases/tag/v0.7.0).
+
+## v0.4.0 — 2026-09-28
 
 ### 추가됨
 - **CUBRID 상태 백엔드 (ADR 0016, #579)**: 영속 백엔드를 선택형으로 추상화한다 — `KPUBDATA_BUILDER_STORAGE_BACKEND`(`sqlite` 기본 / `cubrid`) + `KPUBDATA_BUILDER_CUBRID_URL`(`cubrid+pycubrid://…`). `BuildIndex`/`CredentialRepository`/`ArtifactStore` Protocol 뒤에 SQLAlchemy(`sqlalchemy-cubrid[pycubrid]`) 기반 CUBRID 구현체를 추가(optional `cubrid` extra — 기본 sqlite/local 경로는 SQLAlchemy 의존 없이 무외부의존 유지). manifest 문서는 CUBRID 행을 정본으로 + FS 미러로 이관하고(산출물 바이트는 블록 볼륨 유지, ADR 0003의 "manifest.json 정본" 조항을 cubrid 백엔드에 한해 supersede), OCI Compute VM + Docker Compose 배포(`infra/oci/`)를 추가한다. 실 CUBRID 통합 계약 테스트(`pytest -m cubrid`, `.github/workflows/cubrid.yml`)로 검증. 로컬 개발은 sqlite, 배포는 cubrid 전략.

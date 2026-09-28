@@ -82,6 +82,14 @@ jobs:
         with:
           version: ${{ steps.bump.outputs.new_version }}
 
+      # The release pull request carries its own CHANGELOG change: `[Unreleased]` becomes
+      # this version, dated. An empty `[Unreleased]` stops here, before a branch exists.
+      - name: Date the CHANGELOG section
+        uses: yeongseon/kpubdata/.github/actions/release-notes@main
+        with:
+          command: promote
+          version: ${{ steps.bump.outputs.new_version }}
+
       - name: Show what changed
         run: git --no-pager diff --stat
 
@@ -184,6 +192,16 @@ jobs:
           fi
           echo "${TAG} is free"
 
+      # The notes are the CHANGELOG section, not a list of pull request titles. Taken
+      # before the gates so a missing or empty section stops the release while there
+      # is still nothing to clean up.
+      - name: Release notes from the CHANGELOG
+        id: notes
+        uses: yeongseon/kpubdata/.github/actions/release-notes@main
+        with:
+          command: extract
+          version: ${{ steps.tag.outputs.tag }}
+
       - name: Check the version sources agree
         run: python3 scripts/check_version_consistency.py --tag "${{ steps.tag.outputs.tag }}"
 
@@ -217,7 +235,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "${TAG}"
           git push origin "${TAG}"
-          gh release create "${TAG}" --title "${TAG}" --generate-notes \
+          gh release create "${TAG}" --title "${TAG}" \
+            --notes-file "${{ steps.notes.outputs.file }}" \
             --target "${{ steps.commit.outputs.sha }}"
 
   image:
