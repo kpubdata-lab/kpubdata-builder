@@ -68,6 +68,11 @@ def collect_orphan_staging(catalog: TableCatalog, table_id: str) -> list[str]:
 def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     """Delete one snapshot's files and then its catalog row.
 
+    A snapshot's bytes are in one of two places depending on how far it got: under
+    ``snapshots/`` once promoted, under ``_staging/`` if it never was. Both are
+    removed, because a snapshot that never reached promotion is the common case for
+    reclamation — a compare-and-swap loser, or a crashed build.
+
     The lease check and the state change happen in one transaction inside
     ``begin_retiring``, and no lease is issued for a ``retiring`` snapshot. Checking
     and then deleting in two steps left a gap: a query could resolve the pointer and
@@ -79,12 +84,18 @@ def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
         SnapshotNotFound: No such snapshot.
     """
     snapshot = catalog.begin_retiring(snapshot_id)
-    directory = SnapshotLayout(catalog.root, snapshot.table_id).snapshot_dir(snapshot_id)
+    layout = SnapshotLayout(catalog.root, snapshot.table_id)
+    directory = layout.snapshot_dir(snapshot_id)
     if directory.exists():
         # Committed snapshots are read-only, and a read-only directory will not let
         # its entries be unlinked, so permissions come back before the delete.
         thaw(directory)
         shutil.rmtree(directory, ignore_errors=True)
+    # A snapshot abandoned before it was promoted still has its bytes in staging, and
+    # they are not an orphan yet — the catalog still knows the id, which is exactly
+    # what ``collect_orphan_staging`` refuses to touch. Deleting only the promoted
+    # path left them for a *later* pass to find, after this one forgot the row (#738).
+    layout.discard_staging(snapshot_id)
     # Files first, catalog second. The other order creates the orphan it is meant
     # to clean up.
     catalog.forget_snapshot(snapshot_id)

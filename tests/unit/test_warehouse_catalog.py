@@ -754,3 +754,33 @@ class TestCommitCanCheckTheFilesItIsAbout:
         (staging / "_snapshot.json").write_text('{"anything": true}', encoding="utf-8")
 
         assert warehouse_layout.content_digest(staging) == before
+
+
+def test_reclaiming_an_unpromoted_snapshot_takes_its_staging_bytes_too(
+    catalog: TableCatalog,
+) -> None:
+    """A crashed build's bytes are in staging, not under ``snapshots/`` (#738).
+
+    Deleting only the promoted path left them behind, and they were not orphans that
+    a later pass would find either — ``collect_orphan_staging`` skips every id the
+    catalog knows, and this pass forgets the id only *after* the delete. So one
+    collection freed the row and none freed the disk.
+    """
+    table = catalog.create_table(WORKSPACE, "sales")
+    snapshot = catalog.begin_snapshot(
+        table.id,
+        run_id="crashed",
+        schema_version=1,
+        coverage_hash="cov",
+        artifact_digest="sha256:0",
+    )
+    layout = SnapshotLayout(catalog.root, table.id)
+    staging = layout.begin(snapshot.id)
+    (staging / "part-0.csv").write_text("x\n", encoding="utf-8")
+    catalog.abandon(snapshot.id)
+
+    report = warehouse_gc.collect(catalog, table.id, keep=0)
+
+    assert report.snapshots_removed == [snapshot.id]
+    assert not staging.exists()
+    assert catalog.list_snapshots(table.id) == []

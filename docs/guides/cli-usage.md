@@ -41,6 +41,8 @@ positional arguments:
     verify           Verify dataset specs against live APIs.
     prune-cancelled  List (and optionally delete) cancelled partial-run
                      artifacts past a TTL (#549).
+    warehouse-gc     Reclaim snapshots and staging directories nothing
+                     needs any more (#738).
 
 options:
   -h, --help  show this help message and exit
@@ -193,6 +195,8 @@ preview: dataset.seoul_apt_trade
 ```console
 $ kpubdata-builder build --help
 usage: kpubdata-builder build [-h] [--output-dir OUTPUT_DIR] [--run-id RUN_ID]
+                              [--warehouse DIR] [--workspace-id WORKSPACE_ID]
+                              [--warehouse-keep N]
                               spec
 
 positional arguments:
@@ -203,6 +207,17 @@ options:
   --output-dir OUTPUT_DIR
                         Run workspace root directory (default: build).
   --run-id RUN_ID       Run identifier (default: generated timestamp).
+  --warehouse DIR       Commit each source's Gold output as a table snapshot
+                        under DIR, so the build ends at a queryable table.
+                        Needs no publish credential. Omitted, nothing is
+                        written to a catalog.
+  --workspace-id WORKSPACE_ID
+                        Owning workspace for materialised tables (default:
+                        ws_personal).
+  --warehouse-keep N    Keep the N most recent snapshots of each table this
+                        build commits and reclaim the rest (default: 3). Use
+                        -1 to keep every snapshot. Ignored without
+                        --warehouse.
 ```
 
 > **[예시 — 픽스처 기반 출력]** `build` 명령은 실제 data.go.kr API에 접근하므로
@@ -229,6 +244,64 @@ build: dataset.seoul_apt_trade (run 20240601-153022)
 error: build failed for one or more sources
   - gangnam_202401: ConfigError: KPUBDATA_DATAGO_API_KEY not set
 ```
+
+---
+
+### warehouse-gc — 창고 회수
+
+`--warehouse` 로 빌드하면 갱신할 때마다 새 snapshot 이 커밋된다. **커밋만 하고 회수하지
+않으면 Gold 한 벌이 통째로 남는다** — 매일 갱신하는 데이터셋이면 1년에 365벌이다.
+
+빌드는 **자기가 방금 커밋한 테이블만** 회수한다(`--warehouse-keep`, 기본 3). 그것으로
+닿지 않는 두 가지가 있고, 이 명령이 그 둘을 맡는다.
+
+- **다시 빌드하지 않는 테이블.** 빌드가 안 도니 빌드 시점 회수도 안 돈다.
+- **크래시가 남긴 `staging`.** 나이로만 판단할 수 있어서 **그 빌드 안에서는 판단이 안 된다.**
+  카탈로그가 그 디렉터리를 알고 있으므로 고아 회수(`collect_orphan_staging`)가 일부러
+  건너뛴다 — 아무도 손대지 않는 자리다.
+
+```console
+$ kpubdata-builder warehouse-gc --help
+usage: kpubdata-builder warehouse-gc [-h] [--keep N] [--stale-hours H]
+                                     [--workspace-id WORKSPACE_ID]
+                                     DIR
+
+positional arguments:
+  DIR                   Table catalog root, the same directory `build
+                        --warehouse` was given.
+
+options:
+  -h, --help            show this help message and exit
+  --keep N              Committed snapshots to retain per table, newest first
+                        (default: 3).
+  --stale-hours H       Treat an uncommitted snapshot older than H hours as a
+                        crashed build and mark it reclaimable (default: 24).
+                        The catalog cannot tell a crashed build from a slow
+                        one, so this is a statement about how long a build of
+                        yours may take, not a fact the catalog knows.
+  --workspace-id WORKSPACE_ID
+                        Only collect tables of this workspace (default: every
+                        workspace).
+```
+
+```console
+$ kpubdata-builder warehouse-gc ./warehouse
+  dataset.seoul_apt_trade.gangnam_202401: removed 2
+  dataset.seoul_apt_trade.seocho_202401: removed 0, kept 1 leased
+warehouse warehouse: reclaimed 2 directories
+```
+
+무엇을 **남겼는지**도 말한다. "할 일이 없었다" 와 "전부 사용 중이었다" 를 구분하지 못하면
+회수가 멈춘 창고를 진단할 수 없다.
+
+지우지 못하는 것이 두 가지 있고, 둘 다 정상이다.
+
+- **현재 snapshot.** 지우면 읽을 것이 없어진다.
+- **리스(lease)가 살아 있는 snapshot.** 쿼리가 읽는 중이다. 리스가 끝난 뒤 다시 돌리면 된다.
+
+회수는 **빌드를 실패시키지 않는다.** 커밋까지 간 빌드는 사용자가 요청한 데이터셋을 이미
+만들었고, 청소가 실패했다고 그걸 버리는 건 잘못된 교환이다. 실패하면 로그에 남고, 나중에
+이 명령으로 따라잡는다.
 
 ---
 
