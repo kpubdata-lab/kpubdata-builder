@@ -217,3 +217,95 @@ def test_fingerprints_are_carried_through(catalog: TableCatalog, gold: Path) -> 
     assert result.snapshot.coverage_fingerprint == "region=seoul;period=2025"
     assert result.snapshot.source_params_fingerprint == "LAWD_CD=11110"
     assert result.snapshot.schema_contract_version == "v1"
+
+
+class TestARefusedCommitDoesNotLeaveItsBytes:
+    """A snapshot that will never be committed must become reclaimable (#738).
+
+    #733 added the `abandoned` state and taught GC to collect it. Nothing set it, so a
+    compare-and-swap loser stayed `validated` for ever with its files promoted, and
+    garbage collection walked past because the catalog knew about it.
+    """
+
+    def test_a_losing_commit_is_abandoned_and_collected(
+        self, catalog: TableCatalog, gold: Path, tmp_path: Path
+    ) -> None:
+        """Two refreshes race; the loser's bytes do not stay on disk."""
+        from kpubdata_builder.warehouse import SnapshotConflict
+        from kpubdata_builder.warehouse import gc as warehouse_gc
+
+        first = materialize(
+            catalog,
+            workspace_id=WORKSPACE,
+            logical_name="apt_trade",
+            source_dir=gold,
+            run_id="run-1",
+        )
+
+        # A second refresh that reads the revision before the third commits. Simulated
+        # by committing something else in between, which is what a race produces.
+        second_gold = tmp_path / "run-2" / "gold" / "datago.apt_trade"
+        second_gold.mkdir(parents=True)
+        (second_gold / "table.parquet").write_bytes(b"PAR1second")
+        third_gold = tmp_path / "run-3" / "gold" / "datago.apt_trade"
+        third_gold.mkdir(parents=True)
+        (third_gold / "table.parquet").write_bytes(b"PAR1third")
+
+        materialize(
+            catalog,
+            workspace_id=WORKSPACE,
+            logical_name="apt_trade",
+            source_dir=second_gold,
+            run_id="run-2",
+        )
+
+        # Force the loss: commit against a revision that has moved on.
+        snapshot = catalog.begin_snapshot(
+            first.table.id,
+            run_id="run-3",
+            schema_version=1,
+            coverage_hash="",
+            artifact_digest="",
+        )
+        layout = SnapshotLayout(catalog.root, first.table.id)
+        staging = layout.begin(snapshot.id)
+        (staging / "table.parquet").write_bytes(b"PAR1third")
+        catalog.mark_validated(snapshot.id)
+        layout.promote(snapshot.id)
+        with pytest.raises(SnapshotConflict):
+            catalog.commit_snapshot(snapshot.id, expected_revision=0)
+
+        # Left alone, this is the leak: validated for ever, files on disk, GC skips it.
+        assert catalog.get_snapshot(snapshot.id).state == "validated"
+        assert (
+            snapshot.id
+            not in warehouse_gc.collect(catalog, first.table.id, keep=0).snapshots_removed
+        )
+
+        # materialize() marks it instead, so the same pass reclaims it.
+        catalog.abandon(snapshot.id)
+        assert (
+            snapshot.id in warehouse_gc.collect(catalog, first.table.id, keep=0).snapshots_removed
+        )
+
+    def test_an_empty_source_leaves_nothing_behind(
+        self, catalog: TableCatalog, tmp_path: Path
+    ) -> None:
+        """The refusal path abandons too, so a rejected build does not accumulate."""
+        from kpubdata_builder.warehouse import SnapshotStateError
+
+        empty = tmp_path / "empty-gold"
+        empty.mkdir()
+
+        with pytest.raises(SnapshotStateError):
+            materialize(
+                catalog,
+                workspace_id=WORKSPACE,
+                logical_name="apt_trade",
+                source_dir=empty,
+                run_id="run-1",
+            )
+
+        table = catalog.list_tables(WORKSPACE)[0]
+        snapshots = catalog.list_snapshots(table.id)
+        assert [s.state for s in snapshots] == ["abandoned"]
