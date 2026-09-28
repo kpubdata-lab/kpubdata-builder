@@ -126,6 +126,27 @@ What an agent does not do:
 - Do not rename or delete a branch you did not create.
 - If a git operation is not obviously safe, **ask instead of guessing.**
 
+## Releases
+
+Cadence and order live in [kpubdata's compatibility.md §5.1](https://github.com/yeongseon/kpubdata/blob/main/docs/compatibility.md#release-cadence);
+who may do what lives in POLICY 14. This section keeps only what applies to an
+agent.
+
+- **Release week is a freeze.** From the Monday of the month's last week until
+  kpubdata-studio is released on Thursday, open only release pull requests against
+  `main`: version, CHANGELOG, dependency pin, compatibility documents, or a fix for
+  a failing release gate. Other work waits on its branch.
+- **Prepare, do not release.** An agent may tidy the CHANGELOG's Unreleased section,
+  run a release workflow with `dry_run`, and draft the version and pin pull requests.
+  Pushing a tag, creating a GitHub Release, approving the PyPI environment and
+  changing what a release contains are a person's (POLICY 14).
+- **Propose the bump from the CHANGELOG, with the reason.** In 0.x, a breaking change
+  or a new feature is minor; fixes alone are patch.
+- **Builder and Studio share one version** (ADR 0004). They ship as one application,
+  so a release that only changed one of them still raises both. Skipping a repository
+  because it has no changes applies to kpubdata alone.
+- **Target Release is a month (`2026-10`), not a version.**
+
 ## Build order
 
 1. The spec model
