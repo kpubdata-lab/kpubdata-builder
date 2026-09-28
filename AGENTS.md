@@ -73,6 +73,11 @@ carry most of the weight:
 - **A rule without a gate is a wish.** When you add a rule, add the command that
   checks it, wire it into CI, and write the test that shows it failing. Without the
   third, nobody knows the gate works.
+- **An absent check is not a failure — it is a stop.** A required status check no
+  workflow produces leaves every pull request BLOCKED for ever, because GitHub waits
+  for it rather than reporting it. The way past is `--admin`, which skips every other
+  check too. Require the one aggregate `CI gate` job, never a matrix-suffixed name,
+  and run `scripts/check_required_checks.py` (in kpubdata) after touching a matrix.
 
 Existing debt is frozen with a **ratchet** — the baseline holds today's per-file
 count and the check fails only when a count grows. Fixing everything first means

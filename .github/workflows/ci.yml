@@ -128,3 +128,33 @@ jobs:
 
       - name: Run tests at the floor
         run: uv run --no-sync pytest
+
+  # One gate, so that editing the matrix is not also editing branch protection
+  # (studio#416). Requiring a matrix-suffixed context means every matrix edit is a
+  # protection edit, and the edit that gets forgotten leaves a required context that
+  # is never produced. GitHub does not treat an absent check as a failure — it waits,
+  # so every pull request stays BLOCKED with nothing to look at and the only way past
+  # is `--admin`, which bypasses every other check too.
+  #
+  # Depending on the matrix instead of naming its entries means a new Python version
+  # is covered the moment it is added, and a removed one takes nothing with it.
+  gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    needs: [lint, test, coverage, min-deps]
+    # `always()` so a failed job still reaches this step. Without it the gate is
+    # skipped when something upstream fails, and a skipped required check is the same
+    # absence this job exists to remove.
+    if: always()
+    steps:
+      - name: Every job this gate covers must have succeeded
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "upstream results: ${results}"
+          for result in ${results}; do
+            if [ "${result}" != "success" ]; then
+              echo "::error::CI gate failed — upstream results were: ${results}"
+              exit 1
+            fi
+          done
+          echo "every upstream job succeeded"
