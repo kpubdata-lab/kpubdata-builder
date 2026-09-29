@@ -330,3 +330,56 @@ def test_the_cli_round_trip(
 
     assert main(["warehouse-restore", str(tmp_path / "backup"), str(tmp_path / "restored")]) == 1
     assert "nothing was restored" in capsys.readouterr().err
+
+
+class TestHoldExpiryIsAnInstant:
+    """#790: expiry was compared as text, so an offset other than UTC misread it."""
+
+    def test_a_hold_written_with_a_negative_offset_still_protects(
+        self, catalog: TableCatalog, tmp_path: Path
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        first, _, _ = _three_snapshots(catalog, tmp_path)
+        # Four hours from now, written in UTC-10:00 — as text it sorts before "now".
+        later = datetime.now(timezone(timedelta(hours=-10))) + timedelta(hours=4)
+        catalog.place_hold(first, kind="retention", reason="4 hours", expires_at=later.isoformat())
+
+        report = warehouse_gc.collect(catalog, catalog.get_snapshot(first).table_id, keep=0)
+
+        assert report.kept_held == [first]
+
+    def test_expiry_is_stored_in_utc(self, catalog: TableCatalog, tmp_path: Path) -> None:
+        first = _commit(catalog, tmp_path, "run-1", [1])
+
+        hold = catalog.place_hold(
+            first, kind="audit", reason="r", expires_at="2030-01-01T10:00:00-10:00"
+        )
+
+        assert hold.expires_at == "2030-01-01T20:00:00+00:00"
+
+    @pytest.mark.parametrize("value", ["2030-01-01T10:00:00", "next tuesday"])
+    def test_an_expiry_without_an_offset_is_refused(
+        self, catalog: TableCatalog, tmp_path: Path, value: str
+    ) -> None:
+        first = _commit(catalog, tmp_path, "run-1", [1])
+
+        with pytest.raises(SnapshotStateError, match="expires_at"):
+            catalog.place_hold(first, kind="audit", reason="r", expires_at=value)
+
+    def test_a_row_written_before_the_fix_is_compared_as_an_instant(
+        self, catalog: TableCatalog, tmp_path: Path
+    ) -> None:
+        """No migration needed: julianday() reads the offset of what is already stored."""
+        from datetime import datetime, timedelta, timezone
+
+        first = _commit(catalog, tmp_path, "run-1", [1])
+        later = datetime.now(timezone(timedelta(hours=-10))) + timedelta(hours=4)
+        with closing(sqlite3.connect(catalog.path)) as conn:
+            conn.execute(
+                "INSERT INTO snapshot_holds VALUES (?, ?, 'audit', 'legacy', ?, ?)",
+                ("hold_legacy", first, later.isoformat(), later.isoformat()),
+            )
+            conn.commit()
+
+        assert [h.hold_id for h in catalog.live_holds(first)] == ["hold_legacy"]

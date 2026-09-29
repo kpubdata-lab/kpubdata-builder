@@ -129,7 +129,14 @@ _HOLDS_INDEX = (
 
 # A hold with no expiry lasts until it is released. Leases always expire; holds need
 # not, because an audit does not end on a timer.
-_LIVE_HOLD = "snapshot_id = ? AND (expires_at IS NULL OR expires_at > ?)"
+# Compared as instants, not as text (#790): an ISO string with a -10:00 offset sorts
+# before a UTC one that is hours earlier, so a text comparison called a live hold
+# expired and let collection take a snapshot it was protecting. julianday() reads the
+# offset; rows written before this fix are compared correctly too.
+_LIVE_HOLD = (
+    "snapshot_id = ? AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))"
+)
+_LIVE_LEASE = "snapshot_id = ? AND julianday(expires_at) > julianday(?)"
 
 
 # Each entry upgrades from the version that is its key to the next one. A column is
@@ -271,6 +278,21 @@ class SnapshotHold:
     reason: str
     created_at: str
     expires_at: str | None
+
+
+def _utc_instant(value: str, *, field: str) -> str:
+    """``value`` as a UTC ISO 8601 string; an instant without an offset is refused (#790).
+
+    A naive time means whatever the writing machine's clock zone was, which the next
+    reader cannot know — the same ambiguity that made hold expiry wrong.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise SnapshotStateError(f"{field} is not an ISO 8601 time: {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise SnapshotStateError(f"{field} needs a UTC offset: {value!r}")
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _now() -> str:
@@ -754,7 +776,7 @@ class TableCatalog:
                     f"{snapshot.table_id!r}; deleting it would leave nothing to read"
                 )
             live = conn.execute(
-                "SELECT COUNT(*) FROM snapshot_leases WHERE snapshot_id = ? AND expires_at > ?",
+                f"SELECT COUNT(*) FROM snapshot_leases WHERE {_LIVE_LEASE}",
                 (snapshot_id, moment),
             ).fetchone()[0]
             if live:
@@ -840,7 +862,8 @@ class TableCatalog:
 
         Raises:
             SnapshotStateError: The snapshot was never committed, is retiring, the
-                kind is unknown, or the reason is empty.
+                kind is unknown, the reason is empty, or ``expires_at`` is not an
+                ISO 8601 time with a UTC offset.
             SnapshotNotFound: No such snapshot.
         """
         if kind not in HOLD_KINDS:
@@ -855,7 +878,10 @@ class TableCatalog:
             kind=kind,
             reason=reason,
             created_at=_now(),
-            expires_at=expires_at,
+            # Stored as UTC so the row reads the same to every later comparison (#790).
+            expires_at=(
+                _utc_instant(expires_at, field="expires_at") if expires_at is not None else None
+            ),
         )
         with self._immediate() as conn:
             row = conn.execute(
@@ -1086,7 +1112,7 @@ class TableCatalog:
         """
         moment = now or _now()
         row = self._conn.execute(
-            "SELECT COUNT(*) FROM snapshot_leases WHERE snapshot_id = ? AND expires_at > ?",
+            f"SELECT COUNT(*) FROM snapshot_leases WHERE {_LIVE_LEASE}",
             (snapshot_id, moment),
         ).fetchone()
         return int(row[0])
@@ -1095,7 +1121,10 @@ class TableCatalog:
         """Delete expired leases and return how many went."""
         moment = now or _now()
         with self._immediate() as conn:
-            cursor = conn.execute("DELETE FROM snapshot_leases WHERE expires_at <= ?", (moment,))
+            cursor = conn.execute(
+                "DELETE FROM snapshot_leases WHERE julianday(expires_at) <= julianday(?)",
+                (moment,),
+            )
         return cursor.rowcount
 
     # -------------------------------------------------------------- deletion
