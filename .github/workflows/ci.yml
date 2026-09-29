@@ -56,6 +56,18 @@ jobs:
       - name: Korean comment gate
         run: uv run --no-sources python scripts/check_english_comments.py src tests scripts
 
+      # The service contract tests pass a deliberate break as long as the document and
+      # the code change together. This compares the contract with the base branch's:
+      # any normative change must raise info.version, and a break must raise its major
+      # version — the explicit approval for an intentional break (#693).
+      - name: Contract compatibility
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "${BASE_REF}"
+          uv run --no-sources python scripts/check_contract_compat.py --base FETCH_HEAD
+
   test:
     name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest

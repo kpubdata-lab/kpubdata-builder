@@ -15,6 +15,11 @@ Builder HTTP wire 계약의 단일 소스는 [contract/builder-api.yaml](https:/
 - `main`의 계약 버전은 항상 stable SemVer이며 OpenAPI와 코드가 같은 값을 사용합니다.
 - additive wire 변경은 minor, 기존 의미를 유지하는 계약 오류 수정은 patch, breaking 변경은 major입니다.
 - example·설명·내부 refactor처럼 wire가 같으면 버전을 올리지 않습니다.
+- 위 두 줄은 **CI 가 강제한다**(#693). PR 마다 `scripts/check_contract_compat.py` 가 base
+  브랜치의 계약과 비교해, 규범적 변경(설명·summary·example·`x-*` 이외)에 `info.version` 이
+  오르지 않았거나, operation·status code·media type·property·schema·enum 값 제거, 타입·`$ref`
+  변경, 새 필수 parameter 같은 **breaking 변경이 major 상승 없이** 들어오면 실패한다. 의도한
+  breaking 변경의 명시적 승인은 major 상승 자체다.
 - Studio는 exact equality가 아니라 같은 major와 기능별 최소 SemVer를 확인합니다. 새 operation을
   실제로 소비할 때만 schema/client와 최소 기능 버전을 갱신합니다.
 - Epic #484 완료는 개발 중 버전 변경을 미루는 지점이 아니라 최종 계약을 freeze하고 release
