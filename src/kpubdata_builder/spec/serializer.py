@@ -12,7 +12,7 @@ from typing import cast
 import yaml
 
 from ..stages._path_safety import ensure_within, validate_path_segment
-from .models import BuildSpec, JsonValue
+from .models import BuildSpec, JsonValue, SourceRef
 
 BUILDSPEC_SNAPSHOT_FILENAME = "buildspec.yaml"
 REDACTED_VALUE = "<redacted>"
@@ -93,99 +93,109 @@ def _canonical_structure(value: JsonValue) -> JsonValue:
     return value
 
 
+def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
+    """One source as it appears in the canonical spec, secrets redacted.
+
+    Split out of :func:`canonical_spec_mapping` so a source can be fingerprinted on its
+    own (#700) from exactly the text a run snapshot records — a fingerprint computed
+    any other way would not match the one recomputed from a past run's snapshot.
+    """
+    schema: JsonValue = None
+    if source.schema is not None:
+        schema = {
+            "required": list(source.schema.required),
+            "dtypes": _canonical_structure(cast(JsonValue, source.schema.dtypes)),
+            "casts": _canonical_structure(cast(JsonValue, source.schema.casts)),
+        }
+        # Remaining Silver transformation declarations (post-#611) included
+        # only when declared.
+        #
+        # They are part of the recipe too — if omitted, changing transformation
+        # rules leaves digest unchanged, breaking R1's "same recipe means same
+        # output" claim by leaving the rules that created Silver outside the
+        # recipe. So declared values must always be included.
+        #
+        # However, including keys even when empty changes digests of all
+        # existing specs that don't use these fields. Digest is recipe identity
+        # exposed in manifest/BuildIndex/GET /datasets, so upgrade-time
+        # comparisons of "is this the same recipe?" break. Identity must not
+        # change because of unused features.
+        optional: dict[str, JsonValue] = {
+            "rename": _canonical_structure(cast(JsonValue, source.schema.rename)),
+            "read_as": _canonical_structure(cast(JsonValue, source.schema.read_as)),
+            "null_tokens": list(source.schema.null_tokens),
+            "column_null_tokens": _canonical_structure(
+                cast(
+                    JsonValue,
+                    {
+                        column: {
+                            "tokens": list(rule.tokens),
+                            "on_absent": rule.on_absent,
+                        }
+                        for column, rule in source.schema.column_null_tokens.items()
+                    },
+                )
+            ),
+            "coalesce": _canonical_structure(
+                cast(
+                    JsonValue,
+                    {
+                        target: list(candidates)
+                        for target, candidates in source.schema.coalesce.items()
+                    },
+                )
+            ),
+            "zfill": _canonical_structure(cast(JsonValue, source.schema.zfill)),
+            "derived": [
+                {
+                    "name": rule.name,
+                    "kind": rule.kind,
+                    "columns": list(rule.columns),
+                }
+                for rule in source.schema.derived
+            ],
+        }
+        schema.update({key: value for key, value in optional.items() if value})
+    # Include only fields valid for each kind (#498). Loader's
+    # _reject_foreign_fields rejects on mere presence of kind-foreign fields,
+    # so always including all kinds' fields makes canonical snapshot itself
+    # round-trip-unsafe — follow schema's (#437) existing pattern of "omit if
+    # unrelated". For existing public_api-only specs, only the "kind":
+    # "public_api" field grows additively.
+    entry: dict[str, JsonValue] = {"kind": source.kind, "alias": source.alias, "schema": schema}
+    if source.kind == "file":
+        entry["upload_id"] = source.upload_id
+        entry["format"] = source.format
+        entry["encoding"] = source.encoding
+    elif source.kind == "url":
+        entry["endpoint"] = source.endpoint
+        entry["method"] = source.method
+        entry["format"] = source.format
+    else:
+        entry["provider"] = source.provider
+        entry["dataset"] = source.dataset
+        entry["params"] = _canonical_json(source.params)
+        if source.param_grid:
+            # Expanded combinations determine which data was fetched — part of
+            # the recipe. If omitted, changing grid leaves digest unchanged,
+            # breaking "same recipe means same output" (#613).
+            #
+            # Omit when empty. Existing specs' digests must not change because
+            # of unused features (same reason as #640).
+            entry["param_grid"] = _canonical_structure(
+                cast(
+                    JsonValue,
+                    {key: list(values) for key, values in source.param_grid.items()},
+                )
+            )
+    return entry
+
+
 def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
     """Convert BuildSpec to JSON-compatible mapping with fixed field order and optional defaults."""
     sources: list[JsonValue] = []
     for source in spec.sources:
-        schema: JsonValue = None
-        if source.schema is not None:
-            schema = {
-                "required": list(source.schema.required),
-                "dtypes": _canonical_structure(cast(JsonValue, source.schema.dtypes)),
-                "casts": _canonical_structure(cast(JsonValue, source.schema.casts)),
-            }
-            # Remaining Silver transformation declarations (post-#611) included
-            # only when declared.
-            #
-            # They are part of the recipe too — if omitted, changing transformation
-            # rules leaves digest unchanged, breaking R1's "same recipe means same
-            # output" claim by leaving the rules that created Silver outside the
-            # recipe. So declared values must always be included.
-            #
-            # However, including keys even when empty changes digests of all
-            # existing specs that don't use these fields. Digest is recipe identity
-            # exposed in manifest/BuildIndex/GET /datasets, so upgrade-time
-            # comparisons of "is this the same recipe?" break. Identity must not
-            # change because of unused features.
-            optional: dict[str, JsonValue] = {
-                "rename": _canonical_structure(cast(JsonValue, source.schema.rename)),
-                "read_as": _canonical_structure(cast(JsonValue, source.schema.read_as)),
-                "null_tokens": list(source.schema.null_tokens),
-                "column_null_tokens": _canonical_structure(
-                    cast(
-                        JsonValue,
-                        {
-                            column: {
-                                "tokens": list(rule.tokens),
-                                "on_absent": rule.on_absent,
-                            }
-                            for column, rule in source.schema.column_null_tokens.items()
-                        },
-                    )
-                ),
-                "coalesce": _canonical_structure(
-                    cast(
-                        JsonValue,
-                        {
-                            target: list(candidates)
-                            for target, candidates in source.schema.coalesce.items()
-                        },
-                    )
-                ),
-                "zfill": _canonical_structure(cast(JsonValue, source.schema.zfill)),
-                "derived": [
-                    {
-                        "name": rule.name,
-                        "kind": rule.kind,
-                        "columns": list(rule.columns),
-                    }
-                    for rule in source.schema.derived
-                ],
-            }
-            schema.update({key: value for key, value in optional.items() if value})
-        # Include only fields valid for each kind (#498). Loader's
-        # _reject_foreign_fields rejects on mere presence of kind-foreign fields,
-        # so always including all kinds' fields makes canonical snapshot itself
-        # round-trip-unsafe — follow schema's (#437) existing pattern of "omit if
-        # unrelated". For existing public_api-only specs, only the "kind":
-        # "public_api" field grows additively.
-        entry: dict[str, JsonValue] = {"kind": source.kind, "alias": source.alias, "schema": schema}
-        if source.kind == "file":
-            entry["upload_id"] = source.upload_id
-            entry["format"] = source.format
-            entry["encoding"] = source.encoding
-        elif source.kind == "url":
-            entry["endpoint"] = source.endpoint
-            entry["method"] = source.method
-            entry["format"] = source.format
-        else:
-            entry["provider"] = source.provider
-            entry["dataset"] = source.dataset
-            entry["params"] = _canonical_json(source.params)
-            if source.param_grid:
-                # Expanded combinations determine which data was fetched — part of
-                # the recipe. If omitted, changing grid leaves digest unchanged,
-                # breaking "same recipe means same output" (#613).
-                #
-                # Omit when empty. Existing specs' digests must not change because
-                # of unused features (same reason as #640).
-                entry["param_grid"] = _canonical_structure(
-                    cast(
-                        JsonValue,
-                        {key: list(values) for key, values in source.param_grid.items()},
-                    )
-                )
-        sources.append(entry)
+        sources.append(canonical_source_mapping(source))
 
     exports: list[JsonValue] = [
         {

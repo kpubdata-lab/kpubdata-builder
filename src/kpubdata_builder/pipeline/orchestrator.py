@@ -24,13 +24,15 @@ Key components:
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 from ..artifact import ArtifactDataset
-from ..errors import DatasetValidationError, ValidationError
+from ..errors import DatasetValidationError, SpecLoadError, ValidationError
 from ..events import BuildEventRecorder, BuildEventStore
 from ..exporters import get_exporter
 from ..ingestion import IngestionError
@@ -52,7 +54,16 @@ from ..quality import (
     SchemaDriftFinding,
     evaluate_quality,
 )
-from ..spec import BuildSpec, CompositionSpec, ExportTarget, SourceRef, write_buildspec_snapshot
+from ..spec import (
+    BUILDSPEC_SNAPSHOT_FILENAME,
+    BuildSpec,
+    CompositionSpec,
+    ExportTarget,
+    SourceRef,
+    parse_spec,
+    write_buildspec_snapshot,
+)
+from ..spec.fingerprints import SourceFingerprints, fingerprint_source
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
 from ..stages.bronze.models import BronzeArtifact, utc_now
@@ -64,6 +75,10 @@ from ..stages.gold.compose import CompositionError, build_composed_gold_package
 from ..stages.gold.persist import persist_gold_package
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.drift import (
+    COVERAGE_MISMATCH,
+    COVERAGE_UNKNOWN,
+    SCHEMA_CONTRACT_CHANGED,
+    VOLUME_FINDING_KINDS,
     DriftFinding,
     SilverBaseline,
     detect_drift,
@@ -225,6 +240,52 @@ def _fetch_source_key(source: SourceRef) -> str:
 def _output_source_key(source: SourceRef) -> str:
     """Return user-facing output key for workspace/result recording."""
     return source.alias if source.alias else _fetch_source_key(source)
+
+
+def _recorded_fingerprints(run_dir: Path, output_key: str) -> SourceFingerprints | None:
+    """Recompute an earlier run's source fingerprints from its spec snapshot (#700).
+
+    The snapshot is the canonical text the fingerprints are defined over, so nothing
+    new has to be stored per run and runs from before this existed are covered too.
+    ``None`` when the snapshot is missing, unreadable, or no longer names this source
+    — which makes the run's coverage unknown rather than assumed to match.
+    """
+    try:
+        document = yaml.safe_load(
+            (run_dir / BUILDSPEC_SNAPSHOT_FILENAME).read_text(encoding="utf-8")
+        )
+        if not isinstance(document, dict):
+            return None
+        earlier = parse_spec(document)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, SpecLoadError, ValidationError):
+        return None
+    for source in earlier.sources:
+        if _output_source_key(source) == output_key:
+            return fingerprint_source(source)
+    return None
+
+
+def _volume_comparability(source: SourceRef) -> Callable[[Path], str | None]:
+    """Accept an earlier run as a volume baseline only if it is the same measurement.
+
+    Same population (coverage) and same rules for reading it (schema contract). A row
+    count from Seoul 2025 against one from Busan 2026 is not drift, and neither is a
+    row count from before a ``casts`` change against one after it (#700).
+    """
+    output_key = _output_source_key(source)
+    current = fingerprint_source(source)
+
+    def check(run_dir: Path) -> str | None:
+        earlier = _recorded_fingerprints(run_dir, output_key)
+        if earlier is None:
+            return COVERAGE_UNKNOWN
+        if earlier.coverage != current.coverage:
+            return COVERAGE_MISMATCH
+        if earlier.schema_contract != current.schema_contract:
+            return SCHEMA_CONTRACT_CHANGED
+        return None
+
+    return check
 
 
 def _retag_bronze_artifact(artifact: BronzeArtifact, *, output_key: str) -> BronzeArtifact:
@@ -503,11 +564,17 @@ def _run_source_pipeline(
                     r.threshold,
                 )
 
-        # Drift detection (#445, DRIFT-1). Compared only against the previous
-        # successful run of the same dataset_id and source_key, so another
-        # dataset's silver cannot manufacture drift (#486). The baseline is also
-        # restricted to the same owner (#700): another user's run as the baseline
-        # turns row count and schema changes into a metadata side channel.
+        # Drift detection (#445, DRIFT-1). Compared only against earlier successful
+        # runs of the same dataset_id and source_key, so another dataset's silver
+        # cannot manufacture drift (#486), and only against the same owner (#700):
+        # another user's run as the baseline turns row count and schema changes into
+        # a metadata side channel.
+        #
+        # The two axes do not share a baseline (#700). Columns should not depend on
+        # which region was collected, so the schema axis takes the newest owned run.
+        # A row count only means something against the same population read under
+        # the same contract, so the volume axis takes the newest owned run that
+        # matches both — and reports why when none does, instead of comparing.
         baseline = find_previous_silver(
             context.output_root,
             context.run_id,
@@ -515,34 +582,47 @@ def _run_source_pipeline(
             source_key=output_key,
             owner_id=baseline_owner_id,
         )
-        if isinstance(baseline, SilverBaseline):
-            drift_findings = detect_drift(
-                silver.schema, silver.statistics, baseline.schema, baseline.stats
-            )
-            schema_drift = _to_schema_drift_findings(drift_findings)
-            for f in drift_findings:
-                logger.warning("드리프트 감지: %s @ %s — %s (#445)", f.kind, f.column, f.detail)
-            drift_evaluation = (
-                DriftEvaluation(
-                    axis="schema",
-                    evaluated=True,
-                    baseline_snapshot_id=baseline.run_id,
-                    detail=f"compared against run {baseline.run_id}",
-                ),
-            )
-        else:
-            # Leaving schema_drift empty drops the key from the manifest, and then
-            # "there was no baseline" and "compared, nothing changed" are the same
-            # answer on the wire (#700). Record the failure to evaluate explicitly.
-            drift_evaluation = (
-                DriftEvaluation(
-                    axis="schema",
-                    evaluated=False,
-                    reason=baseline.reason,
-                    detail=baseline.detail,
-                ),
-            )
-            logger.info("드리프트 미평가: %s — %s (#700)", output_key, baseline.detail)
+        volume_baseline = find_previous_silver(
+            context.output_root,
+            context.run_id,
+            dataset_id=context.spec.dataset_id,
+            source_key=output_key,
+            owner_id=baseline_owner_id,
+            comparable=_volume_comparability(source),
+        )
+        drift_findings: list[DriftFinding] = []
+        evaluations: list[DriftEvaluation] = []
+        for axis, found in (("schema", baseline), ("volume", volume_baseline)):
+            if isinstance(found, SilverBaseline):
+                drift_findings.extend(
+                    f
+                    for f in detect_drift(
+                        silver.schema, silver.statistics, found.schema, found.stats
+                    )
+                    if (f.kind in VOLUME_FINDING_KINDS) == (axis == "volume")
+                )
+                evaluations.append(
+                    DriftEvaluation(
+                        axis=axis,
+                        evaluated=True,
+                        baseline_snapshot_id=found.run_id,
+                        detail=f"compared against run {found.run_id}",
+                    )
+                )
+            else:
+                # Leaving the findings empty drops the key from the manifest, and then
+                # "there was no baseline" and "compared, nothing changed" are the same
+                # answer on the wire (#700). Record the failure to evaluate explicitly.
+                evaluations.append(
+                    DriftEvaluation(
+                        axis=axis, evaluated=False, reason=found.reason, detail=found.detail
+                    )
+                )
+                logger.info("드리프트 미평가(%s): %s — %s (#700)", axis, output_key, found.detail)
+        schema_drift = _to_schema_drift_findings(drift_findings)
+        for f in drift_findings:
+            logger.warning("드리프트 감지: %s @ %s — %s (#445)", f.kind, f.column, f.detail)
+        drift_evaluation = tuple(evaluations)
 
         silver_paths = persist_silver_dataset(
             silver, output_root=context.output_root, run_id=context.run_id
@@ -1149,12 +1229,18 @@ def run_build(
     # make three of them lose for no reason (#699).
     materialized: dict[str, MaterializeResult] = {}
     if catalog is not None and status == "ok":
+        sources_by_key = {_output_source_key(source): source for source in spec.sources}
         for outcome in outcomes:
             if outcome.status != "ok":
                 continue
             gold_dir = context.output_root / context.run_id / "gold" / outcome.source_key
             if not gold_dir.is_dir():
                 continue
+            # Recorded so a later refresh can pick a volume baseline that collected the
+            # same population under the same contract (#700). Without them the catalog
+            # can only answer "coverage unknown" for every snapshot a build commits.
+            source_ref = sources_by_key.get(outcome.source_key)
+            fingerprints = fingerprint_source(source_ref) if source_ref is not None else None
             materialized[outcome.source_key] = materialize(
                 catalog,
                 workspace_id=workspace_id,
@@ -1162,6 +1248,9 @@ def run_build(
                 source_dir=gold_dir,
                 run_id=context.run_id,
                 owner_id=effective_manifest_owner_id,
+                coverage_fingerprint=fingerprints.coverage if fingerprints else None,
+                source_params_fingerprint=fingerprints.source_params if fingerprints else None,
+                schema_contract_version=fingerprints.schema_contract if fingerprints else None,
                 row_count=row_counts.get(outcome.source_key),
             )
             logger.info(

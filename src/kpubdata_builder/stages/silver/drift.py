@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -20,6 +21,28 @@ from ...tabular.types import ColumnInfo
 # assert the two stay in step.
 NO_COMMITTED_SNAPSHOT = "no_committed_snapshot"
 OWNER_UNKNOWN = "owner_unknown"
+COVERAGE_MISMATCH = "coverage_mismatch"
+COVERAGE_UNKNOWN = "coverage_unknown"
+SCHEMA_CONTRACT_CHANGED = "schema_contract_changed"
+
+# When several candidates are rejected for different reasons, the report names the
+# one a user can act on first. An unknown coverage is a recording gap; a mismatch is
+# a different population; a contract change is a rule change within the same one.
+_COMPARABILITY_ORDER = (COVERAGE_UNKNOWN, COVERAGE_MISMATCH, SCHEMA_CONTRACT_CHANGED)
+
+_COMPARABILITY_DETAIL = {
+    COVERAGE_UNKNOWN: "no earlier run of {what} recorded what it collected, so a row count "
+    "cannot be shown to be comparable",
+    COVERAGE_MISMATCH: "no earlier run of {what} collected the same population; comparing "
+    "row counts across populations would be meaningless",
+    SCHEMA_CONTRACT_CHANGED: "the schema contract of {what} changed since its earlier runs; "
+    "the volume baseline is invalidated rather than compared silently",
+}
+
+#: Findings about how many rows arrived rather than which columns. They need a
+#: baseline that collected the same population under the same contract (#700); the
+#: rest only need the same owner.
+VOLUME_FINDING_KINDS = frozenset({"row_count_jump"})
 
 # row count sudden change threshold (50% or more change from previous).
 _ROW_COUNT_CHANGE_THRESHOLD = 0.5
@@ -158,6 +181,7 @@ def find_previous_silver(
     dataset_id: str,
     source_key: str,
     owner_id: str | None = None,
+    comparable: Callable[[Path], str | None] | None = None,
 ) -> SilverBaselineOutcome:
     """Find the previous successful silver for this dataset, source and owner.
 
@@ -178,19 +202,31 @@ def find_previous_silver(
     an owner *is* given, **a run that recorded no owner drops out**: it is not
     assumed to be ours.
 
+    ``comparable`` narrows the candidates further, for an axis with stricter rules
+    than ownership. It receives a candidate run directory and returns ``None`` to
+    accept it or a reason constant (``COVERAGE_MISMATCH`` …) to reject it. The volume
+    axis uses it so that the newest run *with the same coverage and contract* is the
+    baseline, rather than the newest run whatever it collected.
+
+    No reason text states how many runs exist or whose they are (#700 N-04). "Only
+    other people's runs exist" reads exactly like "no runs exist" — the count of
+    another owner's runs is the same metadata side channel the owner filter closes.
+
     Returns:
         ``SilverBaseline`` or ``NoSilverBaseline``. **Never ``None``** — an optional
         return is what let a caller treat "nothing to compare" as "nothing wrong".
     """
+    what = f"{dataset_id}/{source_key}"
+    no_baseline = NoSilverBaseline(
+        NO_COMMITTED_SNAPSHOT,
+        f"no successful earlier run of {what} to compare against",
+    )
     if not output_root.exists():
-        return NoSilverBaseline(
-            NO_COMMITTED_SNAPSHOT,
-            f"no previous run exists under {output_root}",
-        )
+        return no_baseline
     source_segment = source_key.replace("/", "_")
     candidates: list[tuple[str, str, Path]] = []
-    rejected_for_owner = 0
-    unowned_runs = 0
+    saw_unowned_run = False
+    rejected_as_incomparable: set[str] = set()
     for run_dir in output_root.iterdir():
         if not run_dir.is_dir() or run_dir.name == current_run_id:
             continue
@@ -205,26 +241,26 @@ def find_previous_silver(
         if not succeeded:
             continue
         if owner_id is not None and run_owner != owner_id:
-            # Counted separately so the reason can say which it was: someone else's
-            # run, or a run that never recorded an owner. The second is a recording
-            # gap worth fixing; the first is the isolation working.
-            rejected_for_owner += 1
-            if run_owner is None:
-                unowned_runs += 1
+            # A run that never recorded an owner is a recording gap worth reporting;
+            # someone else's run is the isolation working, and says nothing.
+            saw_unowned_run = saw_unowned_run or run_owner is None
             continue
+        if comparable is not None:
+            rejection = comparable(run_dir)
+            if rejection is not None:
+                rejected_as_incomparable.add(rejection)
+                continue
         candidates.append((sort_key, run_dir.name, silver_dir))
     if not candidates:
-        if rejected_for_owner:
+        for reason in _COMPARABILITY_ORDER:
+            if reason in rejected_as_incomparable:
+                return NoSilverBaseline(reason, _COMPARABILITY_DETAIL[reason].format(what=what))
+        if saw_unowned_run:
             return NoSilverBaseline(
-                OWNER_UNKNOWN if unowned_runs else NO_COMMITTED_SNAPSHOT,
-                f"{rejected_for_owner} previous run(s) of {dataset_id}/{source_key} exist "
-                f"but none belong to {owner_id}"
-                + (f"; {unowned_runs} recorded no owner" if unowned_runs else ""),
+                OWNER_UNKNOWN,
+                f"an earlier run of {what} recorded no owner, so it cannot be shown to be yours",
             )
-        return NoSilverBaseline(
-            NO_COMMITTED_SNAPSHOT,
-            f"no successful previous run of {dataset_id}/{source_key} to compare against",
-        )
+        return no_baseline
 
     # finished_at descending, ties broken by run_id descending for determinism
     # (#488 same principle as sort_key semantics).
@@ -258,8 +294,12 @@ def find_previous_silver(
 
 
 __all__ = [
+    "COVERAGE_MISMATCH",
+    "COVERAGE_UNKNOWN",
     "NO_COMMITTED_SNAPSHOT",
     "OWNER_UNKNOWN",
+    "SCHEMA_CONTRACT_CHANGED",
+    "VOLUME_FINDING_KINDS",
     "DriftFinding",
     "NoSilverBaseline",
     "SilverBaseline",
