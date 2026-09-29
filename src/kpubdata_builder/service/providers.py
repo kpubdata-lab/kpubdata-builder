@@ -7,7 +7,7 @@ import os
 import socket
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Protocol, cast
 
@@ -68,7 +68,8 @@ class ResolvedCredential:
     """Interpreted credential. Not used as an API response model."""
 
     source: CredentialSource
-    value: str | None
+    # Kept out of repr: a repr reaches logs, exception messages and test output (#686).
+    value: str | None = field(repr=False)
 
 
 @dataclass(frozen=True)

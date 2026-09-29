@@ -257,6 +257,7 @@ def _preview_source(
     seed: int,
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
+    secret_values: tuple[str, ...] = (),
 ) -> SourcePreview:
     """Fetch one source → construct Silver in-memory, extract schema/sample/diff/quality results.
 
@@ -281,6 +282,7 @@ def _preview_source(
             client=client,
             upload_repository=upload_repository,
             owner_id=owner_id,
+            secret_values=secret_values,
         )
         silver = build_silver_dataset(
             bronze,
@@ -385,6 +387,7 @@ def preview_build(
     seed: int = DEFAULT_PREVIEW_SEED,
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
+    secret_values: tuple[str, ...] = (),
 ) -> PreviewResult:
     """Produce schema and sample rows per source, Source↔Silver diff (no file write).
 
@@ -425,6 +428,7 @@ def preview_build(
             seed=seed,
             upload_repository=upload_repository,
             owner_id=owner_id,
+            secret_values=secret_values,
         )
         for source in spec.sources
     )

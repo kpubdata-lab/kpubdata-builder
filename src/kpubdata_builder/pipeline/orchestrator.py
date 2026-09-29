@@ -396,6 +396,7 @@ def _run_source_pipeline(
     baseline_owner_id: str | None = None,
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
+    secret_values: tuple[str, ...] = (),
 ) -> _SourcePipelineResult:
     """Execute one source Bronze → Silver → Gold and persist outputs.
 
@@ -467,6 +468,7 @@ def _run_source_pipeline(
             client=client,
             upload_repository=upload_repository,
             owner_id=owner_id,
+            secret_values=secret_values,
             on_combination_done=after_combination,
         )
         recorder.source_fetch_completed(output_key, record_count=len(bronze.raw_records))
@@ -1023,6 +1025,7 @@ def run_build(
     catalog: TableCatalog | None = None,
     workspace_id: str = "ws_personal",
     warehouse_keep: int | None = 3,
+    secret_values: tuple[str, ...] = (),
 ) -> BuildResult:
     """Execute BuildSpec through Medallion pipeline.
 
@@ -1103,6 +1106,7 @@ def run_build(
             baseline_owner_id=effective_manifest_owner_id,
             capture_silver=_output_source_key(source) in composition_aliases,
             cancellation=cancellation,
+            secret_values=secret_values,
         )
 
     # Per-source fetch/stage mostly waits on network I/O, so concurrent

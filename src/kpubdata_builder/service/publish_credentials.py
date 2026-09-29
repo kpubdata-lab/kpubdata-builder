@@ -70,7 +70,8 @@ class PublishCredentialResolution:
     ``REQUIRE_OWN_PUBLISH_CREDENTIAL`` had no effect.
     """
 
-    values: Mapping[str, str] = field(default_factory=dict)
+    # Kept out of repr: a repr reaches logs, exception messages and test output (#686).
+    values: Mapping[str, str] = field(default_factory=dict, repr=False)
     #: Requester has no stored credentials and server fallback is also closed.
     refused: bool = False
     #: This target requires no credentials (local).
