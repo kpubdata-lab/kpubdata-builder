@@ -10,7 +10,7 @@ Main components:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from typing import Protocol, cast, runtime_checkable
 
@@ -61,6 +61,7 @@ def build_bronze_artifact(
     fetch_params: dict[str, JsonValue] | None = None,
     fetched_at: datetime | None = None,
     param_combinations: Sequence[dict[str, JsonValue]] | None = None,
+    on_combination_done: Callable[[int, int], None] | None = None,
 ) -> BronzeArtifact:
     """Fetch raw records from compatible client and return bronze output.
 
@@ -74,6 +75,12 @@ def build_bronze_artifact(
             combination and concatenate results **in declared order** into single artifact.
             Order is contract—if changed, artifact_id changes.
         fetched_at: fetch completion time; uses current UTC if omitted.
+        on_combination_done: called as ``(done, total)`` after each combination of
+            ``param_combinations`` has been fetched (#648). A combination boundary is a
+            safe point: the records so far are whole, nothing is written yet. The
+            caller uses it to report progress and to stop when cancellation was asked
+            for — by raising, which abandons the fetch before anything is persisted.
+            Not called for a single call.
 
     Returns:
         BronzeArtifact: output containing raw records and provenance.
@@ -94,7 +101,7 @@ def build_bronze_artifact(
 
     dataset = client.dataset(source_key)
     records: list[dict[str, JsonValue]] = []
-    for call_params in calls:
+    for done, call_params in enumerate(calls, start=1):
         # Concatenate in combination order. Order change alters raw_records.jsonl
         # bytes and artifact_id follows—R1 rebuild determinism depends on it.
         if isinstance(dataset, PaginatedSourceDataset):
@@ -103,6 +110,8 @@ def build_bronze_artifact(
             )
         else:
             records.extend(dataset.list(**call_params).items)
+        if combinations is not None and on_combination_done is not None:
+            on_combination_done(done, len(calls))
     raw_records = tuple(records)
 
     # Preserve all combinations in provenance. Without record of which
