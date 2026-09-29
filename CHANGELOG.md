@@ -9,6 +9,7 @@
 
 ### Added
 
+- Pull requests are checked for contract compatibility (#693). `scripts/check_contract_compat.py` compares `contract/builder-api.yaml` with the base branch's and fails the lint job when a normative change leaves `info.version` where it was, or when something a client relies on is removed or retyped — an operation, a status code, a media type, a property, a schema, an enum value, a `type` or `$ref` — or a parameter becomes required, without a major version raise. The major raise is the explicit approval for an intentional break. Replayed over the contract's history, it finds changes that shipped without a version raise, among them `/admin/runs` under 1.27.0 and `SourceRef.normalization_mode` removed under 1.3.0.
 - `kpubdata-builder serve --warehouse DIR` (or `KPUBDATA_BUILDER_WAREHOUSE`) gives the HTTP service a table catalog, so `POST /build` commits each source's Gold output as a table snapshot and reports it under `materialized` (#703). The service accepted a catalog root before, but nothing that starts it passed one, so a deployed service could never reach that end state. No export target and no publish credential are needed.
 - `GET /datasets/{dataset_id}/runs/{run_id}` finds one run by id, not only among the newest page `/runs` returns, so a permalink to an older run opens (studio#418, API contract 1.31.0). Membership and ownership are decided by the server: 404 when no run with that id belongs to the dataset, 403 when it does but not to the caller.
 
