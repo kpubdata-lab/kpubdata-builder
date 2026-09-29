@@ -50,6 +50,12 @@ def test_allows_queries_derived_from_dataset(sql: str) -> None:
         "LOAD httpfs",
         "SET threads = 4",
         "PRAGMA version",
+        # A query must not reach a file or the network by any name (#701).
+        "SELECT * FROM read_parquet('https://evil.example/x.parquet')",
+        "SELECT * FROM scan_csv('/etc/passwd')",
+        "SELECT * FROM '/etc/passwd'",
+        "SELECT * FROM 'https://evil.example/x.csv'",
+        "SELECT * FROM dataset AS d JOIN read_ndjson('file:///etc/passwd') AS x ON true",
     ],
 )
 def test_rejects_unsafe_or_unbound_relations(sql: str) -> None:

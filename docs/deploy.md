@@ -142,6 +142,23 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 동시에 각각 4개까지 실행될 수 있다. 따라서 CPU/memory 중심 build를 많이 제출하는 환경에서는
 이 기본 ACA 크기만으로 안전하다고 가정하지 말고 working set과 throttling을 관찰해야 한다.
 
+한 호스트에 동시에 존재할 수 있는 실행 단위 전체 — 각각 따로 설정되므로 **합**을 호스트와
+대조해야 한다(#701):
+
+| 실행 단위 | 상한 | 설정 |
+| :--- | :--- | :--- |
+| HTTP worker thread | 기본 10 | `KPUBDATA_BUILDER_MAX_WORKERS` / `serve --max-workers` |
+| 비동기 build worker thread | HTTP 와 같은 값, queued 10 | 같은 설정 |
+| build 하나 안의 source fetch thread | **build 당** 최대 4 (`_MAX_PARALLEL_SOURCES`) | 코드 상수 |
+| query child process | 기본 2 | `KPUBDATA_QUERY_MAX_CONCURRENCY` |
+| query child 하나의 메모리 | **기본 무제한**. 설정하면 child 의 address space 를 제한해 초과한 질의만 실패(`400 query_failed`)하고 서버와 다른 요청은 계속된다 | `KPUBDATA_QUERY_MAX_MEMORY_MB` |
+| Polars 내부 thread | 프로세스마다 기본 CPU 코어 수 — build worker 와 query child 모두 | `POLARS_MAX_THREADS` |
+
+`KPUBDATA_QUERY_MAX_MEMORY_MB` 는 address space 상한(`RLIMIT_AS`)이라 RSS 보다 크게 잡아야
+한다 — Polars 가 import 시점에 가상 메모리를 넉넉히 예약하므로 너무 작으면 모든 질의가
+실패한다. 예산 기준 admission control(개수가 아니라 메모리·CPU 합으로 받는 것)은 무엇으로
+잴지부터 정해야 하는 결정으로 남아 있다(#701).
+
 query timing은 다음 경계를 사용한다.
 
 - `execution_ms`: parent의 `QueryEngine.execute` 진입부터 payload 수신·검증과 child join까지.
