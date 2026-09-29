@@ -118,13 +118,44 @@ jobs:
       - name: Run tests with coverage
         run: uv run --no-sources pytest --cov --cov-report=term-missing
 
-  min-deps:
-    # kpubdata 호환성 정책(#213): 선언된 하한(>=0.6.0)에서 테스트 스위트가
-    # 통과하는지 강제한다. 정상 해석 후 kpubdata를 하한으로 고정한다(전체
-    # --resolution lowest-direct는 pyyaml 6.0이 빌드되지 않아 불가).
-    # 하한은 pyproject에서 자동 추출하므로 핀 변경 시 이 잡을 수동 갱신할 필요가 없다.
-    name: Minimum kpubdata floor
+  kpubdata-releases:
+    # Compatibility is a claim about released versions (Independence Rules 11 and 12,
+    # #832). This lists every released, unyanked kpubdata inside the range
+    # pyproject.toml declares, from PyPI at run time, so a new release in range is
+    # tested the day it appears. It fails rather than return a shorter list.
+    name: List supported kpubdata releases
     runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+
+      - name: List releases in the declared range
+        id: list
+        run: |
+          versions=$(uv run --no-project --python 3.12 --with packaging python scripts/kpubdata_release_matrix.py)
+          echo "kpubdata releases under test: ${versions}" >> "$GITHUB_STEP_SUMMARY"
+          echo "versions=${versions}" >> "$GITHUB_OUTPUT"
+
+  min-deps:
+    # kpubdata compatibility policy (#213, #832): the suite must pass against every
+    # released kpubdata the declared range admits — the floor included, which is what
+    # this job used to test alone. Normal resolution first, then kpubdata is replaced
+    # (a full --resolution lowest-direct cannot build pyyaml 6.0).
+    #
+    # The matrix names are not required checks; `CI gate` below needs this job, so a
+    # release added or dropped from the range changes no branch protection.
+    name: kpubdata ${{ matrix.kpubdata }}
+    needs: [kpubdata-releases]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kpubdata: ${{ fromJSON(needs.kpubdata-releases.outputs.versions) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -137,14 +168,16 @@ jobs:
       - name: Install dependencies (normal resolution)
         run: uv sync --extra dev --no-sources
 
-      - name: Pin kpubdata to its declared floor
+      - name: Pin kpubdata to ${{ matrix.kpubdata }}
+        env:
+          KPUBDATA_VERSION: ${{ matrix.kpubdata }}
         run: |
-          floor=$(sed -n 's/.*kpubdata>=\([0-9][0-9.]*\).*/\1/p' pyproject.toml | head -1)
-          echo "Pinning kpubdata to declared floor: $floor"
-          test -n "$floor" || { echo "could not extract kpubdata floor from pyproject.toml"; exit 1; }
-          uv pip install "kpubdata==$floor" --no-deps
+          uv pip install "kpubdata==${KPUBDATA_VERSION}" --no-deps
+          installed=$(uv run --no-sync python -c "from importlib.metadata import version; print(version('kpubdata'))")
+          echo "kpubdata installed: ${installed}"
+          test "${installed}" = "${KPUBDATA_VERSION}"
 
-      - name: Run tests at the floor
+      - name: Run tests against kpubdata ${{ matrix.kpubdata }}
         run: uv run --no-sync pytest
 
   # One gate, so that editing the matrix is not also editing branch protection
@@ -159,7 +192,7 @@ jobs:
   gate:
     name: CI gate
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, min-deps]
+    needs: [lint, test, coverage, kpubdata-releases, min-deps]
     # `always()` so a failed job still reaches this step. Without it the gate is
     # skipped when something upstream fails, and a skipped required check is the same
     # absence this job exists to remove.

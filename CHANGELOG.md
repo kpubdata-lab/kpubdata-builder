@@ -8,6 +8,7 @@
 
 ### Added
 
+- CI tests Builder against every released kpubdata inside the declared range, not only the floor (#832, Independence Rules 11 and 12). `scripts/kpubdata_release_matrix.py` reads the range from `pyproject.toml` and the releases from PyPI at run time, drops yanked and pre-release versions, and fails when the floor is not released or nothing is left; a `kpubdata <version>` matrix job runs the suite against each. `CI gate` stays the one required check. `kpubdata main ↔ Builder` is documented as an early warning, not a compatibility contract.
 - CI refuses imports of kpubdata's private surface (#830, Independence Rule 6). `scripts/check_kpubdata_imports.py` sweeps `src/` and `scripts/` with the AST — imports, `importlib.import_module`/`__import__` and `python -c` source in string literals — and fails on a `_` module segment or a name missing from the installed kpubdata's `__all__`. The 14 private uses left (the verify runner's executor/spec/transport/config, spec lookup in the agent and CLI, `KPubDataConfig` in provider key resolution, `SENSITIVE_PARAM_KEYS` in log redaction) are allowlisted with a reason and kpubdata#667; an entry nothing uses any more fails too, so the list only shrinks.
 
 ### Documentation

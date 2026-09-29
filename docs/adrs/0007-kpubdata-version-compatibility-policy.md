@@ -118,3 +118,20 @@ min-deps:
 - **kpubdata 0.6+ 호환성**: 0.6이 호환 가능한 breaking change 없는 minor 업그레이드인지, 신규 ADR/테스트로 검증 후 상한을 `<0.7`으로 올릴 것인가?
 - **자동 상한 관리**: pyproject.toml에서 상한을 CI/CD가 자동 갱신할 것인가? (현재는 수동 갱신으로 의도적 업그레이드 강제)
 - **Cross-repo compatibility matrix**: kpubdata#233의 compatibility matrix가 확정되면, 이 ADR을 어떻게 연동/갱신할 것인가?
+
+## 갱신 — 릴리스 매트릭스 (#832, 2026-09-30)
+
+호환성은 **릴리스된 버전**에 대한 주장이다 (Independence Rule 11·12). 하한 하나만 돌리던
+`Minimum kpubdata floor` 잡을 매트릭스로 넓혔다.
+
+- `List supported kpubdata releases` 잡이 `scripts/kpubdata_release_matrix.py` 로 pyproject 의
+  `kpubdata` 범위와 PyPI JSON 을 읽어, 범위 안의 릴리스(yanked·pre-release 제외)를 모두 나열한다.
+  하한이 릴리스 목록에 없거나 목록이 비면 실패한다 — 조용히 줄어든 매트릭스는 테스트하지 않은
+  버전을 숨긴다.
+- `kpubdata <version>` 매트릭스 잡이 각 버전을 `--no-deps` 로 설치하고 설치된 버전을 확인한 뒤
+  전체 스위트를 돈다. 하한은 이 목록의 첫 항목이다.
+- 필수 검사는 여전히 `CI gate` 하나다. 매트릭스 이름은 필수 검사가 아니므로 범위에 릴리스가
+  더해지거나 빠져도 branch protection 은 바뀌지 않는다.
+- `kpubdata main ↔ Builder` (`cross-repo-contract.yml`) 는 **조기 경보**다. kpubdata `main` 은
+  릴리스가 아니므로 그 잡의 통과·실패는 호환성 계약의 근거가 아니다 (Rule 12). 거기서 깨진 것은
+  다음 릴리스 전에 고칠 신호이고, 호환성은 이 매트릭스로만 말한다.
