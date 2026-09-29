@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- The contract now says `wire_encoding` is decided per response: an integer column can be `number` in one response and `decimal_string` in another, so clients read it from each response (#794).
+
 ### Security
 
 - `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` now actually keeps the operator's provider key out of requests (#786). The resolver's refusal was indistinguishable from "no key", so callers went on keyless and `Client.from_env` read the operator's key from the environment by itself. A refused provider now stops a build or preview with `403 provider_credential_required` before any client exists, and with the switch on no client — the catalog's included — is built with the operator's keys; a client factory that cannot be told so is refused.
