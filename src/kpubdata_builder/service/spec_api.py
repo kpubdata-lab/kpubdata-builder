@@ -31,6 +31,7 @@ from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..tabular.types import SchemaInfo
 from ..tabular.wire import encode_rows, encode_value
 from ..uploads import UploadRepository
+from . import vocabulary
 from .auth import Principal
 from .build_runs_api import OpenClient
 from .providers import (
@@ -156,9 +157,16 @@ def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> di
     null, tags/operations as empty arrays (preserve response integrity).
     """
     query_support: JsonValue = None
-    if dataset.query_support is not None:
+    # Enum values go through Builder's own vocabulary (#831): a value kpubdata adds
+    # later becomes a declared fallback, never an off-contract string.
+    pagination = (
+        vocabulary.pagination_mode(dataset.query_support.pagination)
+        if dataset.query_support is not None
+        else None
+    )
+    if dataset.query_support is not None and pagination is not None:
         query_support = {
-            "pagination": dataset.query_support.pagination.value,
+            "pagination": pagination,
             "filterable_fields": cast(JsonValue, sorted(dataset.query_support.filterable_fields)),
             "sortable_fields": cast(JsonValue, sorted(dataset.query_support.sortable_fields)),
             "time_range": dataset.query_support.time_range,
@@ -170,8 +178,8 @@ def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> di
         "description": dataset.description,
         "tags": cast(JsonValue, sorted(dataset.tags)),
         "source_url": dataset.source_url,
-        "representation": dataset.representation.value,
-        "operations": cast(JsonValue, sorted(op.value for op in dataset.operations)),
+        "representation": vocabulary.representation(dataset.representation),
+        "operations": cast(JsonValue, vocabulary.operations(dataset.operations)),
         "query_support": query_support,
         "requires_service_key": requires_service_key,
         "request_parameters": cast(JsonValue, _catalog_request_parameters(dataset)),

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Builder owns the wire vocabulary it translates from kpubdata (#831, Independence Rule 7). `DatasetStatusAxes.access` is Builder's `AccessStatus`, and `CatalogDataset.representation`, `operations` and `CatalogQuerySupport.pagination` go through explicit tables in `service/vocabulary.py` instead of passing kpubdata's enum values through. The values still mirror kpubdata's, so no response changes today; a value kpubdata adds later becomes `unknown` (access), `other` (representation), is left out (operations) or makes `query_support` null (pagination), instead of an off-contract string. Contract descriptions only; no version raise.
+
 ### Added
 
 - CI refuses imports of kpubdata's private surface (#830, Independence Rule 6). `scripts/check_kpubdata_imports.py` sweeps `src/` and `scripts/` with the AST — imports, `importlib.import_module`/`__import__` and `python -c` source in string literals — and fails on a `_` module segment or a name missing from the installed kpubdata's `__all__`. The 14 private uses left (the verify runner's executor/spec/transport/config, spec lookup in the agent and CLI, `KPubDataConfig` in provider key resolution, `SENSITIVE_PARAM_KEYS` in log redaction) are allowlisted with a reason and kpubdata#667; an entry nothing uses any more fails too, so the list only shrinks.

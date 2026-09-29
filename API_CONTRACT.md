@@ -56,6 +56,24 @@ KPubData Builder(패키지 `kpubdata-builder`) HTTP wire 계약의 단일 소스
 
 이 문서는 사람이 읽는 운영 가이드입니다. wire 형태를 옮겨 적지 않습니다.
 
+### Builder 가 소유하는 어휘 (#831)
+
+계약의 enum 은 모두 Builder 의 것입니다 (Independence Rule 7). 값이 지금 kpubdata 와 같아도
+소유자는 Builder 이고, kpubdata 의 enum 값을 그대로 wire 로 흘려보내지 않습니다.
+`src/kpubdata_builder/service/vocabulary.py` 가 kpubdata 값마다 Builder 값을 명시적으로 매핑하고,
+매핑에 없는 값은 선언된 대체값으로 바꿉니다.
+
+| 계약 필드 | Builder 어휘 | 현재 값의 출처 | 매핑에 없는 kpubdata 값 |
+| :--- | :--- | :--- | :--- |
+| `DatasetStatusAxes.access` | `AccessStatus` | kpubdata probe 분류 + `unknown` | `unknown` |
+| `CatalogDataset.representation` | `Representation` | kpubdata `Representation` | `other` |
+| `CatalogDataset.operations[]` | `Operation` | kpubdata `Operation` | 목록에서 뺌 |
+| `CatalogQuerySupport.pagination` | `PaginationMode` | kpubdata `PaginationMode` | `query_support` 전체를 `null` |
+
+kpubdata 가 값을 더해도 wire 는 바뀌지 않습니다. 새 값을 어떻게 부를지는 Builder 가 이 매핑에서
+정하고, wire 에 값이 늘면 계약 버전을 올립니다. `tests/unit/test_wire_vocabulary.py` 가 매핑이
+계약 enum 과 같은지, 설치된 kpubdata 의 값을 모두 매핑하는지, 모르는 값이 대체값이 되는지 확인합니다.
+
 ## 2. 실행 모델
 
 v0.4 Builder service는 동기식 실행 모델을 유지합니다.
