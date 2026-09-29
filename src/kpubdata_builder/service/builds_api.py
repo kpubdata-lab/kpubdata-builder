@@ -3,11 +3,10 @@
 Provides **read-only surface** for completed runs — artifacts list, manifest, spec
 snapshot, file serving, build list, event timeline.
 
-Execution-side methods (``build``/``submit_build``/``cancel_build``) are kept separate.
-That side holds eleven concerns (client factory, credential resolver, upload repository,
-spec validation, etc.), so extracting it now would make the new service's constructor
-receive essentially all of ``BuilderService`` again — exactly what #596 tried to remove.
-Read paths use only four dependencies, so the boundary is genuinely narrower here.
+Execution-side methods (``build``/``submit_build``/``cancel_build``) live in
+``build_runs_api.BuildRunsApiService`` (#637). They were split from this read side
+because the two need different things: reads use four dependencies, execution needs
+the client, spec validation, uploads and the job registry as well.
 
 **Wire contract unchanged.** ``BuilderService`` delegates with same signature.
 """

@@ -18,6 +18,7 @@
 
 ### Changed
 
+- The build execution path — run, queue, poll, cancel — moves out of `BuilderService` into `service/build_runs_api.py` (#637, #596); `app.py` goes from 1,708 to 1,374 lines. The provider credential lookup and client creation reach it as one callable, which is what keeps its constructor narrower than the class. `BuilderService.build`, `submit_build`, `build_status` and `cancel_build` stay as delegates and `_run_build_job` stays where it was, so routing, the wire contract and subclasses that override them behave as before.
 - JOIN cardinality is checked on the keys that intersect, not inferred from each side on its own (#698, API contract 1.32.0). `composition.join` gains `keys` (a composite key as `{left, right}` column pairs; `left_key`/`right_key` stay as the single-pair shorthand, and exactly one form must be given), `cardinality` (`one_to_one`/`one_to_many`/`many_to_one`/`many_to_many`, a violation fails the build) and `on_null_key` (`warn`/`fail`). The manifest's `composition` records `keys`, `cardinality`, `observed_cardinality`, both sides' unmatched ratios, `expansion_ratio` and the rows dropped for a null key. **Behaviour change:** `duplicate_key_warning` now fires only when a key present on both sides repeats on both sides, so a spec whose keys are non-unique on both sides but never meet (left `A, A`, right `B, B`) with `on_duplicate_key: fail` no longer fails.
 
 ### Fixed
