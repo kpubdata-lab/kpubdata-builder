@@ -96,7 +96,7 @@ class _FakeClient:
 
 def _service(tmp_path: Path) -> BuilderService:
     client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
-    return BuilderService(output_root=tmp_path, client_factory=lambda: client)
+    return BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
 
 def _build_as(service: BuilderService, run_id: str, created_by: str) -> None:

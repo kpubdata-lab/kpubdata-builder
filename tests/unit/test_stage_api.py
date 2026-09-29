@@ -77,7 +77,7 @@ class _FakeClient:
 def _service(tmp_path: Path, *, rows: int = 2) -> BuilderService:
     records = [{"id": str(i), "v": i * 10} for i in range(1, rows + 1)]
     client = _FakeClient({"datago.air_quality": records})
-    return BuilderService(output_root=tmp_path, client_factory=lambda: client)
+    return BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
 
 def _build(service: BuilderService, run_id: str, spec_yaml: str = VALID_SPEC_YAML) -> int:

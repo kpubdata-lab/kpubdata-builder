@@ -117,7 +117,7 @@ class _BlockingBuildService(BuilderService):
     ) -> None:
         super().__init__(
             output_root=output_root,
-            client_factory=lambda: _FakeClient({}),
+            client_factory=lambda **_: _FakeClient({}),
             async_max_workers=1,
             async_max_queue_size=async_max_queue_size,
         )
@@ -140,7 +140,7 @@ def _service(tmp_path: Path, completed: threading.Event) -> _ObservedBuildServic
     client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
     return _ObservedBuildService(
         output_root=tmp_path,
-        client_factory=lambda: client,
+        client_factory=lambda **_: client,
         completed=completed,
         async_max_workers=1,
     )
@@ -183,7 +183,7 @@ class TestAsyncBuildJobs:
         completed = threading.Event()
         service = _ObservedBuildService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),
+            client_factory=lambda **_: _FakeClient({}),
             completed=completed,
             async_max_workers=1,
         )
@@ -207,7 +207,7 @@ class TestAsyncBuildJobs:
 
         restarted = BuilderService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": []}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": []}),
             async_max_workers=1,
         )
         release.set()
@@ -303,7 +303,7 @@ class TestRunSubmittedEventFailure:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
-        service = BuilderService(output_root=tmp_path, client_factory=lambda: client)
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
         # lazy event store    append .
         event_store = service._event_store
 
@@ -328,7 +328,7 @@ class TestRunSubmittedEventFailure:
         completed = threading.Event()
         service = _ObservedBuildService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             completed=completed,
             async_max_workers=1,
         )
@@ -359,7 +359,7 @@ class TestExecutorEnqueueFailure:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
-        service = BuilderService(output_root=tmp_path, client_factory=lambda: client)
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
         def _broken_executor_submit(*_args: object, **_kwargs: object) -> object:
             raise RuntimeError("simulated worker pool rejection")
@@ -402,7 +402,7 @@ class TestExecutorEnqueueFailure:
         failed   ( "existing"  semantics ).
         """
         client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
-        service = BuilderService(output_root=tmp_path, client_factory=lambda: client)
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
         def _broken_executor_submit(*_args: object, **_kwargs: object) -> object:
             raise RuntimeError("simulated worker pool rejection")
@@ -542,7 +542,7 @@ class TestWorkerAlwaysReachesATerminalState:
         completed = threading.Event()
         service = self._RaisingBuildService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),
+            client_factory=lambda **_: _FakeClient({}),
             completed=completed,
             async_max_workers=1,
         )
@@ -569,7 +569,7 @@ class TestWorkerAlwaysReachesATerminalState:
         completed = threading.Event()
         service = self._RaisingBuildService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),
+            client_factory=lambda **_: _FakeClient({}),
             completed=completed,
             async_max_workers=1,
         )
@@ -591,7 +591,7 @@ class TestWorkerAlwaysReachesATerminalState:
         completed = threading.Event()
         service = self._RaisingBuildService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),
+            client_factory=lambda **_: _FakeClient({}),
             completed=completed,
             async_max_workers=1,
         )

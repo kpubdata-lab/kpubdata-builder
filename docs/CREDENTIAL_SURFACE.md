@@ -38,7 +38,7 @@
 | 5 | environment fallback (조회) | **남는다, 차단 불가** | `service/providers.py:108` — 아래 참조 |
 | 5b | environment fallback (게시) | 남지만 **차단 가능** | `publish_credentials.py:117` `REQUIRE_OWN_PUBLISH_CREDENTIAL` |
 | 6 | queue payload | 남지 않는다 | `service/jobs.py` 에 credential·token·secret 참조 0건 |
-| 7 | response cache | **남는다(간접)** | 아래 참조 |
+| 7 | response cache | 멀티유저 배포에선 꺼짐 (#684) | 아래 참조 |
 | 8 | manifest | 남지 않는다 | `spec/serializer.py:18` 이 명시 키를 `<redacted>` 로 치환. 디스크 확인함 |
 | 9 | logs | **확인 못 했다** | logging redaction 필터가 **없다** (`logging.Filter` 구현 0건) |
 | 10 | temp files | 남지 않는다 | `publishers/kaggle.py:55` — `KAGGLE_CONFIG_DIR` 을 빈 임시 디렉터리로 돌린다 |
@@ -85,6 +85,22 @@ credential 값은 **지문으로 치환된다**(`transport/cache.py:228`, `#263`
 갈리지만, 그렇지 않은 파라미터 조합이면 **A 가 자기 키로 받은 응답을 B 가 같은
 질의로 받는다.** 키는 새지 않지만 **데이터가 샌다** — 캐시가 authorization 을
 대체하는 상태다. 이것이 #684 다.
+
+**조치(#684):** 멀티유저 배포 — `OIDC_ISSUER` 또는 `ENFORCE_OWNERSHIP` 가 켜진
+배포 — 에서는 서비스가 만드는 **모든** client 가 `cache=False` 로 생성된다.
+개인 키가 없는 요청, catalog 조회도 예외가 아니며 `KPUBDATA_CACHE=1` 보다
+우선한다. `cache` 인자를 받지 못하는 client factory 는 신뢰하지 않고 거부한다
+(`service/app.py` `_create_client`). 음성 테스트는
+`tests/unit/test_shared_response_cache.py` 에 있다. 단일 사용자 배포의 캐시는
+그대로 둔다 — 자기 자신과 캐시를 공유하는 것은 노출이 아니다.
+
+**캐시를 다시 켜려면** 다음을 모두 만족해야 한다.
+
+- 캐시 키가 요청자 credential 지문으로 **분할**된다 — 같은 질의라도 키가 다르면
+  다른 항목이다. 키 없는 요청(서버 기본 키)도 하나의 분할로 취급한다.
+- **메모리 전용**이다 — 디스크 캐시는 프로세스·배포 모드 전환을 넘어 살아남아,
+  단일 사용자 시절에 채운 응답이 멀티유저 배포에서 읽힌다.
+- 위 음성 테스트가 수정 없이 통과한다.
 
 ## 13. 브라우저에 남는 것과 남지 않는 것
 

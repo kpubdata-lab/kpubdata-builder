@@ -128,7 +128,7 @@ def _service(tmp_path: Path) -> BuilderService:
             "datago.village_fcst": [{"id": "1", "w": 1}, {"id": "2", "w": 2}, {"id": "3", "w": 3}],
         }
     )
-    return BuilderService(output_root=tmp_path, client_factory=lambda: client)
+    return BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
 
 class TestDatasetGrouping:
