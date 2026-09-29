@@ -1,4 +1,4 @@
-# 에러 처리 설계 — KPubData Engine
+# 에러 처리 설계 — KPubData Builder
 
 ## 1. 개요
 
@@ -34,7 +34,7 @@ BuildError (base)
 
 ```python
 class BuildError(Exception):
-    """Engine 모든 에러의 기반 클래스."""
+    """Builder 모든 에러의 기반 클래스."""
 
 class ValidationError(BuildError):
     """빌드 스펙 검증 실패. 여러 문제를 한 번에 집계."""
@@ -203,7 +203,7 @@ Orchestrator
 
 에러 메시지 변환은 **CLI/Studio 같은 최외곽 boundary**에서 수행합니다.
 
-- Engine 내부: 구조화된 예외 + 메타데이터만 유지
+- Builder 내부: 구조화된 예외 + 메타데이터만 유지
 - CLI: `format_user_error(exc)` 같은 함수로 한국어 메시지 변환
 - Manifest: machine-readable summary (UI 문장 아님)
 

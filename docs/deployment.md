@@ -183,7 +183,7 @@ kpubdata-builder publish specs/weather.yaml --target kaggle --destination my-use
 
 ### serve 명령
 
-Engine HTTP 서비스를 실행합니다 (Studio 연동용).
+Builder HTTP 서비스를 실행합니다 (Studio 연동용).
 
 ```bash
 # 서버 시작 (기본: 127.0.0.1:8000)

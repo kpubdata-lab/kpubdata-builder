@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: KPubData Engine Service API
+  title: KPubData Builder Service API
   version: "1.43.0"
   description: >-
-    KPubData Engine(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
+    KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
     공유한다. 본 문서는 BuilderService(service/app.py)의 dispatch 라우팅과 실제
     wire 형태를 기계 판독용(OpenAPI 3.1) 단일 소스로 고정하며, Studio 같은 소비자가
@@ -30,8 +30,8 @@ info:
     Monitoring 화면을 위한 시스템/집계 observability만 다루며 Run 단위 이벤트는
     별도(#496)다. Async build queue/worker 상태는 기존
     `AsyncBuildExecutor`/`AsyncBuildJobRegistry`(#511/#513)의 read-only
-    snapshot을 반영한다 — 정상 Engine runtime에서는 `availability: available`
-    이며 실제 0건과 `unavailable`을 구분한다. Engine API latency는
+    snapshot을 반영한다 — 정상 Builder runtime에서는 `availability: available`
+    이며 실제 0건과 `unavailable`을 구분한다. Builder API latency는
     healthy/degraded 임계값 근거가 없어 판정 없이 raw
     `sample_count`/`p95_latency_ms`만 제공한다. 대신
     `MonitoringSummaryResponse.status`(`healthy`/`degraded`)는 required
@@ -85,7 +85,7 @@ info:
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
     v1.37.0 lets `POST /build` answer 409 with `warehouse_failures` when every source built but a table commit failed (#787, #788, additive): a build commits against the table revision it started from, so a refresh another build finished meanwhile is a conflict rather than overwritten. The manifest records the same failures.
-    v1.36.0 adds `status_axes` to `DatasetSummary` and `DatasetDetailResponse` (#781, additive): refresh, completeness, health, access and maturity as separate fields, each `unknown` when there is nothing to go on. Refresh shows a queued or running async refresh; completeness comes from the latest run's manifest; health, access and maturity are `unknown` until their sources reach Engine.
+    v1.36.0 adds `status_axes` to `DatasetSummary` and `DatasetDetailResponse` (#781, additive): refresh, completeness, health, access and maturity as separate fields, each `unknown` when there is nothing to go on. Refresh shows a queued or running async refresh; completeness comes from the latest run's manifest; health, access and maturity are `unknown` until their sources reach Builder.
     v1.35.0 adds `version` to `GET /version` (#777, additive): the installed application version, next to `api_version`, the wire contract version. They count different things (kpubdata ADR 0004 §3); Studio compares `version` with its own build to warn about a mismatched pair.
     v1.34.0 adds the `source_fetch_progress` build event (#648, additive): one per finished `param_grid` combination, with `metrics` `{done, total}`, so a long fetch reports progress. Cancellation is now also checked between combinations, so a cancelled run stops fetching at the next combination instead of at the end of the source.
     v1.33.0 lets a BuildSpec state its source's own licence terms (#764, additive): `license_name` and `license_link` join `license`, and are both required when `license` is `other` — the way Hugging Face records a licence outside its list. The Hugging Face card's front matter carries both. `attribution`, accepted since ADR 0018, is now listed in the schema too.
@@ -141,7 +141,7 @@ paths:
   /version:
     get:
       operationId: getVersion
-      summary: Engine API 계약 버전 조회
+      summary: Builder API 계약 버전 조회
       responses:
         "200":
           description: 서비스/계약 버전
@@ -2768,7 +2768,7 @@ paths:
   /monitoring/summary:
     get:
       operationId: getMonitoringSummary
-      summary: Engine API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516)
+      summary: Builder API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516)
       description: >-
         시스템 aggregate만 반환하며 개별 run의 dataset/owner/credential 정보는
         포함하지 않는다. Async build queue/worker(#511/#513)는 이 서비스가 항상
@@ -3543,7 +3543,7 @@ components:
         `number` in a response whose values all fit and `decimal_string` in one where a
         value does not, so the same column can arrive either way across pages, previews
         and queries. Read `wire_encoding` from each response's column metadata; do not
-        cache it from an earlier one. A value outside this list, which a newer Engine may
+        cache it from an earlier one. A value outside this list, which a newer Builder may
         add, is shown as raw text: never read it as a number.
 
     ColumnMetaOrigin:
@@ -3552,7 +3552,7 @@ components:
       description: >-
         Where a column hint came from (#813, ADR 0019). When several sources describe a
         column, each hint is taken from the highest one, in this order: a user's
-        annotation, the Core dataset spec, the catalog, an Engine inference. A hint with
+        annotation, the KPubData dataset spec, the catalog, a Builder inference. A hint with
         origin `engine_inferred` is an estimate and is shown as one.
 
     ColumnSemanticHint:
@@ -3567,7 +3567,7 @@ components:
           type: string
           description: >-
             `code`, `measure`, `date` or `period` today. An open string, not an enum: a
-            newer Engine may send a kind a client does not know, and the client then
+            newer Builder may send a kind a client does not know, and the client then
             shows the raw value rather than failing.
         origin:
           $ref: "#/components/schemas/ColumnMetaOrigin"
@@ -4234,7 +4234,7 @@ components:
         version:
           type: string
           description: >-
-            The installed application version (#777). Engine and Studio share it
+            The installed application version (#777). Builder and Studio share it
             (ADR 0004); it differs from api_version, which counts the wire contract.
 
     HealthResponse:
@@ -4352,7 +4352,7 @@ components:
             The provider's rate limit for this dataset, exactly as the kpubdata spec's
             licence declares it (for example `개발계정 일 10,000건`), not parsed (#778,
             additive). null when the spec declares no quota or the installed kpubdata
-            does not expose licence terms yet — unknown, not unlimited. Engine does not
+            does not expose licence terms yet — unknown, not unlimited. Builder does not
             count calls, so this is the budget, not the consumption.
 
     CatalogRequestParameter:
@@ -5619,7 +5619,7 @@ components:
         one field per axis, never merged into one badge. An axis with nothing to go on
         is `unknown`, not a guess. health, access and maturity are always `unknown`
         for now: stale needs a declared refresh interval, access needs kpubdata's probe
-        results, maturity the source spec's grade, and none of them reaches Engine yet.
+        results, maturity the source spec's grade, and none of them reaches Builder yet.
       required: [refresh, completeness, health, access, maturity]
       properties:
         refresh:
@@ -6002,7 +6002,7 @@ components:
     MonitoringApiStatus:
       type: object
       description: >-
-        Engine API 요청 처리 latency 상태. availability=available은 latency
+        Builder API 요청 처리 latency 상태. availability=available은 latency
         collector(ring buffer)가 정상적으로 표본을 읽어낼 수 있었다는 뜻이며,
         collector 자체가 손상되어 표본을 읽을 수 없으면(#527) unavailable +
         sample_count=null + p95_latency_ms=null이다 — "정상 무표본"

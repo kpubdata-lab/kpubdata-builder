@@ -1,4 +1,4 @@
-# CLI 사용 가이드 — KPubData Engine
+# CLI 사용 가이드 — KPubData Builder
 
 이 문서는 `kpubdata-builder` 명령줄 도구(CLI)의 실제 사용법을 다룹니다.
 각 명령의 출력은 실제 실행 결과를 그대로 수록했습니다.
@@ -24,7 +24,7 @@ kpubdata-builder 0.4.0.dev0
 $ kpubdata-builder --help
 usage: kpubdata-builder [-h] [--version] command ...
 
-KPubData Engine command-line interface.
+KPubData Builder command-line interface.
 
 positional arguments:
   command
@@ -33,7 +33,7 @@ positional arguments:
                      writing artifacts.
     build            Execute a BuildSpec through the Medallion pipeline.
     publish          Publish build artifacts to a local or remote destination.
-    serve            Run the Engine HTTP service.
+    serve            Run the Builder HTTP service.
     rebuild-index    Rebuild the build index from filesystem scans.
     discover         Discover API metadata from a data.go.kr URL.
     monitor          Check pending dataset applications for approval.

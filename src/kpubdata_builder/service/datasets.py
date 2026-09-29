@@ -427,7 +427,7 @@ def status_axes(
       ``unknown`` when there is no manifest or nothing was written.
     - **health**, **access**, **maturity** — ``unknown``. Stale needs a declared
       refresh interval, access needs kpubdata's probe results, maturity the source
-      spec's grade; none of these reaches Engine yet (#781 leaves each a decision).
+      spec's grade; none of these reaches Builder yet (#781 leaves each a decision).
     """
     if any(status in ("running", "cancelling") for status in active_statuses):
         refresh = "running"

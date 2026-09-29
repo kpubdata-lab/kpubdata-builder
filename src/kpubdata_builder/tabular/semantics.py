@@ -9,13 +9,13 @@ that already means something else.
 This module adds three separate, optional hints, each carrying where it came from:
 
     semantic  what kind of value: `code`, `measure`, `date`, `period`, or a kind a newer
-              Engine adds. A client that does not know a kind shows the raw value.
+              Builder adds. A client that does not know a kind shows the raw value.
     display   a label, a description and a display format.
     unit      a unit name and a scale (1000 for "thousand won").
 
 When several sources describe the same column, each hint is taken from the highest
-source that has one (`ORIGIN_PRIORITY`): a user's annotation, then the Core dataset
-spec, then the catalog, then an Engine inference. The hints are metadata only. They
+source that has one (`ORIGIN_PRIORITY`): a user's annotation, then the KPubData dataset
+spec, then the catalog, then a Builder inference. The hints are metadata only. They
 never change the storage type, the wire encoding, a cast, an aggregation or how a row is
 identified, and none of them can overwrite the licence, a PII decision or the source's
 provenance — those are not hints and are not decided here.
@@ -40,7 +40,7 @@ ORIGIN_PRIORITY: tuple[Origin, ...] = (
 """Highest first. A hint from an earlier origin wins over one from a later origin."""
 
 KNOWN_SEMANTIC_KINDS: frozenset[str] = frozenset({"code", "measure", "date", "period"})
-"""Kinds this Engine emits. The contract keeps the field an open string: a client that
+"""Kinds this Builder emits. The contract keeps the field an open string: a client that
 meets a kind outside its own list shows the raw value instead of failing."""
 
 # Core `FieldConstraints.format` values that name a date or a period. Anything else is
@@ -97,7 +97,7 @@ def resolve(layers: Iterable[ColumnSemantics]) -> ColumnSemantics:
     """Combine what several sources say about one column.
 
     Each part is chosen on its own: the display label can come from a user's annotation
-    while the unit comes from the Core spec. Within a part the highest origin wins; two
+    while the unit comes from the KPubData spec. Within a part the highest origin wins; two
     hints from the same origin keep the first one given, so the result does not depend
     on anything but the order the caller chose.
     """
@@ -131,7 +131,7 @@ def from_field_descriptor(descriptor: object) -> ColumnSemantics:
     `constraints.format` the display format. The format also names the kind when it is a
     date or a period format; any other format says nothing about the kind. Core has no
     unit field, so no unit comes from here. `type` and `nullable` are ignored: they
-    describe the source, and the storage type is decided by the data Engine holds.
+    describe the source, and the storage type is decided by the data Builder holds.
 
     Read by attribute so that this module does not depend on one kpubdata release.
     """
