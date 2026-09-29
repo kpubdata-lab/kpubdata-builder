@@ -78,7 +78,10 @@ class TestCatalogFailure:
         assert response.status_code == 502
         assert response.body == {"error": "catalog unavailable"}
         assert "serviceKey" not in str(response.body)
-        assert _SECRET_URL in caplog.text
+        # The operator still sees which request failed — but not the key (#686). This
+        # line used to require the key in the log, pinning the leak it should catch.
+        assert "https://apis.data.go.kr/service?serviceKey=[REDACTED]" in caplog.text
+        assert "SUPERSECRETKEY" not in caplog.text
 
 
 class TestUnhandledJobFailure:
@@ -110,7 +113,10 @@ class TestUnhandledJobFailure:
         assert snapshot.status == "failed"
         assert snapshot.error == "internal error: ConnectionRefusedError"
         assert "serviceKey" not in (snapshot.error or "")
-        assert _SECRET_URL in caplog.text
+        # The operator still sees which request failed — but not the key (#686). This
+        # line used to require the key in the log, pinning the leak it should catch.
+        assert "https://apis.data.go.kr/service?serviceKey=[REDACTED]" in caplog.text
+        assert "SUPERSECRETKEY" not in caplog.text
 
 
 def _await_terminal(executor: AsyncBuildExecutor, run_id: str) -> Any:

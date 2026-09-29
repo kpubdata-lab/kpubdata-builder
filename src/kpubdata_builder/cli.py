@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
-from . import __version__
+from . import __version__, logging_redaction
 from .errors import PublishError, SpecLoadError, ValidationError
 from .pipeline import preview_build, run_build
 from .publishers import PUBLISHER_REGISTRY
@@ -1221,6 +1221,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help(sys.stderr)
         return 2
+    # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
+    logging_redaction.install()
     return dispatch(args)
 
 

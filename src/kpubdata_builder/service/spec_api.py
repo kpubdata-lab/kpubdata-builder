@@ -321,6 +321,8 @@ class SpecApiService:
                 seed=seed,
                 upload_repository=self._upload_repository_for(spec_or_error),
                 owner_id=principal.owner_id if principal is not None else None,
+                # A provider that echoes the request would put the key into the sample.
+                secret_values=tuple(provider_keys.values()),
             )
         finally:
             self._close_client(client)

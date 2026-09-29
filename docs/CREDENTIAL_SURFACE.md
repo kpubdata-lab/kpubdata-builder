@@ -40,7 +40,7 @@
 | 6 | queue payload | 남지 않는다 | `service/jobs.py` 에 credential·token·secret 참조 0건 |
 | 7 | response cache | **남는다(간접)** | 아래 참조 |
 | 8 | manifest | 남지 않는다 | `spec/serializer.py:18` 이 명시 키를 `<redacted>` 로 치환. 디스크 확인함 |
-| 9 | logs | **확인 못 했다** | logging redaction 필터가 **없다** (`logging.Filter` 구현 0건) |
+| 9 | logs | 남지 않는다 — 게이트가 확인한다 (#686) | 아래 참조. 전에는 **남았다**: httpx 가 요청마다 `?serviceKey=` 가 붙은 URL 을 INFO 로 찍었다 |
 | 10 | temp files | 남지 않는다 | `publishers/kaggle.py:55` — `KAGGLE_CONFIG_DIR` 을 빈 임시 디렉터리로 돌린다 |
 | 11 | backup | **확인 못 했다** | 백업 절차가 정의되어 있지 않다. SQLite 파일을 복사하면 ciphertext 가 따라간다 |
 | 12 | SQLite WAL | 남지 않는다 | credential store 는 WAL 을 쓰지 않는다. WAL 은 `store/build_index.py:134` 뿐이고 거기엔 credential 이 없다 |
@@ -49,7 +49,7 @@
 | 15 | APM / traces | 해당 없음 | APM 연동이 없다 |
 | 16 | crash dump | **확인 못 했다** | Python 기본 traceback 에 지역변수는 실리지 않지만, `faulthandler`·코어덤프 설정은 배포가 정한다 |
 | 17 | GitHub Actions 로그·artifact | 사용자 키는 **해당 없음**, 운영자 키는 남지 않는다(마스킹) | 아래 참조 |
-| 18 | 설정 객체의 `__repr__` | **남는다(조건부)** — 두 dataclass 가 평문을 repr 에 싣는다 | 아래 참조 |
+| 18 | 설정 객체의 `__repr__` | 남지 않는다 (#686) | 두 dataclass 의 키 필드를 `repr=False` 로 뺐다 |
 
 ---
 
@@ -147,6 +147,24 @@ repr 은 로그 포맷(`%r`, f-string `!r`), 예외 메시지, 테스트 실패 
 `logger.debug("%r", resolved)` 한 줄을 쓰거나 테스트가 이 객체를 비교하다 실패하면
 키가 출력된다. 수정은 `field(repr=False)` 한 줄씩이고, `#686`(canary 게이트)이 이런
 경로를 기계적으로 잡는 장치다.
+
+## 9·18 이후 — canary 게이트 (#686)
+
+`tests/unit/test_canary_leak_gate.py` 가 사용자 키 자리에 canary 를 넣고 성공·400·403·429·500·
+timeout·redirect·업스트림 echo·취소·재시작을 **실제 kpubdata Client**(HTTP 계층만 mock)로 돌린 뒤,
+로그(DEBUG)·작업공간의 모든 파일(SQLite·WAL 포함)·응답 본문·job registry 를 raw·URL·이중 URL·
+Base64·JSON 이스케이프 다섯 가지로 검색한다. 처음 돌렸을 때 찾은 것:
+
+| 누출 | 원인 | 조치 |
+|---|---|---|
+| 로그 | httpx 가 `HTTP Request: GET <url>` 을 INFO 로 기록 — data.go.kr URL 에 키가 쿼리로 실린다 | `kpubdata_builder.logging_redaction` — 모든 로그 레코드를 record factory 에서 재작성. 이름 기반(kpubdata `SENSITIVE_PARAM_KEYS`) + 열린 client 의 키 값 기반(경로 세그먼트 키) |
+| bronze·silver·gold·카드·export | 요청을 되돌려주는 업스트림이면 키가 **데이터**에 들어간다 | Bronze 진입 지점에서 요청자 키 값(원문·URL 인코딩)을 `[REDACTED]` 로 치환 |
+
+두 테스트가 **로그에 키가 있어야 한다**고 단언하고 있었다(`test_error_message_redaction.py`) — 이슈가
+말한 "누출을 고정하는 테스트"의 사례다. 이제 URL 은 남고 키만 가려진다는 것을 단언한다.
+
+게이트가 보지 않는 곳과 이유: 브라우저 저장소·HAR·스크린샷은 Studio, 프록시 로그·trace·에러 트래커·
+GitHub Actions 는 배포의 영역이다(17번).
 
 ## 9·11·14·16 — "확인 못 했다" 의 의미
 

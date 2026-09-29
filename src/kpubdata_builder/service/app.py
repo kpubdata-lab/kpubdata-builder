@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .. import logging_redaction
 from ..credentials import (
     AesGcmCredentialCipher,
     CredentialRepository,
@@ -100,8 +101,12 @@ class _CloseableClient(Protocol):
 
 
 def _close_request_client(client: SourceClient) -> None:
-    if isinstance(client, _CloseableClient):
-        client.close()
+    try:
+        if isinstance(client, _CloseableClient):
+            client.close()
+    finally:
+        # The client's keys stop being "in use" for log scrubbing once it is closed (#686).
+        logging_redaction.release(client)
 
 
 def _raise_provider_test_error(client: SourceClient, provider: str) -> None:
@@ -306,6 +311,8 @@ class BuilderService:
         async_max_queue_size: int = 10,
         warehouse_root: Path | None = None,
     ) -> None:
+        # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
+        logging_redaction.install()
         self._output_root = output_root
         # Configured, never taken from a request: a per-request path would let a
         # caller write a catalog anywhere the process can reach (#703).
@@ -521,7 +528,11 @@ class BuilderService:
             kwargs["cache"] = False
         if timeout is not None and _factory_accepts_keyword(self._client_factory, "timeout"):
             kwargs["timeout"] = timeout
-        return self._client_factory(**kwargs)
+        client = self._client_factory(**kwargs)
+        # While this client is open its keys are scrubbed from every log record by value,
+        # which catches a key a provider puts in a path segment (#686).
+        logging_redaction.register(client, provider_keys.values())
+        return client
 
     def _runtime_providers(self) -> tuple[ProviderDescriptor, ...] | ServiceResponse:
         return self._providers_service.runtime_providers()

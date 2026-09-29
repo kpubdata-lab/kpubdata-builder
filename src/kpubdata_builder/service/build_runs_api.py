@@ -168,6 +168,8 @@ class BuildRunsApiService:
                 event_store=self._event_store(),
                 cancellation=cancellation,
                 catalog=self._table_catalog(),
+                # A provider that echoes the request would put the key into the data.
+                secret_values=tuple(provider_keys.values()),
             )
         finally:
             self._close_client(client)
