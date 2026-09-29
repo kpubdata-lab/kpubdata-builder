@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- CI tests Builder against every released kpubdata inside the declared range, not only the floor (#832, Independence Rules 11 and 12). `scripts/kpubdata_release_matrix.py` reads the range from `pyproject.toml` and the releases from PyPI at run time, drops yanked and pre-release versions, and fails when the floor is not released or nothing is left; a `kpubdata <version>` matrix job runs the suite against each. `CI gate` stays the one required check. `kpubdata main ↔ Builder` is documented as an early warning, not a compatibility contract.
+
 ### Documentation
 
 - The README, docs, API contract and CLI help call the product KPubData Engine, following kpubdata's BRAND.md (#779). The repository, the `kpubdata-builder` package and CLI, `BuilderService` and the `KPUBDATA_BUILDER_*` variables keep their names, and ADRs and past changelog entries are left as written.

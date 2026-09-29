@@ -14,6 +14,12 @@ name: Cross-repo contract
 # PR마다 돌리지 않는 이유: upstream main이 깨졌을 때 Builder의 무관한 PR까지
 # 빨갛게 만들지 않기 위해서다. 대신 매일·수동·main push에서 돌리고, kpubdata 경계에
 # 직접 닿는 파일이 바뀐 PR에서만 함께 돌린다.
+#
+# Independence Rule 12 (#832): this job is an early warning, not a compatibility
+# contract. kpubdata `main` is not a release, so a pass here promises nothing to a user
+# and a failure here is a signal to fix before the next release — not a broken
+# compatibility claim. Compatibility with each released kpubdata in the declared range
+# is tested by the `kpubdata <version>` matrix in ci.yml, which `CI gate` requires.
 
 on:
   schedule:
@@ -68,6 +74,7 @@ jobs:
       - name: Record which kpubdata commit is under test
         run: |
           echo "kpubdata main = $(git -C .kpubdata-src rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Early warning only (Rule 12): kpubdata main is not a release, so this result is not a compatibility claim." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Integration tests against kpubdata main
         env:
