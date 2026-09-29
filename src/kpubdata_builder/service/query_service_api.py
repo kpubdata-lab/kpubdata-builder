@@ -88,10 +88,6 @@ class QueryApiService:
         try:
             request = query_request_from_body(body)
             context = resolve_query_context(self._output_root, request, principal)
-            validated = validate_read_only_sql(request.sql)
-            result = self._engine.execute(
-                context.table_path, validated.canonical_sql, limit=request.limit
-            )
         except PermissionError:
             return ServiceResponse(403, {"error": "forbidden", "code": "forbidden"})
         except QueryArtifactUnavailableError:
@@ -100,31 +96,44 @@ class QueryApiService:
             )
         except QueryContextError as exc:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_context"})
-        except UnsafeQueryError as exc:
-            return ServiceResponse(400, {"error": str(exc), "code": "unsafe_query"})
-        except QueryBusyError:
-            return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
-        except QueryTimeoutError:
-            return ServiceResponse(504, {"error": "query timed out", "code": "query_timeout"})
-        except QueryExecutionError:
-            return ServiceResponse(
-                400, {"error": "query execution failed", "code": "query_execution_failed"}
-            )
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
+        return execute_query(self._engine, context.table_path, request.sql, limit=request.limit)
 
+
+def execute_query(
+    engine: QueryService, table_path: Path, sql: str, *, limit: int
+) -> ServiceResponse:
+    """Validate and run ``sql`` against one table file, and classify what went wrong.
+
+    Shared by ``POST /query`` and ``POST /warehouse/query`` (#797), so the same failure
+    maps to the same status code and ``code`` whichever way the table was found.
+    """
+    try:
+        validated = validate_read_only_sql(sql)
+        result = engine.execute(table_path, validated.canonical_sql, limit=limit)
+    except UnsafeQueryError as exc:
+        return ServiceResponse(400, {"error": str(exc), "code": "unsafe_query"})
+    except QueryBusyError:
+        return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
+    except QueryTimeoutError:
+        return ServiceResponse(504, {"error": "query timed out", "code": "query_timeout"})
+    except QueryExecutionError:
         return ServiceResponse(
-            200,
-            {
-                "columns": list(result.columns),
-                "column_meta": list(result.column_meta),
-                "rows": list(result.rows),
-                "truncated": result.truncated,
-                "execution_ms": result.execution_ms,
-                "startup_ms": result.startup_ms,
-                "engine_execution_ms": result.engine_execution_ms,
-            },
+            400, {"error": "query execution failed", "code": "query_execution_failed"}
         )
+    return ServiceResponse(
+        200,
+        {
+            "columns": list(result.columns),
+            "column_meta": list(result.column_meta),
+            "rows": list(result.rows),
+            "truncated": result.truncated,
+            "execution_ms": result.execution_ms,
+            "startup_ms": result.startup_ms,
+            "engine_execution_ms": result.engine_execution_ms,
+        },
+    )
 
 
-__all__ = ["QueryApiService", "query_request_from_body"]
+__all__ = ["QueryApiService", "execute_query", "query_request_from_body"]
