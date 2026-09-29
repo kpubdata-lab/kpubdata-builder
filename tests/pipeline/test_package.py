@@ -179,3 +179,78 @@ def test_generate_dataset_card_stats_for_numeric(tmp_path: Path) -> None:
 )
 def test_size_category(n: int, expected: str) -> None:
     assert _size_category(n) == expected
+
+
+# ---------------------------------------------------------------------------
+# Licence: the source's own terms, never a default (#758)
+# ---------------------------------------------------------------------------
+
+_CONFIGS = Path(__file__).parents[2] / "scripts" / "configs"
+# The one config whose source terms could not be read (ECOS loads them with
+# JavaScript). #758 keeps it as it is until they are confirmed.
+_UNCONFIRMED = {"korea_base_rate.yaml"}
+
+
+def test_an_other_licence_carries_its_name_and_link(tmp_path: Path) -> None:
+    config = _minimal_config()
+    config["card"].update(
+        license="other",
+        license_name="korea-public-data-unrestricted",
+        license_link="https://www.data.go.kr/data/15059486/openapi.do",
+    )
+    out = tmp_path / "README.md"
+
+    generate_dataset_card(pl.DataFrame({"id": ["1"]}), config, out)
+
+    front_matter = out.read_text(encoding="utf-8").split("---")[1]
+    assert "license: other" in front_matter
+    assert "license_name: korea-public-data-unrestricted" in front_matter
+    assert "license_link: https://www.data.go.kr/data/15059486/openapi.do" in front_matter
+
+
+def test_a_card_without_a_licence_is_refused(tmp_path: Path) -> None:
+    """Negative: nobody chose a licence, so none is claimed — cc-by-4.0 was the default."""
+    config = _minimal_config()
+    del config["card"]["license"]
+    out = tmp_path / "README.md"
+
+    with pytest.raises(ValueError, match="card.license is required"):
+        generate_dataset_card(pl.DataFrame({"id": ["1"]}), config, out)
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("missing", ["license_name", "license_link"])
+def test_other_without_its_name_or_link_is_refused(tmp_path: Path, missing: str) -> None:
+    config = _minimal_config()
+    config["card"].update(license="other", license_name="kogl-type-1", license_link="https://x")
+    del config["card"][missing]
+
+    with pytest.raises(ValueError, match="license_name and card.license_link"):
+        generate_dataset_card(pl.DataFrame({"id": ["1"]}), config, tmp_path / "README.md")
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(p for p in _CONFIGS.glob("*.yaml") if p.name not in _UNCONFIRMED),
+    ids=lambda p: p.stem,
+)
+def test_every_published_config_states_its_source_terms(path: Path) -> None:
+    """No published card claims a licence its source did not grant (#758).
+
+    Every source here states either no restriction on use or a KOGL type, and none of
+    them grants CC BY. So each card records `other` with the source's own terms, and the
+    card packages without error.
+    """
+    import yaml
+
+    card = yaml.safe_load(path.read_text(encoding="utf-8"))["card"]
+
+    assert card["license"] == "other"
+    assert card["license_name"] in {
+        "korea-public-data-unrestricted",
+        "kogl-type-1",
+        "kogl-type-3",
+    }
+    assert card["license_link"].startswith("https://")
+    assert "cc-by" not in path.read_text(encoding="utf-8").lower()
+    package_mod.license_front_matter(card)

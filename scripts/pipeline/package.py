@@ -25,6 +25,40 @@ def write_parquet(df: pl.DataFrame, output_path: Path) -> Path:
     return output_path
 
 
+def license_front_matter(card: dict[str, Any]) -> str:
+    """The card's licence lines for the front matter, or a refusal (#758).
+
+    There is no default. The old one was ``cc-by-4.0``, which claimed a licence nobody
+    chose and that the source did not grant: most sources here state no restriction on
+    use, and one is KOGL Type 3, which forbids exactly the change CC BY allows. A config
+    that does not say what its source grants cannot be packaged.
+
+    ``license: other`` is how Hugging Face records a licence outside its list, and it
+    means nothing without ``license_name`` and ``license_link`` — so those are required
+    with it.
+
+    Raises:
+        ValueError: ``license`` is missing, or ``other`` without its name and link.
+    """
+    license_id = str(card.get("license") or "").strip()
+    if not license_id:
+        raise ValueError(
+            "card.license is required: state the terms the source grants "
+            "(e.g. license: other + license_name + license_link). There is no default."
+        )
+    lines = [f"license: {license_id}"]
+    if license_id == "other":
+        name = str(card.get("license_name") or "").strip()
+        link = str(card.get("license_link") or "").strip()
+        if not name or not link:
+            raise ValueError(
+                "card.license is 'other', so card.license_name and card.license_link are "
+                "required — 'other' alone tells a reader nothing about the terms"
+            )
+        lines += [f"license_name: {name}", f"license_link: {link}"]
+    return "\n".join(lines)
+
+
 def generate_dataset_card(
     df: pl.DataFrame,
     config: dict[str, Any],
@@ -60,7 +94,7 @@ def generate_dataset_card(
         configs_block = "\n".join(configs_lines) + "\n"
 
     content = f"""---
-license: {card.get("license", "cc-by-4.0")}
+{license_front_matter(card)}
 language:
 {languages_yaml}
 tags:

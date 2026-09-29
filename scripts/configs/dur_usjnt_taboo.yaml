@@ -46,7 +46,9 @@ card:
 
     Contains pairs of drugs that should not be used together,
     including the reason for contraindication.
-  license: cc-by-4.0
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15059486/openapi.do"
   attribution: |
     데이터 출처: 식품의약품안전처, 의약품안전사용서비스(DUR)품목정보
     (Ministry of Food and Drug Safety — DUR product information service)

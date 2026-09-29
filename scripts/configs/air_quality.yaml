@@ -64,7 +64,9 @@ card:
 
     Useful for environmental analysis, time-series forecasting,
     and public health research.
-  license: cc-by-4.0
+  license: other
+  license_name: kogl-type-3
+  license_link: "https://www.kogl.or.kr/info/licenseType3.do"
   language:
     - ko
   tags:

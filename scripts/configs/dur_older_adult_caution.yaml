@@ -37,7 +37,9 @@ card:
   description: |
     Drug Utilization Review (DUR) data for medications requiring
     caution in elderly patients, from Korea's MFDS (식약처).
-  license: cc-by-4.0
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15059486/openapi.do"
   attribution: |
     데이터 출처: 식품의약품안전처, 의약품안전사용서비스(DUR)품목정보
     (Ministry of Food and Drug Safety — DUR product information service)

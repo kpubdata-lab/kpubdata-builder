@@ -44,7 +44,9 @@ card:
     Location-based tourism information from the Korea Tourism Organization
     (한국관광공사) via TourAPI. Returns nearby attractions from a given
     coordinate within a specified radius.
-  license: cc-by-4.0
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15101578/openapi.do"
   attribution: |
     데이터 출처: 한국관광공사, 국문 관광정보 서비스
     (Korea Tourism Organization — TourAPI KorService2)

@@ -87,6 +87,12 @@ def upload_to_kaggle(
         return
 
     card = config["card"]
+    # No default licence (#758): the card must say what the source grants, and this
+    # is checked before anything is staged. `other` shows on Kaggle as "specified in
+    # description", which is why the attribution — the source's own terms — is
+    # appended to the description below.
+    if not card.get("license"):
+        raise ValueError("card.license is required; there is no default licence")
 
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore[import-untyped]
@@ -108,7 +114,7 @@ def upload_to_kaggle(
     if attribution:
         description = f"{description}\n\n{attribution}"
 
-    license_name = _map_kaggle_license(card.get("license", "cc-by-4.0"))
+    license_name = _map_kaggle_license(card["license"])
 
     metadata: dict[str, Any] = {
         "title": card["title"],
@@ -190,5 +196,7 @@ def _map_kaggle_license(hf_license: str) -> str:
         "mit": "other",
         "odc-by": "ODC-BY-1.0",
         "odbl": "ODbL-1.0",
+        # A licence outside Kaggle's list; its terms travel in the description.
+        "other": "other",
     }
     return mapping.get(hf_license.lower(), "other")

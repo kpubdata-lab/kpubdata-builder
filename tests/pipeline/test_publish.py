@@ -302,3 +302,18 @@ def test_a_failed_kaggle_lookup_does_not_become_create(tmp_path: Path) -> None:
 
     api.dataset_create_new.assert_not_called()
     api.dataset_create_version.assert_not_called()
+
+
+def test_upload_to_kaggle_refuses_a_card_without_a_licence(tmp_path: Path) -> None:
+    """Negative (#758): no default licence, and nothing is staged before the refusal."""
+    staging = _staging_dir(tmp_path)
+    config = _kaggle_config("myorg/my-dataset")
+    del config["card"]["license"]
+
+    with pytest.raises(ValueError, match="card.license is required"):
+        upload_to_kaggle(staging, config, dry_run=True)
+    assert not (staging / ".kaggle_upload").exists()
+
+
+def test_an_other_licence_maps_to_kaggle_other() -> None:
+    assert _map_kaggle_license("other") == "other"
