@@ -94,14 +94,17 @@ first draft of this section already dropped the Severity axis that POLICY define
 
 What is specific to agents:
 
-- A new issue carries **at least one `epic:*` and one `type:*`**.
+- A new issue carries **at least one `epic:*`**. Its title starts with a
+  Conventional Commits type — `fix(localdata): empty wrapper becomes a phantom row` —
+  and the `type:*` label follows from the title (POLICY 2.1.3). **Never set `type:*`
+  by hand**, and change the title rather than the label when the type was wrong.
+- Pull request titles use the same types; the `PR title` check fails otherwise. The
+  allowed list lives in kpubdata's `scripts/conventional_title.py`.
 - Leave Priority off when there is no evidence for it. POLICY 8 requires
   `Impact:`, `Blocks:` and `Evidence:` for High and above, and a rating without
   evidence is a wrong rating.
-- `type:feature` is the feature label, matching
-  `.github/ISSUE_TEMPLATE/feature_request.yml`. `type:feat` is retired.
 - Do not prefix a title with `GOV-01:` or `WH-03:`. Those are serial numbers from
-  a backlog document, not the issue's name. Labels do the classifying.
+  a backlog document, not the issue's name. The type is the only prefix.
 
 What an agent does not do:
 

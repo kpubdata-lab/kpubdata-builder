@@ -1,5 +1,6 @@
 <!--
-PR 제목은 Conventional Commits 형식을 권장합니다: feat/fix/docs/refactor/test/chore
+PR 제목은 Conventional Commits 형식이어야 합니다 — `PR title` 체크가 검사합니다(POLICY 2.1.3).
+type: feat fix docs chore test ci refactor style perf build revert i18n
 예) docs: add feature process flow diagrams
 -->
 

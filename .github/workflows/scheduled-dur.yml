@@ -173,5 +173,5 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh issue create \
-            --title "[Freshness] ${WORKFLOW} failed" \
+            --title "fix(freshness): ${WORKFLOW} failed" \
             --body "Scheduled dataset publish failed.\n\nRun: ${RUN_URL}\n\nFollow DATA_FRESHNESS.md escalation policy before re-running or backfilling."
