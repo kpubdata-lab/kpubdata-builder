@@ -279,12 +279,14 @@ _BuildListEntry = dict[str, str | None]
 #   duplicate_key_warning is judged on keys present on both sides only.
 # 1.32.0 -> 1.33.0: BuildSpec gains license_name and license_link, and publishes the
 #   attribution it already accepted (#764, additive). `license: other` needs both.
+# 1.36.0 -> 1.37.0: POST /build may answer 409 with warehouse_failures when a table commit
+#   failed after every source built (#787, #788, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.36.0"
+API_CONTRACT_VERSION = "1.37.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

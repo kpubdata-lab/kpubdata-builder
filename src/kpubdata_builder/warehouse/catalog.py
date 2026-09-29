@@ -457,6 +457,20 @@ class TableCatalog:
             )
         return TableRow(new_id, workspace_id, logical_name, None, 0)
 
+    def table_revision(self, workspace_id: str, logical_name: str) -> int:
+        """The table's current revision, or 0 when it does not exist yet (#787).
+
+        A build reads this when it starts and commits against it, so a refresh that
+        another build finished in the meantime is a conflict rather than overwritten.
+        0 matches a table created later at revision 0, so the first build of a table
+        still commits.
+        """
+        row = self._conn.execute(
+            "SELECT revision FROM tables WHERE workspace_id = ? AND logical_name = ?",
+            (workspace_id, logical_name),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def get_table(self, table_id: str) -> TableRow:
         """Read a table row.
 
