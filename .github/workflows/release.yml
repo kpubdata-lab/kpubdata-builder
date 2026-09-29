@@ -226,6 +226,13 @@ jobs:
           uv run --no-sources mypy src
           uv run --no-sources pytest -ra
 
+      # The kpubdata this release was tested with — the version uv.lock pinned while
+      # the gates above ran — goes into the notes, so the compatibility table in
+      # kpubdata (docs/compatibility.md) is filled from a fact, not from the pyproject
+      # range (#718).
+      - name: Record what the release was tested with
+        run: python3 scripts/release_facts.py "${{ steps.notes.outputs.file }}"
+
       - name: Tag and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
