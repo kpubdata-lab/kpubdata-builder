@@ -1,0 +1,93 @@
+name: Security
+
+# Supply-chain and secret checks (#691). Three questions, one job each:
+#
+#   dependency audit  does anything uv.lock installs have a known vulnerability?
+#   secret scan       does any commit in history carry a credential?
+#   CodeQL            does the Python source have a known-dangerous pattern?
+#
+# They run on every pull request and push to main, and weekly, because a dependency
+# gains an advisory without anyone touching this repository. They are not part of
+# ci.yml's `CI gate`: whether a new advisory should block every open pull request is a
+# branch-protection decision (#520), not something this file decides.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"  # Monday 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+
+      # Audit what uv.lock pins — the --no-sources resolution CI and deployments
+      # install — with every extra, so an optional dependency is not a blind spot.
+      # --no-deps: the export is already the full, pinned closure.
+      - name: Audit the locked dependencies
+        run: |
+          uv export --frozen --no-hashes --no-emit-project --all-extras -o requirements.txt
+          uvx pip-audit==2.10.1 -r requirements.txt --no-deps --disable-pip --progress-spinner off
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.28.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # history, not just the tip: a key removed later is still leaked
+
+      # The binary, checksum-verified, rather than gitleaks-action — that action needs
+      # a licence key for organisations and would add a secret to scan for secrets.
+      - name: Install gitleaks
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "${archive}" "${base}/${archive}"
+          curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" \
+            | grep " ${archive}\$" | sha256sum -c -
+          tar xzf "${archive}" gitleaks
+
+      # Findings judged harmless are listed, with the reason, in .gitleaksignore.
+      - name: Scan the full history
+        run: ./gitleaks git . --redact --no-banner --log-level warn
+
+  codeql:
+    name: CodeQL (python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
+        with:
+          languages: python
+          build-mode: none
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
+        with:
+          category: /language:python
