@@ -186,9 +186,6 @@ def test_size_category(n: int, expected: str) -> None:
 # ---------------------------------------------------------------------------
 
 _CONFIGS = Path(__file__).parents[2] / "scripts" / "configs"
-# The one config whose source terms could not be read (ECOS loads them with
-# JavaScript). #758 keeps it as it is until they are confirmed.
-_UNCONFIRMED = {"korea_base_rate.yaml"}
 
 
 def test_an_other_licence_carries_its_name_and_link(tmp_path: Path) -> None:
@@ -229,28 +226,53 @@ def test_other_without_its_name_or_link_is_refused(tmp_path: Path, missing: str)
         generate_dataset_card(pl.DataFrame({"id": ["1"]}), config, tmp_path / "README.md")
 
 
+def _licence_check() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "scripts.check_config_licence", _CONFIGS.parents[1] / "scripts" / "check_config_licence.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+licence_check = _licence_check()
+
+
 @pytest.mark.parametrize(
     "path",
-    sorted(p for p in _CONFIGS.glob("*.yaml") if p.name not in _UNCONFIRMED),
-    ids=lambda p: p.stem,
+    # Every config at every depth — top level, localdata, templates (#792).
+    sorted(_CONFIGS.rglob("*.yaml")),
+    ids=lambda p: str(p.relative_to(_CONFIGS)),
 )
-def test_every_published_config_states_its_source_terms(path: Path) -> None:
-    """No published card claims a licence its source did not grant (#758).
+def test_no_config_claims_a_licence_its_source_did_not_grant(path: Path) -> None:
+    """#758, #792: a config states the source's terms, or claims none and cannot be packaged.
 
-    Every source here states either no restriction on use or a KOGL type, and none of
-    them grants CC BY. So each card records `other` with the source's own terms, and the
-    card packages without error.
+    The guard used to read only the top level, so localdata/* and templates/* kept
+    cc-by-4.0 unseen. The rule lives in scripts/check_config_licence.py, which the
+    publish workflow runs on the config it is asked to publish.
     """
     import yaml
 
-    card = yaml.safe_load(path.read_text(encoding="utf-8"))["card"]
+    assert licence_check.problems_for(path) == []
+    if path.name in licence_check.UNCONFIRMED:
+        return
+    card = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("card") or {}
+    if "license" in card:
+        package_mod.license_front_matter(card)
+    else:
+        with pytest.raises(ValueError, match="card.license is required"):
+            package_mod.license_front_matter(card)
 
-    assert card["license"] == "other"
-    assert card["license_name"] in {
-        "korea-public-data-unrestricted",
-        "kogl-type-1",
-        "kogl-type-3",
-    }
-    assert card["license_link"].startswith("https://")
-    assert "cc-by" not in path.read_text(encoding="utf-8").lower()
-    package_mod.license_front_matter(card)
+
+def test_the_licence_check_refuses_cc_by(tmp_path: Path) -> None:
+    """Negative: the check itself fails on the old default."""
+    config = tmp_path / "x.yaml"
+    config.write_text("card:\n  license: cc-by-4.0\n", encoding="utf-8")
+
+    assert licence_check.main([str(config)]) == 1
+
+
+def test_the_only_unconfirmed_licence_is_recorded_with_a_reason() -> None:
+    assert set(licence_check.UNCONFIRMED) == {"korea_base_rate.yaml"}
+    assert all(reason.strip() for reason in licence_check.UNCONFIRMED.values())

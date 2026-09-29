@@ -61,6 +61,22 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --extra publish --no-sources
 
+      # Whatever config was asked for — scheduled or dispatched by hand — must pass the
+      # same licence rule the tests hold every config to (#792). The input is a free
+      # path, so the check sits here, not only in the test suite.
+      - name: Licence check
+        env:
+          CONFIG: ${{ inputs.config }}
+        run: |
+          case "${CONFIG}" in
+            scripts/configs/*.yaml|scripts/configs/*/*.yaml) ;;
+            *)
+              echo "::error::config must be a YAML file under scripts/configs/: ${CONFIG}"
+              exit 1
+              ;;
+          esac
+          uv run --no-sources python scripts/check_config_licence.py "${CONFIG}"
+
       - name: Publish dataset (atomic, guarded by secrets)
         env:
           KPUBDATA_DATAGO_API_KEY: ${{ secrets.KPUBDATA_DATAGO_API_KEY }}
