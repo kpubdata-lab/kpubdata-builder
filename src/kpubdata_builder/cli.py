@@ -170,6 +170,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Max concurrent request threads (default: 10, or KPUBDATA_BUILDER_MAX_WORKERS).",
     )
+    serve_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Table catalog root. POST /build then commits each source's Gold output as "
+            "a table snapshot and reports it under `materialized`. Needs no publish "
+            "credential. Default: KPUBDATA_BUILDER_WAREHOUSE, or no catalog."
+        ),
+    )
 
     rebuild_cmd = subparsers.add_parser(
         "rebuild-index",
@@ -610,7 +620,14 @@ def _run_publish(
     return 0
 
 
-def _run_serve(*, output_dir: str, host: str, port: int, max_workers: int | None) -> int:
+def _run_serve(
+    *,
+    output_dir: str,
+    host: str,
+    port: int,
+    max_workers: int | None,
+    warehouse: str | None = None,
+) -> int:
     """Run BuilderService as HTTP server (#249).
 
     Args:
@@ -619,6 +636,8 @@ def _run_serve(*, output_dir: str, host: str, port: int, max_workers: int | None
         port: Binding port.
         max_workers: Max concurrent request threads. If None, use KPUBDATA_BUILDER_MAX_WORKERS env,
             else default (10) (#374).
+        warehouse: Table catalog root (#703). If None, use KPUBDATA_BUILDER_WAREHOUSE env,
+            else no catalog — builds then end at Gold and commit no snapshot.
 
     Returns:
         int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM.
@@ -633,15 +652,23 @@ def _run_serve(*, output_dir: str, host: str, port: int, max_workers: int | None
     if max_workers < 1:
         raise SystemExit(f"max_workers must be >= 1, got {max_workers}")
 
+    # Priority: --warehouse flag > KPUBDATA_BUILDER_WAREHOUSE env > none. Without this
+    # the HTTP service could not reach the materialise-only end state at all: the
+    # service accepted a catalog root, but nothing that starts it passed one (#703).
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+
     service = BuilderService(
         output_root=Path(output_dir),
         client_factory=_create_client,
         async_max_workers=max_workers,
+        warehouse_root=Path(warehouse) if warehouse is not None else None,
     )
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
         f"serving kpubdata-builder on http://{host}:{port} "
-        f"(output: {output_dir}, max_workers: {max_workers})",
+        f"(output: {output_dir}, max_workers: {max_workers}, "
+        f"warehouse: {warehouse or 'none'})",
         flush=True,
     )
     try:
@@ -1054,6 +1081,7 @@ def dispatch(args: argparse.Namespace) -> int:
             host=args.host,
             port=args.port,
             max_workers=args.max_workers,
+            warehouse=args.warehouse,
         )
     if command == "verify":
         return _run_verify(

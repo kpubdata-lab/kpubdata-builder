@@ -8,6 +8,7 @@
 
 ### Added
 
+- `kpubdata-builder serve --warehouse DIR` (or `KPUBDATA_BUILDER_WAREHOUSE`) gives the HTTP service a table catalog, so `POST /build` commits each source's Gold output as a table snapshot and reports it under `materialized` (#703). The service accepted a catalog root before, but nothing that starts it passed one, so a deployed service could never reach that end state. No export target and no publish credential are needed.
 - `GET /datasets/{dataset_id}/runs/{run_id}` finds one run by id, not only among the newest page `/runs` returns, so a permalink to an older run opens (studio#418, API contract 1.31.0). Membership and ownership are decided by the server: 404 when no run with that id belongs to the dataset, 403 when it does but not to the caller.
 
 ### Changed
