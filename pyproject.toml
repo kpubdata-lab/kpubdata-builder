@@ -50,7 +50,7 @@ docs = [
   "mkdocs>=1.6,<2",
 ]
 parquet = ["pyarrow>=15,<26"]
-huggingface = ["huggingface-hub>=0.23,<2"]
+huggingface = ["huggingface-hub>=0.23,<3"]
 # PyJWT 2.9+ 부터 issuer=list 지원 (#434). auth.py:_verify_bearer_token 이
 # list(=여러 issuer)를 jwt.decode(issuer=...)로 넘기므로, 하한을 되돌리면
 # 2.8.x 환경에서 모든 토큰이 InvalidIssuerError 로 거부된다.
@@ -62,7 +62,7 @@ auth = ["pyjwt[crypto]>=2.9,<3"]
 # 기본 백엔드(sqlite/local FS)는 이 extra 없이 동작하므로 코어 dependencies 에는
 # 넣지 않는다 — 무외부의존 기본값 유지. 배포 이미지는 3.12-slim.
 cubrid = ["sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.8"]
-publish = ["huggingface-hub>=0.23,<2", "xmltodict>=0.13,<2", "kaggle>=1.6,<2"]
+publish = ["huggingface-hub>=0.23,<3", "xmltodict>=0.13,<2", "kaggle>=1.6,<2"]
 dev = [
   "build>=1.2,<2",
   "mypy>=1.10,<3",

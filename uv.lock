@@ -865,8 +865,8 @@ publish = [
 requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2,<2" },
     { name = "cryptography", specifier = ">=50,<51" },
-    { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=0.23,<2" },
-    { name = "huggingface-hub", marker = "extra == 'publish'", specifier = ">=0.23,<2" },
+    { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=0.23,<3" },
+    { name = "huggingface-hub", marker = "extra == 'publish'", specifier = ">=0.23,<3" },
     { name = "kaggle", marker = "extra == 'publish'", specifier = ">=1.6,<2" },
     { name = "kpubdata", specifier = ">=0.7.0,<0.8" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
