@@ -270,7 +270,7 @@ class QualityPolicy:
 
 @dataclass(frozen=True)
 class JoinSpec:
-    """Equi-join contract to combine two sources (#506).
+    """Equi-join contract to combine two sources (#506, #698).
 
     Structure (reference alias existence, type/severity vocabulary) is validated
     by spec.validator after parsing. Actual existence of join keys and dtype
@@ -279,23 +279,58 @@ class JoinSpec:
     "Validate during the validate phase" in completion conditions should read as
     encompassing both this structure validation and pipeline gate.
 
+    The join key is either the single-pair shorthand ``left_key``/``right_key`` or
+    a composite ``keys`` tuple of ``(left_column, right_column)`` pairs (#698).
+    Both forms are normalised on construction: ``keys`` always holds every pair,
+    and ``left_key``/``right_key`` always name the first pair, so callers that
+    only understand a single key keep working.
+
     Attributes:
         left: Alias of left source (see BuildSpec.sources[].alias).
         right: Alias of right source.
-        left_key: Join key column name in left table.
-        right_key: Join key column name in right table.
+        left_key: Join key column name in left table (first pair of ``keys``).
+        right_key: Join key column name in right table (first pair of ``keys``).
         type: Join kind. "inner" | "left" (initial scope, #506).
-        on_duplicate_key: Action when both keys carry duplicate values and rows
-            expand many-to-many. "warn" (default, only log to manifest) | "fail"
-            (build failure). Follows QualityPolicy severity convention.
+        on_duplicate_key: Action when a key that appears on both sides repeats on
+            both sides, so matching rows multiply many-to-many. "warn" (default,
+            only log to manifest) | "fail" (build failure). Follows QualityPolicy
+            severity convention. Keys that do not intersect never trigger it (#698).
+        keys: Composite join key as ``(left_column, right_column)`` pairs (#698).
+        cardinality: Declared cardinality verified against the intersecting keys.
+            "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many", or None
+            when not declared (#698).
+        on_null_key: Action when a row has a null in any key column and so can
+            never match. "warn" (default, counted in the manifest) | "fail" (#698).
     """
 
     left: str
     right: str
-    left_key: str
-    right_key: str
+    left_key: str = ""
+    right_key: str = ""
     type: str = "inner"
     on_duplicate_key: str = "warn"
+    keys: tuple[tuple[str, str], ...] = ()
+    cardinality: str | None = None
+    on_null_key: str = "warn"
+
+    def __post_init__(self) -> None:
+        if not self.keys:
+            object.__setattr__(self, "keys", ((self.left_key, self.right_key),))
+            return
+        keys = tuple((str(pair[0]), str(pair[1])) for pair in self.keys)
+        object.__setattr__(self, "keys", keys)
+        first_left, first_right = keys[0]
+        if (self.left_key or self.right_key) and (self.left_key, self.right_key) != (
+            first_left,
+            first_right,
+        ):
+            raise ValueError(
+                "JoinSpec takes either keys or left_key/right_key, not both "
+                f"(keys={list(keys)!r}, left_key={self.left_key!r}, "
+                f"right_key={self.right_key!r})"
+            )
+        object.__setattr__(self, "left_key", first_left)
+        object.__setattr__(self, "right_key", first_right)
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,10 @@
 
 - `GET /datasets/{dataset_id}/runs/{run_id}` finds one run by id, not only among the newest page `/runs` returns, so a permalink to an older run opens (studio#418, API contract 1.31.0). Membership and ownership are decided by the server: 404 when no run with that id belongs to the dataset, 403 when it does but not to the caller.
 
+### Changed
+
+- JOIN cardinality is checked on the keys that intersect, not inferred from each side on its own (#698, API contract 1.32.0). `composition.join` gains `keys` (a composite key as `{left, right}` column pairs; `left_key`/`right_key` stay as the single-pair shorthand, and exactly one form must be given), `cardinality` (`one_to_one`/`one_to_many`/`many_to_one`/`many_to_many`, a violation fails the build) and `on_null_key` (`warn`/`fail`). The manifest's `composition` records `keys`, `cardinality`, `observed_cardinality`, both sides' unmatched ratios, `expansion_ratio` and the rows dropped for a null key. **Behaviour change:** `duplicate_key_warning` now fires only when a key present on both sides repeats on both sides, so a spec whose keys are non-unique on both sides but never meet (left `A, A`, right `B, B`) with `on_duplicate_key: fail` no longer fails.
+
 ### Fixed
 
 - Values no longer lose precision on the way to a client (#735). `/query`, `/preview` and the silver stage sample send every Decimal column, and any integer column holding a value outside ±(2^53−1), as exact decimal text: `9007199254740993` used to arrive as `…992`, and `Decimal("0.1")` as `0.1000000000000000055…`. In-range integers and floats are still JSON numbers. Column metadata gains `logical_type` and `wire_encoding` so a client knows which columns arrive as text (`QueryResponse.column_meta`, API contract 1.30.0). Non-finite floats are sent as `null`, and a Decimal column no longer makes the silver sample write fail. **Wire change:** `/preview` dates and datetimes in `sample`, `source_sample` and the diff are now ISO 8601 (`2025-01-01T12:30:00`), matching `/query` and the stage sample; they were `str()` output with a space separator.

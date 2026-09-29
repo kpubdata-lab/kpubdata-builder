@@ -424,7 +424,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.30.0 -> 1.31.0: GET /datasets/{dataset_id}/runs/{run_id} (studio#418, additive).
 #   One run by id, not only the newest page; 404 when it is not the dataset's, 403
 #   when it is but not the caller's.
-API_CONTRACT_VERSION = "1.31.0"
+# 1.31.0 -> 1.32.0: JoinSpec gains keys, cardinality and on_null_key; the manifest's
+#   CompositionProvenance gains optional cardinality and ratio fields (#698, additive).
+#   duplicate_key_warning is judged on keys present on both sides only.
+API_CONTRACT_VERSION = "1.32.0"
 
 
 def _encodings(schema: SchemaInfo) -> dict[str, str]:

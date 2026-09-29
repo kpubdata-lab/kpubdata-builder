@@ -42,6 +42,13 @@ _JOIN_TYPES = ("inner", "left")
 # JoinSpec.on_duplicate_key permitted vocabulary (#506). Reuses quality severity convention.
 _JOIN_DUPLICATE_KEY_SEVERITIES = ("warn", "fail")
 
+# JoinSpec.on_null_key permitted vocabulary (#698). Same severity convention.
+_JOIN_NULL_KEY_SEVERITIES = ("warn", "fail")
+
+# JoinSpec.cardinality permitted vocabulary (#698). Read left-to-right: "one_to_many"
+# means a key is unique on the left and may repeat on the right.
+_JOIN_CARDINALITIES = ("one_to_one", "one_to_many", "many_to_one", "many_to_many")
+
 # quality.*_severity allowed vocabulary (#486). Default "warn" for existing threshold
 # violations; must explicitly declare "fail" for Gold entry before source failure.
 _QUALITY_SEVERITIES = ("warn", "fail")
@@ -742,20 +749,59 @@ def _parse_quality(value: object) -> QualityPolicy | None:
     )
 
 
-def _parse_join(value: object) -> JoinSpec:
-    """Convert composition.join mapping to JoinSpec (#506).
+def _parse_join_keys(mapping: dict[str, object]) -> tuple[tuple[str, str], ...]:
+    """Read the join key from either ``keys`` or the ``left_key``/``right_key`` shorthand.
 
-    left/right/left_key/right_key are required strings. type/on_duplicate_key
-    are fixed-vocabulary fields validated here immediately like pii.mode —
-    whether left/right match actual sources[].alias and whether join keys
-    actually exist/are compatible is semantic validation (not structural),
+    Exactly one form must be given (#698). Giving both would leave it unclear which
+    one the author meant, so it is refused rather than merged.
+    """
+    has_keys = "keys" in mapping
+    has_shorthand = "left_key" in mapping or "right_key" in mapping
+    if has_keys and has_shorthand:
+        raise ValueError("composition.join takes either keys or left_key/right_key, not both")
+    if not has_keys and not has_shorthand:
+        raise ValueError(
+            "composition.join requires keys (a list of {left, right} pairs) or left_key/right_key"
+        )
+    if has_shorthand:
+        left_key = _require_string(mapping, "left_key", prefix="composition.join")
+        right_key = _require_string(mapping, "right_key", prefix="composition.join")
+        return ((left_key, right_key),)
+
+    raw_keys = mapping["keys"]
+    if not isinstance(raw_keys, list) or not raw_keys:
+        raise ValueError("composition.join.keys must be a non-empty list of {left, right} pairs")
+    pairs: list[tuple[str, str]] = []
+    for index, raw_pair in enumerate(cast(list[object], raw_keys)):
+        prefix = f"composition.join.keys[{index}]"
+        pair = _ensure_mapping(raw_pair, field_name=prefix)
+        unknown = sorted(set(pair) - {"left", "right"})
+        if unknown:
+            raise ValueError(f"{prefix} has unknown fields: {unknown}")
+        pairs.append(
+            (
+                _require_string(pair, "left", prefix=prefix),
+                _require_string(pair, "right", prefix=prefix),
+            )
+        )
+    return tuple(pairs)
+
+
+def _parse_join(value: object) -> JoinSpec:
+    """Convert composition.join mapping to JoinSpec (#506, #698).
+
+    left/right are required strings. The join key is either ``keys`` (a list of
+    ``{left, right}`` column pairs) or the single-pair ``left_key``/``right_key``
+    shorthand — exactly one of the two. type/on_duplicate_key/on_null_key/
+    cardinality are fixed-vocabulary fields validated here immediately like
+    pii.mode — whether left/right match actual sources[].alias and whether join
+    keys actually exist/are compatible is semantic validation (not structural),
     handled by validator/orchestrator respectively.
     """
     mapping = _ensure_mapping(value, field_name="composition.join")
     left = _require_string(mapping, "left", prefix="composition.join")
     right = _require_string(mapping, "right", prefix="composition.join")
-    left_key = _require_string(mapping, "left_key", prefix="composition.join")
-    right_key = _require_string(mapping, "right_key", prefix="composition.join")
+    keys = _parse_join_keys(mapping)
 
     join_type = mapping.get("type", "inner")
     if not isinstance(join_type, str) or join_type not in _JOIN_TYPES:
@@ -771,13 +817,30 @@ def _parse_join(value: object) -> JoinSpec:
             f"{_JOIN_DUPLICATE_KEY_SEVERITIES}, got {on_duplicate_key!r}"
         )
 
+    on_null_key = mapping.get("on_null_key", "warn")
+    if not isinstance(on_null_key, str) or on_null_key not in _JOIN_NULL_KEY_SEVERITIES:
+        raise ValueError(
+            "composition.join.on_null_key must be one of "
+            f"{_JOIN_NULL_KEY_SEVERITIES}, got {on_null_key!r}"
+        )
+
+    cardinality = mapping.get("cardinality")
+    if cardinality is not None and (
+        not isinstance(cardinality, str) or cardinality not in _JOIN_CARDINALITIES
+    ):
+        raise ValueError(
+            "composition.join.cardinality must be one of "
+            f"{_JOIN_CARDINALITIES}, got {cardinality!r}"
+        )
+
     return JoinSpec(
         left=left,
         right=right,
-        left_key=left_key,
-        right_key=right_key,
         type=join_type,
         on_duplicate_key=on_duplicate_key,
+        keys=keys,
+        cardinality=cardinality,
+        on_null_key=on_null_key,
     )
 
 

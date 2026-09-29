@@ -12,7 +12,7 @@ Key components:
 
 from __future__ import annotations
 
-from .composition import CompositionProvenance
+from .composition import CompositionProvenance, JoinKeyProvenance
 from .environment import BuildEnvironment, capture_build_environment
 from .models import MANIFEST_SCHEMA_VERSION, BuildManifest
 from .provenance import (
@@ -31,6 +31,7 @@ __all__ = [
     "BuildManifest",
     "CompositionProvenance",
     "FieldSummary",
+    "JoinKeyProvenance",
     "SchemaSummary",
     "SourceProvenance",
     "build_schema_summary",

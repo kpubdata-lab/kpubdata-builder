@@ -37,6 +37,7 @@ from ..ingestion import IngestionError
 from ..manifest import (
     BuildManifest,
     CompositionProvenance,
+    JoinKeyProvenance,
     SchemaSummary,
     SourceProvenance,
     build_schema_summary,
@@ -783,9 +784,9 @@ def _run_composition(
         # would have raised CompositionError, so reaching here means
         # severity="warn" (default) — log only, continue.
         logger.warning(
-            "composition %r: duplicate join keys on both sides may have multiplied rows "
-            "(left=%s distinct_keys=%d/%d rows, right=%s distinct_keys=%d/%d rows, "
-            "output_rows=%d) (#506)",
+            "composition %r: join keys present on both sides repeat on both sides and "
+            "multiplied rows (left=%s distinct_keys=%d/%d rows, right=%s distinct_keys=%d/%d "
+            "rows, output_rows=%d) (#506, #698)",
             composition.name,
             join.left,
             stats.left_distinct_key_count,
@@ -794,6 +795,18 @@ def _run_composition(
             stats.right_distinct_key_count,
             stats.right_row_count,
             stats.output_row_count,
+        )
+    if stats.left_null_key_rows or stats.right_null_key_rows:
+        # on_null_key="fail" would have raised; under "warn" the rows are dropped
+        # from matching, and that is said out loud rather than hidden (#698).
+        logger.warning(
+            "composition %r: rows with a null join key never match "
+            "(left=%s null_key_rows=%d, right=%s null_key_rows=%d) (#698)",
+            composition.name,
+            join.left,
+            stats.left_null_key_rows,
+            join.right,
+            stats.right_null_key_rows,
         )
 
     outputs: list[str] = []
@@ -841,6 +854,14 @@ def _run_composition(
         right_distinct_key_count=stats.right_distinct_key_count,
         output_row_count=stats.output_row_count,
         duplicate_key_warning=stats.duplicate_key_warning,
+        keys=tuple(JoinKeyProvenance(left=lk, right=rk) for lk, rk in stats.keys),
+        cardinality=stats.cardinality,
+        observed_cardinality=stats.observed_cardinality,
+        left_unmatched_ratio=stats.left_unmatched_ratio,
+        right_unmatched_ratio=stats.right_unmatched_ratio,
+        expansion_ratio=stats.expansion_ratio,
+        left_null_key_rows=stats.left_null_key_rows,
+        right_null_key_rows=stats.right_null_key_rows,
     )
     return _CompositionPipelineResult(
         outcome=CompositionOutcome(name=composition.name, status="ok"),
