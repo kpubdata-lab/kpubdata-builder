@@ -47,6 +47,13 @@ card:
     (한국관광공사) via TourAPI. Includes tourist attractions, restaurants,
     accommodations, and more.
   license: cc-by-4.0
+  attribution: |
+    데이터 출처: 한국관광공사, 국문 관광정보 서비스
+    (Korea Tourism Organization — TourAPI KorService2)
+    원문: https://www.data.go.kr/data/15101578/openapi.do
+    이용허락범위: 제한 없음 (공공데이터포털 표기)
+    사진(image_url)은 공공누리 제1유형 또는 제3유형(변경금지)으로 제공되며, 피사체의 명예훼손·인격권 침해 등
+    일반 정서에 반하는 용도와 기업 CI·BI로의 이용이 금지된다.
   language:
     - ko
   tags:

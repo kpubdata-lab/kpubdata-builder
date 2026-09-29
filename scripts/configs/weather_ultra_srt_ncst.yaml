@@ -43,6 +43,11 @@ card:
 
     Data sourced via the official data.go.kr API.
   license: cc-by-4.0
+  attribution: |
+    데이터 출처: 기상청, 단기예보 조회서비스
+    (Korea Meteorological Administration — short-term forecast service)
+    원문: https://www.data.go.kr/data/15084084/openapi.do
+    이용허락범위: 공공누리 제1유형 (출처표시)
   language:
     - ko
   tags:
