@@ -121,6 +121,39 @@ def _column_name(value: JsonValue, what: str) -> str:
     return value
 
 
+def parse_filters(raw_filters: JsonValue) -> tuple[RowFilter, ...]:
+    """Read a list of filter conditions; shape only, types are checked against a schema."""
+    if not isinstance(raw_filters, list) or len(raw_filters) > MAX_FILTERS:
+        raise ValueError(f"filters must be a list of at most {MAX_FILTERS} conditions")
+    filters: list[RowFilter] = []
+    for item in raw_filters:
+        if not isinstance(item, dict) or not set(item) <= {"column", "op", "value", "values"}:
+            raise ValueError("each filter is {column, op, value | values}")
+        op = item.get("op")
+        if op not in _ALL_OPS:
+            raise ValueError(f"filter op must be one of {sorted(_ALL_OPS)}")
+        column = _column_name(item.get("column"), "filter column")
+        if op in _VALUE_OPS:
+            if "value" not in item or item["value"] is None or "values" in item:
+                raise ValueError(f"filter {op} needs one non-null value")
+            filters.append(RowFilter(column, cast(FilterOp, op), value=item["value"]))
+        elif op == "in":
+            values = item.get("values")
+            if (
+                "value" in item
+                or not isinstance(values, list)
+                or not 1 <= len(values) <= MAX_IN_VALUES
+                or any(v is None for v in values)
+            ):
+                raise ValueError(f"filter in needs 1 to {MAX_IN_VALUES} non-null values")
+            filters.append(RowFilter(column, "in", values=tuple(values)))
+        else:
+            if "value" in item or "values" in item:
+                raise ValueError(f"filter {op} takes no value")
+            filters.append(RowFilter(column, cast(FilterOp, op)))
+    return tuple(filters)
+
+
 def parse_rows_plan(body: Mapping[str, JsonValue]) -> RowsPlan:
     """Read the paging, sort, filter, column and count fields of a request body.
 
@@ -153,35 +186,7 @@ def parse_rows_plan(body: Mapping[str, JsonValue]) -> RowsPlan:
     if len({k.column for k in sort}) != len(sort):
         raise ValueError("a column may appear in sort only once")
 
-    raw_filters = body.get("filters", [])
-    if not isinstance(raw_filters, list) or len(raw_filters) > MAX_FILTERS:
-        raise ValueError(f"filters must be a list of at most {MAX_FILTERS} conditions")
-    filters: list[RowFilter] = []
-    for item in raw_filters:
-        if not isinstance(item, dict) or not set(item) <= {"column", "op", "value", "values"}:
-            raise ValueError("each filter is {column, op, value | values}")
-        op = item.get("op")
-        if op not in _ALL_OPS:
-            raise ValueError(f"filter op must be one of {sorted(_ALL_OPS)}")
-        column = _column_name(item.get("column"), "filter column")
-        if op in _VALUE_OPS:
-            if "value" not in item or item["value"] is None or "values" in item:
-                raise ValueError(f"filter {op} needs one non-null value")
-            filters.append(RowFilter(column, cast(FilterOp, op), value=item["value"]))
-        elif op == "in":
-            values = item.get("values")
-            if (
-                "value" in item
-                or not isinstance(values, list)
-                or not 1 <= len(values) <= MAX_IN_VALUES
-                or any(v is None for v in values)
-            ):
-                raise ValueError(f"filter in needs 1 to {MAX_IN_VALUES} non-null values")
-            filters.append(RowFilter(column, "in", values=tuple(values)))
-        else:
-            if "value" in item or "values" in item:
-                raise ValueError(f"filter {op} takes no value")
-            filters.append(RowFilter(column, cast(FilterOp, op)))
+    filters = parse_filters(body.get("filters", []))
 
     count = body.get("count", "none" if filters else "exact")
     if count not in ("exact", "none"):
@@ -191,7 +196,7 @@ def parse_rows_plan(body: Mapping[str, JsonValue]) -> RowsPlan:
         page_size=page_size,
         columns=columns,
         sort=tuple(sort),
-        filters=tuple(filters),
+        filters=filters,
         count=cast(CountMode, count),
     )
 
@@ -233,7 +238,9 @@ def check_plan(plan: RowsPlan, schema: Mapping[str, pl.DataType]) -> None:
             typed_literal(value, schema[f.column])
 
 
-def _predicate(filters: Sequence[RowFilter], schema: Mapping[str, pl.DataType]) -> pl.Expr | None:
+def filter_predicate(
+    filters: Sequence[RowFilter], schema: Mapping[str, pl.DataType]
+) -> pl.Expr | None:
     import polars as pl
 
     expressions: list[pl.Expr] = []
@@ -280,7 +287,7 @@ def read_page(table_path: str, plan: RowsPlan) -> tuple[pl.DataFrame, int | None
     schema = dict(frame.collect_schema())
     check_plan(plan, schema)
     frame = frame.with_row_index(ROW_ORDER_COLUMN)
-    predicate = _predicate(plan.filters, schema)
+    predicate = filter_predicate(plan.filters, schema)
     if predicate is not None:
         frame = frame.filter(predicate)
 
@@ -356,6 +363,8 @@ __all__ = [
     "RowsPlan",
     "SortKey",
     "check_plan",
+    "filter_predicate",
+    "parse_filters",
     "parse_rows_plan",
     "read_page",
     "rows_worker",

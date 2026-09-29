@@ -297,12 +297,14 @@ _BuildListEntry = dict[str, str | None]
 #   coverage; WarehouseSnapshot gains coverage (#816, additive). Totals are never summed.
 # 1.42.0 -> 1.43.0: POST /warehouse/rows reads one page of a pinned snapshot with a stable
 #   order, filters, a column selection and a count with its status (#815, additive).
+# 1.43.0 -> 1.44.0: POST /warehouse/aggregate runs named aggregates over a pinned snapshot,
+#   top N after the whole aggregate, mixed units refused or split (#818, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.43.0"
+API_CONTRACT_VERSION = "1.44.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -671,6 +673,12 @@ class BuilderService:
     ) -> ServiceResponse:
         """One page of a pinned warehouse snapshot, in a stable order (#815)."""
         return self._warehouse_api.rows(body, principal=principal)
+
+    def aggregate_warehouse(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """A validated aggregate over a pinned warehouse snapshot (#818)."""
+        return self._warehouse_api.aggregate(body, principal=principal)
 
     def create_analysis(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal

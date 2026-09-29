@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.43.0"
+  version: "1.44.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -82,6 +82,7 @@ info:
     Client compatibility (#814): a response may gain optional fields in any minor version, and a client ignores fields it does not know — `additionalProperties: false` on a response schema describes what this version sends, not what a client should reject. A required field keeps its name and type until the next major version. `contract/fixtures/responses.json` gives every named 2xx response example as sent, with an added unknown field, and with a required field retyped, for a client's contract tests.
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
+    v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
     v1.37.0 lets `POST /build` answer 409 with `warehouse_failures` when every source built but a table commit failed (#787, #788, additive): a build commits against the table revision it started from, so a refresh another build finished meanwhile is a conflict rather than overwritten. The manifest records the same failures.
@@ -2600,6 +2601,134 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /warehouse/aggregate:
+    post:
+      operationId: aggregateWarehouseTable
+      summary: A validated aggregate over a pinned warehouse snapshot (#818)
+      description: >-
+        Pins the snapshot like `POST /warehouse/query` and names it in the response;
+        pass that `snapshot_id` to get the same answer again whatever is committed
+        meanwhile. Only named functions over existing columns of a fitting type are
+        accepted. `count_rows` counts rows, `count` a column's non-null values,
+        `count_null` its nulls and `count_distinct` its distinct non-null values. `sum`
+        needs `additive: true` — a numeric column is not additive by default — and a
+        group with no non-null value sums to null, not 0. When the rows carry their
+        unit in `unit_column`, a group mixing units is refused (`unit_policy: reject`,
+        422 `mixed_units`) or split by unit (`split`); units are never converted. Every
+        row that passes `filters` is aggregated, and only then are the groups sorted
+        by `order_by` (ties by the group keys, nulls last) and the first `limit`
+        returned; `result.group_count` says how many there were in all, so
+        `result.completeness` tells a full result from a top-N one. Aggregates are
+        never computed over a sample. Output column metadata is read from the
+        aggregate's own types; no hint of an input column carries over. Runs in the
+        query child process under the same timeout, memory cap and concurrency limit
+        as a query. Another owner's table is a 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseAggregateRequest"
+            examples:
+              TopRegions:
+                summary: The five regions with the most people, unit checked
+                value:
+                  table: stats.population
+                  group_by: [region]
+                  measures:
+                    - {fn: sum, column: people, additive: true, as: total}
+                    - {fn: count_rows, as: rows}
+                  unit_column: unit
+                  order_by:
+                    - {key: total, direction: desc}
+                  limit: 5
+      responses:
+        "200":
+          description: The snapshot read, the groups, and whether they are all of them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseAggregateResponse"
+              examples:
+                TopRegions:
+                  summary: The top two of three groups
+                  value:
+                    snapshot:
+                      table_id: tbl_7f3a
+                      logical_name: stats.population
+                      snapshot_id: snap_20260930_01
+                      revision: 4
+                    columns: [region, unit, total, rows]
+                    column_meta:
+                      - {name: region, logical_type: string, wire_encoding: string}
+                      - {name: unit, logical_type: string, wire_encoding: string}
+                      - {name: total, logical_type: int64, wire_encoding: number}
+                      - {name: rows, logical_type: int64, wire_encoding: number}
+                    rows:
+                      - {region: b, unit: 명, total: 90, rows: 3}
+                      - {region: a, unit: 명, total: 60, rows: 3}
+                    group_by: [region]
+                    measures:
+                      - {as: total, fn: sum, column: people, additive: true, unit_column: unit}
+                      - {as: rows, fn: count_rows, column: null, additive: null, unit_column: null}
+                    order:
+                      - {key: total, direction: desc}
+                    unit: {column: unit, policy: reject, check: single_unit}
+                    input: {row_count: 8, sampled: false}
+                    result: {completeness: top_n, group_count: 3, returned: 2, limit: 2}
+                    execution_ms: 412
+                    startup_ms: 380
+                    engine_execution_ms: 9
+        "400":
+          description: >-
+            An invalid request (`invalid_request`) — an unknown field or function, a
+            column the snapshot lacks, a function the column's type does not allow,
+            `sum` without `additive: true`, an `order_by` key that is neither a group
+            column nor a measure — or an aggregate that failed (`query_execution_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse (`warehouse_not_configured`), no such table in the caller's
+            workspace (`table_not_found`), no such snapshot of it (`snapshot_not_found`),
+            or a snapshot without a table file (`artifact_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The aggregate was computed but is refused rather than cut short:
+            `mixed_units` (a group mixes units of `unit_column`), `too_many_groups`
+            (more than 100000 groups before the top N) or `result_too_large` (the
+            result exceeds what a response may carry). No rows are sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseAggregateRefusal"
+        "429":
+          description: Query capacity is exhausted (`query_busy`); an aggregate takes a query slot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The aggregate timed out (`query_timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /analyses:
     get:
       operationId: listAnalyses
@@ -3448,6 +3577,257 @@ components:
         execution_ms: {type: integer, minimum: 0}
         startup_ms: {type: integer, minimum: 0}
         engine_execution_ms: {type: integer, minimum: 0}
+
+    WarehouseAggregateRequest:
+      type: object
+      additionalProperties: false
+      required: [table, measures]
+      properties:
+        table:
+          type: string
+          description: A table's logical name in the caller's workspace.
+        snapshot:
+          type: string
+          default: current
+          description: "`current`, or a `snapshot_id` returned before to get the same answer again."
+        group_by:
+          type: array
+          maxItems: 4
+          description: Columns to group by. None is one group over every filtered row.
+          items: {type: string}
+        measures:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [fn]
+            properties:
+              fn:
+                type: string
+                enum: [count_rows, count, count_null, count_distinct, sum, avg, min, max]
+                description: >-
+                  `count_rows` takes no column. `sum` and `avg` need a numeric column,
+                  `min` and `max` a numeric, temporal or text one.
+              column: {type: string}
+              as:
+                type: string
+                description: >-
+                  The output column's name. Defaults to `count_rows` or `<fn>_<column>`;
+                  must differ from the group columns and the other measures.
+              additive:
+                type: boolean
+                description: >-
+                  Required and `true` for `sum`, not allowed otherwise: the caller states
+                  that the column may be added up. It is echoed back, not verified.
+        filters:
+          type: array
+          maxItems: 16
+          description: >-
+            Conditions that must all hold, as in `POST /warehouse/rows`. Applied before
+            aggregating.
+          items:
+            type: object
+            additionalProperties: false
+            required: [column, op]
+            properties:
+              column: {type: string}
+              op:
+                type: string
+                enum: [eq, ne, lt, lte, gt, gte, in, is_null, is_not_null]
+              value:
+                type: [string, number, boolean]
+              values:
+                type: array
+                items:
+                  type: [string, number, boolean]
+        order_by:
+          type: array
+          maxItems: 8
+          description: >-
+            Group columns or measure names to sort the groups by, before `limit`. Ties
+            are broken by the group keys, ascending; nulls sort last.
+          items:
+            type: object
+            additionalProperties: false
+            required: [key]
+            properties:
+              key: {type: string}
+              direction:
+                type: string
+                enum: [asc, desc]
+                default: asc
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+          description: How many groups to return after sorting. Never limits the input rows.
+        unit_column:
+          type: string
+          description: >-
+            A column holding each row's unit. Each group must have one unit (null counts
+            as one) unless `unit_policy` is `split`; the unit is sent beside the group.
+        unit_policy:
+          type: string
+          enum: [reject, split]
+          default: reject
+          description: >-
+            `reject` refuses a group mixing units (422 `mixed_units`); `split` groups by
+            the unit as well. Only with `unit_column`.
+
+    WarehouseAggregateResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - snapshot
+        - columns
+        - column_meta
+        - rows
+        - group_by
+        - measures
+        - order
+        - unit
+        - input
+        - result
+        - execution_ms
+        - startup_ms
+        - engine_execution_ms
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [table_id, logical_name, snapshot_id, revision]
+          description: The snapshot aggregated. Pass `snapshot_id` to aggregate it again.
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision: {type: integer, minimum: 0}
+        columns:
+          type: array
+          description: Group columns, then the unit column when checked, then the measures.
+          items: {type: string}
+        column_meta:
+          type: array
+          description: Read from the aggregate's own types; no input column hint carries over.
+          items:
+            $ref: "#/components/schemas/ColumnWireInfo"
+        rows:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              $ref: "#/components/schemas/JsonValue"
+        group_by:
+          type: array
+          items: {type: string}
+        measures:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [as, fn, column, additive, unit_column]
+            properties:
+              as: {type: string}
+              fn: {type: string}
+              column: {type: [string, "null"]}
+              additive:
+                type: [boolean, "null"]
+                description: The caller's assertion for `sum`; null for other functions.
+              unit_column:
+                type: [string, "null"]
+                description: Where this measure's unit is read from; null when not checked or not a value measure.
+        order:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, direction]
+            properties:
+              key: {type: string}
+              direction: {type: string, enum: [asc, desc]}
+        unit:
+          type: object
+          additionalProperties: false
+          required: [column, policy, check]
+          properties:
+            column: {type: [string, "null"]}
+            policy: {type: string, enum: [reject, split]}
+            check:
+              type: string
+              enum: [not_checked, single_unit, split]
+              description: >-
+                `not_checked` — no `unit_column`, so nothing is known about units.
+                `single_unit` — every group had one unit. `split` — groups are per unit.
+        input:
+          type: object
+          additionalProperties: false
+          required: [row_count, sampled]
+          properties:
+            row_count:
+              type: integer
+              minimum: 0
+              description: Rows that passed the filters, all of which were aggregated.
+            sampled:
+              type: boolean
+              description: Always false. Aggregates are never computed over a sample.
+        result:
+          type: object
+          additionalProperties: false
+          required: [completeness, group_count, returned, limit]
+          properties:
+            completeness:
+              type: string
+              enum: [full, top_n]
+              description: >-
+                `full` — every group is in `rows`. `top_n` — the first `limit` groups
+                after sorting; `group_count` says how many there were.
+            group_count: {type: integer, minimum: 0}
+            returned: {type: integer, minimum: 0}
+            limit: {type: integer, minimum: 1}
+        execution_ms: {type: integer, minimum: 0}
+        startup_ms: {type: integer, minimum: 0}
+        engine_execution_ms: {type: integer, minimum: 0}
+
+    WarehouseAggregateRefusal:
+      type: object
+      required: [error, code, snapshot]
+      description: An aggregate refused rather than cut short. Carries no rows.
+      properties:
+        error: {type: string}
+        code:
+          type: string
+          enum: [mixed_units, too_many_groups, result_too_large]
+        snapshot:
+          type: object
+          required: [table_id, logical_name, snapshot_id, revision]
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision: {type: integer, minimum: 0}
+        unit_column: {type: string}
+        mixed_group_count: {type: integer, minimum: 1}
+        samples:
+          type: array
+          description: Up to five mixed groups, by group key, with the units found (null included).
+          items:
+            type: object
+            required: [group, units]
+            properties:
+              group:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
+              units:
+                type: array
+                items:
+                  $ref: "#/components/schemas/JsonValue"
+        group_count: {type: integer, minimum: 0}
+        max_groups: {type: integer, minimum: 1}
+        max_bytes: {type: integer, minimum: 1}
 
     WarehouseQueryResponse:
       type: object

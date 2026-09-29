@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.43.0",
+  "contract_version": "1.44.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -3321,6 +3321,317 @@
         "execution_ms": 431,
         "startup_ms": 390,
         "engine_execution_ms": 14
+      },
+      "broken_path": "$.snapshot"
+    },
+    {
+      "operation_id": "aggregateWarehouseTable",
+      "method": "POST",
+      "path": "/warehouse/aggregate",
+      "status": 200,
+      "example": "TopRegions",
+      "current": {
+        "snapshot": {
+          "table_id": "tbl_7f3a",
+          "logical_name": "stats.population",
+          "snapshot_id": "snap_20260930_01",
+          "revision": 4
+        },
+        "columns": [
+          "region",
+          "unit",
+          "total",
+          "rows"
+        ],
+        "column_meta": [
+          {
+            "name": "region",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "unit",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "total",
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          },
+          {
+            "name": "rows",
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          }
+        ],
+        "rows": [
+          {
+            "region": "b",
+            "unit": "명",
+            "total": 90,
+            "rows": 3
+          },
+          {
+            "region": "a",
+            "unit": "명",
+            "total": 60,
+            "rows": 3
+          }
+        ],
+        "group_by": [
+          "region"
+        ],
+        "measures": [
+          {
+            "as": "total",
+            "fn": "sum",
+            "column": "people",
+            "additive": true,
+            "unit_column": "unit"
+          },
+          {
+            "as": "rows",
+            "fn": "count_rows",
+            "column": null,
+            "additive": null,
+            "unit_column": null
+          }
+        ],
+        "order": [
+          {
+            "key": "total",
+            "direction": "desc"
+          }
+        ],
+        "unit": {
+          "column": "unit",
+          "policy": "reject",
+          "check": "single_unit"
+        },
+        "input": {
+          "row_count": 8,
+          "sampled": false
+        },
+        "result": {
+          "completeness": "top_n",
+          "group_count": 3,
+          "returned": 2,
+          "limit": 2
+        },
+        "execution_ms": 412,
+        "startup_ms": 380,
+        "engine_execution_ms": 9
+      },
+      "with_additive_fields": {
+        "snapshot": {
+          "table_id": "tbl_7f3a",
+          "logical_name": "stats.population",
+          "snapshot_id": "snap_20260930_01",
+          "revision": 4,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "columns": [
+          "region",
+          "unit",
+          "total",
+          "rows"
+        ],
+        "column_meta": [
+          {
+            "name": "region",
+            "logical_type": "string",
+            "wire_encoding": "string",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "unit",
+            "logical_type": "string",
+            "wire_encoding": "string",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "total",
+            "logical_type": "int64",
+            "wire_encoding": "number",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "rows",
+            "logical_type": "int64",
+            "wire_encoding": "number",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "rows": [
+          {
+            "region": "b",
+            "unit": "명",
+            "total": 90,
+            "rows": 3
+          },
+          {
+            "region": "a",
+            "unit": "명",
+            "total": 60,
+            "rows": 3
+          }
+        ],
+        "group_by": [
+          "region"
+        ],
+        "measures": [
+          {
+            "as": "total",
+            "fn": "sum",
+            "column": "people",
+            "additive": true,
+            "unit_column": "unit",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "as": "rows",
+            "fn": "count_rows",
+            "column": null,
+            "additive": null,
+            "unit_column": null,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "order": [
+          {
+            "key": "total",
+            "direction": "desc",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "unit": {
+          "column": "unit",
+          "policy": "reject",
+          "check": "single_unit",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "input": {
+          "row_count": 8,
+          "sampled": false,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "result": {
+          "completeness": "top_n",
+          "group_count": 3,
+          "returned": 2,
+          "limit": 2,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "execution_ms": 412,
+        "startup_ms": 380,
+        "engine_execution_ms": 9,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.snapshot",
+        "$.column_meta[0]",
+        "$.column_meta[1]",
+        "$.column_meta[2]",
+        "$.column_meta[3]",
+        "$.measures[0]",
+        "$.measures[1]",
+        "$.order[0]",
+        "$.unit",
+        "$.input",
+        "$.result",
+        "$"
+      ],
+      "required_type_broken": {
+        "snapshot": [
+          "not",
+          "an object"
+        ],
+        "columns": [
+          "region",
+          "unit",
+          "total",
+          "rows"
+        ],
+        "column_meta": [
+          {
+            "name": "region",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "unit",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "total",
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          },
+          {
+            "name": "rows",
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          }
+        ],
+        "rows": [
+          {
+            "region": "b",
+            "unit": "명",
+            "total": 90,
+            "rows": 3
+          },
+          {
+            "region": "a",
+            "unit": "명",
+            "total": 60,
+            "rows": 3
+          }
+        ],
+        "group_by": [
+          "region"
+        ],
+        "measures": [
+          {
+            "as": "total",
+            "fn": "sum",
+            "column": "people",
+            "additive": true,
+            "unit_column": "unit"
+          },
+          {
+            "as": "rows",
+            "fn": "count_rows",
+            "column": null,
+            "additive": null,
+            "unit_column": null
+          }
+        ],
+        "order": [
+          {
+            "key": "total",
+            "direction": "desc"
+          }
+        ],
+        "unit": {
+          "column": "unit",
+          "policy": "reject",
+          "check": "single_unit"
+        },
+        "input": {
+          "row_count": 8,
+          "sampled": false
+        },
+        "result": {
+          "completeness": "top_n",
+          "group_count": 3,
+          "returned": 2,
+          "limit": 2
+        },
+        "execution_ms": 412,
+        "startup_ms": 380,
+        "engine_execution_ms": 9
       },
       "broken_path": "$.snapshot"
     }

@@ -19,6 +19,10 @@ absent: the same 404 as a name that was never built.
 snapshot is pinned the same way, and ``query.rows`` gives the page a stable order and a
 count that says whether it was computed.
 
+``POST /warehouse/aggregate`` runs a validated aggregate over a pinned snapshot (#818):
+named functions over allowed columns, every row aggregated before the top N is taken,
+and a unit column checked so values counted in different units are never added up.
+
 ``POST /query`` keeps its request shape. Multi-table SQL over pinned snapshots (#704)
 extends this endpoint rather than that one.
 """
@@ -30,6 +34,12 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
+from kpubdata_builder.query.aggregate import (
+    AggregatePlan,
+    Measure,
+    check_aggregate_plan,
+    parse_aggregate_plan,
+)
 from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
 from kpubdata_builder.query.rows import check_plan, parse_rows_plan
 from kpubdata_builder.query.service import QueryBusyError, QueryService
@@ -53,6 +63,17 @@ from kpubdata_builder.warehouse import (
 
 _ALLOWED_FIELDS = {"table", "snapshot", "sql", "limit"}
 _ROWS_FIELDS = {"table", "snapshot", "offset", "page_size", "columns", "sort", "filters", "count"}
+_AGGREGATE_FIELDS = {
+    "table",
+    "snapshot",
+    "group_by",
+    "measures",
+    "filters",
+    "order_by",
+    "limit",
+    "unit_column",
+    "unit_policy",
+}
 #: The file a snapshot's Gold package holds its table in.
 _TABLE_FILE = "table.parquet"
 #: Snapshot states a reader may be pointed at.
@@ -250,6 +271,114 @@ class WarehouseApiService:
         }
         return ServiceResponse(200, body_out)
 
+    def aggregate(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """A validated aggregate over a pinned snapshot (#818).
+
+        Every row that passes the filters is aggregated, then the groups are sorted and
+        the top ``limit`` returned; ``result`` says how many groups there were, so a
+        client can tell a full result from a top-N one. Aggregates are never computed
+        over a sample.
+        """
+        try:
+            if body is None:
+                raise ValueError("request body is required")
+            if not set(body).issubset(_AGGREGATE_FIELDS):
+                raise ValueError("request contains unknown fields")
+            name = body.get("table")
+            snapshot = body.get("snapshot", "current")
+            if not isinstance(name, str) or not name:
+                raise ValueError("table must be a non-empty string")
+            if not isinstance(snapshot, str) or not snapshot:
+                raise ValueError("snapshot must be 'current' or a snapshot id")
+            plan = parse_aggregate_plan(body)
+        except ValueError as exc:
+            return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
+
+        catalog = self._table_catalog()
+        if catalog is None:
+            return _not_configured()
+        table = self._find(catalog, name, principal)
+        if table is None:
+            return _table_not_found(name)
+        try:
+            pin = _pin(catalog, table, snapshot)
+        except (TableNotFound, SnapshotNotFound) as exc:
+            return ServiceResponse(404, {"error": str(exc), "code": "snapshot_not_found"})
+        except SnapshotStateError as exc:
+            return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
+        try:
+            table_path = _readable_table(catalog, table, pin.snapshot_id)
+            if table_path is None:
+                return _no_table_file()
+            import polars as pl
+
+            try:
+                check_aggregate_plan(plan, pl.read_parquet_schema(table_path))
+            except ValueError as exc:
+                return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
+            try:
+                result = self._engine.execute_aggregate(
+                    table_path, plan.to_json(), limit=plan.limit
+                )
+            except QueryBusyError:
+                return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
+            except QueryTimeoutError:
+                return ServiceResponse(
+                    504, {"error": "aggregate timed out", "code": "query_timeout"}
+                )
+            except QueryExecutionError:
+                return ServiceResponse(
+                    400, {"error": "aggregate failed", "code": "query_execution_failed"}
+                )
+        finally:
+            catalog.release(pin.lease_id)
+
+        snapshot_body: dict[str, JsonValue] = {
+            "table_id": table.id,
+            "logical_name": table.logical_name,
+            "snapshot_id": pin.snapshot_id,
+            "revision": pin.revision,
+        }
+        refusal = result.meta.get("refusal")
+        if isinstance(refusal, dict):
+            # Refused rather than cut short: a partial aggregate would look complete.
+            return ServiceResponse(422, {**refusal, "snapshot": snapshot_body})
+        group_count = result.meta.get("group_count")
+        input_rows = result.meta.get("input_row_count")
+        if not isinstance(group_count, int) or not isinstance(input_rows, int):
+            return ServiceResponse(
+                400, {"error": "aggregate failed", "code": "query_execution_failed"}
+            )
+        returned = len(result.rows)
+        return ServiceResponse(
+            200,
+            {
+                "snapshot": snapshot_body,
+                "columns": list(result.columns),
+                "column_meta": list(result.column_meta),
+                "rows": list(result.rows),
+                "group_by": list(plan.group_by),
+                "measures": [_measure_body(m, plan) for m in plan.measures],
+                "order": [
+                    {"key": k.key, "direction": "desc" if k.descending else "asc"}
+                    for k in plan.order
+                ],
+                "unit": _unit_body(plan),
+                "input": {"row_count": input_rows, "sampled": False},
+                "result": {
+                    "completeness": "full" if returned == group_count else "top_n",
+                    "group_count": group_count,
+                    "returned": returned,
+                    "limit": plan.limit,
+                },
+                "execution_ms": result.execution_ms,
+                "startup_ms": result.startup_ms,
+                "engine_execution_ms": result.engine_execution_ms,
+            },
+        )
+
     def run(
         self,
         name: str,
@@ -308,6 +437,30 @@ class WarehouseApiService:
         if while_pinned is not None:
             body["pinned"] = pinned
         return ServiceResponse(200, body)
+
+
+def _measure_body(measure: Measure, plan: AggregatePlan) -> dict[str, JsonValue]:
+    """A measure as applied. ``additive`` is the caller's assertion, echoed back."""
+    unit_bound = measure.fn in ("sum", "avg", "min", "max") and plan.unit_column is not None
+    return {
+        "as": measure.alias,
+        "fn": measure.fn,
+        "column": measure.column,
+        "additive": measure.additive if measure.fn == "sum" else None,
+        # Which column the measure's unit is read from, when rows carry one.
+        "unit_column": plan.unit_column if unit_bound else None,
+    }
+
+
+def _unit_body(plan: AggregatePlan) -> dict[str, JsonValue]:
+    """How units were handled: not checked, one unit per group, or split by unit."""
+    if plan.unit_column is None:
+        check = "not_checked"
+    elif plan.unit_column in plan.key_columns:
+        check = "split"
+    else:
+        check = "single_unit"
+    return {"column": plan.unit_column, "policy": plan.unit_policy, "check": check}
 
 
 def _no_table_file() -> ServiceResponse:
