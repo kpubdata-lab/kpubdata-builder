@@ -2,7 +2,7 @@
 
 These pin three things: a hint can never change how a column is stored or sent; hints
 from several sources resolve by origin, each part on its own; and the contract accepts
-both the metadata a pre-1.41.0 Engine sends and the metadata with hints.
+both the metadata a pre-1.41.0 Builder sends and the metadata with hints.
 """
 
 from __future__ import annotations

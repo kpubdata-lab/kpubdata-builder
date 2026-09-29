@@ -84,7 +84,7 @@ def test_completeness_follows_the_manifest(
 
 
 def test_axes_without_evidence_are_unknown_not_guessed() -> None:
-    """Negative: nothing Engine has decides health, access or maturity."""
+    """Negative: nothing Builder has decides health, access or maturity."""
     axes = status_axes({"row_counts": {"a": 1}}, _record("ok"))
 
     assert axes["health"] == "unknown"

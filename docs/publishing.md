@@ -267,7 +267,7 @@ card:
 스크립트의 각 함수는 Builder의 Medallion Architecture stage에 1:1 대응됩니다.
 
 ```text
-함수                          → Engine Stage      설명
+함수                          → Builder Stage      설명
 ──────────────────────────────────────────────────────────────
 load_config()                 → (설정)            YAML config 로드 및 검증
 fetch_records()               → Bronze            kpubdata Client로 raw 데이터 수집
@@ -387,7 +387,7 @@ uv sync --extra publish
 
 ---
 
-## Engine 모듈 분해 가이드
+## Builder 모듈 분해 가이드
 
 이 스크립트는 학생들이 Builder의 Medallion Architecture 모듈로 분해하는 레퍼런스입니다.
 
