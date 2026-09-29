@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- CI refuses imports of kpubdata's private surface (#830, Independence Rule 6). `scripts/check_kpubdata_imports.py` sweeps `src/` and `scripts/` with the AST — imports, `importlib.import_module`/`__import__` and `python -c` source in string literals — and fails on a `_` module segment or a name missing from the installed kpubdata's `__all__`. The 14 private uses left (the verify runner's executor/spec/transport/config, spec lookup in the agent and CLI, `KPubDataConfig` in provider key resolution, `SENSITIVE_PARAM_KEYS` in log redaction) are allowlisted with a reason and kpubdata#667; an entry nothing uses any more fails too, so the list only shrinks.
+
 ### Documentation
 
 - The README, docs, API contract and CLI help call the product KPubData Engine, following kpubdata's BRAND.md (#779). The repository, the `kpubdata-builder` package and CLI, `BuilderService` and the `KPUBDATA_BUILDER_*` variables keep their names, and ADRs and past changelog entries are left as written.
