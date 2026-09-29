@@ -295,12 +295,14 @@ _BuildListEntry = dict[str, str | None]
 #   with its origin (#813, additive; ADR 0019). Metadata only; absent when undescribed.
 # 1.41.0 -> 1.42.0: manifest provenance gains fetched_row_count, source_reported_total and
 #   coverage; WarehouseSnapshot gains coverage (#816, additive). Totals are never summed.
+# 1.42.0 -> 1.43.0: POST /warehouse/rows reads one page of a pinned snapshot with a stable
+#   order, filters, a column selection and a count with its status (#815, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.42.0"
+API_CONTRACT_VERSION = "1.43.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -658,6 +660,12 @@ class BuilderService:
     ) -> ServiceResponse:
         """Run read-only SQL against a pinned warehouse snapshot (#797)."""
         return self._warehouse_api.query(body, principal=principal)
+
+    def read_warehouse_rows(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """One page of a pinned warehouse snapshot, in a stable order (#815)."""
+        return self._warehouse_api.rows(body, principal=principal)
 
     def create_analysis(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal

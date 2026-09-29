@@ -184,6 +184,7 @@ class QueryEngine:
                 raise QueryExecutionError("query returned an invalid result")
             startup_ms = _timing_from_payload(payload, "startup_ms")
             engine_execution_ms = _timing_from_payload(payload, "engine_execution_ms")
+            extra = payload.get("meta")
             execution_ms = _elapsed_ms(started_ns)
             result = QueryResult(
                 columns=tuple(str(column) for column in columns),
@@ -193,6 +194,7 @@ class QueryEngine:
                 execution_ms=execution_ms,
                 startup_ms=startup_ms,
                 engine_execution_ms=engine_execution_ms,
+                meta=cast(dict[str, JsonValue], extra) if isinstance(extra, dict) else {},
             )
             logger.info(
                 "query timing",

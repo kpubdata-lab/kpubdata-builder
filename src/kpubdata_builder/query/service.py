@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .engine import QueryEngine
 from .models import QueryResult
+from .rows import rows_worker
 
 DEFAULT_QUERY_MAX_CONCURRENCY = 2
 _QUERY_CONCURRENCY_ENV = "KPUBDATA_QUERY_MAX_CONCURRENCY"
@@ -51,11 +52,21 @@ class QueryService:
         *,
         engine: QueryEngine | None = None,
         max_concurrency: int | None = None,
+        rows_engine: QueryEngine | None = None,
     ) -> None:
+        """Args:
+        rows_engine: Runs paged row reads (#815). Defaults to a child-process engine
+            with the same memory cap, and shares this service's concurrency limit:
+            a page read costs a query slot like any query.
+        """
         capacity = query_max_concurrency_from_env() if max_concurrency is None else max_concurrency
         if capacity < 1:
             raise ValueError("max_concurrency must be positive")
-        self._engine = engine or QueryEngine(memory_limit_bytes=query_memory_limit_from_env())
+        memory_limit = query_memory_limit_from_env()
+        self._engine = engine or QueryEngine(memory_limit_bytes=memory_limit)
+        self._rows_engine = rows_engine or QueryEngine(
+            worker=rows_worker, memory_limit_bytes=memory_limit
+        )
         self._capacity = threading.BoundedSemaphore(capacity)
 
     def execute(self, table_path: Path, canonical_sql: str, *, limit: int) -> QueryResult:
@@ -63,6 +74,15 @@ class QueryService:
             raise QueryBusyError("query capacity is exhausted")
         try:
             return self._engine.execute(table_path, canonical_sql, limit=limit)
+        finally:
+            self._capacity.release()
+
+    def execute_rows(self, table_path: Path, plan_json: str, *, limit: int) -> QueryResult:
+        """Read one page of rows by a validated plan (#815), under the same limits."""
+        if not self._capacity.acquire(blocking=False):
+            raise QueryBusyError("query capacity is exhausted")
+        try:
+            return self._rows_engine.execute(table_path, plan_json, limit=limit)
         finally:
             self._capacity.release()
 

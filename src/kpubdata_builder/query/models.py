@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ..spec import JsonValue
@@ -31,6 +31,8 @@ class QueryResult:
     # Per column: name, logical_type, wire_encoding (#735). Tells a client which columns
     # arrive as exact decimal text rather than JSON numbers.
     column_meta: tuple[dict[str, JsonValue], ...] = ()
+    # Anything else a worker reports beside the rows, e.g. a paged read's count (#815).
+    meta: dict[str, JsonValue] = field(default_factory=dict)
 
 
 __all__ = ["QueryRequest", "QueryResult", "QueryStage"]
