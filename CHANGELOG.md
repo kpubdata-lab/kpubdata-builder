@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Builder owns the wire vocabulary it translates from kpubdata (#831, Independence Rule 7). `DatasetStatusAxes.access` is Builder's `AccessStatus`, and `CatalogDataset.representation`, `operations` and `CatalogQuerySupport.pagination` go through explicit tables in `service/vocabulary.py` instead of passing kpubdata's enum values through. The values still mirror kpubdata's, so no response changes today; a value kpubdata adds later becomes `unknown` (access), `other` (representation), is left out (operations) or makes `query_support` null (pagination), instead of an off-contract string. Contract descriptions only; no version raise.
+
 ### Documentation
 
 - The README, docs, API contract and CLI help call the product KPubData Engine, following kpubdata's BRAND.md (#779). The repository, the `kpubdata-builder` package and CLI, `BuilderService` and the `KPUBDATA_BUILDER_*` variables keep their names, and ADRs and past changelog entries are left as written.

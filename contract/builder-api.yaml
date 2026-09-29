@@ -4307,17 +4307,25 @@ components:
         representation:
           type: string
           enum: [api_json, api_xml, file_csv, file_excel, sheet, other]
+          description: >-
+            Builder's vocabulary (#831), currently mirroring kpubdata's Representation.
+            A value Builder has not mapped is sent as `other`.
         operations:
           type: array
           items:
             type: string
             enum: [list, get, schema, raw, download]
-          description: 지원 작업 (정렬된 문자열 배열, 없으면 빈 배열)
+          description: >-
+            지원 작업 (정렬된 문자열 배열, 없으면 빈 배열). Builder's vocabulary (#831),
+            currently mirroring kpubdata's Operation; an operation Builder has not
+            mapped is left out.
         query_support:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/CatalogQuerySupport"
-          description: 목록 질의 capability (알려진 경우만, 없으면 null)
+          description: >-
+            목록 질의 capability (알려진 경우만, 없으면 null). null too when kpubdata
+            reports a paging mode Builder has not mapped (#831).
         requires_service_key:
           type: boolean
         request_parameters:
@@ -4387,6 +4395,7 @@ components:
         pagination:
           type: string
           enum: [offset, index, cursor, none]
+          description: Builder's vocabulary (#831), currently mirroring kpubdata's PaginationMode.
         filterable_fields:
           type: array
           items:
@@ -5642,9 +5651,10 @@ components:
             - retired
             - unknown
           description: >-
-            kpubdata's probe classification (`kpubdata._probe.PROBE_STATUSES`) plus
-            `unknown` — the same identifiers, so the measured value and the word a user
-            sees cannot drift apart.
+            Builder owns this vocabulary (`AccessStatus`, #831). The values currently
+            mirror kpubdata's probe classification, plus `unknown`; Builder maps each
+            probe status explicitly, and one it has not mapped is sent as `unknown`,
+            never as kpubdata's raw value.
         maturity:
           type: string
           enum: [stable, beta, experimental, unknown]

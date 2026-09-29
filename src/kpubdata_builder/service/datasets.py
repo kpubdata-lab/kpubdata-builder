@@ -35,6 +35,7 @@ from ..store import BuildEntry, BuildIndex
 from .auth import Principal
 from .ownership import ownership_allows
 from .stages import list_run_stages
+from .vocabulary import access_status
 
 
 @dataclass(frozen=True)
@@ -454,7 +455,9 @@ def status_axes(
         "refresh": refresh,
         "completeness": completeness,
         "health": "unknown",
-        "access": "unknown",
+        # No probe result reaches Builder yet; access_status(None) is Builder's
+        # "unknown", and a probe status Builder has not mapped would be too (#831).
+        "access": access_status(None),
         "maturity": "unknown",
     }
 
