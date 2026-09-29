@@ -2644,6 +2644,11 @@ components:
         every Decimal column and for an integer column holding any value outside
         ±(2^53−1) — do not convert these with Number(). `number`: a JSON number
         (non-finite floats are null). `string`: text, or ISO 8601 for dates and times.
+        **Decided per response, not per column type** (#794): an integer column is
+        `number` in a response whose values all fit and `decimal_string` in one where a
+        value does not, so the same column can arrive either way across pages, previews
+        and queries. Read `wire_encoding` from each response's column metadata; do not
+        cache it from an earlier one.
 
     ColumnWireInfo:
       type: object
