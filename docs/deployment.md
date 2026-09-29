@@ -249,6 +249,13 @@ kpubdata-builder warehouse-restore BACKUP NEW_DIR
   커밋이 일어나도 읽는 것은 바뀌지 않고, 응답의 `snapshot.snapshot_id` 로 같은 질의를
   다시 돌릴 수 있다. SQL 샌드박스는 `POST /query` 와 같다(테이블 이름은 `dataset`).
 
+저장된 분석(#783)은 `POST /analyses` `{"name", "table", "snapshot", "sql", "limit"}` 로 만든다.
+질의를 한 번 실행하고, 읽은 **구체적 snapshot id** 를 저장하며(`current` 를 저장하지 않는다),
+lease 가 풀리기 전에 그 snapshot 에 `saved_analysis` hold 를 건다. `POST /analyses/{id}/run`
+은 테이블이 갱신된 뒤에도 저장된 snapshot 을 읽는다. 결과 행은 저장하지 않고 컬럼·행 수·
+truncated·실행 시각만 남긴다. `DELETE /analyses/{id}` 가 hold 를 푼다. 저장소는
+`<output_root>/.service/analyses.sqlite3` 다.
+
 복원은 다음 중 하나라도 어긋나면 **아무것도 복원하지 않고** 문제를 전부 나열한다:
 snapshot 이 가리키는 테이블 존재, current 포인터가 커밋된 snapshot 을 가리킴, 각
 snapshot 디렉터리 존재·비어 있지 않음·digest 일치. 파일이 빠진 백업이 빈 테이블로

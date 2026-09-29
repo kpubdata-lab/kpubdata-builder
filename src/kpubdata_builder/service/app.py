@@ -51,6 +51,7 @@ from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
 from . import publish as publish_service
+from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
 from .build_runs_api import BuildRunsApiService
@@ -286,12 +287,14 @@ _BuildListEntry = dict[str, str | None]
 # 1.37.0 -> 1.38.0: GET /warehouse/tables, GET /warehouse/tables/{name} and
 #   POST /warehouse/query read committed table snapshots, the last one pinning the
 #   snapshot for the query's lifetime (#797, additive).
+# 1.38.0 -> 1.39.0: /analyses saves a query bound to the snapshot id it read, holds that
+#   snapshot, and re-runs against it (#783, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.38.0"
+API_CONTRACT_VERSION = "1.39.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -385,6 +388,12 @@ class BuilderService:
         self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
         self._warehouse_api = WarehouseApiService(
             table_catalog=lambda: self._table_catalog(), engine=self._query_service
+        )
+        self._analysis_store: AnalysisStore | None = None
+        self._analyses_api = AnalysesApiService(
+            store=lambda: self._analyses(),
+            warehouse=self._warehouse_api,
+            table_catalog=lambda: self._table_catalog(),
         )
         self._datasets_api = DatasetsApiService(
             output_root=self._output_root,
@@ -490,6 +499,14 @@ class BuilderService:
                     max_bytes=resolve_max_upload_bytes(),
                 )
             return self._upload_repository_lazy
+
+    def _analyses(self) -> AnalysisStore:
+        """Saved analysis store, opened on first use (#783)."""
+        if self._analysis_store is None:
+            self._analysis_store = AnalysisStore(
+                self._output_root / ".service" / "analyses.sqlite3"
+            )
+        return self._analysis_store
 
     def _table_catalog(self) -> TableCatalog | None:
         """The table catalog, or None when this deployment has no warehouse.
@@ -635,6 +652,28 @@ class BuilderService:
     ) -> ServiceResponse:
         """Run read-only SQL against a pinned warehouse snapshot (#797)."""
         return self._warehouse_api.query(body, principal=principal)
+
+    def create_analysis(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """Run a query once and save it bound to the snapshot it read (#783)."""
+        return self._analyses_api.create(body, principal=principal)
+
+    def list_analyses(self, *, principal: Principal) -> ServiceResponse:
+        """The caller's saved analyses, newest first (#783)."""
+        return self._analyses_api.list(principal=principal)
+
+    def get_analysis(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
+        """One saved analysis (#783)."""
+        return self._analyses_api.get(analysis_id, principal=principal)
+
+    def delete_analysis(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
+        """Delete a saved analysis and release its snapshot hold (#783)."""
+        return self._analyses_api.delete(analysis_id, principal=principal)
+
+    def run_analysis(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
+        """Re-run a saved analysis against the snapshot it was saved with (#783)."""
+        return self._analyses_api.run(analysis_id, principal=principal)
 
     def version(self) -> ServiceResponse:
         """Return the HTTP contract version and the application version (#209, #777).
