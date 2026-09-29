@@ -87,16 +87,29 @@ def _type_names(schema: Schema) -> list[str]:
     return []
 
 
-def validate(value: Json, schema: Schema, contract: Schema, path: str = "$") -> list[str]:
+def validate(
+    value: Json,
+    schema: Schema,
+    contract: Schema,
+    path: str = "$",
+    *,
+    allow_additional: bool = False,
+) -> list[str]:
     """Validate ``value`` satisfies ``schema`` and return list of violations.
 
     Empty list means valid. Each violation is human-readable string. ``path``
     (default ``$``) indicates location in JSON document.
+
+    ``allow_additional`` reads the contract the way a client should (#814): an
+    undeclared property is ignored even where the schema says
+    ``additionalProperties: false``. Required properties and types are still checked.
     """
     # If $ref present, not used with other keywords (OpenAPI spec), so interpret and delegate.
     ref = schema.get("$ref")
     if isinstance(ref, str):
-        return validate(value, resolve_ref(contract, ref), contract, path)
+        return validate(
+            value, resolve_ref(contract, ref), contract, path, allow_additional=allow_additional
+        )
 
     errors: list[str] = []
 
@@ -107,7 +120,8 @@ def validate(value: Json, schema: Schema, contract: Schema, path: str = "$") -> 
         passing = [
             branch
             for branch in one_of
-            if isinstance(branch, dict) and not validate(value, branch, contract, path)
+            if isinstance(branch, dict)
+            and not validate(value, branch, contract, path, allow_additional=allow_additional)
         ]
         if not passing:
             errors.append(f"{path}: value matched no oneOf branch")
@@ -117,7 +131,9 @@ def validate(value: Json, schema: Schema, contract: Schema, path: str = "$") -> 
     if isinstance(all_of, list):
         for branch in all_of:
             if isinstance(branch, dict):
-                errors.extend(validate(value, branch, contract, path))
+                errors.extend(
+                    validate(value, branch, contract, path, allow_additional=allow_additional)
+                )
 
     not_schema = schema.get("not")
     if isinstance(not_schema, dict) and not validate(value, not_schema, contract, path):
@@ -136,14 +152,22 @@ def validate(value: Json, schema: Schema, contract: Schema, path: str = "$") -> 
     if isinstance(value, dict) and (
         "object" in type_names or any(keyword in schema for keyword in object_keywords)
     ):
-        errors.extend(_validate_object(value, schema, contract, path))
+        errors.extend(_validate_object(value, schema, contract, path, allow_additional))
     elif "array" in type_names and isinstance(value, list):
         if "minItems" in schema and len(value) < schema["minItems"]:
             errors.append(f"{path}: array length {len(value)} < minItems {schema['minItems']}")
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(value):
-                errors.extend(validate(item, item_schema, contract, f"{path}[{index}]"))
+                errors.extend(
+                    validate(
+                        item,
+                        item_schema,
+                        contract,
+                        f"{path}[{index}]",
+                        allow_additional=allow_additional,
+                    )
+                )
 
     if (
         "minimum" in schema
@@ -157,7 +181,11 @@ def validate(value: Json, schema: Schema, contract: Schema, path: str = "$") -> 
 
 
 def _validate_object(
-    value: dict[str, Json], schema: Schema, contract: Schema, path: str
+    value: dict[str, Json],
+    schema: Schema,
+    contract: Schema,
+    path: str,
+    allow_additional: bool = False,
 ) -> list[str]:
     errors: list[str] = []
     properties = schema.get("properties")
@@ -172,14 +200,18 @@ def _validate_object(
         child_path = f"{path}.{key}"
         prop_schema = properties.get(key)
         if isinstance(prop_schema, dict):
-            errors.extend(validate(sub, prop_schema, contract, child_path))
+            errors.extend(
+                validate(sub, prop_schema, contract, child_path, allow_additional=allow_additional)
+            )
             continue
         # Undeclared property → judged by additionalProperties policy.
         addl = schema.get("additionalProperties", True)
-        if addl is False:
+        if addl is False and not allow_additional:
             errors.append(f"{child_path}: extra property not allowed")
         elif isinstance(addl, dict):
-            errors.extend(validate(sub, addl, contract, child_path))
+            errors.extend(
+                validate(sub, addl, contract, child_path, allow_additional=allow_additional)
+            )
         # True / omitted → allow additional properties (allow incidental variations).
     return errors
 

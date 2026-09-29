@@ -1,0 +1,3029 @@
+{
+  "fixture_format": 1,
+  "contract_version": "1.40.0",
+  "probe_field": "future_optional_field",
+  "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
+  "fixtures": [
+    {
+      "operation_id": "getVersion",
+      "method": "GET",
+      "path": "/version",
+      "status": 200,
+      "example": "CurrentVersion",
+      "current": {
+        "service": "kpubdata-builder",
+        "api_version": "1.40.0",
+        "version": "0.4.0"
+      },
+      "with_additive_fields": {
+        "service": "kpubdata-builder",
+        "api_version": "1.40.0",
+        "version": "0.4.0",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "service": 12345,
+        "api_version": "1.40.0",
+        "version": "0.4.0"
+      },
+      "broken_path": "$.service"
+    },
+    {
+      "operation_id": "getCatalog",
+      "method": "GET",
+      "path": "/catalog",
+      "status": 200,
+      "example": "PublicDataCatalog",
+      "current": {
+        "providers": [
+          {
+            "name": "datago",
+            "datasets": [
+              {
+                "name": "air_quality",
+                "title": "대기오염정보",
+                "description": "측정소별 대기오염 물질 농도 조회",
+                "tags": [
+                  "environment",
+                  "air"
+                ],
+                "source_url": "https://www.data.go.kr/data/15073861/openapi",
+                "representation": "api_json",
+                "operations": [
+                  "get",
+                  "list"
+                ],
+                "query_support": {
+                  "pagination": "offset",
+                  "filterable_fields": [
+                    "station_name"
+                  ],
+                  "sortable_fields": [],
+                  "time_range": true,
+                  "max_page_size": 1000
+                },
+                "requires_service_key": true,
+                "request_parameters": [
+                  {
+                    "name": "sidoName",
+                    "required": true,
+                    "description": "조회할 시·도",
+                    "example": "서울"
+                  }
+                ],
+                "application": {
+                  "required": true,
+                  "url": "https://www.data.go.kr/data/15073861/openapi.do"
+                }
+              },
+              {
+                "name": "village_fcst",
+                "title": "단기예보",
+                "description": null,
+                "tags": [],
+                "source_url": null,
+                "representation": "api_json",
+                "operations": [
+                  "list"
+                ],
+                "query_support": null,
+                "requires_service_key": true,
+                "request_parameters": [],
+                "application": null
+              }
+            ]
+          },
+          {
+            "name": "ecos",
+            "datasets": [
+              {
+                "name": "key_statistic_list",
+                "title": "주요 경제지표",
+                "description": "한국은행 주요 경제지표 시계열",
+                "tags": [
+                  "economy"
+                ],
+                "source_url": null,
+                "representation": "api_json",
+                "operations": [
+                  "list"
+                ],
+                "query_support": null,
+                "requires_service_key": false,
+                "request_parameters": [],
+                "application": null
+              }
+            ]
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "providers": [
+          {
+            "name": "datago",
+            "datasets": [
+              {
+                "name": "air_quality",
+                "title": "대기오염정보",
+                "description": "측정소별 대기오염 물질 농도 조회",
+                "tags": [
+                  "environment",
+                  "air"
+                ],
+                "source_url": "https://www.data.go.kr/data/15073861/openapi",
+                "representation": "api_json",
+                "operations": [
+                  "get",
+                  "list"
+                ],
+                "query_support": {
+                  "pagination": "offset",
+                  "filterable_fields": [
+                    "station_name"
+                  ],
+                  "sortable_fields": [],
+                  "time_range": true,
+                  "max_page_size": 1000,
+                  "future_optional_field": "added by a later minor contract version"
+                },
+                "requires_service_key": true,
+                "request_parameters": [
+                  {
+                    "name": "sidoName",
+                    "required": true,
+                    "description": "조회할 시·도",
+                    "example": "서울",
+                    "future_optional_field": "added by a later minor contract version"
+                  }
+                ],
+                "application": {
+                  "required": true,
+                  "url": "https://www.data.go.kr/data/15073861/openapi.do",
+                  "future_optional_field": "added by a later minor contract version"
+                },
+                "future_optional_field": "added by a later minor contract version"
+              },
+              {
+                "name": "village_fcst",
+                "title": "단기예보",
+                "description": null,
+                "tags": [],
+                "source_url": null,
+                "representation": "api_json",
+                "operations": [
+                  "list"
+                ],
+                "query_support": null,
+                "requires_service_key": true,
+                "request_parameters": [],
+                "application": null,
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "ecos",
+            "datasets": [
+              {
+                "name": "key_statistic_list",
+                "title": "주요 경제지표",
+                "description": "한국은행 주요 경제지표 시계열",
+                "tags": [
+                  "economy"
+                ],
+                "source_url": null,
+                "representation": "api_json",
+                "operations": [
+                  "list"
+                ],
+                "query_support": null,
+                "requires_service_key": false,
+                "request_parameters": [],
+                "application": null,
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.providers[0].datasets[0].query_support",
+        "$.providers[0].datasets[0].request_parameters[0]",
+        "$.providers[0].datasets[0].application",
+        "$.providers[0].datasets[0]",
+        "$.providers[0].datasets[1]",
+        "$.providers[0]",
+        "$.providers[1].datasets[0]",
+        "$.providers[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "providers": {
+          "not": "an array"
+        }
+      },
+      "broken_path": "$.providers"
+    },
+    {
+      "operation_id": "getProviderStatus",
+      "method": "GET",
+      "path": "/providers/{provider}/status",
+      "status": 200,
+      "example": "Connected",
+      "current": {
+        "provider": "datago",
+        "status": "connected",
+        "configured": true,
+        "latency_ms": 84,
+        "checked_at": "2026-08-15T09:30:00+00:00"
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "status": "connected",
+        "configured": true,
+        "latency_ms": 84,
+        "checked_at": "2026-08-15T09:30:00+00:00",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "status": "connected",
+        "configured": true,
+        "latency_ms": 84,
+        "checked_at": "2026-08-15T09:30:00+00:00"
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "getProviderStatus",
+      "method": "GET",
+      "path": "/providers/{provider}/status",
+      "status": 200,
+      "example": "NotConfigured",
+      "current": {
+        "provider": "datago",
+        "status": "not_configured",
+        "configured": false,
+        "latency_ms": 0,
+        "checked_at": "2026-08-15T09:30:00+00:00"
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "status": "not_configured",
+        "configured": false,
+        "latency_ms": 0,
+        "checked_at": "2026-08-15T09:30:00+00:00",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "status": "not_configured",
+        "configured": false,
+        "latency_ms": 0,
+        "checked_at": "2026-08-15T09:30:00+00:00"
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "getProviderStatus",
+      "method": "GET",
+      "path": "/providers/{provider}/status",
+      "status": 200,
+      "example": "ProviderTimeout",
+      "current": {
+        "provider": "datago",
+        "status": "failed",
+        "configured": true,
+        "latency_ms": 10003,
+        "checked_at": "2026-08-15T09:30:10+00:00",
+        "error_category": "timeout"
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "status": "failed",
+        "configured": true,
+        "latency_ms": 10003,
+        "checked_at": "2026-08-15T09:30:10+00:00",
+        "error_category": "timeout",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "status": "failed",
+        "configured": true,
+        "latency_ms": 10003,
+        "checked_at": "2026-08-15T09:30:10+00:00",
+        "error_category": "timeout"
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "testProviderConnection",
+      "method": "POST",
+      "path": "/providers/{provider}/test",
+      "status": 200,
+      "example": "Connected",
+      "current": {
+        "provider": "datago",
+        "status": "connected",
+        "configured": true,
+        "latency_ms": 91,
+        "checked_at": "2026-08-15T09:30:00+00:00"
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "status": "connected",
+        "configured": true,
+        "latency_ms": 91,
+        "checked_at": "2026-08-15T09:30:00+00:00",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "status": "connected",
+        "configured": true,
+        "latency_ms": 91,
+        "checked_at": "2026-08-15T09:30:00+00:00"
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "testProviderConnection",
+      "method": "POST",
+      "path": "/providers/{provider}/test",
+      "status": 200,
+      "example": "AuthenticationFailed",
+      "current": {
+        "provider": "datago",
+        "status": "failed",
+        "configured": true,
+        "latency_ms": 72,
+        "checked_at": "2026-08-15T09:30:00+00:00",
+        "error_category": "auth",
+        "response_code": 401
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "status": "failed",
+        "configured": true,
+        "latency_ms": 72,
+        "checked_at": "2026-08-15T09:30:00+00:00",
+        "error_category": "auth",
+        "response_code": 401,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "status": "failed",
+        "configured": true,
+        "latency_ms": 72,
+        "checked_at": "2026-08-15T09:30:00+00:00",
+        "error_category": "auth",
+        "response_code": 401
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "getProviderCredential",
+      "method": "GET",
+      "path": "/providers/{provider}/credential",
+      "status": 200,
+      "example": "Configured",
+      "current": {
+        "configured": true,
+        "masked": "********",
+        "updated_at": "2026-08-15T09:25:00+00:00"
+      },
+      "with_additive_fields": {
+        "configured": true,
+        "masked": "********",
+        "updated_at": "2026-08-15T09:25:00+00:00",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "configured": "true",
+        "masked": "********",
+        "updated_at": "2026-08-15T09:25:00+00:00"
+      },
+      "broken_path": "$.configured"
+    },
+    {
+      "operation_id": "getProviderCredential",
+      "method": "GET",
+      "path": "/providers/{provider}/credential",
+      "status": 200,
+      "example": "NotConfigured",
+      "current": {
+        "configured": false,
+        "masked": null,
+        "updated_at": null
+      },
+      "with_additive_fields": {
+        "configured": false,
+        "masked": null,
+        "updated_at": null,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "configured": "true",
+        "masked": null,
+        "updated_at": null
+      },
+      "broken_path": "$.configured"
+    },
+    {
+      "operation_id": "putProviderCredential",
+      "method": "PUT",
+      "path": "/providers/{provider}/credential",
+      "status": 200,
+      "example": "Stored",
+      "current": {
+        "provider": "datago",
+        "configured": true,
+        "masked": "********",
+        "updated_at": "2026-08-15T09:25:00+00:00"
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "configured": true,
+        "masked": "********",
+        "updated_at": "2026-08-15T09:25:00+00:00",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "configured": true,
+        "masked": "********",
+        "updated_at": "2026-08-15T09:25:00+00:00"
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "deleteProviderCredential",
+      "method": "DELETE",
+      "path": "/providers/{provider}/credential",
+      "status": 200,
+      "example": "Deleted",
+      "current": {
+        "provider": "datago",
+        "configured": false,
+        "masked": null,
+        "updated_at": null
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "configured": false,
+        "masked": null,
+        "updated_at": null,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "configured": false,
+        "masked": null,
+        "updated_at": null
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "createUpload",
+      "method": "POST",
+      "path": "/uploads",
+      "status": 200,
+      "example": "Uploaded",
+      "current": {
+        "upload_id": "upl_0123456789abcdef0123456789abcdef",
+        "format": "csv",
+        "encoding": "utf-8",
+        "size_bytes": 1024,
+        "original_filename": "trades.csv",
+        "created_at": "2026-08-16T09:00:00+00:00"
+      },
+      "with_additive_fields": {
+        "upload_id": "upl_0123456789abcdef0123456789abcdef",
+        "format": "csv",
+        "encoding": "utf-8",
+        "size_bytes": 1024,
+        "original_filename": "trades.csv",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "upload_id": 12345,
+        "format": "csv",
+        "encoding": "utf-8",
+        "size_bytes": 1024,
+        "original_filename": "trades.csv",
+        "created_at": "2026-08-16T09:00:00+00:00"
+      },
+      "broken_path": "$.upload_id"
+    },
+    {
+      "operation_id": "validateSpec",
+      "method": "POST",
+      "path": "/validate",
+      "status": 200,
+      "example": "ValidSpec",
+      "current": {
+        "status": "valid",
+        "dataset_id": "seoul-air-quality",
+        "api_version": "1.8.0"
+      },
+      "with_additive_fields": {
+        "status": "valid",
+        "dataset_id": "seoul-air-quality",
+        "api_version": "1.8.0",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "dataset_id": "seoul-air-quality",
+        "api_version": "1.8.0"
+      },
+      "broken_path": "$.status"
+    },
+    {
+      "operation_id": "previewBuild",
+      "method": "POST",
+      "path": "/preview",
+      "status": 200,
+      "example": "AirQualityPreview",
+      "current": {
+        "dataset_id": "seoul-air-quality",
+        "previews": [
+          {
+            "source_key": "air",
+            "status": "ok",
+            "error": null,
+            "schema": [
+              {
+                "name": "station_name",
+                "dtype": "String",
+                "nullable": false,
+                "unique_count": 2,
+                "logical_type": "string",
+                "wire_encoding": "string"
+              },
+              {
+                "name": "pm10_value",
+                "dtype": "Int64",
+                "nullable": true,
+                "unique_count": 2,
+                "logical_type": "int64",
+                "wire_encoding": "number"
+              }
+            ],
+            "sample": [
+              {
+                "station_name": "종로구",
+                "pm10_value": 31
+              },
+              {
+                "station_name": "중구",
+                "pm10_value": 28
+              }
+            ],
+            "total_rows": 25,
+            "statistics": {
+              "row_count": 25,
+              "null_counts": {
+                "station_name": 0,
+                "pm10_value": 1
+              },
+              "duplicate_rate": 0.0
+            },
+            "quality_results": [
+              {
+                "source_key": "air",
+                "category": "row_count",
+                "rule": "min_rows",
+                "column": null,
+                "status": "pass",
+                "actual": 25,
+                "threshold": 1,
+                "affected_rows": null,
+                "evaluated_rows": null,
+                "detail": null
+              }
+            ],
+            "source_sample": [
+              {
+                "station_name": "종로구",
+                "pm10_value": 31
+              },
+              {
+                "station_name": "중구",
+                "pm10_value": 28
+              }
+            ],
+            "sample_mode": "first",
+            "diff_available": true,
+            "diffs": [],
+            "transform_summary": {
+              "changed_cells": 0,
+              "changed_rows": 0
+            },
+            "diff_truncated": false
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "dataset_id": "seoul-air-quality",
+        "previews": [
+          {
+            "source_key": "air",
+            "status": "ok",
+            "error": null,
+            "schema": [
+              {
+                "name": "station_name",
+                "dtype": "String",
+                "nullable": false,
+                "unique_count": 2,
+                "logical_type": "string",
+                "wire_encoding": "string",
+                "future_optional_field": "added by a later minor contract version"
+              },
+              {
+                "name": "pm10_value",
+                "dtype": "Int64",
+                "nullable": true,
+                "unique_count": 2,
+                "logical_type": "int64",
+                "wire_encoding": "number",
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "sample": [
+              {
+                "station_name": "종로구",
+                "pm10_value": 31
+              },
+              {
+                "station_name": "중구",
+                "pm10_value": 28
+              }
+            ],
+            "total_rows": 25,
+            "statistics": {
+              "row_count": 25,
+              "null_counts": {
+                "station_name": 0,
+                "pm10_value": 1
+              },
+              "duplicate_rate": 0.0,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "quality_results": [
+              {
+                "source_key": "air",
+                "category": "row_count",
+                "rule": "min_rows",
+                "column": null,
+                "status": "pass",
+                "actual": 25,
+                "threshold": 1,
+                "affected_rows": null,
+                "evaluated_rows": null,
+                "detail": null,
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "source_sample": [
+              {
+                "station_name": "종로구",
+                "pm10_value": 31
+              },
+              {
+                "station_name": "중구",
+                "pm10_value": 28
+              }
+            ],
+            "sample_mode": "first",
+            "diff_available": true,
+            "diffs": [],
+            "transform_summary": {
+              "changed_cells": 0,
+              "changed_rows": 0,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "diff_truncated": false,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.previews[0].schema[0]",
+        "$.previews[0].schema[1]",
+        "$.previews[0].statistics",
+        "$.previews[0].quality_results[0]",
+        "$.previews[0].transform_summary",
+        "$.previews[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "dataset_id": 12345,
+        "previews": [
+          {
+            "source_key": "air",
+            "status": "ok",
+            "error": null,
+            "schema": [
+              {
+                "name": "station_name",
+                "dtype": "String",
+                "nullable": false,
+                "unique_count": 2,
+                "logical_type": "string",
+                "wire_encoding": "string"
+              },
+              {
+                "name": "pm10_value",
+                "dtype": "Int64",
+                "nullable": true,
+                "unique_count": 2,
+                "logical_type": "int64",
+                "wire_encoding": "number"
+              }
+            ],
+            "sample": [
+              {
+                "station_name": "종로구",
+                "pm10_value": 31
+              },
+              {
+                "station_name": "중구",
+                "pm10_value": 28
+              }
+            ],
+            "total_rows": 25,
+            "statistics": {
+              "row_count": 25,
+              "null_counts": {
+                "station_name": 0,
+                "pm10_value": 1
+              },
+              "duplicate_rate": 0.0
+            },
+            "quality_results": [
+              {
+                "source_key": "air",
+                "category": "row_count",
+                "rule": "min_rows",
+                "column": null,
+                "status": "pass",
+                "actual": 25,
+                "threshold": 1,
+                "affected_rows": null,
+                "evaluated_rows": null,
+                "detail": null
+              }
+            ],
+            "source_sample": [
+              {
+                "station_name": "종로구",
+                "pm10_value": 31
+              },
+              {
+                "station_name": "중구",
+                "pm10_value": 28
+              }
+            ],
+            "sample_mode": "first",
+            "diff_available": true,
+            "diffs": [],
+            "transform_summary": {
+              "changed_cells": 0,
+              "changed_rows": 0
+            },
+            "diff_truncated": false
+          }
+        ]
+      },
+      "broken_path": "$.dataset_id"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
+      "status": 200,
+      "example": "BuildCompleted",
+      "current": {
+        "status": "ok",
+        "run_id": "air-quality-20260815",
+        "outcomes": [
+          {
+            "source_key": "air",
+            "status": "ok",
+            "stages_completed": [
+              "bronze",
+              "silver",
+              "gold"
+            ],
+            "error": null
+          }
+        ],
+        "manifest": "build/air-quality-20260815/manifest.json",
+        "api_version": "1.8.0"
+      },
+      "with_additive_fields": {
+        "status": "ok",
+        "run_id": "air-quality-20260815",
+        "outcomes": [
+          {
+            "source_key": "air",
+            "status": "ok",
+            "stages_completed": [
+              "bronze",
+              "silver",
+              "gold"
+            ],
+            "error": null,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "manifest": "build/air-quality-20260815/manifest.json",
+        "api_version": "1.8.0",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.outcomes[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "run_id": "air-quality-20260815",
+        "outcomes": [
+          {
+            "source_key": "air",
+            "status": "ok",
+            "stages_completed": [
+              "bronze",
+              "silver",
+              "gold"
+            ],
+            "error": null
+          }
+        ],
+        "manifest": "build/air-quality-20260815/manifest.json",
+        "api_version": "1.8.0"
+      },
+      "broken_path": "$.status"
+    },
+    {
+      "operation_id": "listBuildArtifacts",
+      "method": "GET",
+      "path": "/artifacts/{run_id}",
+      "status": 200,
+      "example": "BuildArtifacts",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "files": [
+          "buildspec.yaml",
+          "manifest.json",
+          "artifacts/air-quality.jsonl",
+          "silver/air/table.parquet"
+        ]
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "files": [
+          "buildspec.yaml",
+          "manifest.json",
+          "artifacts/air-quality.jsonl",
+          "silver/air/table.parquet"
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "files": [
+          "buildspec.yaml",
+          "manifest.json",
+          "artifacts/air-quality.jsonl",
+          "silver/air/table.parquet"
+        ]
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildJob",
+      "method": "GET",
+      "path": "/builds/{run_id}",
+      "status": 200,
+      "example": "Running",
+      "current": {
+        "run_id": "run-0123456789abcdef",
+        "status": "running",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:01+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "with_additive_fields": {
+        "run_id": "run-0123456789abcdef",
+        "status": "running",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:01+00:00",
+        "created_by": "oidc:user-a",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "status": "running",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:01+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildJob",
+      "method": "GET",
+      "path": "/builds/{run_id}",
+      "status": 200,
+      "example": "Succeeded",
+      "current": {
+        "run_id": "run-0123456789abcdef",
+        "status": "succeeded",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:07+00:00",
+        "created_by": "oidc:user-a",
+        "response": {
+          "run_id": "run-0123456789abcdef",
+          "status": "ok"
+        }
+      },
+      "with_additive_fields": {
+        "run_id": "run-0123456789abcdef",
+        "status": "succeeded",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:07+00:00",
+        "created_by": "oidc:user-a",
+        "response": {
+          "run_id": "run-0123456789abcdef",
+          "status": "ok"
+        },
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "status": "succeeded",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:07+00:00",
+        "created_by": "oidc:user-a",
+        "response": {
+          "run_id": "run-0123456789abcdef",
+          "status": "ok"
+        }
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "cancelBuildJob",
+      "method": "POST",
+      "path": "/builds/{run_id}/cancel",
+      "status": 200,
+      "example": "QueuedCancelled",
+      "current": {
+        "run_id": "run-0123456789abcdef",
+        "status": "cancelled",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:02+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "with_additive_fields": {
+        "run_id": "run-0123456789abcdef",
+        "status": "cancelled",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:02+00:00",
+        "created_by": "oidc:user-a",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "status": "cancelled",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:02+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "cancelBuildJob",
+      "method": "POST",
+      "path": "/builds/{run_id}/cancel",
+      "status": 200,
+      "example": "RunningCancelling",
+      "current": {
+        "run_id": "run-0123456789abcdef",
+        "status": "cancelling",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:03+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "with_additive_fields": {
+        "run_id": "run-0123456789abcdef",
+        "status": "cancelling",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:03+00:00",
+        "created_by": "oidc:user-a",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "status": "cancelling",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:03+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildManifest",
+      "method": "GET",
+      "path": "/builds/{run_id}/manifest",
+      "status": 200,
+      "example": "CompletedManifest",
+      "current": {
+        "build_id": "air-quality-20260815",
+        "started_at": "2026-08-15T09:30:00+00:00",
+        "finished_at": "2026-08-15T09:30:07+00:00",
+        "schema_version": "1.0",
+        "inputs": [
+          "air"
+        ],
+        "outputs": [
+          "artifacts/air-quality.jsonl"
+        ],
+        "warnings": [],
+        "errors": [],
+        "row_counts": {
+          "air": 25
+        },
+        "inputs_fingerprint": "sha256:example-fingerprint",
+        "created_by": "oidc:example-user",
+        "quality_results": {
+          "air": []
+        },
+        "schema_drift": {
+          "air": []
+        }
+      },
+      "with_additive_fields": {
+        "build_id": "air-quality-20260815",
+        "started_at": "2026-08-15T09:30:00+00:00",
+        "finished_at": "2026-08-15T09:30:07+00:00",
+        "schema_version": "1.0",
+        "inputs": [
+          "air"
+        ],
+        "outputs": [
+          "artifacts/air-quality.jsonl"
+        ],
+        "warnings": [],
+        "errors": [],
+        "row_counts": {
+          "air": 25
+        },
+        "inputs_fingerprint": "sha256:example-fingerprint",
+        "created_by": "oidc:example-user",
+        "quality_results": {
+          "air": []
+        },
+        "schema_drift": {
+          "air": []
+        },
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "build_id": 12345,
+        "started_at": "2026-08-15T09:30:00+00:00",
+        "finished_at": "2026-08-15T09:30:07+00:00",
+        "schema_version": "1.0",
+        "inputs": [
+          "air"
+        ],
+        "outputs": [
+          "artifacts/air-quality.jsonl"
+        ],
+        "warnings": [],
+        "errors": [],
+        "row_counts": {
+          "air": 25
+        },
+        "inputs_fingerprint": "sha256:example-fingerprint",
+        "created_by": "oidc:example-user",
+        "quality_results": {
+          "air": []
+        },
+        "schema_drift": {
+          "air": []
+        }
+      },
+      "broken_path": "$.build_id"
+    },
+    {
+      "operation_id": "getBuildSpecSnapshot",
+      "method": "GET",
+      "path": "/builds/{run_id}/spec",
+      "status": 200,
+      "example": "CanonicalSnapshot",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "spec": "dataset_id: seoul-air-quality\ntitle: 서울 대기질 관측\ndescription: 서울 지역 측정소별 대기오염 관측 데이터\nsources:\n  - provider: datago\n    dataset: air_quality\n    alias: air\nexports:\n  - kind: jsonl\n    output_path: artifacts/air-quality.jsonl\n",
+        "spec_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "spec": "dataset_id: seoul-air-quality\ntitle: 서울 대기질 관측\ndescription: 서울 지역 측정소별 대기오염 관측 데이터\nsources:\n  - provider: datago\n    dataset: air_quality\n    alias: air\nexports:\n  - kind: jsonl\n    output_path: artifacts/air-quality.jsonl\n",
+        "spec_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "spec": "dataset_id: seoul-air-quality\ntitle: 서울 대기질 관측\ndescription: 서울 지역 측정소별 대기오염 관측 데이터\nsources:\n  - provider: datago\n    dataset: air_quality\n    alias: air\nexports:\n  - kind: jsonl\n    output_path: artifacts/air-quality.jsonl\n",
+        "spec_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
+      "status": 202,
+      "example": "Accepted",
+      "current": {
+        "run_id": "run-0123456789abcdef",
+        "status": "queued",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:00+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "with_additive_fields": {
+        "run_id": "run-0123456789abcdef",
+        "status": "queued",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:00+00:00",
+        "created_by": "oidc:user-a",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "status": "queued",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:00+00:00",
+        "created_by": "oidc:user-a"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "listBuilds",
+      "method": "GET",
+      "path": "/builds",
+      "status": 200,
+      "example": "RecentBuilds",
+      "current": {
+        "builds": [
+          {
+            "run_id": "air-quality-20260815",
+            "status": "ok",
+            "started_at": "2026-08-15T09:30:00+00:00",
+            "finished_at": "2026-08-15T09:30:07+00:00"
+          },
+          {
+            "run_id": "air-quality-20260814",
+            "status": "failed",
+            "started_at": "2026-08-14T09:30:00+00:00",
+            "finished_at": "2026-08-14T09:30:02+00:00"
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "builds": [
+          {
+            "run_id": "air-quality-20260815",
+            "status": "ok",
+            "started_at": "2026-08-15T09:30:00+00:00",
+            "finished_at": "2026-08-15T09:30:07+00:00",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "run_id": "air-quality-20260814",
+            "status": "failed",
+            "started_at": "2026-08-14T09:30:00+00:00",
+            "finished_at": "2026-08-14T09:30:02+00:00",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.builds[0]",
+        "$.builds[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "builds": {
+          "not": "an array"
+        }
+      },
+      "broken_path": "$.builds"
+    },
+    {
+      "operation_id": "listDatasets",
+      "method": "GET",
+      "path": "/datasets",
+      "status": 200,
+      "example": "BuiltDatasets",
+      "current": {
+        "total": 1,
+        "datasets": [
+          {
+            "dataset_id": "seoul-air-quality",
+            "title": "서울 대기질 관측",
+            "sources": [
+              {
+                "provider": "datago",
+                "dataset": "air_quality",
+                "alias": "air"
+              }
+            ],
+            "latest_run_id": "air-quality-20260815",
+            "status": "ok",
+            "updated_at": "2026-08-15T09:30:07+00:00",
+            "row_counts": {
+              "air": 25
+            },
+            "total_row_count": 25,
+            "stages": {
+              "air": {
+                "bronze": "completed",
+                "silver": "completed",
+                "gold": "completed"
+              }
+            },
+            "quality": null,
+            "status_axes": {
+              "refresh": "succeeded",
+              "completeness": "complete",
+              "health": "unknown",
+              "access": "unknown",
+              "maturity": "unknown"
+            }
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "total": 1,
+        "datasets": [
+          {
+            "dataset_id": "seoul-air-quality",
+            "title": "서울 대기질 관측",
+            "sources": [
+              {
+                "provider": "datago",
+                "dataset": "air_quality",
+                "alias": "air",
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "latest_run_id": "air-quality-20260815",
+            "status": "ok",
+            "updated_at": "2026-08-15T09:30:07+00:00",
+            "row_counts": {
+              "air": 25
+            },
+            "total_row_count": 25,
+            "stages": {
+              "air": {
+                "bronze": "completed",
+                "silver": "completed",
+                "gold": "completed",
+                "future_optional_field": "added by a later minor contract version"
+              }
+            },
+            "quality": null,
+            "status_axes": {
+              "refresh": "succeeded",
+              "completeness": "complete",
+              "health": "unknown",
+              "access": "unknown",
+              "maturity": "unknown",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.datasets[0].sources[0]",
+        "$.datasets[0].stages.air",
+        "$.datasets[0].status_axes",
+        "$.datasets[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "total": 1,
+        "datasets": {
+          "not": "an array"
+        }
+      },
+      "broken_path": "$.datasets"
+    },
+    {
+      "operation_id": "getDataset",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}",
+      "status": 200,
+      "example": "AirQualityDataset",
+      "current": {
+        "dataset_id": "seoul-air-quality",
+        "title": "서울 대기질 관측",
+        "sources": [
+          {
+            "provider": "datago",
+            "dataset": "air_quality",
+            "alias": "air"
+          }
+        ],
+        "latest_run_id": "air-quality-20260815",
+        "status": "ok",
+        "updated_at": "2026-08-15T09:30:07+00:00",
+        "row_counts": {
+          "air": 25
+        },
+        "total_row_count": 25,
+        "stages": {
+          "air": {
+            "bronze": "completed",
+            "silver": "completed",
+            "gold": "completed"
+          }
+        },
+        "quality": null,
+        "status_axes": {
+          "refresh": "succeeded",
+          "completeness": "complete",
+          "health": "unknown",
+          "access": "unknown",
+          "maturity": "unknown"
+        },
+        "run_count": 2
+      },
+      "with_additive_fields": {
+        "dataset_id": "seoul-air-quality",
+        "title": "서울 대기질 관측",
+        "sources": [
+          {
+            "provider": "datago",
+            "dataset": "air_quality",
+            "alias": "air",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "latest_run_id": "air-quality-20260815",
+        "status": "ok",
+        "updated_at": "2026-08-15T09:30:07+00:00",
+        "row_counts": {
+          "air": 25
+        },
+        "total_row_count": 25,
+        "stages": {
+          "air": {
+            "bronze": "completed",
+            "silver": "completed",
+            "gold": "completed",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        },
+        "quality": null,
+        "status_axes": {
+          "refresh": "succeeded",
+          "completeness": "complete",
+          "health": "unknown",
+          "access": "unknown",
+          "maturity": "unknown",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "run_count": 2,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.sources[0]",
+        "$.stages.air",
+        "$.status_axes",
+        "$"
+      ],
+      "required_type_broken": {
+        "dataset_id": 12345,
+        "title": "서울 대기질 관측",
+        "sources": [
+          {
+            "provider": "datago",
+            "dataset": "air_quality",
+            "alias": "air"
+          }
+        ],
+        "latest_run_id": "air-quality-20260815",
+        "status": "ok",
+        "updated_at": "2026-08-15T09:30:07+00:00",
+        "row_counts": {
+          "air": 25
+        },
+        "total_row_count": 25,
+        "stages": {
+          "air": {
+            "bronze": "completed",
+            "silver": "completed",
+            "gold": "completed"
+          }
+        },
+        "quality": null,
+        "status_axes": {
+          "refresh": "succeeded",
+          "completeness": "complete",
+          "health": "unknown",
+          "access": "unknown",
+          "maturity": "unknown"
+        },
+        "run_count": 2
+      },
+      "broken_path": "$.dataset_id"
+    },
+    {
+      "operation_id": "listDatasetRuns",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}/runs",
+      "status": 200,
+      "example": "AirQualityRuns",
+      "current": {
+        "dataset_id": "seoul-air-quality",
+        "runs": [
+          {
+            "run_id": "air-quality-20260815",
+            "status": "ok",
+            "started_at": "2026-08-15T09:30:00+00:00",
+            "finished_at": "2026-08-15T09:30:07+00:00",
+            "spec_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "created_by": "oidc:example-user"
+          },
+          {
+            "run_id": "air-quality-20260814",
+            "status": "failed",
+            "started_at": "2026-08-14T09:30:00+00:00",
+            "finished_at": "2026-08-14T09:30:02+00:00",
+            "spec_digest": null,
+            "created_by": null
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "dataset_id": "seoul-air-quality",
+        "runs": [
+          {
+            "run_id": "air-quality-20260815",
+            "status": "ok",
+            "started_at": "2026-08-15T09:30:00+00:00",
+            "finished_at": "2026-08-15T09:30:07+00:00",
+            "spec_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "created_by": "oidc:example-user",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "run_id": "air-quality-20260814",
+            "status": "failed",
+            "started_at": "2026-08-14T09:30:00+00:00",
+            "finished_at": "2026-08-14T09:30:02+00:00",
+            "spec_digest": null,
+            "created_by": null,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.runs[0]",
+        "$.runs[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "dataset_id": 12345,
+        "runs": [
+          {
+            "run_id": "air-quality-20260815",
+            "status": "ok",
+            "started_at": "2026-08-15T09:30:00+00:00",
+            "finished_at": "2026-08-15T09:30:07+00:00",
+            "spec_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "created_by": "oidc:example-user"
+          },
+          {
+            "run_id": "air-quality-20260814",
+            "status": "failed",
+            "started_at": "2026-08-14T09:30:00+00:00",
+            "finished_at": "2026-08-14T09:30:02+00:00",
+            "spec_digest": null,
+            "created_by": null
+          }
+        ]
+      },
+      "broken_path": "$.dataset_id"
+    },
+    {
+      "operation_id": "getDatasetRun",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}/runs/{run_id}",
+      "status": 200,
+      "example": "OlderRun",
+      "current": {
+        "dataset_id": "seoul-air-quality",
+        "run": {
+          "run_id": "air-quality-20260101",
+          "status": "ok",
+          "started_at": "2026-01-01T09:30:00+00:00",
+          "finished_at": "2026-01-01T09:30:07+00:00",
+          "spec_digest": null,
+          "created_by": "oidc:example-user"
+        }
+      },
+      "with_additive_fields": {
+        "dataset_id": "seoul-air-quality",
+        "run": {
+          "run_id": "air-quality-20260101",
+          "status": "ok",
+          "started_at": "2026-01-01T09:30:00+00:00",
+          "finished_at": "2026-01-01T09:30:07+00:00",
+          "spec_digest": null,
+          "created_by": "oidc:example-user",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.run",
+        "$"
+      ],
+      "required_type_broken": {
+        "dataset_id": 12345,
+        "run": {
+          "run_id": "air-quality-20260101",
+          "status": "ok",
+          "started_at": "2026-01-01T09:30:00+00:00",
+          "finished_at": "2026-01-01T09:30:07+00:00",
+          "spec_digest": null,
+          "created_by": "oidc:example-user"
+        }
+      },
+      "broken_path": "$.dataset_id"
+    },
+    {
+      "operation_id": "getBuildEvents",
+      "method": "GET",
+      "path": "/builds/{run_id}/events",
+      "status": 200,
+      "example": "CompletedRun",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "events": [
+          {
+            "seq": 1,
+            "timestamp": "2026-08-15T09:30:00+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "run_started",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "pipeline execution started",
+            "metrics": null
+          },
+          {
+            "seq": 2,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "stage_completed",
+            "status": "ok",
+            "source_key": "air",
+            "stage": "bronze",
+            "message": "Bronze written",
+            "metrics": {
+              "records": 84321
+            }
+          },
+          {
+            "seq": 3,
+            "timestamp": "2026-08-15T09:30:02+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "run_finished",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "build completed",
+            "metrics": null
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "events": [
+          {
+            "seq": 1,
+            "timestamp": "2026-08-15T09:30:00+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "run_started",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "pipeline execution started",
+            "metrics": null,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "seq": 2,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "stage_completed",
+            "status": "ok",
+            "source_key": "air",
+            "stage": "bronze",
+            "message": "Bronze written",
+            "metrics": {
+              "records": 84321
+            },
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "seq": 3,
+            "timestamp": "2026-08-15T09:30:02+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "run_finished",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "build completed",
+            "metrics": null,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.events[0]",
+        "$.events[1]",
+        "$.events[2]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "events": [
+          {
+            "seq": 1,
+            "timestamp": "2026-08-15T09:30:00+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "run_started",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "pipeline execution started",
+            "metrics": null
+          },
+          {
+            "seq": 2,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "stage_completed",
+            "status": "ok",
+            "source_key": "air",
+            "stage": "bronze",
+            "message": "Bronze written",
+            "metrics": {
+              "records": 84321
+            }
+          },
+          {
+            "seq": 3,
+            "timestamp": "2026-08-15T09:30:02+00:00",
+            "run_id": "air-quality-20260815",
+            "event": "run_finished",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "build completed",
+            "metrics": null
+          }
+        ]
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildEvents",
+      "method": "GET",
+      "path": "/builds/{run_id}/events",
+      "status": 200,
+      "example": "PartialFailure",
+      "current": {
+        "run_id": "air-quality-partial",
+        "events": [
+          {
+            "seq": 1,
+            "timestamp": "2026-08-15T09:30:00+00:00",
+            "run_id": "air-quality-partial",
+            "event": "run_started",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "pipeline execution started",
+            "metrics": null
+          },
+          {
+            "seq": 2,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-partial",
+            "event": "source_fetch_failed",
+            "status": "fail",
+            "source_key": "air",
+            "stage": null,
+            "message": "pipeline failed for source 'air'",
+            "metrics": null
+          },
+          {
+            "seq": 3,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-partial",
+            "event": "run_failed",
+            "status": "fail",
+            "source_key": null,
+            "stage": null,
+            "message": "1 source(s) failed",
+            "metrics": null
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-partial",
+        "events": [
+          {
+            "seq": 1,
+            "timestamp": "2026-08-15T09:30:00+00:00",
+            "run_id": "air-quality-partial",
+            "event": "run_started",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "pipeline execution started",
+            "metrics": null,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "seq": 2,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-partial",
+            "event": "source_fetch_failed",
+            "status": "fail",
+            "source_key": "air",
+            "stage": null,
+            "message": "pipeline failed for source 'air'",
+            "metrics": null,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "seq": 3,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-partial",
+            "event": "run_failed",
+            "status": "fail",
+            "source_key": null,
+            "stage": null,
+            "message": "1 source(s) failed",
+            "metrics": null,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.events[0]",
+        "$.events[1]",
+        "$.events[2]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "events": [
+          {
+            "seq": 1,
+            "timestamp": "2026-08-15T09:30:00+00:00",
+            "run_id": "air-quality-partial",
+            "event": "run_started",
+            "status": "ok",
+            "source_key": null,
+            "stage": null,
+            "message": "pipeline execution started",
+            "metrics": null
+          },
+          {
+            "seq": 2,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-partial",
+            "event": "source_fetch_failed",
+            "status": "fail",
+            "source_key": "air",
+            "stage": null,
+            "message": "pipeline failed for source 'air'",
+            "metrics": null
+          },
+          {
+            "seq": 3,
+            "timestamp": "2026-08-15T09:30:01+00:00",
+            "run_id": "air-quality-partial",
+            "event": "run_failed",
+            "status": "fail",
+            "source_key": null,
+            "stage": null,
+            "message": "1 source(s) failed",
+            "metrics": null
+          }
+        ]
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getPublishReadiness",
+      "method": "GET",
+      "path": "/builds/{run_id}/publish/readiness",
+      "status": 200,
+      "example": "Ready",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "ready": true,
+        "blockers": [],
+        "warnings": []
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "ready": true,
+        "blockers": [],
+        "warnings": [],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "target": "huggingface",
+        "ready": true,
+        "blockers": [],
+        "warnings": []
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getPublishReadiness",
+      "method": "GET",
+      "path": "/builds/{run_id}/publish/readiness",
+      "status": 200,
+      "example": "Blocked",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "ready": false,
+        "blockers": [
+          {
+            "code": "license_missing",
+            "message": "BuildSpec.license must be declared before this dataset can be published (#443)"
+          },
+          {
+            "code": "credential_unavailable",
+            "message": "no server-side credential is configured for target 'huggingface'"
+          }
+        ],
+        "warnings": []
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "ready": false,
+        "blockers": [
+          {
+            "code": "license_missing",
+            "message": "BuildSpec.license must be declared before this dataset can be published (#443)",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "code": "credential_unavailable",
+            "message": "no server-side credential is configured for target 'huggingface'",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "warnings": [],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.blockers[0]",
+        "$.blockers[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "target": "huggingface",
+        "ready": false,
+        "blockers": [
+          {
+            "code": "license_missing",
+            "message": "BuildSpec.license must be declared before this dataset can be published (#443)"
+          },
+          {
+            "code": "credential_unavailable",
+            "message": "no server-side credential is configured for target 'huggingface'"
+          }
+        ],
+        "warnings": []
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 200,
+      "example": "Published",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "publisher": "huggingface",
+        "destination": "kpubdata/air-quality",
+        "reference": "https://huggingface.co/datasets/kpubdata/air-quality",
+        "artifact_count": 3,
+        "status": "ok"
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "publisher": "huggingface",
+        "destination": "kpubdata/air-quality",
+        "reference": "https://huggingface.co/datasets/kpubdata/air-quality",
+        "artifact_count": 3,
+        "status": "ok",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "target": "huggingface",
+        "publisher": "huggingface",
+        "destination": "kpubdata/air-quality",
+        "reference": "https://huggingface.co/datasets/kpubdata/air-quality",
+        "artifact_count": 3,
+        "status": "ok"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "listBuildStages",
+      "method": "GET",
+      "path": "/builds/{run_id}/stages",
+      "status": 200,
+      "example": "CompletedStages",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "sources": [
+          {
+            "source_key": "air",
+            "bronze": {
+              "status": "completed",
+              "available": true
+            },
+            "silver": {
+              "status": "completed",
+              "available": true
+            },
+            "gold": {
+              "status": "completed",
+              "available": true
+            }
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "sources": [
+          {
+            "source_key": "air",
+            "bronze": {
+              "status": "completed",
+              "available": true,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "silver": {
+              "status": "completed",
+              "available": true,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "gold": {
+              "status": "completed",
+              "available": true,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.sources[0].bronze",
+        "$.sources[0].silver",
+        "$.sources[0].gold",
+        "$.sources[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "sources": [
+          {
+            "source_key": "air",
+            "bronze": {
+              "status": "completed",
+              "available": true
+            },
+            "silver": {
+              "status": "completed",
+              "available": true
+            },
+            "gold": {
+              "status": "completed",
+              "available": true
+            }
+          }
+        ]
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildStageDetail",
+      "method": "GET",
+      "path": "/builds/{run_id}/stages/{stage}",
+      "status": 200,
+      "example": "BronzeDetail",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "stage": "bronze",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "provider": "datago",
+        "dataset": "air_quality",
+        "fetched_at": "2026-08-15T09:30:02+00:00",
+        "record_count": 25
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "stage": "bronze",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "provider": "datago",
+        "dataset": "air_quality",
+        "fetched_at": "2026-08-15T09:30:02+00:00",
+        "record_count": 25,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "stage": "bronze",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "provider": "datago",
+        "dataset": "air_quality",
+        "fetched_at": "2026-08-15T09:30:02+00:00",
+        "record_count": 25
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildStageDetail",
+      "method": "GET",
+      "path": "/builds/{run_id}/stages/{stage}",
+      "status": 200,
+      "example": "SilverDetail",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "stage": "silver",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "row_count": 25,
+        "schema": [
+          {
+            "name": "station_name",
+            "dtype": "String",
+            "nullable": false,
+            "unique_count": 25,
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "pm10_value",
+            "dtype": "Int64",
+            "nullable": true,
+            "unique_count": 18,
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          }
+        ],
+        "statistics": {
+          "row_count": 25,
+          "null_counts": {
+            "station_name": 0,
+            "pm10_value": 1
+          },
+          "duplicate_rate": 0.0
+        },
+        "validation": {
+          "ok": true,
+          "problems": []
+        },
+        "sample": [
+          {
+            "station_name": "종로구",
+            "pm10_value": 31
+          },
+          {
+            "station_name": "중구",
+            "pm10_value": 28
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "stage": "silver",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "row_count": 25,
+        "schema": [
+          {
+            "name": "station_name",
+            "dtype": "String",
+            "nullable": false,
+            "unique_count": 25,
+            "logical_type": "string",
+            "wire_encoding": "string",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "pm10_value",
+            "dtype": "Int64",
+            "nullable": true,
+            "unique_count": 18,
+            "logical_type": "int64",
+            "wire_encoding": "number",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "statistics": {
+          "row_count": 25,
+          "null_counts": {
+            "station_name": 0,
+            "pm10_value": 1
+          },
+          "duplicate_rate": 0.0,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "validation": {
+          "ok": true,
+          "problems": [],
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "sample": [
+          {
+            "station_name": "종로구",
+            "pm10_value": 31
+          },
+          {
+            "station_name": "중구",
+            "pm10_value": 28
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.schema[0]",
+        "$.schema[1]",
+        "$.statistics",
+        "$.validation",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "stage": "silver",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "row_count": 25,
+        "schema": [
+          {
+            "name": "station_name",
+            "dtype": "String",
+            "nullable": false,
+            "unique_count": 25,
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "pm10_value",
+            "dtype": "Int64",
+            "nullable": true,
+            "unique_count": 18,
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          }
+        ],
+        "statistics": {
+          "row_count": 25,
+          "null_counts": {
+            "station_name": 0,
+            "pm10_value": 1
+          },
+          "duplicate_rate": 0.0
+        },
+        "validation": {
+          "ok": true,
+          "problems": []
+        },
+        "sample": [
+          {
+            "station_name": "종로구",
+            "pm10_value": 31
+          },
+          {
+            "station_name": "중구",
+            "pm10_value": 28
+          }
+        ]
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildStageDetail",
+      "method": "GET",
+      "path": "/builds/{run_id}/stages/{stage}",
+      "status": 200,
+      "example": "GoldDetail",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "stage": "gold",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "row_count": 25,
+        "columns": [
+          "station_name",
+          "pm10_value"
+        ],
+        "splits": null,
+        "exports": [
+          {
+            "kind": "jsonl"
+          }
+        ],
+        "sample": null,
+        "sample_available": false
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "stage": "gold",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "row_count": 25,
+        "columns": [
+          "station_name",
+          "pm10_value"
+        ],
+        "splits": null,
+        "exports": [
+          {
+            "kind": "jsonl",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "sample": null,
+        "sample_available": false,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.exports[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "stage": "gold",
+        "source_key": "air",
+        "status": "completed",
+        "available": true,
+        "row_count": 25,
+        "columns": [
+          "station_name",
+          "pm10_value"
+        ],
+        "splits": null,
+        "exports": [
+          {
+            "kind": "jsonl"
+          }
+        ],
+        "sample": null,
+        "sample_available": false
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getDatasetQualityHistory",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}/quality/history",
+      "status": 200,
+      "example": "AirQualityHistory",
+      "current": {
+        "dataset_id": "seoul-air-quality",
+        "runs": [
+          {
+            "run_id": "air-quality-20260815",
+            "timestamp": "2026-08-15T09:30:07+00:00",
+            "status": "ok",
+            "pass_count": 2,
+            "warn_count": 1,
+            "fail_count": 0,
+            "evaluated_checks": 3,
+            "rule_pass_rate": 0.6666666666666666,
+            "validated_rows": 25
+          },
+          {
+            "run_id": "air-quality-legacy",
+            "timestamp": null,
+            "status": "ok",
+            "pass_count": 0,
+            "warn_count": 0,
+            "fail_count": 0,
+            "evaluated_checks": 0,
+            "rule_pass_rate": null,
+            "validated_rows": null
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "dataset_id": "seoul-air-quality",
+        "runs": [
+          {
+            "run_id": "air-quality-20260815",
+            "timestamp": "2026-08-15T09:30:07+00:00",
+            "status": "ok",
+            "pass_count": 2,
+            "warn_count": 1,
+            "fail_count": 0,
+            "evaluated_checks": 3,
+            "rule_pass_rate": 0.6666666666666666,
+            "validated_rows": 25,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "run_id": "air-quality-legacy",
+            "timestamp": null,
+            "status": "ok",
+            "pass_count": 0,
+            "warn_count": 0,
+            "fail_count": 0,
+            "evaluated_checks": 0,
+            "rule_pass_rate": null,
+            "validated_rows": null,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.runs[0]",
+        "$.runs[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "dataset_id": 12345,
+        "runs": [
+          {
+            "run_id": "air-quality-20260815",
+            "timestamp": "2026-08-15T09:30:07+00:00",
+            "status": "ok",
+            "pass_count": 2,
+            "warn_count": 1,
+            "fail_count": 0,
+            "evaluated_checks": 3,
+            "rule_pass_rate": 0.6666666666666666,
+            "validated_rows": 25
+          },
+          {
+            "run_id": "air-quality-legacy",
+            "timestamp": null,
+            "status": "ok",
+            "pass_count": 0,
+            "warn_count": 0,
+            "fail_count": 0,
+            "evaluated_checks": 0,
+            "rule_pass_rate": null,
+            "validated_rows": null
+          }
+        ]
+      },
+      "broken_path": "$.dataset_id"
+    },
+    {
+      "operation_id": "getBuildQuality",
+      "method": "GET",
+      "path": "/builds/{run_id}/quality",
+      "status": 200,
+      "example": "EvaluatedQuality",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "availability": "available",
+        "evaluated_checks": 2,
+        "quality_results": {
+          "air": [
+            {
+              "source_key": "air",
+              "category": "row_count",
+              "rule": "min_rows",
+              "column": null,
+              "status": "pass",
+              "actual": 25,
+              "threshold": 10,
+              "affected_rows": null,
+              "evaluated_rows": null,
+              "detail": null
+            },
+            {
+              "source_key": "air",
+              "category": "missing",
+              "rule": "max_null_ratio",
+              "column": "pm10_value",
+              "status": "warn",
+              "actual": 0.04,
+              "threshold": 0.01,
+              "affected_rows": 1,
+              "evaluated_rows": 25,
+              "detail": null
+            }
+          ]
+        },
+        "schema_drift": {
+          "air": [
+            {
+              "kind": "column_added",
+              "column": "station_code",
+              "detail": "column added since previous successful run"
+            }
+          ]
+        }
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "availability": "available",
+        "evaluated_checks": 2,
+        "quality_results": {
+          "air": [
+            {
+              "source_key": "air",
+              "category": "row_count",
+              "rule": "min_rows",
+              "column": null,
+              "status": "pass",
+              "actual": 25,
+              "threshold": 10,
+              "affected_rows": null,
+              "evaluated_rows": null,
+              "detail": null,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            {
+              "source_key": "air",
+              "category": "missing",
+              "rule": "max_null_ratio",
+              "column": "pm10_value",
+              "status": "warn",
+              "actual": 0.04,
+              "threshold": 0.01,
+              "affected_rows": 1,
+              "evaluated_rows": 25,
+              "detail": null,
+              "future_optional_field": "added by a later minor contract version"
+            }
+          ]
+        },
+        "schema_drift": {
+          "air": [
+            {
+              "kind": "column_added",
+              "column": "station_code",
+              "detail": "column added since previous successful run",
+              "future_optional_field": "added by a later minor contract version"
+            }
+          ]
+        },
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.quality_results.air[0]",
+        "$.quality_results.air[1]",
+        "$.schema_drift.air[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "availability": "available",
+        "evaluated_checks": 2,
+        "quality_results": {
+          "air": [
+            {
+              "source_key": "air",
+              "category": "row_count",
+              "rule": "min_rows",
+              "column": null,
+              "status": "pass",
+              "actual": 25,
+              "threshold": 10,
+              "affected_rows": null,
+              "evaluated_rows": null,
+              "detail": null
+            },
+            {
+              "source_key": "air",
+              "category": "missing",
+              "rule": "max_null_ratio",
+              "column": "pm10_value",
+              "status": "warn",
+              "actual": 0.04,
+              "threshold": 0.01,
+              "affected_rows": 1,
+              "evaluated_rows": 25,
+              "detail": null
+            }
+          ]
+        },
+        "schema_drift": {
+          "air": [
+            {
+              "kind": "column_added",
+              "column": "station_code",
+              "detail": "column added since previous successful run"
+            }
+          ]
+        }
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildQuality",
+      "method": "GET",
+      "path": "/builds/{run_id}/quality",
+      "status": 200,
+      "example": "LegacyQualityUnavailable",
+      "current": {
+        "run_id": "air-quality-legacy",
+        "availability": "unavailable",
+        "evaluated_checks": 0,
+        "quality_results": {},
+        "schema_drift": {}
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-legacy",
+        "availability": "unavailable",
+        "evaluated_checks": 0,
+        "quality_results": {},
+        "schema_drift": {},
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "availability": "unavailable",
+        "evaluated_checks": 0,
+        "quality_results": {},
+        "schema_drift": {}
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getQualitySummary",
+      "method": "GET",
+      "path": "/quality/summary",
+      "status": 200,
+      "example": "RecentWindow",
+      "current": {
+        "window": "24h",
+        "generated_at": "2026-09-01T09:30:00+00:00",
+        "availability": "available",
+        "total_runs": 7,
+        "evaluated_runs": 5,
+        "pass_runs": 3,
+        "warn_runs": 2,
+        "fail_runs": 1
+      },
+      "with_additive_fields": {
+        "window": "24h",
+        "generated_at": "2026-09-01T09:30:00+00:00",
+        "availability": "available",
+        "total_runs": 7,
+        "evaluated_runs": 5,
+        "pass_runs": 3,
+        "warn_runs": 2,
+        "fail_runs": 1,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "window": 12345,
+        "generated_at": "2026-09-01T09:30:00+00:00",
+        "availability": "available",
+        "total_runs": 7,
+        "evaluated_runs": 5,
+        "pass_runs": 3,
+        "warn_runs": 2,
+        "fail_runs": 1
+      },
+      "broken_path": "$.window"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 200,
+      "example": "AveragePm10Result",
+      "current": {
+        "columns": [
+          "station_name",
+          "avg_pm10"
+        ],
+        "column_meta": [
+          {
+            "name": "station_name",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "avg_pm10",
+            "logical_type": "float64",
+            "wire_encoding": "number"
+          }
+        ],
+        "rows": [
+          {
+            "station_name": "종로구",
+            "avg_pm10": 31.5
+          },
+          {
+            "station_name": "중구",
+            "avg_pm10": 28.0
+          }
+        ],
+        "truncated": false,
+        "execution_ms": 7,
+        "startup_ms": 12,
+        "engine_execution_ms": 5
+      },
+      "with_additive_fields": {
+        "columns": [
+          "station_name",
+          "avg_pm10"
+        ],
+        "column_meta": [
+          {
+            "name": "station_name",
+            "logical_type": "string",
+            "wire_encoding": "string",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "avg_pm10",
+            "logical_type": "float64",
+            "wire_encoding": "number",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "rows": [
+          {
+            "station_name": "종로구",
+            "avg_pm10": 31.5
+          },
+          {
+            "station_name": "중구",
+            "avg_pm10": 28.0
+          }
+        ],
+        "truncated": false,
+        "execution_ms": 7,
+        "startup_ms": 12,
+        "engine_execution_ms": 5,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.column_meta[0]",
+        "$.column_meta[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "columns": {
+          "not": "an array"
+        },
+        "column_meta": [
+          {
+            "name": "station_name",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "avg_pm10",
+            "logical_type": "float64",
+            "wire_encoding": "number"
+          }
+        ],
+        "rows": [
+          {
+            "station_name": "종로구",
+            "avg_pm10": 31.5
+          },
+          {
+            "station_name": "중구",
+            "avg_pm10": 28.0
+          }
+        ],
+        "truncated": false,
+        "execution_ms": 7,
+        "startup_ms": 12,
+        "engine_execution_ms": 5
+      },
+      "broken_path": "$.columns"
+    },
+    {
+      "operation_id": "listWarehouseTables",
+      "method": "GET",
+      "path": "/warehouse/tables",
+      "status": 200,
+      "example": "OneTable",
+      "current": {
+        "tables": [
+          {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "current_snapshot_id": "snap_20260929_01",
+            "revision": 3
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "tables": [
+          {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "current_snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.tables[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "tables": {
+          "not": "an array"
+        }
+      },
+      "broken_path": "$.tables"
+    },
+    {
+      "operation_id": "queryWarehouseTable",
+      "method": "POST",
+      "path": "/warehouse/query",
+      "status": 200,
+      "example": "PinnedCount",
+      "current": {
+        "snapshot": {
+          "table_id": "tbl_7f3a",
+          "logical_name": "seoul-air-quality.air",
+          "snapshot_id": "snap_20260929_01",
+          "revision": 3
+        },
+        "result": {
+          "columns": [
+            "station_name",
+            "pm10",
+            "amount"
+          ],
+          "column_meta": [
+            {
+              "name": "station_name",
+              "logical_type": "string",
+              "wire_encoding": "string"
+            },
+            {
+              "name": "pm10",
+              "logical_type": "int64",
+              "wire_encoding": "number"
+            },
+            {
+              "name": "amount",
+              "logical_type": "decimal",
+              "wire_encoding": "decimal_string"
+            }
+          ],
+          "rows": [
+            {
+              "station_name": "종로구",
+              "pm10": 42,
+              "amount": "12.50"
+            }
+          ],
+          "truncated": false,
+          "execution_ms": 412,
+          "startup_ms": 380,
+          "engine_execution_ms": 12
+        }
+      },
+      "with_additive_fields": {
+        "snapshot": {
+          "table_id": "tbl_7f3a",
+          "logical_name": "seoul-air-quality.air",
+          "snapshot_id": "snap_20260929_01",
+          "revision": 3,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "result": {
+          "columns": [
+            "station_name",
+            "pm10",
+            "amount"
+          ],
+          "column_meta": [
+            {
+              "name": "station_name",
+              "logical_type": "string",
+              "wire_encoding": "string",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            {
+              "name": "pm10",
+              "logical_type": "int64",
+              "wire_encoding": "number",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            {
+              "name": "amount",
+              "logical_type": "decimal",
+              "wire_encoding": "decimal_string",
+              "future_optional_field": "added by a later minor contract version"
+            }
+          ],
+          "rows": [
+            {
+              "station_name": "종로구",
+              "pm10": 42,
+              "amount": "12.50"
+            }
+          ],
+          "truncated": false,
+          "execution_ms": 412,
+          "startup_ms": 380,
+          "engine_execution_ms": 12,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.snapshot",
+        "$.result.column_meta[0]",
+        "$.result.column_meta[1]",
+        "$.result.column_meta[2]",
+        "$.result",
+        "$"
+      ],
+      "required_type_broken": {
+        "snapshot": [
+          "not",
+          "an object"
+        ],
+        "result": {
+          "columns": [
+            "station_name",
+            "pm10",
+            "amount"
+          ],
+          "column_meta": [
+            {
+              "name": "station_name",
+              "logical_type": "string",
+              "wire_encoding": "string"
+            },
+            {
+              "name": "pm10",
+              "logical_type": "int64",
+              "wire_encoding": "number"
+            },
+            {
+              "name": "amount",
+              "logical_type": "decimal",
+              "wire_encoding": "decimal_string"
+            }
+          ],
+          "rows": [
+            {
+              "station_name": "종로구",
+              "pm10": 42,
+              "amount": "12.50"
+            }
+          ],
+          "truncated": false,
+          "execution_ms": 412,
+          "startup_ms": 380,
+          "engine_execution_ms": 12
+        }
+      },
+      "broken_path": "$.snapshot"
+    }
+  ]
+}
