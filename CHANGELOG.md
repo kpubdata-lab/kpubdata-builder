@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- CI refuses imports of kpubdata's private surface (#830, Independence Rule 6). `scripts/check_kpubdata_imports.py` sweeps `src/` and `scripts/` with the AST — imports, `importlib.import_module`/`__import__` and `python -c` source in string literals — and fails on a `_` module segment or a name missing from the installed kpubdata's `__all__`. The 14 private uses left (the verify runner's executor/spec/transport/config, spec lookup in the agent and CLI, `KPubDataConfig` in provider key resolution, `SENSITIVE_PARAM_KEYS` in log redaction) are allowlisted with a reason and kpubdata#667; an entry nothing uses any more fails too, so the list only shrinks.
+
 ### Documentation
 
 - The product is KPubData Builder again (#829), reverting the KPubData Engine name from #779. The README, docs, API contract prose, `info.title` and CLI help say Builder, and the family is described by dependency direction — KPubData is a standalone SDK, Builder its downstream consumer, Studio a visual workspace for Builder — instead of `Core → Engine → Studio`. Wire values such as `core_spec` and `engine_inferred`, SQLAlchemy/query "engine" and every identifier are unchanged; past changelog entries are left as written.

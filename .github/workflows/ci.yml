@@ -56,6 +56,12 @@ jobs:
       - name: Korean comment gate
         run: uv run --no-sources python scripts/check_english_comments.py src tests scripts
 
+      # Independence Rule 6 (#830): Builder imports only kpubdata's public API — names
+      # in the installed kpubdata's __all__, never a `_` module. The remaining private
+      # uses are allowlisted in the script, each naming the kpubdata issue to replace it.
+      - name: kpubdata public-API gate
+        run: uv run --no-sources python scripts/check_kpubdata_imports.py
+
       # The service contract tests pass a deliberate break as long as the document and
       # the code change together. This compares the contract with the base branch's:
       # any normative change must raise info.version, and a break must raise its major
