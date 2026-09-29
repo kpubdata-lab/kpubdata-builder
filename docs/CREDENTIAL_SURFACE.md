@@ -38,7 +38,7 @@
 | 5 | environment fallback (조회) | **남는다, 차단 불가** | `service/providers.py:108` — 아래 참조 |
 | 5b | environment fallback (게시) | 남지만 **차단 가능** | `publish_credentials.py:117` `REQUIRE_OWN_PUBLISH_CREDENTIAL` |
 | 6 | queue payload | 남지 않는다 | `service/jobs.py` 에 credential·token·secret 참조 0건 |
-| 7 | response cache | **남는다(간접)** | 아래 참조 |
+| 7 | response cache | 멀티유저 배포에선 꺼짐 (#684, 심층 방어) | 아래 참조 |
 | 8 | manifest | 남지 않는다 | `spec/serializer.py:18` 이 명시 키를 `<redacted>` 로 치환. 디스크 확인함 |
 | 9 | logs | 남지 않는다 — 게이트가 확인한다 (#686) | 아래 참조. 전에는 **남았다**: httpx 가 요청마다 `?serviceKey=` 가 붙은 URL 을 INFO 로 찍었다 |
 | 10 | temp files | 남지 않는다 | `publishers/kaggle.py:55` — `KAGGLE_CONFIG_DIR` 을 빈 임시 디렉터리로 돌린다 |
@@ -75,16 +75,37 @@ def resolve(self, owner_id: str | None, provider: str) -> ResolvedCredential:
 `#635` 가 게시 쪽만 막은 이유는 그 이슈가 게시에서 출발했기 때문이고, 조회 쪽을
 검토한 결과가 아니다.
 
-## 7. response cache 가 인증을 대체한다
+## 7. response cache 가 인증을 대체하지 않게 한다
 
-`kpubdata` 의 transport cache 키는 method·url·params·headers 에서 만들고,
-credential 값은 **지문으로 치환된다**(`transport/cache.py:228`, `#263`). 즉 캐시
-파일 안에 키 원문은 없다.
+`kpubdata` ≥0.7 의 transport cache 키는 method·url·params·headers 에서 만들고,
+credential 값은 **지문으로 치환되어 키에 들어간다**(`transport/cache.py:224-227`,
+kpubdata#263 — 닫힘). 민감 헤더를 실은 GET 은 아예 캐시하지 않는다. 그래서 현재
+kpubdata 에서는 한 credential 로 받은 응답이 다른 credential 의 같은 질의에 돌아가지
+않는다.
 
-문제는 다른 데 있다. 캐시 키에 credential 지문이 들어간다면 사용자마다 캐시가
-갈리지만, 그렇지 않은 파라미터 조합이면 **A 가 자기 키로 받은 응답을 B 가 같은
-질의로 받는다.** 키는 새지 않지만 **데이터가 샌다** — 캐시가 authorization 을
-대체하는 상태다. 이것이 #684 다.
+서비스는 **그 보장에 기대지 않는다(심층 방어).** 캐시 키 도출이 바뀌거나 어떤 파라미터
+조합에서 지문이 빠지면, A 가 자기 키로 받은 응답을 B 가 같은 질의로 받게 된다 — 키는
+새지 않아도 **데이터가 새고**, 캐시가 authorization 을 대체한다. 또 디스크 캐시는 배포
+모드 전환을 넘어 살아남는다. #684 는 이 두 가능성을 닫는다.
+
+**조치(#684):** 멀티유저 배포 — `OIDC_ISSUER` 또는 `ENFORCE_OWNERSHIP` 가 켜진
+배포 — 에서는 서비스가 만드는 **모든** client 가 `cache=False` 로 생성된다.
+개인 키가 없는 요청, catalog 조회도 예외가 아니며 `KPUBDATA_CACHE=1` 보다
+우선한다. `cache` 인자를 받지 못하는 client factory 는 신뢰하지 않고 거부한다
+(`service/app.py` `_create_client`). 음성 테스트는
+`tests/unit/test_shared_response_cache.py` 에 있다. 단일 사용자 배포의 캐시는
+그대로 둔다 — 자기 자신과 캐시를 공유하는 것은 노출이 아니다.
+
+**여러 사람이 API 키 하나를 공유하는 배포**(Studio 의 API 키 모드 등)는 위 두 스위치로
+멀티유저로 판정되지 않는다. 그런 배포에서는 `KPUBDATA_CACHE` 를 설정하지 않아 캐시를 끈다.
+
+**캐시를 다시 켜려면** 다음을 모두 만족해야 한다.
+
+- 캐시 키가 요청자 credential 지문으로 **분할**된다 — 같은 질의라도 키가 다르면
+  다른 항목이다. 키 없는 요청(서버 기본 키)도 하나의 분할로 취급한다.
+- **메모리 전용**이다 — 디스크 캐시는 프로세스·배포 모드 전환을 넘어 살아남아,
+  단일 사용자 시절에 채운 응답이 멀티유저 배포에서 읽힌다.
+- 위 음성 테스트가 수정 없이 통과한다.
 
 ## 13. 브라우저에 남는 것과 남지 않는 것
 

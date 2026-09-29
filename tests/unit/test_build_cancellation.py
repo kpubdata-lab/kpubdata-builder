@@ -84,7 +84,9 @@ class _FakeClient:
 
 def _service(tmp_path: Path) -> BuilderService:
     client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}, {"id": "2", "v": 20}]})
-    return BuilderService(output_root=tmp_path, client_factory=lambda: client, async_max_workers=1)
+    return BuilderService(
+        output_root=tmp_path, client_factory=lambda **_: client, async_max_workers=1
+    )
 
 
 class _BoundaryProbe:
@@ -426,7 +428,7 @@ class TestPipelineBoundaries:
         """Cancellation does not swallow failures — failure reason stays in manifest errors."""
         service = BuilderService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),  # source fetch fails
+            client_factory=lambda **_: _FakeClient({}),  # source fetch fails
             async_max_workers=1,
         )
 
@@ -603,7 +605,7 @@ class _BlockingCancelService(BuilderService):
     ) -> None:
         super().__init__(
             output_root=output_root,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             async_max_workers=1,
         )
         self._entered = entered

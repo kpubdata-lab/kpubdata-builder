@@ -562,11 +562,16 @@ class BuilderService:
             if not _factory_accepts_keyword(self._client_factory, "provider_keys"):
                 raise RuntimeError("client_factory cannot accept principal provider credentials")
             kwargs["provider_keys"] = provider_keys
+        # A response cache shared between users must never stand in for authorization
+        # (#684). kpubdata >=0.7 fingerprints credentials into its cache key and does not
+        # cache GETs carrying sensitive headers, but the service does not rely on that:
+        # this is defence in depth, and it also stops a disk cache written in one
+        # deployment mode being read after a switch to another. Per-user credentials and
+        # any multi-user deployment therefore get no cache, whatever KPUBDATA_CACHE says —
+        # and a factory that cannot turn it off is refused rather than trusted.
+        if provider_keys or ownership_module.multi_user_mode():
             if not _factory_accepts_keyword(self._client_factory, "cache"):
-                raise RuntimeError("client_factory cannot disable credential response cache")
-            # kpubdata#263 unfixed: credentials not in cache key.
-            # Service clients with per-user credentials disable cache regardless
-            # of configuration.
+                raise RuntimeError("client_factory cannot disable the shared response cache")
             kwargs["cache"] = False
         if timeout is not None and _factory_accepts_keyword(self._client_factory, "timeout"):
             kwargs["timeout"] = timeout

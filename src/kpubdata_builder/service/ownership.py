@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import os
 
-from .auth import Principal, principal_owns
+from .auth import Principal, oidc_enabled, principal_owns
 
 _OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 
@@ -34,6 +34,17 @@ _OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 def enforce_ownership() -> bool:
     """Check if ownership enforcement is enabled (#389). Default off — backward compatible."""
     return os.environ.get(_OWNERSHIP_ENV, "").lower() in ("true", "1")
+
+
+def multi_user_mode() -> bool:
+    """Whether this deployment serves more than one user (#684).
+
+    Either switch means another user's requests reach the same process: OIDC lets
+    anyone on the allowlist log in, and ``ENFORCE_OWNERSHIP`` exists only because
+    runs belong to different people. A single ``X-API-Key`` or dev mode alone is
+    one user.
+    """
+    return oidc_enabled() or enforce_ownership()
 
 
 PERSONAL_WORKSPACE = "ws_personal"

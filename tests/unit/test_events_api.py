@@ -73,7 +73,7 @@ class _FakeClient:
 def _service(tmp_path: Path, *, rows: int = 2) -> BuilderService:
     records = [{"id": str(i), "v": i * 10} for i in range(1, rows + 1)]
     client = _FakeClient({"datago.air_quality": records})
-    return BuilderService(output_root=tmp_path, client_factory=lambda: client)
+    return BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
 
 def _build(service: BuilderService, run_id: str, spec_yaml: str = VALID_SPEC_YAML) -> int:
@@ -448,7 +448,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -477,7 +477,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -503,7 +503,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -529,7 +529,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -566,7 +566,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -600,7 +600,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -634,7 +634,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -661,7 +661,7 @@ class TestActiveAsyncRunEvents:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -699,7 +699,7 @@ class TestActiveAsyncRunEvents:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = BuilderService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
         )
 
         def _broken_executor_submit(*_args: object, **_kwargs: object) -> object:
@@ -767,7 +767,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             completed=completed,
         )
         principal_a = Principal(kind="oidc", identifier="same", owner_id="oidc:owner-A")
@@ -792,7 +792,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             completed=completed,
         )
         principal_a = Principal(kind="oidc", identifier="same", owner_id="oidc:owner-A")
@@ -825,7 +825,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _BlockingAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             entered=entered,
             release=release,
             completed=completed,
@@ -858,7 +858,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             completed=completed,
         )
         secret_owner_id = "oidc:super-secret-owner-hash"
@@ -896,7 +896,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({}),
+            client_factory=lambda **_: _FakeClient({}),
             completed=completed,
         )
         owner = Principal(kind="oidc", identifier="a", owner_id="oidc:owner-a")
@@ -938,7 +938,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             completed=completed,
         )
         principal_a = Principal(kind="oidc", identifier="same", owner_id="oidc:owner-A")
@@ -965,7 +965,7 @@ class TestAsyncManifestOwnerIdPropagation:
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
-            client_factory=lambda: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
+            client_factory=lambda **_: _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]}),
             completed=completed,
         )
         principal_a = Principal(kind="oidc", identifier="same", owner_id="oidc:owner-A")

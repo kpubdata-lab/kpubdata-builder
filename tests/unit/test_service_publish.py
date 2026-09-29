@@ -123,7 +123,7 @@ class _DeferredPublisher(_SpyPublisher):
 
 def _service(tmp_path: Path) -> BuilderService:
     client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}, {"id": "2", "v": 20}]})
-    return BuilderService(output_root=tmp_path, client_factory=lambda: client)
+    return BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
 
 
 def _build(service: BuilderService, run_id: str, spec_yaml: str) -> ServiceResponse:
