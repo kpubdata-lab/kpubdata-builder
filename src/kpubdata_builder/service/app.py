@@ -63,6 +63,7 @@ from .providers import (
     ProviderDescriptor,
     ProviderTestOperation,
     default_provider_test,
+    require_own_provider_credential,
 )
 from .providers_service import ProvidersService
 from .publish_api import PublishApiService
@@ -528,6 +529,13 @@ class BuilderService:
             kwargs["cache"] = False
         if timeout is not None and _factory_accepts_keyword(self._client_factory, "timeout"):
             kwargs["timeout"] = timeout
+        # With REQUIRE_OWN_PROVIDER_CREDENTIAL on, no client may carry the operator's keys
+        # — not even a keyless one, which would read them from the environment itself
+        # (#786). A factory that cannot be told so is refused, not trusted.
+        if require_own_provider_credential():
+            if not _factory_accepts_keyword(self._client_factory, "environment_keys"):
+                raise RuntimeError("client_factory cannot be kept from the operator's credentials")
+            kwargs["environment_keys"] = False
         client = self._client_factory(**kwargs)
         # While this client is open its keys are scrubbed from every log record by value,
         # which catches a key a provider puts in a path segment (#686).

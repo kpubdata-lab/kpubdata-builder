@@ -33,7 +33,11 @@ from ..tabular.wire import encode_rows, encode_value
 from ..uploads import UploadRepository
 from .auth import Principal
 from .build_runs_api import OpenClient
-from .providers import ProviderCredentialConflictError, runtime_provider_catalog
+from .providers import (
+    ProviderCredentialConflictError,
+    ProviderCredentialRequired,
+    runtime_provider_catalog,
+)
 from .redaction import redact_secret_text
 from .responses import ServiceResponse
 from .routes.core import MAX_PREVIEW_LIMIT
@@ -308,6 +312,17 @@ class SpecApiService:
             # No credential owner besides the request principal: a preview is never a
             # queued job acting for someone who has left.
             client, provider_keys = self._open_client(principal, None, provider_names)
+        except ProviderCredentialRequired as exc:
+            # The requester has no key of their own and the operator's may not be used
+            # (#786): an answer, before any client exists.
+            return ServiceResponse(
+                403,
+                {
+                    "error": str(exc),
+                    "code": "provider_credential_required",
+                    "providers": list(exc.providers),
+                },
+            )
         except (ProviderCredentialConflictError, ValueError) as exc:
             return ServiceResponse(400, {"error": str(exc)})
         except Exception:

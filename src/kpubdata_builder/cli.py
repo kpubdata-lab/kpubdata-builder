@@ -377,6 +377,7 @@ def _create_client(
     provider_keys: dict[str, str] | None = None,
     timeout: float | None = None,
     cache: bool | None = None,
+    environment_keys: bool = True,
 ) -> SourceClient:
     """Create kpubdata client with configuration.
 
@@ -385,6 +386,18 @@ def _create_client(
     """
     from kpubdata import Client
 
+    if not environment_keys:
+        # The service asked for a client that must not carry the operator's keys
+        # (REQUIRE_OWN_PROVIDER_CREDENTIAL, #786). from_env would add them from the
+        # environment on its own, so build the client from explicit keys only.
+        return cast(
+            SourceClient,
+            Client(
+                provider_keys=dict(provider_keys or {}),
+                timeout=timeout if timeout is not None else 30.0,
+                cache=bool(cache),
+            ),
+        )
     # Since kpubdata #276, from_env accepts only explicit parameters (**kwargs removed).
     return cast(
         SourceClient,
