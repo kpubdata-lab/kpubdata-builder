@@ -453,11 +453,21 @@ def _run_source_pipeline(
         # public_api/file/url all use identical event vocabulary.
         recorder.stage_started(output_key, "bronze")
         recorder.source_fetch_started(output_key)
+
+        def after_combination(done: int, total: int) -> None:
+            # Each finished combination is a safe boundary (#648): report it, then stop
+            # if cancellation was asked for. Raising here abandons the fetch before
+            # Bronze is written, so a cancelled run keeps no half-fetched source.
+            recorder.source_fetch_progress(output_key, done=done, total=total)
+            if done < total:
+                raise_if_cancelled(cancellation)
+
         bronze = build_bronze_artifact_for_source(
             source,
             client=client,
             upload_repository=upload_repository,
             owner_id=owner_id,
+            on_combination_done=after_combination,
         )
         recorder.source_fetch_completed(output_key, record_count=len(bronze.raw_records))
         fetch_completed = True

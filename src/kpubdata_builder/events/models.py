@@ -35,7 +35,10 @@ RunEventName = Literal[
 
 # source fetch transition (#498 resolver boundary: common to public_api/file/url).
 SourceFetchEventName = Literal[
-    "source_fetch_started", "source_fetch_completed", "source_fetch_failed"
+    "source_fetch_started",
+    "source_fetch_progress",
+    "source_fetch_completed",
+    "source_fetch_failed",
 ]
 
 # medallion stage transition. "export" is BuildSpec.exports execution phase.

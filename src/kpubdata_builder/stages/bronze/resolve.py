@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
 
@@ -52,8 +53,13 @@ def build_bronze_artifact_for_source(
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
     fetched_at: datetime | None = None,
+    on_combination_done: Callable[[int, int], None] | None = None,
 ) -> BronzeArtifact:
-    """fetches per source.kind and creates BronzeArtifact (#498)."""
+    """fetches per source.kind and creates BronzeArtifact (#498).
+
+    ``on_combination_done`` reaches the ``param_grid`` loop of a public_api source
+    (#648); other kinds make one read and never call it.
+    """
     if source.kind == "file":
         return _build_from_upload(
             source, upload_repository=upload_repository, owner_id=owner_id, fetched_at=fetched_at
@@ -75,6 +81,7 @@ def build_bronze_artifact_for_source(
             fetch_params=dict(source.params),
             fetched_at=fetched_at,
             param_combinations=combinations,
+            on_combination_done=on_combination_done,
         )
     # BuildSpec that bypassed loader validation (direct SourceRef construction) also
     # already rejected, but, resolver itself "else is public_api"implicit
