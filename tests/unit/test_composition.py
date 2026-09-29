@@ -911,3 +911,31 @@ def test_run_build_without_composition_is_unaffected(tmp_path: Path) -> None:
         dict[str, JsonValue], json.loads(result.manifest_path.read_text(encoding="utf-8"))
     )
     assert manifest["composition"] is None
+
+
+class TestNaNJoinKeys:
+    """#793: a NaN key is a missing key — counted as null, never matched."""
+
+    def _compose(self, **join: object) -> tuple[object, object]:
+        nan = float("nan")
+        left = _make_silver([{"k": nan, "a": 1}, {"k": nan, "a": 2}, {"k": 1.0, "a": 3}])
+        right = _make_silver([{"k": nan, "b": 4}, {"k": nan, "b": 5}, {"k": 1.0, "b": 6}])
+        return build_composed_gold_package(
+            left_silver=left,
+            right_silver=right,
+            join=JoinSpec(left="l", right="r", left_key="k", right_key="k", **join),  # type: ignore[arg-type]
+            dataset_name="nan_keys",
+        )
+
+    def test_statistics_and_the_join_agree(self) -> None:
+        package, stats = self._compose()
+
+        assert stats.left_null_key_rows == 2  # type: ignore[attr-defined]
+        assert stats.right_null_key_rows == 2  # type: ignore[attr-defined]
+        # Only the real key 1.0 matches: NaN keys no longer pair up into four rows.
+        assert stats.output_row_count == 1  # type: ignore[attr-defined]
+        assert stats.observed_cardinality == "one_to_one"  # type: ignore[attr-defined]
+
+    def test_on_null_key_fail_catches_nan(self) -> None:
+        with pytest.raises(CompositionError, match="null join key"):
+            self._compose(on_null_key="fail")
