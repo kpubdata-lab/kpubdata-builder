@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Engine Service API
-  version: "1.42.0"
+  version: "1.43.0"
   description: >-
     KPubData Engine(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -81,6 +81,7 @@ info:
     v1.41.0 adds optional `semantic`, `display` and `unit` to column metadata (#813, additive; ADR 0019): `ColumnWireInfo`, the `/preview` schema items and `SilverColumnInfo`. They say what a column means, apart from how it is stored (`dtype`, `logical_type`) and sent (`wire_encoding`), and each carries its `origin`. They are metadata only: they never change a column's storage type, wire encoding or values. Absent when nothing describes the column.
     Client compatibility (#814): a response may gain optional fields in any minor version, and a client ignores fields it does not know — `additionalProperties: false` on a response schema describes what this version sends, not what a client should reject. A required field keeps its name and type until the next major version. `contract/fixtures/responses.json` gives every named 2xx response example as sent, with an added unknown field, and with a required field retyped, for a client's contract tests.
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
+    v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
     v1.37.0 lets `POST /build` answer 409 with `warehouse_failures` when every source built but a table commit failed (#787, #788, additive): a build commits against the table revision it started from, so a refresh another build finished meanwhile is a conflict rather than overwritten. The manifest records the same failures.
@@ -2498,6 +2499,107 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /warehouse/rows:
+    post:
+      operationId: readWarehouseRows
+      summary: One page of a pinned warehouse snapshot for a table screen (#815)
+      description: >-
+        Pins the snapshot like `POST /warehouse/query`: `current` (the default) is
+        resolved to a snapshot id once, under a lease, and the response names it. Pass
+        that `snapshot_id` for the next pages and every page reads the same snapshot,
+        whatever refresh is committed in between. Rows are ordered by `sort` and then by
+        their position in the snapshot, so rows that tie on every key keep one order and
+        no page repeats or skips them. Nulls sort last in either direction. That position
+        is valid inside one snapshot only and is not sent. `count` is `exact` or
+        `not_computed` — a count that was not computed is null, never 0. Paging is by
+        offset; `engine_execution_ms` reports what a page cost. Values use the same wire
+        encoding as a query (see `WireEncoding`). Another owner's table is a 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseRowsRequest"
+            examples:
+              FirstPage:
+                summary: The first page of the current snapshot, newest first
+                value:
+                  table: seoul-air-quality.air
+                  page_size: 50
+                  sort:
+                    - {column: measured_at, direction: desc}
+                  filters:
+                    - {column: station_code, op: in, values: ["111121", "111123"]}
+                  count: exact
+      responses:
+        "200":
+          description: The snapshot read, one page of rows, and the count with its status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseRowsResponse"
+              examples:
+                FirstPage:
+                  summary: A first page with more to come
+                  value:
+                    snapshot:
+                      table_id: tbl_7f3a
+                      logical_name: seoul-air-quality.air
+                      snapshot_id: snap_20260929_01
+                      revision: 3
+                    columns: [station_code, measured_at, pm10]
+                    column_meta:
+                      - {name: station_code, logical_type: string, wire_encoding: string}
+                      - {name: measured_at, logical_type: datetime, wire_encoding: string}
+                      - {name: pm10, logical_type: int64, wire_encoding: number}
+                    rows:
+                      - {station_code: "111121", measured_at: "2026-09-29T10:00:00", pm10: 42}
+                    order:
+                      - {column: measured_at, direction: desc}
+                    page: {offset: 0, page_size: 1, returned: 1, has_more: true, next_offset: 1}
+                    count: {status: exact, value: 48}
+                    execution_ms: 431
+                    startup_ms: 390
+                    engine_execution_ms: 14
+        "400":
+          description: >-
+            An invalid request (`invalid_request`) — an unknown field, a column the
+            snapshot lacks, a filter value that does not fit the column's type — or a
+            read that failed (`query_execution_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse (`warehouse_not_configured`), no such table in the caller's
+            workspace (`table_not_found`), no such snapshot of it (`snapshot_not_found`),
+            or a snapshot without a table file (`artifact_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Query capacity is exhausted (`query_busy`); a page takes a query slot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The read timed out (`query_timeout`). No count is reported as 0.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /analyses:
     get:
       operationId: listAnalyses
@@ -3195,6 +3297,157 @@ components:
           description: "`current`, or a snapshot id of this table."
         sql: {type: string, maxLength: 65536}
         limit: {type: integer, minimum: 1, maximum: 500, default: 100}
+
+    WarehouseRowsRequest:
+      type: object
+      additionalProperties: false
+      required: [table]
+      properties:
+        table:
+          type: string
+          description: A table's logical name in the caller's workspace.
+        snapshot:
+          type: string
+          default: current
+          description: "`current` for the first page; the returned `snapshot_id` for the next."
+        offset:
+          type: integer
+          minimum: 0
+          default: 0
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+        columns:
+          type: array
+          minItems: 1
+          description: Columns to return, in this order. All columns when omitted.
+          items: {type: string}
+        sort:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [column]
+            properties:
+              column: {type: string}
+              direction:
+                type: string
+                enum: [asc, desc]
+                default: asc
+        filters:
+          type: array
+          maxItems: 16
+          description: >-
+            Conditions that must all hold. `value` (for eq/ne/lt/lte/gt/gte) and
+            `values` (for `in`, at most 100) are cast to the column's type, so a
+            Decimal, a large integer or a date is sent the way it was received — as its
+            exact text.
+          items:
+            type: object
+            additionalProperties: false
+            required: [column, op]
+            properties:
+              column: {type: string}
+              op:
+                type: string
+                enum: [eq, ne, lt, lte, gt, gte, in, is_null, is_not_null]
+              value:
+                type: [string, number, boolean]
+              values:
+                type: array
+                items:
+                  type: [string, number, boolean]
+        count:
+          type: string
+          enum: [exact, none]
+          description: >-
+            `exact` counts the rows that pass the filters; `none` skips the count. The
+            default is `exact` without filters and `none` with them. Without filters the
+            snapshot's own row count is returned either way.
+
+    WarehouseRowsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - snapshot
+        - columns
+        - column_meta
+        - rows
+        - order
+        - page
+        - count
+        - execution_ms
+        - startup_ms
+        - engine_execution_ms
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [table_id, logical_name, snapshot_id, revision]
+          description: The snapshot this page read. Pass `snapshot_id` for the next page.
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision: {type: integer, minimum: 0}
+        columns:
+          type: array
+          items: {type: string}
+        column_meta:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnWireInfo"
+        rows:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              $ref: "#/components/schemas/JsonValue"
+        order:
+          type: array
+          description: >-
+            The sort keys applied. Ties are then broken by the row's position in the
+            snapshot, which is internal and not a cell key across snapshots.
+          items:
+            type: object
+            additionalProperties: false
+            required: [column, direction]
+            properties:
+              column: {type: string}
+              direction: {type: string, enum: [asc, desc]}
+        page:
+          type: object
+          additionalProperties: false
+          required: [offset, page_size, returned, has_more, next_offset]
+          properties:
+            offset: {type: integer, minimum: 0}
+            page_size: {type: integer, minimum: 1}
+            returned: {type: integer, minimum: 0}
+            has_more: {type: boolean}
+            next_offset:
+              type: [integer, "null"]
+              minimum: 0
+              description: The offset of the next page, or null on the last one.
+        count:
+          type: object
+          additionalProperties: false
+          required: [status, value]
+          properties:
+            status:
+              type: string
+              enum: [exact, estimated, not_computed]
+              description: >-
+                `exact` — counted. `not_computed` — not asked for; `value` is null, not
+                0. `estimated` is reserved and not sent yet.
+            value:
+              type: [integer, "null"]
+              minimum: 0
+        execution_ms: {type: integer, minimum: 0}
+        startup_ms: {type: integer, minimum: 0}
+        engine_execution_ms: {type: integer, minimum: 0}
 
     WarehouseQueryResponse:
       type: object

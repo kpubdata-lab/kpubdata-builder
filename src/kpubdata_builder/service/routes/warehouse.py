@@ -28,6 +28,8 @@ def route(
     del query
     if method == "POST" and path == "/warehouse/query":
         return service.query_warehouse(body, principal=principal)
+    if method == "POST" and path == "/warehouse/rows":
+        return service.read_warehouse_rows(body, principal=principal)
     if method == "GET" and path == "/warehouse/tables":
         return service.list_warehouse_tables(principal=principal)
     if method == "GET" and path.startswith(_PREFIX):
