@@ -37,7 +37,9 @@ card:
     Drug Utilization Review (DUR) product master data from Korea's
     Ministry of Food and Drug Safety (식약처). Contains basic product
     information for drugs registered in the DUR system.
-  license: cc-by-4.0
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15059486/openapi.do"
   attribution: |
     데이터 출처: 식품의약품안전처, 의약품안전사용서비스(DUR)품목정보
     (Ministry of Food and Drug Safety — DUR product information service)

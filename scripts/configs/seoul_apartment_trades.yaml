@@ -3109,7 +3109,9 @@ card:
 
     The target variable for regression tasks is `deal_amount_10k_krw`
     (transaction price in units of 10,000 KRW).
-  license: "cc-by-4.0"
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15126468/openapi.do"
   language:
     - ko
     - en
@@ -3155,21 +3157,20 @@ card:
     - name: apartment_seq
       description: "Unique apartment complex identifier (아파트 일련번호)"
 
-  # Legal & Attribution (공공누리 제1유형)
+  # Legal & Attribution — the source's own terms (#758): 이용허락범위 제한 없음
   attribution: |
     ## Legal & Attribution
 
     This dataset uses "아파트매매 실거래 상세 자료" (Apartment Trade Detailed Data)
     published by the Ministry of Land, Infrastructure and Transport (국토교통부)
-    under Korea Open Government License Type 1 (공공누리 제1유형).
+    on data.go.kr, where its terms of use are stated as 이용허락범위 제한 없음
+    (no restriction on use).
 
     **Korean attribution (한국어 출처표시):**
 
-    > 본 저작물은 '국토교통부'에서 작성하여 공공누리 제1유형으로 개방한
-    > '아파트매매 실거래 상세 자료'를 이용하였으며, 해당 저작물은
-    > '국토교통부, https://www.data.go.kr/data/15126468/openapi.do'에서
-    > 무료로 다운받으실 수 있습니다.
+    > 데이터 출처: 국토교통부, 아파트매매 실거래 상세 자료
+    > 원문: https://www.data.go.kr/data/15126468/openapi.do
+    > 이용허락범위: 제한 없음 (공공데이터포털 표기)
 
-    **License:** [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)
+    **Terms:** as stated by the source — 이용허락범위 제한 없음.
     **Original source:** https://www.data.go.kr/data/15126468/openapi.do
-    **공공누리 정보:** https://www.kogl.or.kr/info/licenseType1.do

@@ -7,7 +7,7 @@
 source:
   provider: datago
   dataset: apt_rent
-  source_url: "https://www.data.go.kr/data/15126471/openapi.do"
+  source_url: "https://www.data.go.kr/data/15126474/openapi.do"
   list_all: true
   fetch_params: []  # Will be populated by generator
 
@@ -68,7 +68,9 @@ card:
 
     Data sourced from Korea's Ministry of Land, Infrastructure and Transport (국토교통부)
     via the official data.go.kr API.
-  license: cc-by-4.0
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15126474/openapi.do"
   language:
     - ko
   tags:
@@ -125,3 +127,5 @@ card:
   attribution: |
     데이터 출처: 국토교통부 아파트 전월세 실거래가 자료
     (Ministry of Land, Infrastructure and Transport — Apartment Rent Transaction Data)
+    원문: https://www.data.go.kr/data/15126474/openapi.do
+    이용허락범위: 제한 없음 (공공데이터포털 표기)

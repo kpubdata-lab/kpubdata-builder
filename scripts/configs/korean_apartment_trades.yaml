@@ -95,7 +95,9 @@ card:
     This dataset is the Korean equivalent of the California Housing dataset —
     a tabular regression benchmark where the target variable is the transaction
     price (`deal_amount_10k_krw`, unit: 10,000 KRW).
-  license: "cc-by-4.0"
+  license: other
+  license_name: korea-public-data-unrestricted
+  license_link: "https://www.data.go.kr/data/15126468/openapi.do"
   attribution: |
     데이터 출처: 국토교통부, 아파트 매매 실거래가 상세 자료
     (Ministry of Land, Infrastructure and Transport — apartment trade details)
