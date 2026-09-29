@@ -99,7 +99,10 @@ What is specific to agents:
   and the `type:*` label follows from the title (POLICY 2.1.3). **Never set `type:*`
   by hand**, and change the title rather than the label when the type was wrong.
 - Pull request titles use the same types; the `PR title` check fails otherwise. The
-  allowed list lives in kpubdata's `scripts/conventional_title.py`.
+  allowed list lives in kpubdata's `scripts/conventional_title.py`, and the rules in
+  kpubdata's POLICY 2.1.3 — the one place all three repositories read. Merges are
+  squash-only, so the PR title becomes the commit title on `main`. Do not put an issue
+  number in a PR title; write `Closes #N` in the body.
 - Leave Priority off when there is no evidence for it. POLICY 8 requires
   `Impact:`, `Blocks:` and `Evidence:` for High and above, and a rating without
   evidence is a wrong rating.

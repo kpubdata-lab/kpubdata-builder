@@ -103,9 +103,13 @@ jobs:
           VALID: ${{ steps.title.outputs.valid }}
           ERROR: ${{ steps.title.outputs.error }}
         run: |
+          # pipefail, and no `| head -1`: a failed `gh api` used to vanish behind the pipe
+          # and read as "no comment yet", which posted the note twice (kpubdata#628).
+          set -euo pipefail
           marker="<!-- title-check -->"
-          existing=$(gh api "repos/${REPO}/issues/${NUMBER}/comments" --paginate \
-            -q ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -1)
+          ids=$(gh api "repos/${REPO}/issues/${NUMBER}/comments" --paginate \
+            -q ".[] | select(.body | startswith(\"${marker}\")) | .id")
+          existing="${ids%%$'\n'*}"
           if [ "${VALID}" = "true" ]; then
             if [ -n "${existing}" ]; then
               gh api -X DELETE "repos/${REPO}/issues/comments/${existing}"
