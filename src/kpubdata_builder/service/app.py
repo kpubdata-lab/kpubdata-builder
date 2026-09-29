@@ -57,6 +57,7 @@ from .auth_throttle import AuthFailureThrottle
 from .build_runs_api import BuildRunsApiService
 from .builds_api import BuildArtifactsApiService
 from .datasets_api import DatasetsApiService
+from .exports_api import ExportsApiService
 from .jobs import AsyncBuildExecutor
 from .monitoring_api import MonitoringApiService
 from .providers import (
@@ -299,12 +300,14 @@ _BuildListEntry = dict[str, str | None]
 #   order, filters, a column selection and a count with its status (#815, additive).
 # 1.43.0 -> 1.44.0: POST /warehouse/aggregate runs named aggregates over a pinned snapshot,
 #   top N after the whole aggregate, mixed units refused or split (#818, additive).
+# 1.44.0 -> 1.45.0: /warehouse/exports writes a pinned query's full result as a bundle with
+#   its manifest and terms, checked by licence and PII policy (#819, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.44.0"
+API_CONTRACT_VERSION = "1.45.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -398,6 +401,11 @@ class BuilderService:
         self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
         self._warehouse_api = WarehouseApiService(
             table_catalog=lambda: self._table_catalog(), engine=self._query_service
+        )
+        self._exports_api = ExportsApiService(
+            output_root=self._output_root,
+            table_catalog=lambda: self._table_catalog(),
+            engine=self._query_service,
         )
         self._analysis_store: AnalysisStore | None = None
         self._analyses_api = AnalysesApiService(
@@ -679,6 +687,29 @@ class BuilderService:
     ) -> ServiceResponse:
         """A validated aggregate over a pinned warehouse snapshot (#818)."""
         return self._warehouse_api.aggregate(body, principal=principal)
+    def create_warehouse_export(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """Export a pinned query's full result through the policy checks (#819)."""
+        return self._exports_api.create(body, principal=principal)
+
+    def list_warehouse_exports(self, *, principal: Principal) -> ServiceResponse:
+        """The caller's unexpired exports, newest first (#819)."""
+        return self._exports_api.list(principal=principal)
+
+    def get_warehouse_export(self, export_id: str, *, principal: Principal) -> ServiceResponse:
+        """One export's status and manifest (#819)."""
+        return self._exports_api.get(export_id, principal=principal)
+
+    def download_warehouse_export(
+        self, export_id: str, *, principal: Principal
+    ) -> ServiceResponse | FileResponse:
+        """An export's bundle, with ownership and expiry checked at download (#819)."""
+        return self._exports_api.download(export_id, principal=principal)
+
+    def delete_warehouse_export(self, export_id: str, *, principal: Principal) -> ServiceResponse:
+        """Delete an export and its file (#819)."""
+        return self._exports_api.delete(export_id, principal=principal)
 
     def create_analysis(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
