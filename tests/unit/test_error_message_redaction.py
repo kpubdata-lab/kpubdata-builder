@@ -64,12 +64,13 @@ class TestCatalogFailure:
     def test_an_upstream_failure_does_not_return_the_request_url(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        import kpubdata_builder.service.app as app_module
+        import kpubdata_builder.service.spec_api as spec_api_module
 
         def _boom(_client: object) -> Any:
             raise RuntimeError(f"connection failed: {_SECRET_URL}")
 
-        monkeypatch.setattr(app_module, "runtime_provider_catalog", _boom)
+        # The catalog lives in the spec authoring service (#596).
+        monkeypatch.setattr(spec_api_module, "runtime_provider_catalog", _boom)
 
         with caplog.at_level(logging.ERROR):
             response = _service(tmp_path).catalog()

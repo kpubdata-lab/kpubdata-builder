@@ -21,36 +21,25 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast, runtime_checkable
-from urllib.parse import urlsplit
-
-import yaml
-from kpubdata.core.models import DatasetRef
+from typing import Protocol, runtime_checkable
 
 from ..credentials import (
     AesGcmCredentialCipher,
     CredentialRepository,
     SQLiteCredentialRepository,
 )
-from ..errors import SpecLoadError, ValidationError
 from ..events import BuildEventStore
 from ..pipeline import (
     DEFAULT_PREVIEW_SEED,
     CancellationProbe,
-    SampleMode,
-    preview_build,
 )
-from ..quality import QualityCheckResult
 from ..query.service import QueryService
-from ..spec import BuildSpec, JsonValue, parse_spec
-from ..spec.validator import validate_spec
+from ..spec import BuildSpec, JsonValue
 from ..stages.bronze.build import SourceClient
 from ..store import make_build_index
 from ..store.artifacts import make_artifact_store
 from ..store.backend import storage_backend
 from ..tabular import DEFAULT_PREVIEW_LIMIT
-from ..tabular.types import SchemaInfo
-from ..tabular.wire import encode_rows, encode_value
 from ..uploads import (
     SQLiteUploadRepository,
     UploadRepository,
@@ -70,21 +59,21 @@ from .jobs import AsyncBuildExecutor
 from .monitoring_api import MonitoringApiService
 from .providers import (
     CredentialResolver,
-    ProviderCredentialConflictError,
     ProviderDescriptor,
     ProviderTestOperation,
     default_provider_test,
-    runtime_provider_catalog,
 )
 from .providers_service import ProvidersService
 from .publish_api import PublishApiService
 from .quality_api import QualityApiService
 from .query_service_api import QueryApiService
-from .redaction import redact_secret_text as _redact_secret_text
 from .responses import FileResponse, ServiceResponse
 from .routes import ROUTE_ADAPTERS
 from .routes import uploads as uploads_route
-from .routes.core import MAX_PREVIEW_LIMIT
+
+# Re-exported: the preview limit was part of this module before #596 moved preview out.
+from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
+from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import UploadsService
 
@@ -151,124 +140,6 @@ def _factory_accepts_keyword(factory: Callable[..., SourceClient], keyword: str)
         parameter.kind is inspect.Parameter.VAR_KEYWORD or parameter.name == keyword
         for parameter in parameters
     )
-
-
-_SECRET_LIKE_PARAM_NAMES = frozenset(
-    {
-        "servicekey",
-        "service_key",
-        "apikey",
-        "api_key",
-        "key",
-        "secret",
-        "token",
-        "password",
-        "authkey",
-        "auth_key",
-    }
-)
-
-
-def _catalog_request_parameters(dataset: DatasetRef) -> list[JsonValue]:
-    """Serialize request parameter descriptions from ``raw_metadata`` as a secret-free
-    allowlist.
-
-    Minimal public metadata for UI to guide required request parameters in advance
-    (``dataset.raw_metadata["request_parameters"]``, or empty array if absent).
-
-    - Only ``dict`` items with non-empty string ``name`` required.
-    - Exclude ``service_key_param`` and secret-like names (serviceKey/apiKey/key/
-      secret/token/password, etc.) — serviceKey/API key input is not required as
-      user request params.
-    - Only include ``name``/``required``(bool)/``description``(str|None)/
-      ``example``(str|None). Do not expose provider internal implementation details.
-    """
-    raw = dataset.raw_metadata.get("request_parameters")
-    if not isinstance(raw, (list, tuple)):
-        return []
-    service_key_param = str(dataset.raw_metadata.get("service_key_param", "")).strip().lower()
-    result: list[JsonValue] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        name_raw = item.get("name")
-        if not isinstance(name_raw, str) or not name_raw.strip():
-            continue
-        name = name_raw.strip()
-        lowered = name.lower()
-        if lowered in _SECRET_LIKE_PARAM_NAMES:
-            continue
-        if service_key_param and lowered == service_key_param:
-            continue
-        description = item.get("description")
-        example = item.get("example")
-        result.append(
-            {
-                "name": name,
-                "required": bool(item.get("required", False)),
-                "description": description
-                if isinstance(description, str) and description
-                else None,
-                "example": example if isinstance(example, str) and example else None,
-            }
-        )
-    return result
-
-
-def _catalog_application(dataset: DatasetRef) -> JsonValue:
-    """Serialize ``raw_metadata.application`` as a secret-free allowlist.
-
-    Public Data Portal may separate API Key issuance from per-Dataset application
-    approval — if ``dataset.raw_metadata["application"]`` (``{"required": bool,
-    "url": str}``) exists, pass it through; otherwise ``null`` (approval status
-    unknown, not assumed unnecessary). Do not expose if ``url`` lacks http(s)
-    scheme (block arbitrary schemes).
-    """
-    raw = dataset.raw_metadata.get("application")
-    if not isinstance(raw, dict):
-        return None
-    required = raw.get("required")
-    if not isinstance(required, bool):
-        return None
-    url = raw.get("url")
-    if not isinstance(url, str) or not url.strip():
-        return None
-    parsed = urlsplit(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return None
-    return {"required": required, "url": url}
-
-
-def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> dict[str, JsonValue]:
-    """Serialize only public/canonical metadata from DatasetRef as an allowlist (#490).
-
-    ``raw_metadata`` may contain provider internals and secret-like values, so
-    never expose directly — only explicitly select fields needed for UI discovery.
-    Datasets without metadata serialize description/source_url/query_support as
-    null, tags/operations as empty arrays (preserve response integrity).
-    """
-    query_support: JsonValue = None
-    if dataset.query_support is not None:
-        query_support = {
-            "pagination": dataset.query_support.pagination.value,
-            "filterable_fields": cast(JsonValue, sorted(dataset.query_support.filterable_fields)),
-            "sortable_fields": cast(JsonValue, sorted(dataset.query_support.sortable_fields)),
-            "time_range": dataset.query_support.time_range,
-            "max_page_size": dataset.query_support.max_page_size,
-        }
-    return {
-        "name": dataset.dataset_key,
-        "title": dataset.name,
-        "description": dataset.description,
-        "tags": cast(JsonValue, sorted(dataset.tags)),
-        "source_url": dataset.source_url,
-        "representation": dataset.representation.value,
-        "operations": cast(JsonValue, sorted(op.value for op in dataset.operations)),
-        "query_support": query_support,
-        "requires_service_key": requires_service_key,
-        "request_parameters": cast(JsonValue, _catalog_request_parameters(dataset)),
-        "application": _catalog_application(dataset),
-    }
 
 
 def _enforce_ownership() -> bool:
@@ -406,27 +277,6 @@ _BuildListEntry = dict[str, str | None]
 API_CONTRACT_VERSION = "1.33.0"
 
 
-def _encodings(schema: SchemaInfo) -> dict[str, str]:
-    """Each column's wire encoding, for values sent outside the sample rows (#735)."""
-    return {column.name: column.wire_encoding for column in schema.columns}
-
-
-def _quality_result_to_json(r: QualityCheckResult) -> dict[str, JsonValue]:
-    """Convert QualityCheckResult to wire JSON (#486)."""
-    return {
-        "source_key": r.source_key,
-        "category": r.category,
-        "rule": r.rule,
-        "column": r.column,
-        "status": r.status,
-        "actual": cast(JsonValue, r.actual),
-        "threshold": r.threshold,
-        "affected_rows": r.affected_rows,
-        "evaluated_rows": r.evaluated_rows,
-        "detail": r.detail,
-    }
-
-
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
 #: (#481, #491). Single mapping to avoid publish path deriving separate state,
 #: preventing divergence from canonical.
@@ -435,22 +285,6 @@ _MANIFEST_TO_PUBLISH_STATUS: dict[str, publish_service.RunStatus] = {
     "failed": "failed",
     "cancelled": "cancelled",
 }
-
-
-def _parse_spec_text(spec_yaml: str) -> BuildSpec:
-    """Parse YAML text to BuildSpec.
-
-    Malformed YAML yields ``yaml.YAMLError``, a user input problem not a server
-    defect. Converted to SpecLoadError so callers treat other parse failures as
-    400 — otherwise sync path returns 500 and async worker never terminates.
-    """
-    try:
-        raw = cast(object, yaml.safe_load(spec_yaml))
-    except yaml.YAMLError as exc:
-        raise SpecLoadError(f"spec is not valid YAML: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise SpecLoadError("top-level YAML must be a mapping")
-    return parse_spec(cast(dict[str, object], raw))
 
 
 class BuilderService:
@@ -561,6 +395,16 @@ class BuilderService:
             build_index=self._build_index,
             async_builds=self._async_builds,
             latency_recorder=self._latency_recorder,
+        )
+        # Spec authoring (#596). Same credential path as the build: `open_client`.
+        self._spec_api = SpecApiService(
+            api_version=API_CONTRACT_VERSION,
+            open_client=lambda principal, owner, providers: self._open_build_client(
+                principal, owner, providers
+            ),
+            catalog_client=lambda: self._create_client(),
+            close_client=_close_request_client,
+            upload_repository_for=lambda spec: self._upload_repository_for(spec),
         )
         # Build execution (#596, #637). Every accessor is a lambda so the lazy stores
         # stay lazy and a method a test replaces on this instance is the one called.
@@ -751,66 +595,17 @@ class BuilderService:
             200, {"service": "kpubdata-builder", "api_version": API_CONTRACT_VERSION}
         )
 
+    # --- spec authoring (#596) -----------------------------------------------------
+    #
+    # Catalog, validation and preview live in SpecApiService; same-name delegates here.
+
     def catalog(self) -> ServiceResponse:
-        """Return available provider/dataset catalog (#416, BL2, #436).
-
-        Uses kpubdata Client's provider-specific public ``datasets.list(provider=...)``.
-        Isolates KRX explicit optional pandas-less case; other errors fail.
-        Provider list from runtime registry (ADR 0011 — Builder not hardcoding).
-        Previously used ``getattr(client, "_catalog")`` private + 8-provider
-        tuple, so new providers weren't discovered (#436). Secrets unexposed;
-        only requirement status shown.
-        """
-        client = self._create_client()
-        try:
-            runtime_catalog = runtime_provider_catalog(client)
-        except Exception:
-            # Upstream exception strings may carry request URLs, and URLs carry
-            # API keys as query parameters (same reason as providers_service).
-            logger.exception("provider catalog unavailable")
-            return ServiceResponse(502, {"error": "catalog unavailable"})
-        finally:
-            _close_request_client(client)
-
-        providers_data: list[JsonValue] = [
-            {
-                "name": item.descriptor.name,
-                "datasets": [
-                    _catalog_dataset_body(
-                        dataset,
-                        item.descriptor.requires_credential
-                        or bool(dataset.raw_metadata.get("service_key_param")),
-                    )
-                    for dataset in item.datasets
-                ],
-            }
-            for item in runtime_catalog
-        ]
-        return ServiceResponse(200, {"providers": providers_data})
+        """Return available provider/dataset catalog (#416, BL2, #436)."""
+        return self._spec_api.catalog()
 
     def validate(self, spec_yaml: str) -> ServiceResponse:
         """Parse and validate BuildSpec."""
-        try:
-            spec = _parse_spec_text(spec_yaml)
-            validate_spec(spec)
-        except SpecLoadError as exc:
-            return ServiceResponse(400, {"status": "error", "error": str(exc)})
-        except ValidationError as exc:
-            body: dict[str, JsonValue] = {"status": "invalid", "problems": list(exc.problems)}
-            if exc.structured_problems:
-                body["structured_problems"] = [
-                    {"code": p.code, "path": p.path, "message": p.message, "hint": p.hint}
-                    for p in exc.structured_problems
-                ]
-            return ServiceResponse(400, body)
-        return ServiceResponse(
-            200,
-            {
-                "status": "valid",
-                "dataset_id": spec.dataset_id,
-                "api_version": API_CONTRACT_VERSION,
-            },
-        )
+        return self._spec_api.validate(spec_yaml)
 
     def preview(
         self,
@@ -821,116 +616,14 @@ class BuilderService:
         seed: int = DEFAULT_PREVIEW_SEED,
         principal: Principal | None = None,
     ) -> ServiceResponse:
-        """Produce each source's schema, sample rows, Source↔Silver diff (no file
-        write, #497)."""
-        if limit < 1 or limit > MAX_PREVIEW_LIMIT:
-            return ServiceResponse(
-                400, {"error": f"'limit' must be a positive integer up to {MAX_PREVIEW_LIMIT}"}
-            )
-        if sample_mode not in ("first", "random"):
-            return ServiceResponse(400, {"error": "'sample_mode' must be 'first' or 'random'"})
-        if not isinstance(seed, int) or isinstance(seed, bool):
-            return ServiceResponse(400, {"error": "'seed' must be an integer"})
-        spec_or_error = self._load_validated(spec_yaml)
-        if isinstance(spec_or_error, ServiceResponse):
-            return spec_or_error
-
-        # Provider credential meaningful only for kind="public_api" sources (#498) —
-        # file/url sources' provider always empty string; mixing confuses credential
-        # resolver with meaningless provider names.
-        provider_names = tuple(
-            source.provider for source in spec_or_error.sources if source.kind == "public_api"
+        """Each source's schema, sample rows and Source↔Silver diff; writes nothing."""
+        return self._spec_api.preview(
+            spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
         )
-        try:
-            provider_keys = (
-                self._credential_resolver.provider_keys(principal.owner_id, provider_names)
-                if principal is not None
-                else {}
-            )
-            client = self._create_client(
-                principal,
-                providers=provider_names,
-                resolved_provider_keys=provider_keys,
-            )
-        except (ProviderCredentialConflictError, ValueError) as exc:
-            return ServiceResponse(400, {"error": str(exc)})
-        except Exception:
-            return ServiceResponse(502, {"error": "provider client unavailable"})
-        try:
-            result = preview_build(
-                spec_or_error,
-                client=client,
-                limit=limit,
-                sample_mode=cast(SampleMode, sample_mode),
-                seed=seed,
-                upload_repository=self._upload_repository_for(spec_or_error),
-                owner_id=principal.owner_id if principal is not None else None,
-            )
-        finally:
-            _close_request_client(client)
-        previews: list[JsonValue] = [
-            {
-                "source_key": p.source_key,
-                "status": p.status,
-                "error": _redact_secret_text(p.error, provider_keys.values()),
-                "schema": [
-                    {
-                        "name": column.name,
-                        "dtype": column.dtype,
-                        "nullable": column.nullable,
-                        "unique_count": column.unique_count,
-                        "logical_type": column.logical_type,
-                        "wire_encoding": column.wire_encoding,
-                    }
-                    for column in p.schema.columns
-                ],
-                # Wire-encoded by column (#735). The diff below was computed on the
-                # unencoded values, so encoding here changes what is sent, not what changed.
-                "sample": list(encode_rows(p.preview.rows, p.schema.columns)),
-                "total_rows": p.preview.total_rows,
-                "statistics": {
-                    "row_count": p.statistics.row_count,
-                    "null_counts": dict(p.statistics.null_counts),
-                    "duplicate_rate": p.statistics.duplicate_rate,
-                },
-                "quality_results": cast(
-                    JsonValue, [_quality_result_to_json(r) for r in p.quality_results]
-                ),
-                # The raw bronze rows go through the same encoder, so a value reads the
-                # same in `source_sample`, `sample` and the diff below (#735).
-                "source_sample": list(encode_rows(p.source_sample, p.schema.columns)),
-                "sample_mode": p.sample_mode,
-                "diff_available": p.diff_available,
-                "diffs": cast(
-                    JsonValue,
-                    [
-                        {
-                            "row": d.row,
-                            "column": d.column,
-                            "before": encode_value(
-                                d.before, _encodings(p.schema).get(d.column, "json")
-                            ),
-                            "after": encode_value(
-                                d.after, _encodings(p.schema).get(d.column, "json")
-                            ),
-                            "transform": d.transform,
-                        }
-                        for d in p.diffs
-                    ],
-                ),
-                "transform_summary": (
-                    {
-                        "changed_cells": p.transform_summary.changed_cells,
-                        "changed_rows": p.transform_summary.changed_rows,
-                    }
-                    if p.transform_summary is not None
-                    else None
-                ),
-                "diff_truncated": p.diff_truncated,
-            }
-            for p in result.previews
-        ]
-        return ServiceResponse(200, {"dataset_id": spec_or_error.dataset_id, "previews": previews})
+
+    def _load_validated(self, spec_yaml: str) -> BuildSpec | ServiceResponse:
+        """Parse and validate spec_yaml; return error ServiceResponse on failure."""
+        return self._spec_api.load_validated(spec_yaml)
 
     # --- build execution (#596, #637) ---------------------------------------------
     #
@@ -1003,7 +696,8 @@ class BuilderService:
     ) -> tuple[SourceClient, Mapping[str, str]]:
         """Resolve the requester's provider credentials and make a client with them.
 
-        One callable for the build path, which never used the two apart (#637). A
+        One callable for the build and preview paths, which never used the two apart
+        (#637, #596). A
         request principal's owner wins over ``credential_owner_id``; with neither, no
         stored credential is looked up.
         """
@@ -1235,23 +929,6 @@ class BuilderService:
         return self._publish_api.reset_publish_receipt(
             run_id, target, destination, principal=principal
         )
-
-    def _load_validated(self, spec_yaml: str) -> BuildSpec | ServiceResponse:
-        """Parse and validate spec_yaml; return error ServiceResponse on failure."""
-        try:
-            spec = _parse_spec_text(spec_yaml)
-            validate_spec(spec)
-        except SpecLoadError as exc:
-            return ServiceResponse(400, {"status": "error", "error": str(exc)})
-        except ValidationError as exc:
-            body: dict[str, JsonValue] = {"status": "invalid", "problems": list(exc.problems)}
-            if exc.structured_problems:
-                body["structured_problems"] = [
-                    {"code": p.code, "path": p.path, "message": p.message, "hint": p.hint}
-                    for p in exc.structured_problems
-                ]
-            return ServiceResponse(400, body)
-        return spec
 
 
 def dispatch(
