@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Engine Service API
-  version: "1.41.0"
+  version: "1.42.0"
   description: >-
     KPubData Engine(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -80,6 +80,7 @@ info:
     v1.40.0 adds `quota` to `CatalogDataset` (#778, additive): the provider's rate limit as the kpubdata spec's licence declares it, verbatim, or null when nothing is declared.
     v1.41.0 adds optional `semantic`, `display` and `unit` to column metadata (#813, additive; ADR 0019): `ColumnWireInfo`, the `/preview` schema items and `SilverColumnInfo`. They say what a column means, apart from how it is stored (`dtype`, `logical_type`) and sent (`wire_encoding`), and each carries its `origin`. They are metadata only: they never change a column's storage type, wire encoding or values. Absent when nothing describes the column.
     Client compatibility (#814): a response may gain optional fields in any minor version, and a client ignores fields it does not know — `additionalProperties: false` on a response schema describes what this version sends, not what a client should reject. A required field keeps its name and type until the next major version. `contract/fixtures/responses.json` gives every named 2xx response example as sent, with an added unknown field, and with a required field retyped, for a client's contract tests.
+    v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
     v1.37.0 lets `POST /build` answer 409 with `warehouse_failures` when every source built but a table commit failed (#787, #788, additive): a build commits against the table revision it started from, so a refresh another build finished meanwhile is a conflict rather than overwritten. The manifest records the same failures.
@@ -1050,6 +1051,24 @@ paths:
                     errors: []
                     row_counts:
                       air: 25
+                    provenance:
+                      - provider: datago
+                        dataset: air_quality
+                        fetched_at: "2026-08-15T09:30:03+00:00"
+                        record_count: 25
+                        data_checksum: "sha256:example-checksum"
+                        api_version: unknown
+                        params: {sidoName: 서울}
+                        fetched_row_count: 25
+                        source_reported_total:
+                          status: reported
+                          value: 25
+                          observed_at: "2026-08-15T09:30:03+00:00"
+                          calls:
+                            - {index: 0, value: 25, status: reported, fetched_row_count: 25, pages: 1}
+                        coverage:
+                          status: complete
+                          reasons: []
                     inputs_fingerprint: "sha256:example-fingerprint"
                     created_by: "oidc:example-user"
                     quality_results:
@@ -3029,6 +3048,123 @@ components:
         row_count: {type: [integer, "null"], minimum: 0}
         created_at: {type: string}
         committed_at: {type: [string, "null"]}
+        coverage:
+          description: >-
+            Whether the fetch behind the snapshot collected what the provider reported
+            (#816). Null when not recorded — a snapshot committed before 1.42.0 or from
+            a source without a fetch record. Null is unknown, not complete.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SnapshotCoverage"
+
+    SourceProvenance:
+      type: object
+      additionalProperties: true
+      required: [provider, dataset, fetched_at, record_count, data_checksum]
+      properties:
+        provider: {type: string}
+        dataset: {type: string}
+        fetched_at: {type: string}
+        record_count: {type: integer, minimum: 0}
+        data_checksum: {type: string}
+        api_version: {type: string}
+        params:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        fetched_row_count:
+          type: integer
+          minimum: 0
+          description: Rows actually fetched (#816). Absent in manifests written before 1.42.0.
+        source_reported_total:
+          $ref: "#/components/schemas/SourceReportedTotal"
+        coverage:
+          $ref: "#/components/schemas/FetchCoverage"
+
+    SourceReportedTotal:
+      type: object
+      additionalProperties: false
+      required: [status, value, observed_at]
+      description: >-
+        What the provider said the total was (#816). Never a sum: pages repeat one
+        call's total, and `param_grid` combinations can overlap, so several calls give
+        `not_summed` with each call's total under `calls`.
+      properties:
+        status:
+          type: string
+          enum: [reported, unknown, inconsistent, not_summed, not_reported]
+          description: >-
+            `reported` — one call, and `value` is its total. `unknown` — the provider
+            stated none. `inconsistent` — pages of one call disagreed. `not_summed` —
+            several calls. `not_reported` — a file or URL source, with no provider total.
+        value:
+          type: [integer, "null"]
+          minimum: 0
+          description: The total when `status` is `reported` (0 is a reported zero); null otherwise.
+        observed_at:
+          type: string
+          description: When the total was read (the fetch's completion time).
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallTotal"
+
+    CallTotal:
+      type: object
+      additionalProperties: false
+      required: [index, value, status, fetched_row_count, pages]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: 0 for a plain source; the combination's position in `param_combinations` otherwise.
+        value: {type: [integer, "null"], minimum: 0}
+        status:
+          type: string
+          enum: [reported, unknown, inconsistent]
+        fetched_row_count: {type: integer, minimum: 0}
+        pages: {type: integer, minimum: 0}
+
+    FetchCoverage:
+      type: object
+      additionalProperties: false
+      required: [status, reasons]
+      description: >-
+        Whether the fetch collected what the provider reported (#816). `complete` —
+        every call returned exactly its reported total. `partial` — some call returned
+        fewer. `unknown` — nothing trustworthy to compare with. Show a partial snapshot
+        as partial wherever its rows are shown, charted or exported.
+      properties:
+        status:
+          type: string
+          enum: [complete, partial, unknown]
+        reasons:
+          type: array
+          items: {type: string}
+
+    SnapshotCoverage:
+      type: object
+      additionalProperties: false
+      required: [status, reasons, fetched_row_count, source_reported_total]
+      description: The fetch coverage recorded with a warehouse snapshot (#816).
+      properties:
+        status:
+          type: string
+          enum: [complete, partial, unknown]
+        reasons:
+          type: array
+          items: {type: string}
+        fetched_row_count: {type: [integer, "null"], minimum: 0}
+        source_reported_total:
+          type: object
+          additionalProperties: false
+          required: [status, value, observed_at]
+          properties:
+            status:
+              type: string
+              enum: [reported, unknown, inconsistent, not_summed, not_reported]
+            value: {type: [integer, "null"], minimum: 0}
+            observed_at: {type: string}
 
     WarehouseTableDetailResponse:
       type: object
@@ -4676,6 +4812,15 @@ components:
           type: object
           additionalProperties:
             type: integer
+        provenance:
+          type: array
+          description: >-
+            Per source fetch: when, with which parameters, how many rows, and — from
+            1.42.0 — what the provider reported and whether the fetch collected it
+            (#816). `row_counts` is the Gold (snapshot) count, which filtering and
+            deduplication can make smaller than `fetched_row_count`.
+          items:
+            $ref: "#/components/schemas/SourceProvenance"
         inputs_fingerprint:
           type: [string, "null"]
         created_by:

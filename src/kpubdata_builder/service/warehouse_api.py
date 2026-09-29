@@ -21,7 +21,9 @@ extends this endpoint rather than that one.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
+from typing import cast
 
 from kpubdata_builder.query.service import QueryService
 from kpubdata_builder.service import ownership
@@ -77,7 +79,23 @@ def _snapshot_body(snapshot: SnapshotRow) -> dict[str, JsonValue]:
         "row_count": snapshot.row_count,
         "created_at": snapshot.created_at,
         "committed_at": snapshot.committed_at,
+        "coverage": _coverage(snapshot.coverage),
     }
+
+
+def _coverage(raw: str | None) -> JsonValue:
+    """The snapshot's recorded fetch coverage (#816), or None when none was recorded.
+
+    None means unknown: a snapshot committed before coverage was recorded, or one whose
+    record cannot be read, is never reported as complete.
+    """
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return cast(JsonValue, value) if isinstance(value, dict) else None
 
 
 class WarehouseApiService:
