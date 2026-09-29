@@ -1,4 +1,4 @@
-# KPubData Builder — Korea Public Data Builder
+# KPubData Engine
 
 **KPubData Builder transforms raw Korean public data into validated, distributable datasets.**
 
