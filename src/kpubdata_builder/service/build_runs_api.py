@@ -42,6 +42,7 @@ from ..store.artifacts import ArtifactStore
 from ..store.build_index import BuildIndex
 from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
+from . import ownership as ownership_module
 from .auth import Principal
 from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
 from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
@@ -197,6 +198,11 @@ class BuildRunsApiService:
                 event_store=self._event_store(),
                 cancellation=cancellation,
                 catalog=self._table_catalog(),
+                # One workspace per owner when ownership is enforced, so one owner's
+                # refresh cannot replace another owner's table (#789).
+                workspace_id=ownership_module.warehouse_workspace(
+                    manifest_owner_id if manifest_owner_id is not None else owner_id
+                ),
                 # A provider that echoes the request would put the key into the data.
                 secret_values=tuple(provider_keys.values()),
             )

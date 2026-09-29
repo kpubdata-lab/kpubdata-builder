@@ -23,6 +23,7 @@ comparison logic singular in auth so both implementations do not drift.
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 from .auth import Principal, principal_owns
@@ -33,6 +34,24 @@ _OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 def enforce_ownership() -> bool:
     """Check if ownership enforcement is enabled (#389). Default off — backward compatible."""
     return os.environ.get(_OWNERSHIP_ENV, "").lower() in ("true", "1")
+
+
+PERSONAL_WORKSPACE = "ws_personal"
+
+
+def warehouse_workspace(owner_id: str | None) -> str:
+    """The warehouse workspace a build by ``owner_id`` commits into (#789).
+
+    Tables are unique per (workspace, logical name). With one shared workspace, two
+    owners building the same spec committed into the same table, and each refresh
+    replaced the other owner's current snapshot. When ownership is enforced, each owner
+    gets a workspace of their own, named from a hash of the owner id (it is a path and
+    a catalog key, so the id itself does not appear). Otherwise nothing changes: a
+    single-user deployment keeps its one personal workspace.
+    """
+    if owner_id is None or not enforce_ownership():
+        return PERSONAL_WORKSPACE
+    return "ws_" + hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:16]
 
 
 def _has_grandfathered_full_access(principal: Principal) -> bool:
