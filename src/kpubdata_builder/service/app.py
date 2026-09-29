@@ -687,6 +687,7 @@ class BuilderService:
     ) -> ServiceResponse:
         """A validated aggregate over a pinned warehouse snapshot (#818)."""
         return self._warehouse_api.aggregate(body, principal=principal)
+
     def create_warehouse_export(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
     ) -> ServiceResponse:
