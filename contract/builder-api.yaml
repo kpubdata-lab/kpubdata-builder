@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.30.0"
+  version: "1.31.0"
   description: >-
     Builder 중심 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -77,6 +77,7 @@ info:
     v1.17.0은 build publish 표면을 추가한다(#491) — `GET /builds/{run_id}/publish/readiness`(ready/blockers/warnings)와 `POST /builds/{run_id}/publish`(idempotent publish receipt, TOCTOU 재검사)를 추가한다(additive). HTTP target은 `huggingface`로 한정한다.
     v1.21.0은 publish 감사 로그 조회를 추가한다(#563, additive) — `GET /builds/{run_id}/publish/audit`(reconcile/reset 이력, 소유권 게이트, receipt 삭제 후에도 조회).
     v1.22.0은 `GET /datasets` 응답에 `total`을 추가한다(#488 후속, additive — 기존 필드/동작은 변경되지 않는다). `total`은 canonical dataset grouping과 ownership 필터를 적용한 뒤 pagination(limit) 이전의 접근 가능한 distinct dataset_id 개수이며, Studio Home의 DATASETS KPI가 `datasets` 길이나 limit을 total로 오인하지 않도록 authoritative aggregate를 제공한다. 같은 릴리스 범위에서 `/catalog` 응답의 `CatalogDataset`에 `request_parameters`와 `application`도 추가한다(additive — 기존 필드/동작은 변경되지 않는다). `raw_metadata`의 요청 파라미터 설명을 secret-free allowlist(`name`/`required`/`description`/`example`)로 직렬화한 것으로, `serviceKey` 등 시크릿 파라미터는 제외된다. Add Data가 선택한 Dataset의 필수 요청 파라미터를 사전에 안내하는 데 쓴다. metadata가 없는 dataset은 빈 배열. `application`은 공공데이터포털처럼 API Key 발급과 Dataset별 활용신청이 별개일 수 있는 경우의 안내(`{required, url}`)로, `raw_metadata.application`에서 그대로 전달하며 없으면 null이다 — Studio는 신청 완료/승인 여부를 추측하지 않는다.
+    v1.31.0 adds `GET /datasets/{dataset_id}/runs/{run_id}` (studio#418, additive): one run found by id rather than in the newest-first page `/runs` returns. The server decides membership and ownership — 404 when no run with that id belongs to the dataset, 403 when it does but not to the caller — so a permalink to an older run opens, and a client can tell a missing run from a forbidden one.
     v1.30.0 adds `logical_type` and `wire_encoding` to column metadata (#735, additive): `QueryResponse.column_meta`, the `/preview` schema items and `SilverColumnInfo`. A column with `wire_encoding: decimal_string` sends its values as exact decimal text — every Decimal column, and an integer column holding any value outside ±(2^53−1) — because a JSON number is read as a double and loses them. In-range integers and floats stay JSON numbers. Non-finite floats are sent as null. Which columns are identifiers is not decided here (#702).
     v1.29.0은 `POST /build` 응답에 `materialized` 를 추가한다(#703, additive) — 웨어하우스가 설정된 배포에서만 나타나고, source 별로 커밋된 테이블 snapshot 을 담는다. **설정되지 않은 배포에서는 키가 아예 없다** — 빈 객체는 "커밋된 것이 없다" 를 주장하고, 호출자는 그것을 "애초에 요청하지 않았다" 와 구별할 수 없다.
 
@@ -1421,6 +1422,59 @@ paths:
                   summary: run history를 조회할 수 없는 dataset
                   value:
                     error: "dataset not found: unknown-dataset"
+
+  /datasets/{dataset_id}/runs/{run_id}:
+    get:
+      operationId: getDatasetRun
+      summary: One run of a dataset by id, not limited to the newest page (studio#418)
+      description: >-
+        `/datasets/{dataset_id}/runs` returns the newest runs only, so a permalink to an
+        older run cannot be judged from it. This finds the run directly. Membership and
+        ownership are decided here, not by the client: 404 when no run with this id
+        belongs to the dataset (missing, or another dataset's run), 403 when it belongs
+        to the dataset but not to the caller.
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: The run, in the same shape as an item of `/runs`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetRunResponse"
+              examples:
+                OlderRun:
+                  summary: a run older than the newest page
+                  value:
+                    dataset_id: seoul-air-quality
+                    run:
+                      run_id: air-quality-20260101
+                      status: ok
+                      started_at: "2026-01-01T09:30:00+00:00"
+                      finished_at: "2026-01-01T09:30:07+00:00"
+                      spec_digest: null
+                      created_by: "oidc:example-user"
+        "400":
+          description: dataset_id is empty or run_id is not a safe path segment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The run belongs to the dataset but not to the caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No run with this id belongs to the dataset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /builds/{run_id}/events:
     get:
@@ -4501,6 +4555,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DatasetRunSummary"
+
+    DatasetRunResponse:
+      type: object
+      additionalProperties: false
+      required: [dataset_id, run]
+      properties:
+        dataset_id:
+          type: string
+        run:
+          $ref: "#/components/schemas/DatasetRunSummary"
 
     StageState:
       type: object

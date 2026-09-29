@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
 from ...spec import JsonValue
+from ...stages._path_safety import validate_path_segment
 from ..auth import Principal
 from ..responses import ServiceResponse
 from ._parsing import positive_limit_query
@@ -34,6 +35,19 @@ def route(
         return None
 
     raw_rest = path[len("/datasets/") :]
+    # /datasets/{dataset_id}/runs/{run_id} (studio#418). A run_id has no slash, so the
+    # last "/runs/" splits it off even when the dataset_id itself contains one.
+    head, sep, raw_run_id = raw_rest.rpartition("/runs/")
+    if sep and raw_run_id and "/" not in raw_run_id:
+        dataset_id = unquote(head)
+        run_id = unquote(raw_run_id)
+        if not dataset_id:
+            return ServiceResponse(400, {"error": "dataset_id must not be empty"})
+        try:
+            validate_path_segment(run_id, field_name="run_id")
+        except ValueError as exc:
+            return ServiceResponse(400, {"error": str(exc)})
+        return service.get_dataset_run(dataset_id, run_id, principal=principal)
     is_runs_route = raw_rest.endswith("/runs")
     is_quality_history_route = raw_rest.endswith("/quality/history")
     if is_runs_route:

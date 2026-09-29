@@ -65,6 +65,13 @@ class DatasetsApiService:
 
     # --- Run record collection (shared with quality domain) ---
 
+    def _canonical_records(self) -> list[datasets_service.RunRecord]:
+        """Every canonical run with a dataset_id, before any ownership filter."""
+        index_records = datasets_service.collect_run_records_from_index(self._build_index) or []
+        filesystem_records = datasets_service.collect_run_records_from_filesystem(self._output_root)
+        records = datasets_service.merge_run_records(index_records, filesystem_records)
+        return datasets_service.retain_canonical_run_records(self._output_root, records)
+
     def dataset_records(self, principal: Principal | None) -> list[datasets_service.RunRecord]:
         """Get all accessible runs with dataset_id (index-first, filesystem fallback).
 
@@ -72,12 +79,8 @@ class DatasetsApiService:
         users' runs with the same dataset_id do not mix into latest candidates
         (#488 semantics D).
         """
-        index_records = datasets_service.collect_run_records_from_index(self._build_index) or []
-        filesystem_records = datasets_service.collect_run_records_from_filesystem(self._output_root)
-        records = datasets_service.merge_run_records(index_records, filesystem_records)
-        records = datasets_service.retain_canonical_run_records(self._output_root, records)
         return datasets_service.filter_ownership(
-            records, principal, enforce=self._enforce_ownership()
+            self._canonical_records(), principal, enforce=self._enforce_ownership()
         )
 
     def dataset_records_for(
@@ -189,18 +192,41 @@ class DatasetsApiService:
         if not records:
             return ServiceResponse(404, {"error": f"dataset not found: {dataset_id}"})
         ordered = sorted(records, key=datasets_service.sort_key, reverse=True)[:limit]
-        runs: list[JsonValue] = [
-            {
-                "run_id": r.run_id,
-                "status": r.status,
-                "started_at": r.started_at,
-                "finished_at": r.finished_at,
-                "spec_digest": r.spec_digest,
-                "created_by": r.created_by,
-            }
-            for r in ordered
-        ]
+        runs: list[JsonValue] = [_run_item(r) for r in ordered]
         return ServiceResponse(200, {"dataset_id": dataset_id, "runs": runs})
+
+    def get_dataset_run(
+        self, dataset_id: str, run_id: str, *, principal: Principal | None = None
+    ) -> ServiceResponse:
+        """Return one run of dataset_id, found directly rather than in a page (studio#418).
+
+        The runs list returns the most recent `limit` runs. A permalink to an older run is
+        still valid, and the list cannot say so; this can. The server decides both facts a
+        client must not decide for itself:
+
+            404  no run with this id belongs to this dataset — missing, or another
+                 dataset's run. Both mean "this URL does not open".
+            403  the run belongs to the dataset, but not to this principal.
+
+        The body is one item of the runs list, so a client treats both the same way.
+        """
+        record = next(
+            (
+                r
+                for r in self._canonical_records()
+                if r.run_id == run_id and r.dataset_id == dataset_id
+            ),
+            None,
+        )
+        if record is None:
+            return ServiceResponse(
+                404, {"error": f"run not found in dataset {dataset_id}: {run_id}"}
+            )
+        if not datasets_service.filter_ownership(
+            [record], principal, enforce=self._enforce_ownership()
+        ):
+            return ServiceResponse(403, {"error": "forbidden: not run owner"})
+        return ServiceResponse(200, {"dataset_id": dataset_id, "run": _run_item(record)})
 
     def get_dataset_quality_history(
         self, dataset_id: str, *, limit: int = 30, principal: Principal | None = None
@@ -220,6 +246,18 @@ class DatasetsApiService:
             manifest = self._store.get_manifest(r.run_id) or {}
             runs.append(cast(JsonValue, quality_service.summarize_run_quality(r, manifest)))
         return ServiceResponse(200, {"dataset_id": dataset_id, "runs": runs})
+
+
+def _run_item(record: datasets_service.RunRecord) -> JsonValue:
+    """One run as the runs list and the direct lookup both send it."""
+    return {
+        "run_id": record.run_id,
+        "status": record.status,
+        "started_at": record.started_at,
+        "finished_at": record.finished_at,
+        "spec_digest": record.spec_digest,
+        "created_by": record.created_by,
+    }
 
 
 __all__ = ["DatasetsApiService", "QUALITY_WINDOW_MTIME_MARGIN_SECONDS"]
