@@ -840,9 +840,9 @@ class TestPreviewWireSerialization:
 
     dict returned by ``BuilderService.preview()`` contains Python
     objects directly (same as #440+ existing ``sample`` field pattern).
-    Check actual HTTP response bytes to verify ``service/http.py``
-    ``json.dumps(default=str)`` correctly applied to ``source_sample``/``diffs``.
-    Reuse existing path without new serializer.
+    Check actual HTTP response bytes: ``source_sample``, ``sample`` and ``diffs`` are
+    wire-encoded by ``tabular/wire.py`` (#735) — dates ISO 8601, Decimals and
+    out-of-range integers as exact decimal text.
     """
 
     def _post_preview(
@@ -895,15 +895,15 @@ class TestPreviewWireSerialization:
         assert source_row["ratio"] == 1.5
         assert source_row["active"] is True
         assert source_row["label"] == "seoul"
-        # date/naive datetime go through http.py json.dumps(default=str) → str()
-        # Becomes space-separated string — same rule as existing sample field (#497
-        # Reuse only; don't create new rules).
+        # Dates and datetimes are ISO 8601 in source_sample and sample alike — the same
+        # rule as /query and the silver stage sample (#735). Before it, /preview sent
+        # str() with a space separator while the other two paths sent ISO.
         assert source_row["d"] == "2025-01-01"
-        assert source_row["ts"] == "2025-01-01 12:30:00"
+        assert source_row["ts"] == "2025-01-01T12:30:00"
 
         transformed_row = cast(dict[str, object], cast(list[object], preview["sample"])[0])
         assert transformed_row["d"] == "2025-01-01"
-        assert transformed_row["ts"] == "2025-01-01 12:30:00"
+        assert transformed_row["ts"] == "2025-01-01T12:30:00"
 
     def test_timezone_aware_datetime_survives_the_wire(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -927,9 +927,9 @@ class TestPreviewWireSerialization:
         # source_sample exposes bronze raw record as-is, preserving original KST offset
         # Preserved; Silver (transformed) normalized by polars to UTC — KST 21:30 and
         # UTC 12:30 is same instant so no diff (values equal), but representations differ
-        # Verify each str() with different offset serializes accurately.
-        assert source_row["tz"] == "2025-01-01 21:30:00+09:00"
-        assert transformed_row["tz"] == "2025-01-01 12:30:00+00:00"
+        # Verify each is ISO 8601 with its own offset (#735).
+        assert source_row["tz"] == "2025-01-01T21:30:00+09:00"
+        assert transformed_row["tz"] == "2025-01-01T12:30:00+00:00"
 
     def test_diff_before_after_carry_wire_correct_types(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

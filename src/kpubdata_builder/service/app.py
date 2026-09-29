@@ -54,6 +54,8 @@ from ..store import make_build_index
 from ..store.artifacts import make_artifact_store
 from ..store.backend import storage_backend
 from ..tabular import DEFAULT_PREVIEW_LIMIT
+from ..tabular.types import SchemaInfo
+from ..tabular.wire import encode_rows, encode_value
 from ..uploads import (
     SQLiteUploadRepository,
     UploadRepository,
@@ -415,7 +417,16 @@ _BuildListEntry = dict[str, str | None]
 # repeatedly, concatenating results into one dataset. Expansion order is contract
 # (by key name, last key fastest, declaration order within axes) — order changes
 # break Bronze bytes, breaking rebuild determinism.
-API_CONTRACT_VERSION = "1.29.0"
+# 1.29.0 -> 1.30.0: column metadata gains logical_type and wire_encoding (#735,
+#   additive) on /query (column_meta), /preview schema items and SilverColumnInfo.
+#   Decimal columns and integer columns holding a value outside ±(2**53 - 1) are sent
+#   as exact decimal text, because a JSON number is read as a double.
+API_CONTRACT_VERSION = "1.30.0"
+
+
+def _encodings(schema: SchemaInfo) -> dict[str, str]:
+    """Each column's wire encoding, for values sent outside the sample rows (#735)."""
+    return {column.name: column.wire_encoding for column in schema.columns}
 
 
 def _quality_result_to_json(r: QualityCheckResult) -> dict[str, JsonValue]:
@@ -866,10 +877,14 @@ class BuilderService:
                         "dtype": column.dtype,
                         "nullable": column.nullable,
                         "unique_count": column.unique_count,
+                        "logical_type": column.logical_type,
+                        "wire_encoding": column.wire_encoding,
                     }
                     for column in p.schema.columns
                 ],
-                "sample": list(p.preview.rows),
+                # Wire-encoded by column (#735). The diff below was computed on the
+                # unencoded values, so encoding here changes what is sent, not what changed.
+                "sample": list(encode_rows(p.preview.rows, p.schema.columns)),
                 "total_rows": p.preview.total_rows,
                 "statistics": {
                     "row_count": p.statistics.row_count,
@@ -879,7 +894,9 @@ class BuilderService:
                 "quality_results": cast(
                     JsonValue, [_quality_result_to_json(r) for r in p.quality_results]
                 ),
-                "source_sample": list(p.source_sample),
+                # The raw bronze rows go through the same encoder, so a value reads the
+                # same in `source_sample`, `sample` and the diff below (#735).
+                "source_sample": list(encode_rows(p.source_sample, p.schema.columns)),
                 "sample_mode": p.sample_mode,
                 "diff_available": p.diff_available,
                 "diffs": cast(
@@ -888,8 +905,12 @@ class BuilderService:
                         {
                             "row": d.row,
                             "column": d.column,
-                            "before": d.before,
-                            "after": d.after,
+                            "before": encode_value(
+                                d.before, _encodings(p.schema).get(d.column, "json")
+                            ),
+                            "after": encode_value(
+                                d.after, _encodings(p.schema).get(d.column, "json")
+                            ),
                             "transform": d.transform,
                         }
                         for d in p.diffs

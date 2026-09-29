@@ -155,10 +155,12 @@ def test_examples_are_secret_safe_and_have_no_internal_absolute_paths() -> None:
     assert credential == {"credential": "replace-with-your-provider-key"}
 
 
-def test_query_example_has_main_1_9_0_result_fields() -> None:
+def test_query_example_has_the_current_result_fields() -> None:
+    # 1.9.0 added the timing fields; 1.30.0 added column_meta (#735).
     result = _example("/query", "post", "response:200", "AveragePm10Result")
     assert set(result) == {
         "columns",
+        "column_meta",
         "rows",
         "truncated",
         "execution_ms",
@@ -211,6 +213,10 @@ class _ExampleQueryService:
             7,
             12,
             5,
+            (
+                {"name": "station_name", "logical_type": "string", "wire_encoding": "string"},
+                {"name": "avg_pm10", "logical_type": "float64", "wire_encoding": "number"},
+            ),
         )
 
 

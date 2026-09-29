@@ -912,6 +912,27 @@ class TestResponseConformance:
         assert resp.status_code == 200
         _assert_conforms(resp, "/preview", "POST")
 
+    def test_preview_200_keeps_integer_precision(self, tmp_path: Path) -> None:
+        # #735: /preview sends an out-of-range integer column as exact decimal text and
+        # says so in the schema; an in-range column stays a JSON number.
+        client = _FakeClient(
+            {"datago.air_quality": [{"id": 9007199254740993, "v": 10}, {"id": 1, "v": 20}]}
+        )
+        service = BuilderService(output_root=tmp_path, client_factory=lambda: client)
+
+        resp = dispatch(service, "POST", "/preview", {"spec": _CONFORM_SPEC_YAML, "limit": 2})
+
+        assert resp.status_code == 200
+        _assert_conforms(resp, "/preview", "POST")
+        preview = cast(list[dict[str, JsonValue]], resp.body["previews"])[0]
+        schema = cast(list[dict[str, JsonValue]], preview["schema"])
+        assert {c["name"]: c["wire_encoding"] for c in schema} == {
+            "id": "decimal_string",
+            "v": "number",
+        }
+        sample = cast(list[dict[str, JsonValue]], preview["sample"])
+        assert sample[0] == {"id": "9007199254740993", "v": 10}
+
     def test_preview_200_source_failure(self, tmp_path: Path) -> None:
         resp = dispatch(
             _conform_service(tmp_path),

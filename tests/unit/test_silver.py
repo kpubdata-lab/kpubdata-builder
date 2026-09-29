@@ -252,6 +252,31 @@ class TestPersistSilverDataset:
         rows = cast(list[dict[str, JsonValue]], preview["rows"])
         assert rows[0]["d"] == "2025-01-01"
 
+    def test_stage_sample_keeps_precision_and_records_the_encoding(self, tmp_path: Path) -> None:
+        # #735: preview.json is served as stage detail's sample. An out-of-range integer
+        # and a Decimal are stored as exact decimal text, and schema.json says so. A
+        # Decimal column used to make this persist step raise TypeError.
+        from decimal import Decimal
+
+        bronze = _bronze(
+            (
+                {"n": 9007199254740993, "amount": Decimal("12.50")},
+                {"n": 1, "amount": Decimal("0.10")},
+            )
+        )
+        dataset = build_silver_dataset(bronze)
+
+        result = persist_silver_dataset(dataset, output_root=tmp_path, run_id="run1")
+
+        preview = cast(
+            dict[str, JsonValue], json.loads(result.preview_path.read_text(encoding="utf-8"))
+        )
+        rows = cast(list[dict[str, JsonValue]], preview["rows"])
+        assert rows[0] == {"n": "9007199254740993", "amount": "12.50"}
+        schema = json.loads(result.schema_path.read_text(encoding="utf-8"))
+        encodings = {c["name"]: c["wire_encoding"] for c in schema["columns"]}
+        assert encodings == {"n": "decimal_string", "amount": "decimal_string"}
+
     def test_serializes_naive_datetime_values_as_iso_strings(self, tmp_path: Path) -> None:
         # Columns cast to naive datetime in preview appear as ISO string without offset
         # verify serialization (#97 datetime regression).

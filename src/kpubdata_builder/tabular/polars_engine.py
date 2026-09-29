@@ -15,6 +15,7 @@ import polars as pl
 
 from .convert import dataframe_to_records, records_to_dataframe
 from .types import ColumnInfo, PreviewSlice, SchemaInfo, TableStatistics
+from .wire import logical_type, wire_encoding
 
 DEFAULT_PREVIEW_LIMIT = 5
 
@@ -37,6 +38,8 @@ def infer_schema(df: pl.DataFrame) -> SchemaInfo:
             dtype=str(dtype),
             nullable=df.get_column(name).null_count() > 0,
             unique_count=df.get_column(name).n_unique(),
+            logical_type=logical_type(dtype),
+            wire_encoding=wire_encoding(df.get_column(name)),
         )
         for name, dtype in df.schema.items()
     )

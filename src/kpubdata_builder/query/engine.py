@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import multiprocessing
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import date, datetime
-from datetime import time as time_value
-from decimal import Decimal
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -32,24 +28,6 @@ class QueryTimeoutError(QueryExecutionError):
 
 
 MAX_QUERY_RESPONSE_BYTES = 8 * 1024 * 1024
-
-
-def _json_value(value: object) -> JsonValue:
-    if value is None or isinstance(value, (str, bool, int)):
-        return cast(JsonValue, value)
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, (date, datetime, time_value)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, bytes):
-        return value.hex()
-    if isinstance(value, list):
-        return [_json_value(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    return str(value)
 
 
 def _elapsed_ms(started_ns: int, ended_ns: int | None = None) -> int:
@@ -82,13 +60,17 @@ def _query_worker(
         context = pl.SQLContext({"dataset": frame}, eager=False, register_globals=False)
         result = context.execute(bounded_sql).collect()
         engine_execution_ms = _elapsed_ms(engine_started_ns)
-        rows = [
-            {str(key): _json_value(value) for key, value in row.items()}
-            for row in result.to_dicts()
-        ]
+        from ..tabular.polars_engine import infer_schema
+        from ..tabular.wire import column_meta, encode_rows
+
+        # Wire-encoded by column (#735): a Decimal or an out-of-range integer arrives as
+        # its exact decimal text, and `column_meta` says which columns that applies to.
+        columns = infer_schema(result).columns
+        rows = list(encode_rows(result.to_dicts(), columns))
         payload = {
             "ok": True,
             "columns": list(result.columns),
+            "column_meta": column_meta(columns),
             "rows": rows[:limit],
             "truncated": len(rows) > limit,
             "startup_ms": startup_ms,
@@ -144,10 +126,12 @@ class QueryEngine:
             if not isinstance(payload, dict) or payload.get("ok") is not True:
                 raise QueryExecutionError("query execution failed")
             columns = payload.get("columns")
+            meta = payload.get("column_meta")
             rows = payload.get("rows")
             truncated = payload.get("truncated")
             if (
                 not isinstance(columns, list)
+                or not isinstance(meta, list)
                 or not isinstance(rows, list)
                 or not isinstance(truncated, bool)
             ):
@@ -157,6 +141,7 @@ class QueryEngine:
             execution_ms = _elapsed_ms(started_ns)
             result = QueryResult(
                 columns=tuple(str(column) for column in columns),
+                column_meta=tuple(cast(dict[str, JsonValue], item) for item in meta),
                 rows=tuple(cast(dict[str, JsonValue], row) for row in rows),
                 truncated=truncated,
                 execution_ms=execution_ms,
