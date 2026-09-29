@@ -894,7 +894,9 @@ class BuilderService:
                 "quality_results": cast(
                     JsonValue, [_quality_result_to_json(r) for r in p.quality_results]
                 ),
-                "source_sample": list(p.source_sample),
+                # The raw bronze rows go through the same encoder, so a value reads the
+                # same in `source_sample`, `sample` and the diff below (#735).
+                "source_sample": list(encode_rows(p.source_sample, p.schema.columns)),
                 "sample_mode": p.sample_mode,
                 "diff_available": p.diff_available,
                 "diffs": cast(

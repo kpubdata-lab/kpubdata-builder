@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Values no longer lose precision on the way to a client (#735). `/query`, `/preview` and the silver stage sample send every Decimal column, and any integer column holding a value outside ±(2^53−1), as exact decimal text: `9007199254740993` used to arrive as `…992`, and `Decimal("0.1")` as `0.1000000000000000055…`. In-range integers and floats are still JSON numbers. Column metadata gains `logical_type` and `wire_encoding` so a client knows which columns arrive as text (`QueryResponse.column_meta`, API contract 1.30.0). Non-finite floats are sent as `null`, and a Decimal column no longer makes the silver sample write fail.
+- Values no longer lose precision on the way to a client (#735). `/query`, `/preview` and the silver stage sample send every Decimal column, and any integer column holding a value outside ±(2^53−1), as exact decimal text: `9007199254740993` used to arrive as `…992`, and `Decimal("0.1")` as `0.1000000000000000055…`. In-range integers and floats are still JSON numbers. Column metadata gains `logical_type` and `wire_encoding` so a client knows which columns arrive as text (`QueryResponse.column_meta`, API contract 1.30.0). Non-finite floats are sent as `null`, and a Decimal column no longer makes the silver sample write fail. **Wire change:** `/preview` dates and datetimes in `sample`, `source_sample` and the diff are now ISO 8601 (`2025-01-01T12:30:00`), matching `/query` and the stage sample; they were `str()` output with a space separator.
 
 ## v0.4.0 — 2026-09-28
 

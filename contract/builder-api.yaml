@@ -667,10 +667,14 @@ paths:
                             dtype: String
                             nullable: false
                             unique_count: 2
+                            logical_type: string
+                            wire_encoding: string
                           - name: pm10_value
                             dtype: Int64
                             nullable: true
                             unique_count: 2
+                            logical_type: int64
+                            wire_encoding: number
                         sample:
                           - station_name: 종로구
                             pm10_value: 31
@@ -1844,10 +1848,14 @@ paths:
                         dtype: String
                         nullable: false
                         unique_count: 25
+                        logical_type: string
+                        wire_encoding: string
                       - name: pm10_value
                         dtype: Int64
                         nullable: true
                         unique_count: 18
+                        logical_type: int64
+                        wire_encoding: number
                     statistics:
                       row_count: 25
                       null_counts:
@@ -2142,6 +2150,9 @@ paths:
                   summary: bounded row 결과와 현재 1.9.0 실행 시간 필드
                   value:
                     columns: [station_name, avg_pm10]
+                    column_meta:
+                      - {name: station_name, logical_type: string, wire_encoding: string}
+                      - {name: avg_pm10, logical_type: float64, wire_encoding: number}
                     rows:
                       - station_name: 종로구
                         avg_pm10: 31.5

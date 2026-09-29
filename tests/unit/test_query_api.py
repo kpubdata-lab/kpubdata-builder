@@ -81,6 +81,7 @@ def test_query_response_contains_only_documented_result_fields(
     assert response.status_code == 200
     assert set(cast(dict[str, JsonValue], response.body)) == {
         "columns",
+        "column_meta",
         "rows",
         "truncated",
         "execution_ms",

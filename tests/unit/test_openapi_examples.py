@@ -211,6 +211,10 @@ class _ExampleQueryService:
             7,
             12,
             5,
+            (
+                {"name": "station_name", "logical_type": "string", "wire_encoding": "string"},
+                {"name": "avg_pm10", "logical_type": "float64", "wire_encoding": "number"},
+            ),
         )
 
 
