@@ -6,16 +6,17 @@
 
 > **✅ 는 "그 범위의 작업이 끝났다" 는 뜻이고, 릴리스 여부가 아니다.**
 >
-> 현재 패키지 버전은 `pyproject.toml` 의 `0.4.0.dev0` 이고 발행된 태그는 `v0.1.0`
-> 하나뿐이다. 즉 아래의 v0.2~v0.5 는 **미출시 범위**다. 두 숫자가 다른 것을 보고
-> 문서가 낡았다고 읽는 일이 있어서 여기에 적어 둔다 — 어긋난 것이 아니라 다른
-> 것을 세고 있다.
+> 선언과 태그는 이제 맞는다 — `pyproject.toml` 의 `0.4.0` 과 태그·GitHub Release
+> `v0.4.0`(2026-09-28). 그래도 **로드맵 번호와 패키지 버전은 다른 것을 센다.** 아래
+> v0.5 는 작업 범위의 이름이고, 그 작업이 담긴 릴리스 번호가 아니다. 어느 릴리스에
+> 무엇이 들어갔는지는 [CHANGELOG](https://github.com/yeongseon/kpubdata-builder/blob/main/CHANGELOG.md) 가 기준이다.
 >
-> 이 불일치는 이제 **게이트가 막는다**(#690). `scripts/check_version_consistency.py`
+> 둘이 다시 어긋나지 않게 **게이트가 막는다**(#690). `scripts/check_version_consistency.py`
 > 가 `pyproject.toml` 을 정본으로 CHANGELOG 와 git 태그를 대조하고, 개발 버전
-> (`.dev`/`a`/`b`/`rc`)으로는 태그 발행 자체를 거부한다. 지금 상태에서 `v0.4.0` 을
-> 태그하려 하면 이미지 발행이 실패한다 — 라벨과 내용이 어긋난 이미지를 내보내지
-> 않기 위해서다.
+> (`.dev`/`a`/`b`/`rc`)으로는 태그 발행 자체를 거부한다. `release.yml` 과
+> `docker.yml` 이 태그·이미지를 만들기 전에 이것을 돌리므로, 라벨과 내용이 어긋난
+> 이미지는 발행되지 않는다. 이미지 안의 `kpubdata-builder --version` 과 manifest 의
+> `build_environment.builder_version` 은 둘 다 설치된 배포판 메타데이터에서 읽는다.
 
 > kpubdata-builder는 **원시 공공데이터를 정제된, 검증된, 배포 가능한 데이터셋으로 변환하는 빌드 엔진**입니다.
 
@@ -62,7 +63,7 @@ Plugin 생태계와 고급 빌드 기능.
 - ✅ Snapshot-aware builds
 - ✅ Build diff/compare tools
 
-## v0.4 🔧 진행 중
+## v0.4 ✅ 완료 — `v0.4.0` (2026-09-28)
 
 인증, 카탈로그, BuildSpec 어시스턴트.
 
