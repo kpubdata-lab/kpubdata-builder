@@ -136,10 +136,14 @@ def test_read_bounded_rejects_content_over_limit() -> None:
 
 
 class _Handler(BaseHTTPRequestHandler):
+    #: Header names each request arrived with, in order — one entry per hop.
+    seen_headers: list[list[str]] = []
+
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib
         return
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib
+        type(self).seen_headers.append([name.casefold() for name in self.headers.keys()])
         if self.path == "/ok":
             body = b'[{"id": 1}]'
             self.send_response(200)
@@ -465,3 +469,20 @@ def test_safe_fetch_get_maps_timeout_to_ingestion_error(monkeypatch: pytest.Monk
 
     with pytest.raises(IngestionError, match="failed to fetch"):
         safe_fetch_get("https://example.org/ok")
+
+
+def test_no_hop_of_a_redirect_carries_a_credential_header(local_server: HTTPServer) -> None:
+    """#685: a url source sends no credential, so no redirect can re-send one.
+
+    Every hop — the first request and each one a redirect leads to — carries only the
+    fixed headers the fetcher sets itself and what http.client adds. Nothing a spec or
+    a user supplies can reach a request, and there is no Authorization to forward.
+    """
+    del local_server
+    _Handler.seen_headers.clear()
+
+    safe_fetch_get("https://example.org/redirect-once")
+
+    assert len(_Handler.seen_headers) == 2  # the redirect and its target
+    for hop in _Handler.seen_headers:
+        assert set(hop) <= {"host", "accept-encoding", "accept", "user-agent", "connection"}
