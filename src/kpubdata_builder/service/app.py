@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from .. import logging_redaction
+from .. import __version__, logging_redaction
 from ..credentials import (
     AesGcmCredentialCipher,
     CredentialRepository,
@@ -279,9 +279,10 @@ _BuildListEntry = dict[str, str | None]
 #   duplicate_key_warning is judged on keys present on both sides only.
 # 1.32.0 -> 1.33.0: BuildSpec gains license_name and license_link, and publishes the
 #   attribution it already accepted (#764, additive). `license: other` needs both.
+# 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.34.0"
+API_CONTRACT_VERSION = "1.35.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -599,13 +600,20 @@ class BuilderService:
         return self._query_api.query(body, principal=principal)
 
     def version(self) -> ServiceResponse:
-        """Return Builder API contract version (#209).
+        """Return the HTTP contract version and the application version (#209, #777).
 
-        Meta endpoint allowing consumers (Studio, etc.) to verify contract
-        compatibility before calling.
+        They count different things (kpubdata ADR 0004 §3): ``api_version`` is the wire
+        contract a client checks before calling, ``version`` the installed application
+        Studio compares with its own build to tell a mismatched pair. ``version`` is
+        read from the installed distribution's metadata — the single source #592 set.
         """
         return ServiceResponse(
-            200, {"service": "kpubdata-builder", "api_version": API_CONTRACT_VERSION}
+            200,
+            {
+                "service": "kpubdata-builder",
+                "api_version": API_CONTRACT_VERSION,
+                "version": __version__,
+            },
         )
 
     # --- spec authoring (#596) -----------------------------------------------------

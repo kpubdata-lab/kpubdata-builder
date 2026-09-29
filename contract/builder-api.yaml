@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.34.0"
+  version: "1.35.0"
   description: >-
     Builder 중심 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -77,6 +77,7 @@ info:
     v1.17.0은 build publish 표면을 추가한다(#491) — `GET /builds/{run_id}/publish/readiness`(ready/blockers/warnings)와 `POST /builds/{run_id}/publish`(idempotent publish receipt, TOCTOU 재검사)를 추가한다(additive). HTTP target은 `huggingface`로 한정한다.
     v1.21.0은 publish 감사 로그 조회를 추가한다(#563, additive) — `GET /builds/{run_id}/publish/audit`(reconcile/reset 이력, 소유권 게이트, receipt 삭제 후에도 조회).
     v1.22.0은 `GET /datasets` 응답에 `total`을 추가한다(#488 후속, additive — 기존 필드/동작은 변경되지 않는다). `total`은 canonical dataset grouping과 ownership 필터를 적용한 뒤 pagination(limit) 이전의 접근 가능한 distinct dataset_id 개수이며, Studio Home의 DATASETS KPI가 `datasets` 길이나 limit을 total로 오인하지 않도록 authoritative aggregate를 제공한다. 같은 릴리스 범위에서 `/catalog` 응답의 `CatalogDataset`에 `request_parameters`와 `application`도 추가한다(additive — 기존 필드/동작은 변경되지 않는다). `raw_metadata`의 요청 파라미터 설명을 secret-free allowlist(`name`/`required`/`description`/`example`)로 직렬화한 것으로, `serviceKey` 등 시크릿 파라미터는 제외된다. Add Data가 선택한 Dataset의 필수 요청 파라미터를 사전에 안내하는 데 쓴다. metadata가 없는 dataset은 빈 배열. `application`은 공공데이터포털처럼 API Key 발급과 Dataset별 활용신청이 별개일 수 있는 경우의 안내(`{required, url}`)로, `raw_metadata.application`에서 그대로 전달하며 없으면 null이다 — Studio는 신청 완료/승인 여부를 추측하지 않는다.
+    v1.35.0 adds `version` to `GET /version` (#777, additive): the installed application version, next to `api_version`, the wire contract version. They count different things (kpubdata ADR 0004 §3); Studio compares `version` with its own build to warn about a mismatched pair.
     v1.34.0 adds the `source_fetch_progress` build event (#648, additive): one per finished `param_grid` combination, with `metrics` `{done, total}`, so a long fetch reports progress. Cancellation is now also checked between combinations, so a cancelled run stops fetching at the next combination instead of at the end of the source.
     v1.33.0 lets a BuildSpec state its source's own licence terms (#764, additive): `license_name` and `license_link` join `license`, and are both required when `license` is `other` — the way Hugging Face records a licence outside its list. The Hugging Face card's front matter carries both. `attribution`, accepted since ADR 0018, is now listed in the schema too.
     v1.32.0 checks JOIN cardinality on the keys that intersect (#698, additive): `JoinSpec` gains `keys` (a composite key as `{left, right}` column pairs; `left_key`/`right_key` stay as the single-pair shorthand, and exactly one form is given), `cardinality` (`one_to_one`/`one_to_many`/`many_to_one`/`many_to_many`, verified against the keys present on both sides) and `on_null_key` (`warn`/`fail`). `CompositionProvenance` gains optional `keys`, `cardinality`, `observed_cardinality`, `left_unmatched_ratio`, `right_unmatched_ratio`, `expansion_ratio`, `left_null_key_rows` and `right_null_key_rows`; manifests written before 1.32.0 lack them. `duplicate_key_warning` now fires only when a key present on both sides repeats on both sides, so duplicates that never meet no longer warn or fail.
@@ -3238,6 +3239,12 @@ components:
           type: string
         api_version:
           type: string
+          description: The HTTP contract version (this document's info.version).
+        version:
+          type: string
+          description: >-
+            The installed application version (#777). Builder and Studio share it
+            (ADR 0004); it differs from api_version, which counts the wire contract.
 
     HealthResponse:
       type: object

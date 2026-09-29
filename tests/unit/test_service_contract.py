@@ -893,6 +893,21 @@ class TestResponseConformance:
         assert resp.status_code == 200
         _assert_conforms(resp, "/version", "GET")
 
+    def test_version_reports_the_application_version_apart_from_the_contract(
+        self, tmp_path: Path
+    ) -> None:
+        """#777: Studio compares `version` with its own build; `api_version` is the wire."""
+        from kpubdata_builder import __version__
+        from kpubdata_builder.service import API_CONTRACT_VERSION
+
+        resp = dispatch(_conform_service(tmp_path), "GET", "/version", None)
+
+        assert resp.body == {
+            "service": "kpubdata-builder",
+            "api_version": API_CONTRACT_VERSION,
+            "version": __version__,
+        }
+
     def test_validate_200(self, tmp_path: Path) -> None:
         resp = dispatch(
             _conform_service(tmp_path), "POST", "/validate", {"spec": _CONFORM_SPEC_YAML}
