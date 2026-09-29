@@ -50,6 +50,8 @@ positional arguments:
                      Restore a warehouse backup into an empty directory, after
                      checking the catalog and the snapshot files against each
                      other (#705).
+    warehouse-hold   Place, release or list holds that keep a snapshot past
+                     garbage collection (#705, #797).
 
 options:
   -h, --help  show this help message and exit

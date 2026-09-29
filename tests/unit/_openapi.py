@@ -185,7 +185,7 @@ def _validate_object(
 
 
 def _normalize_path(contract: Schema, path: str) -> str:
-    """Matches concrete path (e.g., ``/artifacts/run-1``) to template (``/artifacts/{run_id}``)\."""
+    """Matches concrete path (e.g., ``/artifacts/run-1``) to template (``/artifacts/{run_id}``)."""
     paths = contract.get("paths")
     if not isinstance(paths, dict):
         return path

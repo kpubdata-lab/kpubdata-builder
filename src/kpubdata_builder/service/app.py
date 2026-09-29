@@ -78,6 +78,7 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import UploadsService
+from .warehouse_api import WarehouseApiService
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +283,15 @@ _BuildListEntry = dict[str, str | None]
 #   attribution it already accepted (#764, additive). `license: other` needs both.
 # 1.36.0 -> 1.37.0: POST /build may answer 409 with warehouse_failures when a table commit
 #   failed after every source built (#787, #788, additive).
+# 1.37.0 -> 1.38.0: GET /warehouse/tables, GET /warehouse/tables/{name} and
+#   POST /warehouse/query read committed table snapshots, the last one pinning the
+#   snapshot for the query's lifetime (#797, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.37.0"
+API_CONTRACT_VERSION = "1.38.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -379,6 +383,9 @@ class BuilderService:
         # defeating lazy creation. Check need first here.
         self._uploads_service = UploadsService(repository=lambda: self._upload_repository)
         self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
+        self._warehouse_api = WarehouseApiService(
+            table_catalog=lambda: self._table_catalog(), engine=self._query_service
+        )
         self._datasets_api = DatasetsApiService(
             output_root=self._output_root,
             build_index=self._build_index,
@@ -614,6 +621,20 @@ class BuilderService:
     ) -> ServiceResponse:
         """Execute one validated SQL query against server-resolved stage table."""
         return self._query_api.query(body, principal=principal)
+
+    def list_warehouse_tables(self, *, principal: Principal) -> ServiceResponse:
+        """List the caller's committed warehouse tables (#797)."""
+        return self._warehouse_api.list_tables(principal=principal)
+
+    def get_warehouse_table(self, name: str, *, principal: Principal) -> ServiceResponse:
+        """One warehouse table and its readable snapshots (#797)."""
+        return self._warehouse_api.get_table(name, principal=principal)
+
+    def query_warehouse(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """Run read-only SQL against a pinned warehouse snapshot (#797)."""
+        return self._warehouse_api.query(body, principal=principal)
 
     def version(self) -> ServiceResponse:
         """Return the HTTP contract version and the application version (#209, #777).
