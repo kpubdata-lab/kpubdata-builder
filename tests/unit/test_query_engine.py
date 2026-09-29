@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from multiprocessing.connection import Connection
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -211,3 +213,65 @@ def test_stop_process_uses_bounded_join_then_kill_fallback() -> None:
 
     assert process.calls == ["terminate", "join:1.0", "kill", "join:1.0"]
     assert process.is_alive() is False
+
+
+def _allocating_worker(
+    connection: Any, table_path: str, canonical_sql: str, limit: int, parent_started_ns: int
+) -> None:
+    """Stands in for an expensive sort: asks for far more memory than the cap allows."""
+    del table_path, canonical_sql, limit, parent_started_ns
+    hog = bytearray(2 * 1024 * 1024 * 1024)
+    # A complete, valid result — so without the cap this query would succeed, and
+    # the test could not pass by accident.
+    connection.send(
+        {
+            "ok": True,
+            "columns": ["size"],
+            "column_meta": [],
+            "rows": [{"size": len(hog)}],
+            "truncated": False,
+            "startup_ms": 0,
+            "engine_execution_ms": 0,
+        }
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="RLIMIT_AS is POSIX")
+def test_a_query_over_its_memory_cap_fails_alone(tmp_path: Path) -> None:
+    """#701: the expensive query dies, the server and the next query do not."""
+    import polars as pl
+
+    capped = QueryEngine(
+        timeout_seconds=5 * spawn_timeout_multiplier(),
+        worker=_allocating_worker,
+        memory_limit_bytes=512 * 1024 * 1024,
+    )
+    with pytest.raises(QueryExecutionError):
+        capped.execute(tmp_path / "unused.parquet", "SELECT * FROM dataset", limit=1)
+
+    table_path = tmp_path / "table.parquet"
+    pl.DataFrame({"value": [1, 2]}).write_parquet(table_path)
+    after = QueryEngine(timeout_seconds=5 * spawn_timeout_multiplier()).execute(
+        table_path, "SELECT value FROM dataset", limit=5
+    )
+    assert after.rows == ({"value": 1}, {"value": 2})
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="RLIMIT_AS is POSIX")
+def test_a_generous_cap_leaves_ordinary_queries_alone(tmp_path: Path) -> None:
+    import polars as pl
+
+    table_path = tmp_path / "table.parquet"
+    pl.DataFrame({"value": [3, 1, 2]}).write_parquet(table_path)
+
+    result = QueryEngine(
+        timeout_seconds=5 * spawn_timeout_multiplier(),
+        memory_limit_bytes=16 * 1024 * 1024 * 1024,
+    ).execute(table_path, "SELECT value FROM dataset ORDER BY value", limit=5)
+
+    assert result.rows == ({"value": 1}, {"value": 2}, {"value": 3})
+
+
+def test_a_non_positive_memory_cap_is_refused() -> None:
+    with pytest.raises(ValueError, match="memory_limit_bytes"):
+        QueryEngine(memory_limit_bytes=0)

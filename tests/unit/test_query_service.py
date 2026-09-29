@@ -89,3 +89,16 @@ def test_query_concurrency_env_requires_positive_integer(
 def test_explicit_zero_concurrency_is_rejected() -> None:
     with pytest.raises(ValueError, match="positive"):
         QueryService(max_concurrency=0)
+
+
+def test_the_memory_cap_is_opt_in_and_given_in_megabytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kpubdata_builder.query.service import query_memory_limit_from_env
+
+    monkeypatch.delenv("KPUBDATA_QUERY_MAX_MEMORY_MB", raising=False)
+    assert query_memory_limit_from_env() is None
+    monkeypatch.setenv("KPUBDATA_QUERY_MAX_MEMORY_MB", "2048")
+    assert query_memory_limit_from_env() == 2048 * 1024 * 1024
+    for bad in ("0", "-1", "lots"):
+        monkeypatch.setenv("KPUBDATA_QUERY_MAX_MEMORY_MB", bad)
+        with pytest.raises(ValueError, match="KPUBDATA_QUERY_MAX_MEMORY_MB"):
+            query_memory_limit_from_env()
