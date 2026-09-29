@@ -28,6 +28,9 @@ class QueryResult:
     execution_ms: int
     startup_ms: int
     engine_execution_ms: int
+    # Per column: name, logical_type, wire_encoding (#735). Tells a client which columns
+    # arrive as exact decimal text rather than JSON numbers.
+    column_meta: tuple[dict[str, JsonValue], ...] = ()
 
 
 __all__ = ["QueryRequest", "QueryResult", "QueryStage"]

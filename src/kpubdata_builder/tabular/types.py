@@ -26,12 +26,16 @@ class ColumnInfo:
         dtype: String representation of Polars dtype (e.g. "Int64", "String").
         nullable: Whether any null values exist in column.
         unique_count: Count of unique values (null included, per Polars n_unique).
+        logical_type: The dtype without parameters (e.g. "int64", "decimal"); see wire.py.
+        wire_encoding: How the column's values are sent to a JSON client; see wire.py.
     """
 
     name: str
     dtype: str
     nullable: bool
     unique_count: int
+    logical_type: str = ""
+    wire_encoding: str = "json"
 
 
 @dataclass(frozen=True)

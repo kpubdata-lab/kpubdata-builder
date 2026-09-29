@@ -94,6 +94,38 @@ def test_real_engine_executes_canonical_sql_and_hard_limit(
     assert str(table_path) not in timing_record.getMessage()
 
 
+def test_real_engine_keeps_precision_and_says_how_columns_are_sent(tmp_path: Path) -> None:
+    """#735: /query sends out-of-range integers and Decimals as exact text."""
+    from decimal import Decimal
+
+    import polars as pl
+
+    table_path = tmp_path / "table.parquet"
+    pl.DataFrame(
+        {
+            "big": [9007199254740993, 1],
+            "small": [9007199254740991, 2],
+            "amount": [Decimal("0.10"), Decimal("12.50")],
+        },
+        schema={"big": pl.Int64, "small": pl.Int64, "amount": pl.Decimal(10, 2)},
+    ).write_parquet(table_path)
+
+    result = QueryEngine(timeout_seconds=5 * spawn_timeout_multiplier()).execute(
+        table_path, "SELECT big, small, amount FROM dataset ORDER BY small DESC", limit=10
+    )
+
+    assert result.rows[0] == {
+        "big": "9007199254740993",
+        "small": 9007199254740991,
+        "amount": "0.10",
+    }
+    assert result.column_meta == (
+        {"name": "big", "logical_type": "int64", "wire_encoding": "decimal_string"},
+        {"name": "small", "logical_type": "int64", "wire_encoding": "number"},
+        {"name": "amount", "logical_type": "decimal", "wire_encoding": "decimal_string"},
+    )
+
+
 @pytest.mark.parametrize("value", [None, True, False, -1, 1.5, "1"])
 def test_timing_payload_requires_nonnegative_integer(value: object) -> None:
     with pytest.raises(QueryExecutionError, match="invalid timing data"):

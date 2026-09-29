@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from ...tabular.wire import encode_rows
 from .._path_safety import ensure_within, validate_path_segment
 from .models import SilverDataset
 
@@ -90,7 +91,11 @@ def persist_silver_dataset(
         dataset.table.write_parquet(tmp_dir / "table.parquet")
         _write_json(tmp_dir / "schema.json", asdict(dataset.schema))
         _write_json(tmp_dir / "stats.json", asdict(dataset.statistics))
-        _write_json(tmp_dir / "preview.json", asdict(dataset.preview))
+        # The sample is served as-is by stage detail, so it is written wire-encoded (#735):
+        # a Decimal or an out-of-range integer is stored as its exact decimal text.
+        preview = asdict(dataset.preview)
+        preview["rows"] = list(encode_rows(dataset.preview.rows, dataset.schema.columns))
+        _write_json(tmp_dir / "preview.json", preview)
         _write_json(tmp_dir / "validation.json", asdict(dataset.validation))
 
         # Atomic swap: replaces existing directory without data loss (#180).

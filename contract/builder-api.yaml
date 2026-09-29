@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.29.0"
+  version: "1.30.0"
   description: >-
     Builder 중심 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -77,6 +77,7 @@ info:
     v1.17.0은 build publish 표면을 추가한다(#491) — `GET /builds/{run_id}/publish/readiness`(ready/blockers/warnings)와 `POST /builds/{run_id}/publish`(idempotent publish receipt, TOCTOU 재검사)를 추가한다(additive). HTTP target은 `huggingface`로 한정한다.
     v1.21.0은 publish 감사 로그 조회를 추가한다(#563, additive) — `GET /builds/{run_id}/publish/audit`(reconcile/reset 이력, 소유권 게이트, receipt 삭제 후에도 조회).
     v1.22.0은 `GET /datasets` 응답에 `total`을 추가한다(#488 후속, additive — 기존 필드/동작은 변경되지 않는다). `total`은 canonical dataset grouping과 ownership 필터를 적용한 뒤 pagination(limit) 이전의 접근 가능한 distinct dataset_id 개수이며, Studio Home의 DATASETS KPI가 `datasets` 길이나 limit을 total로 오인하지 않도록 authoritative aggregate를 제공한다. 같은 릴리스 범위에서 `/catalog` 응답의 `CatalogDataset`에 `request_parameters`와 `application`도 추가한다(additive — 기존 필드/동작은 변경되지 않는다). `raw_metadata`의 요청 파라미터 설명을 secret-free allowlist(`name`/`required`/`description`/`example`)로 직렬화한 것으로, `serviceKey` 등 시크릿 파라미터는 제외된다. Add Data가 선택한 Dataset의 필수 요청 파라미터를 사전에 안내하는 데 쓴다. metadata가 없는 dataset은 빈 배열. `application`은 공공데이터포털처럼 API Key 발급과 Dataset별 활용신청이 별개일 수 있는 경우의 안내(`{required, url}`)로, `raw_metadata.application`에서 그대로 전달하며 없으면 null이다 — Studio는 신청 완료/승인 여부를 추측하지 않는다.
+    v1.30.0 adds `logical_type` and `wire_encoding` to column metadata (#735, additive): `QueryResponse.column_meta`, the `/preview` schema items and `SilverColumnInfo`. A column with `wire_encoding: decimal_string` sends its values as exact decimal text — every Decimal column, and an integer column holding any value outside ±(2^53−1) — because a JSON number is read as a double and loses them. In-range integers and floats stay JSON numbers. Non-finite floats are sent as null. Which columns are identifiers is not decided here (#702).
     v1.29.0은 `POST /build` 응답에 `materialized` 를 추가한다(#703, additive) — 웨어하우스가 설정된 배포에서만 나타나고, source 별로 커밋된 테이블 snapshot 을 담는다. **설정되지 않은 배포에서는 키가 아예 없다** — 빈 객체는 "커밋된 것이 없다" 를 주장하고, 호출자는 그것을 "애초에 요청하지 않았다" 와 구별할 수 없다.
 
     v1.28.0은 관리자 전용 `GET /admin/runs`와 `GET /admin/config`를 추가한다(#679, additive — 기존 경로·동작은 변경되지 않는다). 두 경로는 **메타데이터만** 돌려준다 — 산출물 바이트도, credential 도 포함하지 않는다. 관리자가 아닌 principal 에게는 403 이다.
@@ -2483,11 +2484,18 @@ components:
     QueryResponse:
       type: object
       additionalProperties: false
-      required: [columns, rows, truncated, execution_ms, startup_ms, engine_execution_ms]
+      required: [columns, column_meta, rows, truncated, execution_ms, startup_ms, engine_execution_ms]
       properties:
         columns:
           type: array
           items: {type: string}
+        column_meta:
+          type: array
+          description: >-
+            One entry per column, in `columns` order: what the column was and how its
+            values are sent (#735).
+          items:
+            $ref: "#/components/schemas/ColumnWireInfo"
         rows:
           type: array
           items:
@@ -2533,6 +2541,28 @@ components:
           description: status=invalid일 때의 검증 문제 목록
           items:
             type: string
+
+    WireEncoding:
+      type: string
+      enum: [number, decimal_string, string, boolean, json]
+      description: >-
+        How a column's values are sent (#735). `decimal_string`: exact decimal text, for
+        every Decimal column and for an integer column holding any value outside
+        ±(2^53−1) — do not convert these with Number(). `number`: a JSON number
+        (non-finite floats are null). `string`: text, or ISO 8601 for dates and times.
+
+    ColumnWireInfo:
+      type: object
+      additionalProperties: false
+      required: [name, logical_type, wire_encoding]
+      properties:
+        name:
+          type: string
+        logical_type:
+          type: string
+          description: The column dtype without parameters, e.g. `int64`, `decimal`, `datetime`.
+        wire_encoding:
+          $ref: "#/components/schemas/WireEncoding"
 
     JsonValue:
       description: 표준 JSON으로 직렬화 가능한 값(null, scalar, array, object)
@@ -3398,7 +3428,7 @@ components:
           type: array
           items:
             type: object
-            required: [name, dtype, nullable, unique_count]
+            required: [name, dtype, nullable, unique_count, logical_type, wire_encoding]
             properties:
               name:
                 type: string
@@ -3408,6 +3438,10 @@ components:
                 type: boolean
               unique_count:
                 type: integer
+              logical_type:
+                type: string
+              wire_encoding:
+                $ref: "#/components/schemas/WireEncoding"
         sample:
           type: array
           items:
@@ -4549,6 +4583,11 @@ components:
           type: boolean
         unique_count:
           type: integer
+        logical_type:
+          type: string
+          description: Absent for runs written before 1.30.0 (#735).
+        wire_encoding:
+          $ref: "#/components/schemas/WireEncoding"
 
     SilverValidationProblem:
       type: object

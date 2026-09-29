@@ -117,6 +117,7 @@ class QueryApiService:
             200,
             {
                 "columns": list(result.columns),
+                "column_meta": list(result.column_meta),
                 "rows": list(result.rows),
                 "truncated": result.truncated,
                 "execution_ms": result.execution_ms,
