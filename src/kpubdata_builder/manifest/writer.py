@@ -16,9 +16,24 @@ import tempfile
 from dataclasses import asdict
 from datetime import timezone
 from pathlib import Path
+from typing import Any
 
 from ..errors import ManifestError
 from .models import BuildManifest
+from .provenance import SourceProvenance
+
+#: Provenance fields added by #816. Left out, not null, when a fetch did not record
+#: them — a manifest written before them has no such keys, and a reader tells the two
+#: cases apart the same way.
+_OPTIONAL_PROVENANCE_FIELDS = ("fetched_row_count", "source_reported_total", "coverage")
+
+
+def _provenance_entry(entry: SourceProvenance) -> dict[str, Any]:
+    payload = asdict(entry)
+    for key in _OPTIONAL_PROVENANCE_FIELDS:
+        if payload.get(key) is None:
+            payload.pop(key, None)
+    return payload
 
 
 def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
@@ -59,7 +74,7 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         "schema_summaries": {
             key: asdict(summary) for key, summary in manifest.schema_summaries.items()
         },
-        "provenance": [asdict(entry) for entry in manifest.provenance],
+        "provenance": [_provenance_entry(entry) for entry in manifest.provenance],
         # additive (#486): per-source_key structured quality/drift results. Empty dict default
         # so legacy consumers harmless if unaware of this key.
         "quality_results": {
@@ -78,6 +93,12 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         # run is null — legacy consumers harmless if unaware of this key.
         "composition": asdict(manifest.composition) if manifest.composition is not None else None,
     }
+    # additive (#788): only when a table commit failed, so every other manifest keeps
+    # its shape. A manifest saying "ok" must also say when the table did not move.
+    if manifest.warehouse_failures:
+        payload["warehouse_failures"] = {
+            key: dict(value) for key, value in manifest.warehouse_failures.items()
+        }
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)

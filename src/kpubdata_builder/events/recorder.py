@@ -162,6 +162,20 @@ class BuildEventRecorder:
     def source_fetch_started(self, source_key: str) -> None:
         self._record("source_fetch_started", "ok", source_key=source_key)
 
+    def source_fetch_progress(self, source_key: str, *, done: int, total: int) -> None:
+        """One ``param_grid`` combination fetched (#648).
+
+        A 1,500-combination fetch used to be silent for an hour. This is the only
+        event that can repeat within a stage, so it carries its position in metrics.
+        """
+        self._record(
+            "source_fetch_progress",
+            "ok",
+            source_key=source_key,
+            message="combination fetched",
+            metrics={"done": done, "total": total},
+        )
+
     def source_fetch_completed(self, source_key: str, *, record_count: int) -> None:
         self._record(
             "source_fetch_completed",

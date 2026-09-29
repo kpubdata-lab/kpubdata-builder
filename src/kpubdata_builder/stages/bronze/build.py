@@ -10,12 +10,19 @@ Main components:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from typing import Protocol, cast, runtime_checkable
 
 from ...spec import JsonValue
-from .models import BronzeArtifact, ProvenanceEvent, require_timezone_aware, utc_now
+from .models import (
+    BronzeArtifact,
+    CallTotal,
+    ProvenanceEvent,
+    TotalStatus,
+    require_timezone_aware,
+    utc_now,
+)
 
 
 class DatasetResult(Protocol):
@@ -61,6 +68,7 @@ def build_bronze_artifact(
     fetch_params: dict[str, JsonValue] | None = None,
     fetched_at: datetime | None = None,
     param_combinations: Sequence[dict[str, JsonValue]] | None = None,
+    on_combination_done: Callable[[int, int], None] | None = None,
 ) -> BronzeArtifact:
     """Fetch raw records from compatible client and return bronze output.
 
@@ -74,6 +82,12 @@ def build_bronze_artifact(
             combination and concatenate results **in declared order** into single artifact.
             Order is contract—if changed, artifact_id changes.
         fetched_at: fetch completion time; uses current UTC if omitted.
+        on_combination_done: called as ``(done, total)`` after each combination of
+            ``param_combinations`` has been fetched (#648). A combination boundary is a
+            safe point: the records so far are whole, nothing is written yet. The
+            caller uses it to report progress and to stop when cancellation was asked
+            for — by raising, which abandons the fetch before anything is persisted.
+            Not called for a single call.
 
     Returns:
         BronzeArtifact: output containing raw records and provenance.
@@ -94,15 +108,23 @@ def build_bronze_artifact(
 
     dataset = client.dataset(source_key)
     records: list[dict[str, JsonValue]] = []
-    for call_params in calls:
+    call_totals: list[CallTotal] = []
+    for done, call_params in enumerate(calls, start=1):
         # Concatenate in combination order. Order change alters raw_records.jsonl
         # bytes and artifact_id follows—R1 rebuild determinism depends on it.
-        if isinstance(dataset, PaginatedSourceDataset):
-            records.extend(
-                record for batch in dataset.list_all(**call_params) for record in batch.items
-            )
-        else:
-            records.extend(dataset.list(**call_params).items)
+        batches: Iterable[DatasetResult] = (
+            dataset.list_all(**call_params)
+            if isinstance(dataset, PaginatedSourceDataset)
+            else (dataset.list(**call_params),)
+        )
+        before = len(records)
+        reported: list[int | None] = []
+        for batch in batches:
+            records.extend(batch.items)
+            reported.append(_reported_total(batch))
+        call_totals.append(_call_total(done - 1, reported, fetched=len(records) - before))
+        if combinations is not None and on_combination_done is not None:
+            on_combination_done(done, len(calls))
     raw_records = tuple(records)
 
     # Preserve all combinations in provenance. Without record of which
@@ -126,4 +148,35 @@ def build_bronze_artifact(
         fetch_params=provenance_params,
         fetched_at=resolved_fetched_at,
         provenance=provenance,
+        call_totals=tuple(call_totals),
+    )
+
+
+def _reported_total(batch: object) -> int | None:
+    """The page's ``total_count`` (kpubdata ``RecordBatch``), or None when it has none.
+
+    A bool or a negative number is not a count and reads as None.
+    """
+    value = getattr(batch, "total_count", None)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _call_total(index: int, reported: list[int | None], *, fetched: int) -> CallTotal:
+    """One call's total: read once, not summed across its pages (#816)."""
+    stated = {value for value in reported if value is not None}
+    status: TotalStatus
+    if not stated:
+        status, value = "unknown", None
+    elif len(stated) == 1:
+        status, value = "reported", next(iter(stated))
+    else:
+        status, value = "inconsistent", None
+    return CallTotal(
+        index=index,
+        value=value,
+        status=status,
+        fetched_row_count=fetched,
+        pages=len(reported),
     )

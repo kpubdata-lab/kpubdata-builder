@@ -52,6 +52,15 @@ _DISPATCH_ROUTES: dict[tuple[str, str], str] = {
     ("/providers/{provider}/credential", "PUT"): "putProviderCredential",
     ("/providers/{provider}/credential", "DELETE"): "deleteProviderCredential",
     ("/query", "POST"): "queryBuiltDataset",
+    ("/warehouse/tables", "GET"): "listWarehouseTables",
+    ("/warehouse/tables/{name}", "GET"): "getWarehouseTable",
+    ("/warehouse/query", "POST"): "queryWarehouseTable",
+    ("/warehouse/rows", "POST"): "readWarehouseRows",
+    ("/analyses", "GET"): "listAnalyses",
+    ("/analyses", "POST"): "createAnalysis",
+    ("/analyses/{analysis_id}", "GET"): "getAnalysis",
+    ("/analyses/{analysis_id}", "DELETE"): "deleteAnalysis",
+    ("/analyses/{analysis_id}/run", "POST"): "runAnalysis",
     ("/validate", "POST"): "validateSpec",
     ("/preview", "POST"): "previewBuild",
     ("/build", "POST"): "createBuild",
@@ -94,6 +103,15 @@ _REQUIRED_OPERATIONS = [
     ("/providers/{provider}/credential", "put"),
     ("/providers/{provider}/credential", "delete"),
     ("/query", "post"),
+    ("/warehouse/tables", "get"),
+    ("/warehouse/tables/{name}", "get"),
+    ("/warehouse/query", "post"),
+    ("/warehouse/rows", "post"),
+    ("/analyses", "get"),
+    ("/analyses", "post"),
+    ("/analyses/{analysis_id}", "get"),
+    ("/analyses/{analysis_id}", "delete"),
+    ("/analyses/{analysis_id}/run", "post"),
     ("/validate", "post"),
     ("/preview", "post"),
     ("/build", "post"),
@@ -393,6 +411,15 @@ _IMPLEMENTED_OPERATIONS = {
     "putProviderCredential",
     "deleteProviderCredential",
     "queryBuiltDataset",
+    "listWarehouseTables",
+    "getWarehouseTable",
+    "queryWarehouseTable",
+    "readWarehouseRows",
+    "listAnalyses",
+    "createAnalysis",
+    "getAnalysis",
+    "deleteAnalysis",
+    "runAnalysis",
     "validateSpec",
     "previewBuild",
     "createBuild",
@@ -619,9 +646,18 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "putProviderCredential": {200, 400, 403, 404, 502, 503},
     "deleteProviderCredential": {200, 403, 404, 502, 503},
     "queryBuiltDataset": {200, 400, 403, 404, 429, 504},
+    "listWarehouseTables": {200, 404},
+    "getWarehouseTable": {200, 400, 404},
+    "queryWarehouseTable": {200, 400, 404, 409, 429, 504},
+    "readWarehouseRows": {200, 400, 404, 409, 429, 504},
+    "listAnalyses": {200},
+    "createAnalysis": {200, 400, 404, 409, 429, 504},
+    "getAnalysis": {200, 404},
+    "deleteAnalysis": {200, 404},
+    "runAnalysis": {200, 400, 404, 409, 429, 504},
     "validateSpec": {200, 400},
     "previewBuild": {200, 400, 502},
-    "createBuild": {200, 400, 502},
+    "createBuild": {200, 400, 409, 502},
     "submitBuild": {200, 202, 400, 409, 429, 500},
     "getBuildJob": {200, 400, 403, 404},
     "cancelBuildJob": {200, 400, 403, 404, 409},
@@ -892,6 +928,21 @@ class TestResponseConformance:
         resp = dispatch(_conform_service(tmp_path), "GET", "/version", None)
         assert resp.status_code == 200
         _assert_conforms(resp, "/version", "GET")
+
+    def test_version_reports_the_application_version_apart_from_the_contract(
+        self, tmp_path: Path
+    ) -> None:
+        """#777: Studio compares `version` with its own build; `api_version` is the wire."""
+        from kpubdata_builder import __version__
+        from kpubdata_builder.service import API_CONTRACT_VERSION
+
+        resp = dispatch(_conform_service(tmp_path), "GET", "/version", None)
+
+        assert resp.body == {
+            "service": "kpubdata-builder",
+            "api_version": API_CONTRACT_VERSION,
+            "version": __version__,
+        }
 
     def test_validate_200(self, tmp_path: Path) -> None:
         resp = dispatch(

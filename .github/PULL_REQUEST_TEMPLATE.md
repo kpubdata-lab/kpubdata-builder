@@ -1,6 +1,7 @@
 <!--
 PR 제목은 Conventional Commits 형식이어야 합니다 — `PR title` 체크가 검사합니다(POLICY 2.1.3).
-type: feat fix docs chore test ci refactor style perf build revert i18n
+type: feat fix docs test perf refactor ci build chore style revert — 규칙 정본: kpubdata POLICY 2.1.3
+이슈 번호는 제목이 아니라 본문에 적습니다 (Closes #123). squash 병합이 PR 번호를 붙입니다.
 예) docs: add feature process flow diagrams
 -->
 

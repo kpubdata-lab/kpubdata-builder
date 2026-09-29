@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -47,6 +47,7 @@ from ..manifest import (
     capture_build_environment,
     compute_inputs_fingerprint,
     manifest_writer,
+    snapshot_coverage,
 )
 from ..quality import (
     DriftEvaluation,
@@ -90,7 +91,13 @@ from ..stages.silver.pii import scan_pii
 from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..uploads import UploadRepository
-from ..warehouse import MaterializeResult, TableCatalog, materialize
+from ..warehouse import (
+    MaterializeResult,
+    SnapshotConflict,
+    TableCatalog,
+    WarehouseError,
+    materialize,
+)
 from ..warehouse import gc as warehouse_gc
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .context import BuildContext
@@ -235,6 +242,9 @@ class BuildResult:
     spec_digest: str
     composition_outcome: CompositionOutcome | None = None
     materialized: dict[str, MaterializeResult] = field(default_factory=dict)
+    #: Sources whose table commit failed, with the reason (#788). The build itself
+    #: succeeded; the table was not moved to its output.
+    warehouse_failures: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def _fetch_source_key(source: SourceRef) -> str:
@@ -296,13 +306,7 @@ def _volume_comparability(source: SourceRef) -> Callable[[Path], str | None]:
 
 def _retag_bronze_artifact(artifact: BronzeArtifact, *, output_key: str) -> BronzeArtifact:
     """Keep fetch provenance; replace only source_key for output paths."""
-    return BronzeArtifact(
-        source_key=output_key,
-        raw_records=artifact.raw_records,
-        fetch_params=artifact.fetch_params,
-        fetched_at=artifact.fetched_at,
-        provenance=artifact.provenance,
-    )
+    return replace(artifact, source_key=output_key)
 
 
 def _record_output_paths(outputs: list[str], *paths: Path) -> None:
@@ -396,6 +400,7 @@ def _run_source_pipeline(
     baseline_owner_id: str | None = None,
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
+    secret_values: tuple[str, ...] = (),
 ) -> _SourcePipelineResult:
     """Execute one source Bronze → Silver → Gold and persist outputs.
 
@@ -453,11 +458,22 @@ def _run_source_pipeline(
         # public_api/file/url all use identical event vocabulary.
         recorder.stage_started(output_key, "bronze")
         recorder.source_fetch_started(output_key)
+
+        def after_combination(done: int, total: int) -> None:
+            # Each finished combination is a safe boundary (#648): report it, then stop
+            # if cancellation was asked for. Raising here abandons the fetch before
+            # Bronze is written, so a cancelled run keeps no half-fetched source.
+            recorder.source_fetch_progress(output_key, done=done, total=total)
+            if done < total:
+                raise_if_cancelled(cancellation)
+
         bronze = build_bronze_artifact_for_source(
             source,
             client=client,
             upload_repository=upload_repository,
             owner_id=owner_id,
+            secret_values=secret_values,
+            on_combination_done=after_combination,
         )
         recorder.source_fetch_completed(output_key, record_count=len(bronze.raw_records))
         fetch_completed = True
@@ -487,6 +503,8 @@ def _run_source_pipeline(
             # encoding, url has endpoint/method without query string,
             # public_api has original source.params unchanged.
             params=bronze.fetch_params,
+            # Reported totals are kept per call, never summed (#816).
+            call_totals=bronze.call_totals,
         )
 
         # Boundary 1 (#481): Bronze outputs written to disk and provenance
@@ -1013,6 +1031,7 @@ def run_build(
     catalog: TableCatalog | None = None,
     workspace_id: str = "ws_personal",
     warehouse_keep: int | None = 3,
+    secret_values: tuple[str, ...] = (),
 ) -> BuildResult:
     """Execute BuildSpec through Medallion pipeline.
 
@@ -1073,6 +1092,17 @@ def run_build(
     _, spec_digest = write_buildspec_snapshot(
         spec, output_root=context.output_root, run_id=context.run_id
     )
+    # The revision each table has *now*, before anything is fetched (#787). Committing
+    # against it makes a refresh another build finished meanwhile a conflict: the
+    # older data loses instead of replacing the newer snapshot.
+    start_revisions: dict[str, int] = (
+        {
+            key: catalog.table_revision(workspace_id, f"{spec.dataset_id}.{key}")
+            for key in (_output_source_key(source) for source in spec.sources)
+        }
+        if catalog is not None
+        else {}
+    )
 
     # composition (#506) referenced aliases' Silver only survives thread results
     # — non-composition builds unchanged, no extra preservation.
@@ -1093,6 +1123,7 @@ def run_build(
             baseline_owner_id=effective_manifest_owner_id,
             capture_silver=_output_source_key(source) in composition_aliases,
             cancellation=cancellation,
+            secret_values=secret_values,
         )
 
     # Per-source fetch/stage mostly waits on network I/O, so concurrent
@@ -1111,6 +1142,7 @@ def run_build(
     row_counts: dict[str, int] = {}
     schema_summaries: dict[str, SchemaSummary] = {}
     provenance: list[SourceProvenance] = []
+    provenance_by_key: dict[str, SourceProvenance] = {}
     quality_results: dict[str, tuple[QualityCheckResult, ...]] = {}
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = {}
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
@@ -1123,6 +1155,7 @@ def run_build(
             schema_summaries[result.outcome.source_key] = result.schema_summary
         if result.provenance_entry is not None:
             provenance.append(result.provenance_entry)
+            provenance_by_key[result.outcome.source_key] = result.provenance_entry
         # quality_evaluated tracks whether evaluate_quality was actually called
         # (#486) — even if FAIL fails source, result survives. Bronze/Silver
         # failure never reaches evaluate_quality, so manifest lacks that key
@@ -1198,6 +1231,73 @@ def run_build(
         status = "ok"
         recorder.run_finished()
 
+    # Materialise after every source is done, in the single-threaded merge. Committing
+    # from the worker pool would put four threads through the same compare-and-swap and
+    # make three of them lose for no reason (#699).
+    #
+    # Before the manifest, not after (#788): a commit that fails is part of what this
+    # run did, so the manifest records it, the index still gets its row, and the caller
+    # gets an answer instead of an exception after a manifest that already said ok.
+    materialized: dict[str, MaterializeResult] = {}
+    warehouse_failures: dict[str, dict[str, str]] = {}
+    if catalog is not None and status == "ok":
+        sources_by_key = {_output_source_key(source): source for source in spec.sources}
+        for outcome in outcomes:
+            if outcome.status != "ok":
+                continue
+            gold_dir = context.output_root / context.run_id / "gold" / outcome.source_key
+            if not gold_dir.is_dir():
+                continue
+            # Recorded so a later refresh can pick a volume baseline that collected the
+            # same population under the same contract (#700). Without them the catalog
+            # can only answer "coverage unknown" for every snapshot a build commits.
+            source_ref = sources_by_key.get(outcome.source_key)
+            fingerprints = fingerprint_source(source_ref) if source_ref is not None else None
+            try:
+                committed = materialize(
+                    catalog,
+                    workspace_id=workspace_id,
+                    logical_name=f"{spec.dataset_id}.{outcome.source_key}",
+                    source_dir=gold_dir,
+                    run_id=context.run_id,
+                    owner_id=effective_manifest_owner_id,
+                    coverage_fingerprint=fingerprints.coverage if fingerprints else None,
+                    source_params_fingerprint=(
+                        fingerprints.source_params if fingerprints else None
+                    ),
+                    schema_contract_version=(
+                        fingerprints.schema_contract if fingerprints else None
+                    ),
+                    row_count=row_counts.get(outcome.source_key),
+                    expected_revision=start_revisions.get(outcome.source_key),
+                    # A snapshot of a partial fetch says so (#816), so a reader can show
+                    # it rather than present part of the data as the whole.
+                    coverage=snapshot_coverage(provenance_by_key.get(outcome.source_key)),
+                )
+            except SnapshotConflict:
+                # Another build committed this table after this one started (#787).
+                # Not retried (#699): this run's data is older than what is current.
+                warehouse_failures[outcome.source_key] = {
+                    "reason": "conflict",
+                    "detail": "another build committed this table after this run started; "
+                    "the newer snapshot stays current",
+                }
+                continue
+            except (WarehouseError, OSError) as exc:
+                logger.exception("warehouse commit failed for %s", outcome.source_key)
+                warehouse_failures[outcome.source_key] = {
+                    "reason": "commit_failed",
+                    "detail": f"the snapshot could not be committed ({type(exc).__name__})",
+                }
+                continue
+            materialized[outcome.source_key] = committed
+            logger.info(
+                "materialised %s as snapshot %s",
+                outcome.source_key,
+                committed.snapshot.id,
+            )
+            _reclaim(catalog, committed.table.id, warehouse_keep)
+
     manifest = BuildManifest(
         build_id=context.run_id,
         status=status,
@@ -1226,45 +1326,10 @@ def run_build(
         schema_drift=schema_drift,
         drift_evaluation=drift_evaluation,
         composition=composition_provenance,
+        warehouse_failures=warehouse_failures,
     )
     manifest_path = context.output_root / context.run_id / "manifest.json"
     manifest_writer(manifest, manifest_path)
-
-    # Materialise after every source is done, in the single-threaded merge. Committing
-    # from the worker pool would put four threads through the same compare-and-swap and
-    # make three of them lose for no reason (#699).
-    materialized: dict[str, MaterializeResult] = {}
-    if catalog is not None and status == "ok":
-        sources_by_key = {_output_source_key(source): source for source in spec.sources}
-        for outcome in outcomes:
-            if outcome.status != "ok":
-                continue
-            gold_dir = context.output_root / context.run_id / "gold" / outcome.source_key
-            if not gold_dir.is_dir():
-                continue
-            # Recorded so a later refresh can pick a volume baseline that collected the
-            # same population under the same contract (#700). Without them the catalog
-            # can only answer "coverage unknown" for every snapshot a build commits.
-            source_ref = sources_by_key.get(outcome.source_key)
-            fingerprints = fingerprint_source(source_ref) if source_ref is not None else None
-            materialized[outcome.source_key] = materialize(
-                catalog,
-                workspace_id=workspace_id,
-                logical_name=f"{spec.dataset_id}.{outcome.source_key}",
-                source_dir=gold_dir,
-                run_id=context.run_id,
-                owner_id=effective_manifest_owner_id,
-                coverage_fingerprint=fingerprints.coverage if fingerprints else None,
-                source_params_fingerprint=fingerprints.source_params if fingerprints else None,
-                schema_contract_version=fingerprints.schema_contract if fingerprints else None,
-                row_count=row_counts.get(outcome.source_key),
-            )
-            logger.info(
-                "materialised %s as snapshot %s",
-                outcome.source_key,
-                materialized[outcome.source_key].snapshot.id,
-            )
-            _reclaim(catalog, materialized[outcome.source_key].table.id, warehouse_keep)
 
     return BuildResult(
         context=context,
@@ -1274,4 +1339,5 @@ def run_build(
         spec_digest=spec_digest,
         composition_outcome=composition_outcome,
         materialized=materialized,
+        warehouse_failures=warehouse_failures,
     )

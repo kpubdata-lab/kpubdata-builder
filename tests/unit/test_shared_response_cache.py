@@ -1,14 +1,16 @@
 """The response cache is never authorization (#684).
 
-kpubdata's transport cache keys on method, URL, params and headers, with the
-credential swapped for a fingerprint (kpubdata#263). Whenever the fingerprint is
-not in the key, a response fetched with A's key answers B's identical query. In a
-multi-user deployment the cache is therefore off for every client the service
-builds, not only for clients carrying a personal key.
+kpubdata >=0.7 keys its transport cache on method, URL, params and headers with
+the credential swapped for a fingerprint (kpubdata#263, closed), so it does not
+leak today. The service does not rely on that: in a multi-user deployment the
+cache is off for every client the service builds, not only for clients carrying
+a personal key — defence in depth, and no disk cache carried across a switch of
+deployment mode.
 
-``_SharedCacheFactory`` models that cache: one store for the whole process,
-keyed on the query alone, consulted unless the client was built with
-``cache=False``.
+``_SharedCacheFactory`` is a hypothetical regression model, not kpubdata's cache:
+one store for the whole process, keyed on the query alone (what a cache would do
+if the fingerprint ever fell out of the key), consulted unless the client was
+built with ``cache=False``. The tests pin the invariant against that model.
 """
 
 from __future__ import annotations
@@ -95,7 +97,7 @@ class _Client:
         return _Dataset(self, dataset_id)
 
     def fetch(self, dataset_id: str) -> list[dict[str, JsonValue]]:
-        # Key on the query alone, as kpubdata#263 does when no fingerprint lands in it.
+        # Key on the query alone: the regression this model stands for, not kpubdata today.
         if self._cache is not None and dataset_id in self._cache:
             return self._cache[dataset_id]
         owner = self.provider_keys.get("datago", "anonymous")
@@ -228,3 +230,22 @@ def test_multi_user_mode_refuses_a_factory_that_cannot_turn_the_cache_off(
 
     with pytest.raises(RuntimeError, match="cannot disable the shared response cache"):
         service._create_client(principal=_USER_B)
+
+
+@pytest.mark.parametrize("switch", _MULTI_USER_SWITCHES)
+def test_provider_status_builds_its_client_without_the_cache(
+    tmp_path: Path,
+    repository: SQLiteCredentialRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    switch: dict[str, str],
+) -> None:
+    """The connection test is another way in: it must not read or fill the cache either."""
+    for name, value in switch.items():
+        monkeypatch.setenv(name, value)
+    service, factory = _service(tmp_path, repository)
+    repository.put(cast(str, _USER_A.owner_id), "datago", "key-of-a")
+
+    assert service.provider_status("datago", principal=_USER_A).status_code == 200
+
+    assert factory.cache_args and all(arg is False for arg in factory.cache_args)
+    assert factory.store == {}

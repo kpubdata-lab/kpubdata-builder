@@ -183,7 +183,7 @@ kpubdata-builder publish specs/weather.yaml --target kaggle --destination my-use
 
 ### serve 명령
 
-Builder HTTP 서비스를 실행합니다 (Studio 연동용).
+Engine HTTP 서비스를 실행합니다 (Studio 연동용).
 
 ```bash
 # 서버 시작 (기본: 127.0.0.1:8000)
@@ -219,7 +219,14 @@ GC 가 **절대 지우지 않는** 것 — 모두 snapshot 을 `retiring` 으로
 | hold 가 걸린 snapshot — 저장된 분석·보존 기간·감사 | `TableCatalog.place_hold(snapshot_id, kind=..., reason=..., expires_at=...)` |
 
 hold 에는 이유가 필수다 — 이유 없는 hold 는 아무도 풀지 못한다. `expires_at` 이 없으면
-`release_hold` 할 때까지 유지된다.
+`release_hold` 할 때까지 유지된다. CLI 로도 건다(#797):
+
+```bash
+kpubdata-builder warehouse-hold DIR place SNAPSHOT --kind audit --reason "2026 감사" \
+  [--expires-at 2027-01-01T00:00:00+00:00]   # hold id 를 출력한다
+kpubdata-builder warehouse-hold DIR list SNAPSHOT
+kpubdata-builder warehouse-hold DIR release HOLD
+```
 
 ```bash
 # catalog 와 snapshot 파일을 함께 백업 (대상 디렉터리는 비어 있어야 한다)
@@ -228,6 +235,26 @@ kpubdata-builder warehouse-backup DIR BACKUP
 # 빈 디렉터리로 복원 — catalog 와 파일을 서로 대조한 뒤에만 복원한다
 kpubdata-builder warehouse-restore BACKUP NEW_DIR
 ```
+
+### 커밋된 테이블 읽기 (#797)
+
+서버에 `--warehouse` 가 있으면 호출자가 자기 빌드로 커밋한 테이블을 HTTP 로 읽는다.
+테이블 이름은 `<dataset_id>.<source_key>` 이고, 소유권을 강제하면 소유자마다 워크스페이스가
+따로라 다른 소유자의 테이블은 404 다.
+
+- `GET /warehouse/tables` — 테이블 목록과 current snapshot
+- `GET /warehouse/tables/{name}` — 읽을 수 있는 snapshot 목록(최신순)
+- `POST /warehouse/query` `{"table": ..., "snapshot": "current"|<id>, "sql": ..., "limit": ...}`
+  — `current` 는 질의 시작 전에 한 번 snapshot id 로 해석되고 lease 로 고정된다. 질의 중
+  커밋이 일어나도 읽는 것은 바뀌지 않고, 응답의 `snapshot.snapshot_id` 로 같은 질의를
+  다시 돌릴 수 있다. SQL 샌드박스는 `POST /query` 와 같다(테이블 이름은 `dataset`).
+
+저장된 분석(#783)은 `POST /analyses` `{"name", "table", "snapshot", "sql", "limit"}` 로 만든다.
+질의를 한 번 실행하고, 읽은 **구체적 snapshot id** 를 저장하며(`current` 를 저장하지 않는다),
+lease 가 풀리기 전에 그 snapshot 에 `saved_analysis` hold 를 건다. `POST /analyses/{id}/run`
+은 테이블이 갱신된 뒤에도 저장된 snapshot 을 읽는다. 결과 행은 저장하지 않고 컬럼·행 수·
+truncated·실행 시각만 남긴다. `DELETE /analyses/{id}` 가 hold 를 푼다. 저장소는
+`<output_root>/.service/analyses.sqlite3` 다.
 
 복원은 다음 중 하나라도 어긋나면 **아무것도 복원하지 않고** 문제를 전부 나열한다:
 snapshot 이 가리키는 테이블 존재, current 포인터가 커밋된 snapshot 을 가리킴, 각

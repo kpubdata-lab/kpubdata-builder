@@ -191,6 +191,9 @@ def test_manifest_writer_serializes_provenance(tmp_path: Path) -> None:
             "data_checksum": prov.data_checksum,
             "api_version": "unknown",
             "params": {"page": 1},
+            # #816: the fetched count is always known; a reported total and coverage
+            # are left out, not null, when the caller had no call totals to give.
+            "fetched_row_count": 1,
         }
     ]
 

@@ -33,7 +33,11 @@ from ..tabular.wire import encode_rows, encode_value
 from ..uploads import UploadRepository
 from .auth import Principal
 from .build_runs_api import OpenClient
-from .providers import ProviderCredentialConflictError, runtime_provider_catalog
+from .providers import (
+    ProviderCredentialConflictError,
+    ProviderCredentialRequired,
+    runtime_provider_catalog,
+)
 from .redaction import redact_secret_text
 from .responses import ServiceResponse
 from .routes.core import MAX_PREVIEW_LIMIT
@@ -127,6 +131,22 @@ def _catalog_application(dataset: DatasetRef) -> JsonValue:
     return {"required": required, "url": url}
 
 
+def _catalog_quota(dataset: DatasetRef) -> str | None:
+    """The spec licence's quota as the provider words it, or None (#778).
+
+    Read with ``getattr`` because ``DatasetRef.license`` arrives in a kpubdata release
+    after the one this package pins (kpubdata#609); until then every quota is None,
+    which the contract defines as "unknown", never "unlimited". The text is passed
+    through unparsed: providers phrase it differently, and a guessed number would be
+    worse than the sentence.
+    """
+    terms = getattr(dataset, "license", None)
+    quota = getattr(terms, "quota", None)
+    if not isinstance(quota, str) or not quota.strip():
+        return None
+    return quota
+
+
 def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> dict[str, JsonValue]:
     """Serialize only public/canonical metadata from DatasetRef as an allowlist (#490).
 
@@ -156,6 +176,7 @@ def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> di
         "requires_service_key": requires_service_key,
         "request_parameters": cast(JsonValue, _catalog_request_parameters(dataset)),
         "application": _catalog_application(dataset),
+        "quota": _catalog_quota(dataset),
     }
 
 
@@ -308,6 +329,17 @@ class SpecApiService:
             # No credential owner besides the request principal: a preview is never a
             # queued job acting for someone who has left.
             client, provider_keys = self._open_client(principal, None, provider_names)
+        except ProviderCredentialRequired as exc:
+            # The requester has no key of their own and the operator's may not be used
+            # (#786): an answer, before any client exists.
+            return ServiceResponse(
+                403,
+                {
+                    "error": str(exc),
+                    "code": "provider_credential_required",
+                    "providers": list(exc.providers),
+                },
+            )
         except (ProviderCredentialConflictError, ValueError) as exc:
             return ServiceResponse(400, {"error": str(exc)})
         except Exception:
@@ -321,6 +353,8 @@ class SpecApiService:
                 seed=seed,
                 upload_repository=self._upload_repository_for(spec_or_error),
                 owner_id=principal.owner_id if principal is not None else None,
+                # A provider that echoes the request would put the key into the sample.
+                secret_values=tuple(provider_keys.values()),
             )
         finally:
             self._close_client(client)

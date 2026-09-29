@@ -62,13 +62,17 @@ def test_the_operator_key_is_served_by_default(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_the_switch_refuses_the_operator_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With the switch on, a requester with no key of their own gets none."""
+    """With the switch on, a requester with no key of their own is refused.
+
+    "refused", not "none" (#786): "none" let callers carry on keyless, and a keyless
+    client read the operator's key from the environment by itself.
+    """
     monkeypatch.setenv(ENV, "1")
     resolver = CredentialResolver(_Repository())
 
     resolved = resolver.resolve(ALICE, "datago")
 
-    assert resolved.source == "none"
+    assert resolved.source == "refused"
     assert resolved.value is None
 
 
@@ -90,7 +94,7 @@ def test_the_switch_accepts_the_usual_spellings(
     monkeypatch.setenv(ENV, value)
     resolver = CredentialResolver(_Repository())
 
-    assert resolver.resolve(ALICE, "datago").source == "none"
+    assert resolver.resolve(ALICE, "datago").source == "refused"
 
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "", "  "])

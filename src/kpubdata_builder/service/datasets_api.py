@@ -16,6 +16,7 @@ the same ``dataset_id`` mix into latest candidates.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ from typing import cast
 from kpubdata_builder.service import datasets as datasets_service
 from kpubdata_builder.service import quality as quality_service
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.jobs import BuildJobSnapshot
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.store.artifacts import ArtifactStore
@@ -48,10 +50,13 @@ class DatasetsApiService:
         build_index: BuildIndex,
         store: ArtifactStore,
         enforce_ownership: bool | None = None,
+        active_runs: Callable[[], Sequence[BuildJobSnapshot]] = lambda: (),
     ) -> None:
         self._output_root = output_root
         self._build_index = build_index
         self._store = store
+        # Queued and running async jobs, so a table can say it is being refreshed (#781).
+        self._active_runs = active_runs
         # If None, re-read environment at call time — preserving test pattern of
         # toggling via env (#389).
         self._enforce_ownership_override = enforce_ownership
@@ -62,6 +67,29 @@ class DatasetsApiService:
         from kpubdata_builder.service import ownership as ownership_module
 
         return ownership_module.enforce_ownership()
+
+    def _active_statuses(self, principal: Principal | None) -> dict[str, list[str]]:
+        """Status of each in-progress job the principal may see, by dataset_id (#781).
+
+        The same ownership rule as the run records: another user's queued refresh must
+        not show up in this user's table any more than their finished run does.
+        """
+        from kpubdata_builder.service import ownership as ownership_module
+
+        enforce = self._enforce_ownership()
+        by_dataset: dict[str, list[str]] = {}
+        for job in self._active_runs():
+            if job.dataset_id is None:
+                continue
+            if principal is not None and not ownership_module.ownership_allows(
+                created_by=job.created_by,
+                owner_id=job.owner_id,
+                principal=principal,
+                enforce=enforce,
+            ):
+                continue
+            by_dataset.setdefault(job.dataset_id, []).append(job.status)
+        return by_dataset
 
     # --- Run record collection (shared with quality domain) ---
 
@@ -155,9 +183,14 @@ class DatasetsApiService:
         )
         items: list[JsonValue] = []
         total = 0
+        active = self._active_statuses(principal)
         for record in ordered:
             if len(items) < limit:
-                view = datasets_service.build_dataset_summary(self._output_root, record)
+                view = datasets_service.build_dataset_summary(
+                    self._output_root,
+                    record,
+                    active_statuses=active.get(record.dataset_id, ()),
+                )
                 if view is None:
                     continue
                 items.append(view)
@@ -178,7 +211,11 @@ class DatasetsApiService:
         if not records:
             return ServiceResponse(404, {"error": f"dataset not found: {dataset_id}"})
         latest = datasets_service.pick_latest(records)
-        view = datasets_service.build_dataset_summary(self._output_root, latest)
+        view = datasets_service.build_dataset_summary(
+            self._output_root,
+            latest,
+            active_statuses=self._active_statuses(principal).get(dataset_id, ()),
+        )
         if view is None:
             return ServiceResponse(404, {"error": f"dataset not found: {dataset_id}"})
         view["run_count"] = len(records)

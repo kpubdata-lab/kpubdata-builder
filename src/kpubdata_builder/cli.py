@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
-from . import __version__
+from . import __version__, logging_redaction
 from .errors import PublishError, SpecLoadError, ValidationError
 from .pipeline import preview_build, run_build
 from .publishers import PUBLISHER_REGISTRY
@@ -28,7 +28,14 @@ from .spec import load_spec
 from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
 from .tabular import DEFAULT_PREVIEW_LIMIT
-from .warehouse import CATALOG_FILENAME, BackupInvalid, TableCatalog
+from .warehouse import (
+    CATALOG_FILENAME,
+    HOLD_KINDS,
+    BackupInvalid,
+    HoldKind,
+    TableCatalog,
+    WarehouseError,
+)
 from .warehouse import backup as warehouse_backup
 from .warehouse import gc as warehouse_gc
 
@@ -48,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="kpubdata-builder",
-        description="KPubData Builder command-line interface.",
+        description="KPubData Engine command-line interface.",
     )
     parser.add_argument(
         "--version",
@@ -147,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve_cmd = subparsers.add_parser(
         "serve",
-        help="Run the Builder HTTP service.",
+        help="Run the Engine HTTP service.",
     )
     serve_cmd.add_argument(
         "--host",
@@ -369,6 +376,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Where to restore. Must not exist or be empty; nothing is overwritten.",
     )
 
+    hold_cmd = subparsers.add_parser(
+        "warehouse-hold",
+        help=(
+            "Place, release or list holds that keep a snapshot past garbage collection "
+            "(#705, #797)."
+        ),
+    )
+    hold_cmd.add_argument("warehouse", metavar="DIR", help="Table catalog root.")
+    hold_actions = hold_cmd.add_subparsers(dest="hold_action", required=True)
+    hold_place = hold_actions.add_parser("place", help="Hold a committed snapshot.")
+    hold_place.add_argument("snapshot_id", metavar="SNAPSHOT")
+    hold_place.add_argument("--kind", required=True, choices=HOLD_KINDS)
+    hold_place.add_argument(
+        "--reason",
+        required=True,
+        help="What the hold is for, so whoever finds it later knows whether to release it.",
+    )
+    hold_place.add_argument(
+        "--expires-at",
+        default=None,
+        metavar="ISO8601",
+        help="When the hold lapses, with a UTC offset (default: until released).",
+    )
+    hold_release = hold_actions.add_parser("release", help="Release a hold.")
+    hold_release.add_argument("hold_id", metavar="HOLD")
+    hold_list = hold_actions.add_parser("list", help="List a snapshot's live holds.")
+    hold_list.add_argument("snapshot_id", metavar="SNAPSHOT")
+
     return parser
 
 
@@ -377,6 +412,7 @@ def _create_client(
     provider_keys: dict[str, str] | None = None,
     timeout: float | None = None,
     cache: bool | None = None,
+    environment_keys: bool = True,
 ) -> SourceClient:
     """Create kpubdata client with configuration.
 
@@ -385,6 +421,18 @@ def _create_client(
     """
     from kpubdata import Client
 
+    if not environment_keys:
+        # The service asked for a client that must not carry the operator's keys
+        # (REQUIRE_OWN_PROVIDER_CREDENTIAL, #786). from_env would add them from the
+        # environment on its own, so build the client from explicit keys only.
+        return cast(
+            SourceClient,
+            Client(
+                provider_keys=dict(provider_keys or {}),
+                timeout=timeout if timeout is not None else 30.0,
+                cache=bool(cache),
+            ),
+        )
     # Since kpubdata #276, from_env accepts only explicit parameters (**kwargs removed).
     return cast(
         SourceClient,
@@ -759,6 +807,52 @@ def _run_warehouse_restore(*, backup: str, warehouse: str) -> int:
         return 1
     tables = catalog.list_tables()
     print(f"restored {len(tables)} table(s) into {warehouse}")
+    return 0
+
+
+def _run_warehouse_hold(
+    *,
+    warehouse: str,
+    action: str,
+    snapshot_id: str | None = None,
+    hold_id: str | None = None,
+    kind: str | None = None,
+    reason: str | None = None,
+    expires_at: str | None = None,
+) -> int:
+    """Place, release or list snapshot holds (#797).
+
+    Holds existed only as a Python API, so keeping a snapshot for an audit or a saved
+    analysis meant writing code against the catalog.
+    """
+    root = Path(warehouse)
+    if not (root / CATALOG_FILENAME).is_file():
+        print(f"error: no table catalog under {root}", file=sys.stderr)
+        return 1
+    catalog = TableCatalog(root)
+    try:
+        if action == "place":
+            hold = catalog.place_hold(
+                snapshot_id or "",
+                kind=cast(HoldKind, kind),
+                reason=reason or "",
+                expires_at=expires_at,
+            )
+            print(hold.hold_id)
+        elif action == "release":
+            catalog.release_hold(hold_id or "")
+            print(f"released {hold_id}")
+        else:
+            for live in catalog.live_holds(snapshot_id or ""):
+                print(
+                    f"{live.hold_id}\t{live.kind}\t{live.expires_at or 'until released'}"
+                    f"\t{live.reason}"
+                )
+    except WarehouseError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        catalog.close()
     return 0
 
 
@@ -1167,6 +1261,16 @@ def dispatch(args: argparse.Namespace) -> int:
         return _run_warehouse_backup(warehouse=args.warehouse, destination=args.destination)
     if command == "warehouse-restore":
         return _run_warehouse_restore(backup=args.backup, warehouse=args.warehouse)
+    if command == "warehouse-hold":
+        return _run_warehouse_hold(
+            warehouse=args.warehouse,
+            action=args.hold_action,
+            snapshot_id=getattr(args, "snapshot_id", None),
+            hold_id=getattr(args, "hold_id", None),
+            kind=getattr(args, "kind", None),
+            reason=getattr(args, "reason", None),
+            expires_at=getattr(args, "expires_at", None),
+        )
     if command == "prune-cancelled":
         return _run_prune_cancelled(
             output_dir=args.output_dir,
@@ -1221,6 +1325,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help(sys.stderr)
         return 2
+    # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
+    logging_redaction.install()
     return dispatch(args)
 
 

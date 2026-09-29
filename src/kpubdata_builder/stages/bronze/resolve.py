@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
-from urllib.parse import urlsplit, urlunsplit
+from typing import cast
+from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
 from ...ingestion import IngestionError, parse_tabular_bytes, safe_fetch_get
 from ...ingestion.url_fetch import default_max_fetch_bytes
@@ -52,8 +55,65 @@ def build_bronze_artifact_for_source(
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
     fetched_at: datetime | None = None,
+    secret_values: tuple[str, ...] = (),
+    on_combination_done: Callable[[int, int], None] | None = None,
 ) -> BronzeArtifact:
-    """fetches per source.kind and creates BronzeArtifact (#498)."""
+    """fetches per source.kind and creates BronzeArtifact (#498).
+
+    ``on_combination_done`` reaches the ``param_grid`` loop of a public_api source
+    (#648); other kinds make one read and never call it.
+
+    ``secret_values`` are the requester's provider keys. A provider that echoes the
+    request back in its response puts the key into the records, and from there into
+    every stage output, card and export (#686). Bronze is where records enter, so it
+    is where exact occurrences of a key are replaced — before anything is written.
+    """
+    artifact = _fetch_bronze(
+        source,
+        client=client,
+        upload_repository=upload_repository,
+        owner_id=owner_id,
+        fetched_at=fetched_at,
+        on_combination_done=on_combination_done,
+    )
+    if not secret_values:
+        return artifact
+    scrubbed = tuple(
+        cast(dict[str, JsonValue], scrub_secret_values(record, secret_values))
+        for record in artifact.raw_records
+    )
+    if scrubbed == artifact.raw_records:
+        return artifact
+    return replace(artifact, raw_records=scrubbed)
+
+
+def scrub_secret_values(value: JsonValue, secrets: tuple[str, ...]) -> JsonValue:
+    """``value`` with every string occurrence of a secret — raw or URL-encoded — replaced."""
+    if isinstance(value, str):
+        cleaned = value
+        for form in sorted(
+            {f for s in secrets if s for f in (s, quote(s, safe=""), quote_plus(s))},
+            key=len,
+            reverse=True,
+        ):
+            cleaned = cleaned.replace(form, "[REDACTED]")
+        return cleaned
+    if isinstance(value, list):
+        return [scrub_secret_values(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: scrub_secret_values(item, secrets) for key, item in value.items()}
+    return value
+
+
+def _fetch_bronze(
+    source: SourceRef,
+    *,
+    client: SourceClient,
+    upload_repository: UploadRepository | None,
+    owner_id: str | None,
+    fetched_at: datetime | None,
+    on_combination_done: Callable[[int, int], None] | None = None,
+) -> BronzeArtifact:
     if source.kind == "file":
         return _build_from_upload(
             source, upload_repository=upload_repository, owner_id=owner_id, fetched_at=fetched_at
@@ -75,6 +135,7 @@ def build_bronze_artifact_for_source(
             fetch_params=dict(source.params),
             fetched_at=fetched_at,
             param_combinations=combinations,
+            on_combination_done=on_combination_done,
         )
     # BuildSpec that bypassed loader validation (direct SourceRef construction) also
     # already rejected, but, resolver itself "else is public_api"implicit

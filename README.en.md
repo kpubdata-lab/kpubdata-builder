@@ -1,6 +1,8 @@
 # KPubData Engine
 
-**KPubData Builder transforms raw Korean public data into validated, distributable datasets.**
+**KPubData Engine is the execution and warehouse engine that turns public data into verifiable table snapshots.**
+
+> The KPubData family: [Core](https://github.com/yeongseon/kpubdata) (access layer) → **Engine** (execution and warehouse) → [Studio](https://github.com/yeongseon/kpubdata-studio) (visual workspace). The product is KPubData Engine; the repository, the Python package and the CLI keep the name `kpubdata-builder`.
 
 It sits atop [kpubdata](https://github.com/yeongseon/kpubdata) and runs a Medallion pipeline: Bronze (raw) → Silver (typed/normalized) → Gold (exportable). BuildSpec is the declarative contract that ensures reproducibility — the same spec produces the same output.
 
@@ -98,14 +100,14 @@ build/{run_id}/
 
 ## Supported data
 
-Builder leverages all Providers and Datasets that kpubdata supports. See [kpubdata's SUPPORTED_DATA.md](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md) for coverage.
+KPubData Engine uses all Providers and Datasets that kpubdata supports. See [kpubdata's SUPPORTED_DATA.md](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md) for coverage.
 
 ## KPubData Product Family
 
 | Package | Role |
 |---|---|
 | [kpubdata](https://github.com/yeongseon/kpubdata) | Public data access + normalization core |
-| **kpubdata-builder** | Raw data → validated, distributable datasets |
+| **kpubdata-builder** (KPubData Engine) | Raw data → validated, distributable datasets and table snapshots |
 | [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | Dataset workbench UI |
 
 ---

@@ -1,11 +1,11 @@
-# KPubData-Builder 기여 가이드 (CONTRIBUTING.md)
+# KPubData Engine (`kpubdata-builder`) 기여 가이드 (CONTRIBUTING.md)
 
 > **프로젝트 관리·리뷰 정책의 정본은 [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 하나다.**
 > Epic · Issue · Priority · Review Level · Verification · Release 규칙은 그 문서를 따른다.
 > 이 문서에는 이 저장소 고유의 절차(빌드 명령, 디렉터리 규칙)만 남긴다.
 > 충돌하면 POLICY.md 가 우선한다.
 
-KPubData-Builder 프로젝트에 기여하고 싶으신가요? 환영합니다! 이 프로젝트는 KPubData에서 가져온 데이터를 다양한 형식(CSV, JSON, SQL 등)으로 가공하고 내보내는 역할을 합니다.
+KPubData Engine 프로젝트에 기여하고 싶으신가요? 환영합니다! 이 프로젝트는 KPubData에서 가져온 데이터를 다양한 형식(CSV, JSON, SQL 등)으로 가공하고 내보내는 역할을 합니다.
 
 ## 1. 환영 인사 및 프로젝트 소개
 
@@ -106,7 +106,7 @@ uv sync --extra dev --extra publish --no-sources
 
 #### 핀 범위(`>=0.7.0,<0.8`)를 이렇게 설정한 이유
 
-`kpubdata-builder`는 `kpubdata` 0.7.x의 API(`Client.dataset(...).list` 등)에 의존합니다. kpubdata 0.7.0은 datago 카탈로그에서 `hospital_info`·`apt_trade`·`village_fcst`를 뺀 breaking 릴리스이지만, 세 데이터셋은 spec 실행기로 계속 조회되고 Builder 전체 스위트가 그 변경을 포함한 kpubdata main에서 통과했습니다(2026-09-28, #746). 0.8 이상은 검증 전이라 허용하지 않습니다 (관련 이슈: #213).
+`kpubdata-builder`는 `kpubdata` 0.7.x의 API(`Client.dataset(...).list` 등)에 의존합니다. kpubdata 0.7.0은 datago 카탈로그에서 `hospital_info`·`apt_trade`·`village_fcst`를 뺀 breaking 릴리스이지만, 세 데이터셋은 spec 실행기로 계속 조회되고 이 저장소의 전체 스위트가 그 변경을 포함한 kpubdata main에서 통과했습니다(2026-09-28, #746). 0.8 이상은 검증 전이라 허용하지 않습니다 (관련 이슈: #213).
 
 핀의 정본은 `pyproject.toml`의 `dependencies`입니다. 이 표와 어긋나면 `pyproject.toml`이 맞습니다.
 
@@ -169,18 +169,16 @@ flowchart TD
 4.  **Push**: `git push origin feat/issue-번호-설명`
 5.  **PR**: GitHub 웹사이트에서 초록색 "Compare & pull request" 버튼을 누릅니다.
 
-### 3-5. 커밋 메시지 규칙
-영어로 작성하는 것을 원칙으로 하며, 첫 단어(태그)로 성격을 나타냅니다.
+### 3-5. 제목과 커밋 메시지 규칙
+이슈·PR·최종 커밋 제목의 **정본은 kpubdata 의 [POLICY 2.1.3](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md#213-유형은-제목이-정하고-라벨은-따라온다--2026-09-29-개정)** 입니다 — 세 저장소가
+같은 규칙과 같은 허용 type 11개를 씁니다. 요약하면:
 
-| 태그 | 의미 |
-| :--- | :--- |
-| `feat` | 새로운 기능 추가 |
-| `fix` | 버그 수정 |
-| `docs` | 문서 수정 (README 등) |
-| `test` | 테스트 코드 추가/수정 |
-| `refactor` | 코드 구조 개선 (기능 변화 없음) |
-
-- 예: `feat: add support for parquet export`
+- `type: description` 또는 `type(scope): description`, 영어, 끝에 마침표 없음
+  (예: `feat: add support for parquet export`, `fix(query): keep Decimal precision`)
+- 허용 type: `feat` `fix` `docs` `test` `perf` `refactor` `ci` `build` `chore` `style` `revert`
+- 병합은 squash 뿐이라 PR 제목이 그대로 `main` 의 커밋 제목이 됩니다. 브랜치 안의 개별 커밋
+  메시지는 자유지만 '무엇을 왜 바꿨는지' 쓰기를 권합니다.
+- 이슈 번호는 제목이 아니라 PR 본문에 `Closes #123` 으로 적습니다.
 
 ### 3-6. 절대 금지 사항
 - **main 브랜치에 직접 Push 금지**: 모든 변경은 PR을 거쳐야 합니다.
@@ -237,7 +235,7 @@ KPubData-Builder에 새로운 파일 형식을 추가해 봅시다.
 
 ## 8. PR 체크리스트
 
-PR을 작성할 때 제목을 `[#이슈번호] 간단한 설명`으로 작성해 주세요.
+PR 제목은 [3-5](#3-5-제목과-커밋-메시지-규칙) 의 규칙(`type(scope): description`)을 따르고, 이슈는 본문에 `Closes #123` 으로 연결해 주세요.
 
 - [ ] 로컬 테스트(`uv run pytest`)가 모두 성공했나요?
 - [ ] 린트(`uv run ruff check .`)에서 오류가 없나요?

@@ -106,6 +106,8 @@ class BuildManifest:
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = field(default_factory=dict)
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = field(default_factory=dict)
     composition: CompositionProvenance | None = None
+    #: Sources whose warehouse commit failed after they built, by reason (#788).
+    warehouse_failures: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 __all__ = ["MANIFEST_SCHEMA_VERSION", "BuildManifest"]

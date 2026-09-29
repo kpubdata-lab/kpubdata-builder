@@ -29,6 +29,35 @@ class QueryTimeoutError(QueryExecutionError):
 
 MAX_QUERY_RESPONSE_BYTES = 8 * 1024 * 1024
 
+WorkerFn = Callable[[Connection, str, str, int, int], None]
+
+
+def _bounded_worker(
+    memory_limit_bytes: int | None,
+    worker: WorkerFn,
+    connection: Connection,
+    table_path: str,
+    canonical_sql: str,
+    limit: int,
+    parent_started_ns: int,
+) -> None:
+    """Run ``worker`` in the child after capping the child's address space (#701).
+
+    An expensive sort must cost the query, not the server. The cap is applied inside
+    the child, before Polars is imported, so exceeding it fails this process — the
+    parent sees a closed pipe or ``ok: False`` and answers 400 while every other
+    request carries on. Where the platform has no ``resource`` module the cap is not
+    applied, and nothing else changes.
+    """
+    if memory_limit_bytes is not None:
+        try:
+            import resource
+
+            resource.setrlimit(resource.RLIMIT_AS, (memory_limit_bytes, memory_limit_bytes))
+        except (ImportError, ValueError, OSError):
+            pass
+    worker(connection, table_path, canonical_sql, limit, parent_started_ns)
+
 
 def _elapsed_ms(started_ns: int, ended_ns: int | None = None) -> int:
     end = time.monotonic_ns() if ended_ns is None else ended_ns
@@ -94,18 +123,35 @@ class QueryEngine:
         self,
         *,
         timeout_seconds: float = 10.0,
-        worker: Callable[[Connection, str, str, int, int], None] = _query_worker,
+        worker: WorkerFn = _query_worker,
+        memory_limit_bytes: int | None = None,
     ) -> None:
+        """Args:
+        memory_limit_bytes: Address-space cap for each query's child process, or
+            None for no cap (#701). Opt-in: which budget a deployment has is its own
+            decision, and a cap below what Polars reserves would fail every query.
+        """
+        if memory_limit_bytes is not None and memory_limit_bytes < 1:
+            raise ValueError("memory_limit_bytes must be positive")
         self._timeout_seconds = timeout_seconds
         self._worker = worker
+        self._memory_limit_bytes = memory_limit_bytes
 
     def execute(self, table_path: Path, canonical_sql: str, *, limit: int) -> QueryResult:
         started_ns = time.monotonic_ns()
         context = multiprocessing.get_context("spawn")
         parent, child = context.Pipe(duplex=False)
         process = context.Process(
-            target=self._worker,
-            args=(child, str(table_path), canonical_sql, limit, started_ns),
+            target=_bounded_worker,
+            args=(
+                self._memory_limit_bytes,
+                self._worker,
+                child,
+                str(table_path),
+                canonical_sql,
+                limit,
+                started_ns,
+            ),
             daemon=True,
         )
         process_started = False
@@ -138,6 +184,7 @@ class QueryEngine:
                 raise QueryExecutionError("query returned an invalid result")
             startup_ms = _timing_from_payload(payload, "startup_ms")
             engine_execution_ms = _timing_from_payload(payload, "engine_execution_ms")
+            extra = payload.get("meta")
             execution_ms = _elapsed_ms(started_ns)
             result = QueryResult(
                 columns=tuple(str(column) for column in columns),
@@ -147,6 +194,7 @@ class QueryEngine:
                 execution_ms=execution_ms,
                 startup_ms=startup_ms,
                 engine_execution_ms=engine_execution_ms,
+                meta=cast(dict[str, JsonValue], extra) if isinstance(extra, dict) else {},
             )
             logger.info(
                 "query timing",

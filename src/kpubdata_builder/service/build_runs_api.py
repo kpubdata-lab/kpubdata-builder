@@ -29,6 +29,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from typing_extensions import assert_never
 
 from ..events import BuildEvent, BuildEventStore
@@ -41,9 +42,10 @@ from ..store.artifacts import ArtifactStore
 from ..store.build_index import BuildIndex
 from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
+from . import ownership as ownership_module
 from .auth import Principal
 from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
-from .providers import ProviderCredentialConflictError
+from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
 from .redaction import redact_json_secrets, redact_secret_text
 from .responses import ServiceResponse
 
@@ -60,6 +62,23 @@ keys come back too, because the build redacts them from what it returns. Raises
 ``ProviderCredentialConflictError``/``ValueError`` for a bad credential request and
 anything else when no client can be made.
 """
+
+
+def _declared_dataset_id(spec_yaml: str) -> str | None:
+    """The spec's top-level ``dataset_id``, or None — read only to label the job (#781).
+
+    Not validation: the worker validates the whole spec when it runs, and a spec that
+    fails here fails there with a proper answer. This only lets a table show that a
+    refresh is queued or running before the run finishes.
+    """
+    try:
+        document = yaml.safe_load(spec_yaml)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    dataset_id = document.get("dataset_id")
+    return dataset_id if isinstance(dataset_id, str) and dataset_id else None
 
 
 class BuildRunsApiService:
@@ -151,6 +170,17 @@ class BuildRunsApiService:
             client, provider_keys = self._open_client(
                 principal, credential_owner_id, provider_names
             )
+        except ProviderCredentialRequired as exc:
+            # The requester has no key of their own and the operator's may not be used
+            # (#786): an answer, before any client exists.
+            return ServiceResponse(
+                403,
+                {
+                    "error": str(exc),
+                    "code": "provider_credential_required",
+                    "providers": list(exc.providers),
+                },
+            )
         except (ProviderCredentialConflictError, ValueError) as exc:
             return ServiceResponse(400, {"error": str(exc)})
         except Exception:
@@ -168,6 +198,13 @@ class BuildRunsApiService:
                 event_store=self._event_store(),
                 cancellation=cancellation,
                 catalog=self._table_catalog(),
+                # One workspace per owner when ownership is enforced, so one owner's
+                # refresh cannot replace another owner's table (#789).
+                workspace_id=ownership_module.warehouse_workspace(
+                    manifest_owner_id if manifest_owner_id is not None else owner_id
+                ),
+                # A provider that echoes the request would put the key into the data.
+                secret_values=tuple(provider_keys.values()),
             )
         finally:
             self._close_client(client)
@@ -199,6 +236,11 @@ class BuildRunsApiService:
         # partial manifest recorded below.
         cancelled = result.status == "cancelled"
         status_code = 200 if result.status == "ok" else 409 if cancelled else 502
+        # The build succeeded but a table was not committed (#788) — most often another
+        # build refreshed it after this one started (#787). 409, not 500: nothing broke,
+        # the table kept the newer snapshot, and the body says which source and why.
+        if result.warehouse_failures and status_code == 200:
+            status_code = 409
         body: dict[str, JsonValue] = {
             "status": result.status,
             "run_id": result.context.run_id,
@@ -222,6 +264,10 @@ class BuildRunsApiService:
         # deployment has no warehouse: an empty object would say "nothing was
         # committed", and a caller cannot tell that from "committing was never
         # configured". The same distinction #700 drew for drift baselines.
+        if result.warehouse_failures:
+            body["warehouse_failures"] = {
+                key: dict(value) for key, value in result.warehouse_failures.items()
+            }
         if self._warehouse_configured:
             body["materialized"] = {
                 source_key: {
@@ -368,6 +414,7 @@ class BuildRunsApiService:
                 run_id=resolved_run_id,
                 created_by=created_by,
                 owner_id=owner_id,
+                dataset_id=_declared_dataset_id(spec_yaml),
                 runner=runner,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,

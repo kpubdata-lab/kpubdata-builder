@@ -107,7 +107,7 @@ Builder는 kpubdata가 지원하는 모든 Provider와 Dataset을 활용할 수 
 | 패키지 | 역할 |
 |---|---|
 | [kpubdata](https://github.com/yeongseon/kpubdata) | 공공데이터 접근·정규화 코어 |
-| **kpubdata-builder** | 원시 데이터 → 정제·검증·배포 가능한 데이터셋 엔진 |
+| **kpubdata-builder** (KPubData Engine) | 원시 데이터 → 정제·검증·배포 가능한 데이터셋 엔진 |
 | [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | 데이터셋 워크벤치 UI |
 
 ---

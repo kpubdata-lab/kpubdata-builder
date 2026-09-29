@@ -217,6 +217,11 @@ def _oidc_issuers() -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
+def oidc_enabled() -> bool:
+    """Whether OIDC sign-in is configured, i.e. at least one issuer is set."""
+    return bool(_oidc_issuers())
+
+
 def _discover_jwks_uri(issuer: str) -> str:
     """Fetch jwks_uri from OIDC discovery document (RFC 8414, #435).
 
@@ -529,6 +534,7 @@ __all__ = [
     "Principal",
     "authenticate",
     "compute_owner_id",
+    "oidc_enabled",
     "principal_owns",
     "validate_dev_mode",
     "validate_oidc_config",

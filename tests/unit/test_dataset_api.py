@@ -572,7 +572,7 @@ class TestDatasetTotal:
         real_summary = datasets_module.build_dataset_summary
         real_renderable = datasets_module.dataset_summary_renderable
 
-        def _spy_summary(output_root: Path, record: RunRecord) -> object:
+        def _spy_summary(output_root: Path, record: RunRecord, **kwargs: object) -> object:
             summary_calls.append(record.run_id)
             return real_summary(output_root, record)
 

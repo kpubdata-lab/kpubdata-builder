@@ -115,6 +115,21 @@ def _validate_join_keys(
             )
 
 
+def _nan_keys_to_null(table: pl.DataFrame, columns: Sequence[str]) -> pl.DataFrame:
+    """Float key columns with NaN turned into null (#793).
+
+    Polars joins NaN keys to each other, while the null-key count saw none of them: two
+    NaN keys a side reported zero null keys, an empty intersection and one_to_one, and
+    the join still produced four rows. NaN is not a value that equals anything, so it is
+    treated as the missing key it stands for — counted as a null key, never matched —
+    and the statistics and the join follow the same rule.
+    """
+    floats = [c for c in columns if table.schema[c].is_float()]
+    if not floats:
+        return table
+    return table.with_columns([pl.col(c).fill_nan(None) for c in floats])
+
+
 def _null_key_mask(table: pl.DataFrame, columns: Sequence[str]) -> pl.Series:
     """True for rows with a null in any key column — such a row never matches."""
     return table.select(pl.any_horizontal([pl.col(c).is_null() for c in columns])).to_series()
@@ -169,6 +184,8 @@ def build_composed_gold_package(
 
     left_columns = [lc for lc, _ in join.keys]
     right_columns = [rc for _, rc in join.keys]
+    left_table = _nan_keys_to_null(left_table, left_columns)
+    right_table = _nan_keys_to_null(right_table, right_columns)
     left_row_count = left_table.height
     right_row_count = right_table.height
 

@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .. import __version__, logging_redaction
 from ..credentials import (
     AesGcmCredentialCipher,
     CredentialRepository,
@@ -50,6 +51,7 @@ from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
 from . import publish as publish_service
+from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
 from .build_runs_api import BuildRunsApiService
@@ -62,6 +64,7 @@ from .providers import (
     ProviderDescriptor,
     ProviderTestOperation,
     default_provider_test,
+    require_own_provider_credential,
 )
 from .providers_service import ProvidersService
 from .publish_api import PublishApiService
@@ -76,6 +79,7 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import UploadsService
+from .warehouse_api import WarehouseApiService
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +104,12 @@ class _CloseableClient(Protocol):
 
 
 def _close_request_client(client: SourceClient) -> None:
-    if isinstance(client, _CloseableClient):
-        client.close()
+    try:
+        if isinstance(client, _CloseableClient):
+            client.close()
+    finally:
+        # The client's keys stop being "in use" for log scrubbing once it is closed (#686).
+        logging_redaction.release(client)
 
 
 def _raise_provider_test_error(client: SourceClient, provider: str) -> None:
@@ -274,7 +282,27 @@ _BuildListEntry = dict[str, str | None]
 #   duplicate_key_warning is judged on keys present on both sides only.
 # 1.32.0 -> 1.33.0: BuildSpec gains license_name and license_link, and publishes the
 #   attribution it already accepted (#764, additive). `license: other` needs both.
-API_CONTRACT_VERSION = "1.33.0"
+# 1.36.0 -> 1.37.0: POST /build may answer 409 with warehouse_failures when a table commit
+#   failed after every source built (#787, #788, additive).
+# 1.37.0 -> 1.38.0: GET /warehouse/tables, GET /warehouse/tables/{name} and
+#   POST /warehouse/query read committed table snapshots, the last one pinning the
+#   snapshot for the query's lifetime (#797, additive).
+# 1.38.0 -> 1.39.0: /analyses saves a query bound to the snapshot id it read, holds that
+#   snapshot, and re-runs against it (#783, additive).
+# 1.39.0 -> 1.40.0: CatalogDataset gains quota, the spec licence's rate limit verbatim or
+#   null (#778, additive).
+# 1.40.0 -> 1.41.0: column metadata gains optional semantic, display and unit hints, each
+#   with its origin (#813, additive; ADR 0019). Metadata only; absent when undescribed.
+# 1.41.0 -> 1.42.0: manifest provenance gains fetched_row_count, source_reported_total and
+#   coverage; WarehouseSnapshot gains coverage (#816, additive). Totals are never summed.
+# 1.42.0 -> 1.43.0: POST /warehouse/rows reads one page of a pinned snapshot with a stable
+#   order, filters, a column selection and a count with its status (#815, additive).
+# 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
+#   completeness, health, access, maturity as separate fields (#781, additive).
+# 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
+# 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
+#   combination with metrics {done, total} (#648, additive).
+API_CONTRACT_VERSION = "1.43.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -304,6 +332,8 @@ class BuilderService:
         async_max_queue_size: int = 10,
         warehouse_root: Path | None = None,
     ) -> None:
+        # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
+        logging_redaction.install()
         self._output_root = output_root
         # Configured, never taken from a request: a per-request path would let a
         # caller write a catalog anywhere the process can reach (#703).
@@ -364,8 +394,21 @@ class BuilderService:
         # defeating lazy creation. Check need first here.
         self._uploads_service = UploadsService(repository=lambda: self._upload_repository)
         self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
+        self._warehouse_api = WarehouseApiService(
+            table_catalog=lambda: self._table_catalog(), engine=self._query_service
+        )
+        self._analysis_store: AnalysisStore | None = None
+        self._analyses_api = AnalysesApiService(
+            store=lambda: self._analyses(),
+            warehouse=self._warehouse_api,
+            table_catalog=lambda: self._table_catalog(),
+        )
         self._datasets_api = DatasetsApiService(
-            output_root=self._output_root, build_index=self._build_index, store=self._store
+            output_root=self._output_root,
+            build_index=self._build_index,
+            store=self._store,
+            # Resolved at call time: the job registry is created further down (#781).
+            active_runs=lambda: self._async_builds.registry.active_snapshots(),
         )
         self._stages_api = StagesApiService(output_root=self._output_root, store=self._store)
         self._builds_api = BuildArtifactsApiService(
@@ -465,6 +508,14 @@ class BuilderService:
                 )
             return self._upload_repository_lazy
 
+    def _analyses(self) -> AnalysisStore:
+        """Saved analysis store, opened on first use (#783)."""
+        if self._analysis_store is None:
+            self._analysis_store = AnalysisStore(
+                self._output_root / ".service" / "analyses.sqlite3"
+            )
+        return self._analysis_store
+
     def _table_catalog(self) -> TableCatalog | None:
         """The table catalog, or None when this deployment has no warehouse.
 
@@ -511,18 +562,31 @@ class BuilderService:
             if not _factory_accepts_keyword(self._client_factory, "provider_keys"):
                 raise RuntimeError("client_factory cannot accept principal provider credentials")
             kwargs["provider_keys"] = provider_keys
-        # A shared response cache answers B's query with A's response, so the cache
-        # would stand in for authorization (#684). kpubdata#263 unfixed: credentials
-        # are not in the cache key. Per-user credentials and any multi-user
-        # deployment therefore get no cache, whatever KPUBDATA_CACHE says — and a
-        # factory that cannot turn it off is refused rather than trusted.
+        # A response cache shared between users must never stand in for authorization
+        # (#684). kpubdata >=0.7 fingerprints credentials into its cache key and does not
+        # cache GETs carrying sensitive headers, but the service does not rely on that:
+        # this is defence in depth, and it also stops a disk cache written in one
+        # deployment mode being read after a switch to another. Per-user credentials and
+        # any multi-user deployment therefore get no cache, whatever KPUBDATA_CACHE says —
+        # and a factory that cannot turn it off is refused rather than trusted.
         if provider_keys or ownership_module.multi_user_mode():
             if not _factory_accepts_keyword(self._client_factory, "cache"):
                 raise RuntimeError("client_factory cannot disable the shared response cache")
             kwargs["cache"] = False
         if timeout is not None and _factory_accepts_keyword(self._client_factory, "timeout"):
             kwargs["timeout"] = timeout
-        return self._client_factory(**kwargs)
+        # With REQUIRE_OWN_PROVIDER_CREDENTIAL on, no client may carry the operator's keys
+        # — not even a keyless one, which would read them from the environment itself
+        # (#786). A factory that cannot be told so is refused, not trusted.
+        if require_own_provider_credential():
+            if not _factory_accepts_keyword(self._client_factory, "environment_keys"):
+                raise RuntimeError("client_factory cannot be kept from the operator's credentials")
+            kwargs["environment_keys"] = False
+        client = self._client_factory(**kwargs)
+        # While this client is open its keys are scrubbed from every log record by value,
+        # which catches a key a provider puts in a path segment (#686).
+        logging_redaction.register(client, provider_keys.values())
+        return client
 
     def _runtime_providers(self) -> tuple[ProviderDescriptor, ...] | ServiceResponse:
         return self._providers_service.runtime_providers()
@@ -588,14 +652,63 @@ class BuilderService:
         """Execute one validated SQL query against server-resolved stage table."""
         return self._query_api.query(body, principal=principal)
 
-    def version(self) -> ServiceResponse:
-        """Return Builder API contract version (#209).
+    def list_warehouse_tables(self, *, principal: Principal) -> ServiceResponse:
+        """List the caller's committed warehouse tables (#797)."""
+        return self._warehouse_api.list_tables(principal=principal)
 
-        Meta endpoint allowing consumers (Studio, etc.) to verify contract
-        compatibility before calling.
+    def get_warehouse_table(self, name: str, *, principal: Principal) -> ServiceResponse:
+        """One warehouse table and its readable snapshots (#797)."""
+        return self._warehouse_api.get_table(name, principal=principal)
+
+    def query_warehouse(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """Run read-only SQL against a pinned warehouse snapshot (#797)."""
+        return self._warehouse_api.query(body, principal=principal)
+
+    def read_warehouse_rows(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """One page of a pinned warehouse snapshot, in a stable order (#815)."""
+        return self._warehouse_api.rows(body, principal=principal)
+
+    def create_analysis(
+        self, body: Mapping[str, JsonValue] | None, *, principal: Principal
+    ) -> ServiceResponse:
+        """Run a query once and save it bound to the snapshot it read (#783)."""
+        return self._analyses_api.create(body, principal=principal)
+
+    def list_analyses(self, *, principal: Principal) -> ServiceResponse:
+        """The caller's saved analyses, newest first (#783)."""
+        return self._analyses_api.list(principal=principal)
+
+    def get_analysis(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
+        """One saved analysis (#783)."""
+        return self._analyses_api.get(analysis_id, principal=principal)
+
+    def delete_analysis(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
+        """Delete a saved analysis and release its snapshot hold (#783)."""
+        return self._analyses_api.delete(analysis_id, principal=principal)
+
+    def run_analysis(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
+        """Re-run a saved analysis against the snapshot it was saved with (#783)."""
+        return self._analyses_api.run(analysis_id, principal=principal)
+
+    def version(self) -> ServiceResponse:
+        """Return the HTTP contract version and the application version (#209, #777).
+
+        They count different things (kpubdata ADR 0004 §3): ``api_version`` is the wire
+        contract a client checks before calling, ``version`` the installed application
+        Studio compares with its own build to tell a mismatched pair. ``version`` is
+        read from the installed distribution's metadata — the single source #592 set.
         """
         return ServiceResponse(
-            200, {"service": "kpubdata-builder", "api_version": API_CONTRACT_VERSION}
+            200,
+            {
+                "service": "kpubdata-builder",
+                "api_version": API_CONTRACT_VERSION,
+                "version": __version__,
+            },
         )
 
     # --- spec authoring (#596) -----------------------------------------------------

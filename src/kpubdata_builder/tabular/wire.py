@@ -20,7 +20,9 @@ So every column carries what it was (`logical_type`) and how it is sent
 The decision is per column, not per value, so a client reads one field to know how to
 treat every cell below it. An integer column switches to `decimal_string` as a whole when
 one value would not survive, and stays `number` otherwise — in-range integers keep
-arriving as numbers.
+arriving as numbers. That makes the encoding a property of one response, not of the
+column (#794): another page or query over the same column can come back the other way,
+so a client reads `wire_encoding` from every response.
 
 Which columns are identifiers (postcodes, PNU, legal-dong codes) is a separate decision
 (#702) and is not made here.

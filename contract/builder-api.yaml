@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: KPubData Builder Service API
-  version: "1.33.0"
+  title: KPubData Engine Service API
+  version: "1.43.0"
   description: >-
-    Builder 중심 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
+    KPubData Engine(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
     공유한다. 본 문서는 BuilderService(service/app.py)의 dispatch 라우팅과 실제
     wire 형태를 기계 판독용(OpenAPI 3.1) 단일 소스로 고정하며, Studio 같은 소비자가
@@ -30,8 +30,8 @@ info:
     Monitoring 화면을 위한 시스템/집계 observability만 다루며 Run 단위 이벤트는
     별도(#496)다. Async build queue/worker 상태는 기존
     `AsyncBuildExecutor`/`AsyncBuildJobRegistry`(#511/#513)의 read-only
-    snapshot을 반영한다 — 정상 Builder runtime에서는 `availability: available`
-    이며 실제 0건과 `unavailable`을 구분한다. Builder API latency는
+    snapshot을 반영한다 — 정상 Engine runtime에서는 `availability: available`
+    이며 실제 0건과 `unavailable`을 구분한다. Engine API latency는
     healthy/degraded 임계값 근거가 없어 판정 없이 raw
     `sample_count`/`p95_latency_ms`만 제공한다. 대신
     `MonitoringSummaryResponse.status`(`healthy`/`degraded`)는 required
@@ -77,6 +77,17 @@ info:
     v1.17.0은 build publish 표면을 추가한다(#491) — `GET /builds/{run_id}/publish/readiness`(ready/blockers/warnings)와 `POST /builds/{run_id}/publish`(idempotent publish receipt, TOCTOU 재검사)를 추가한다(additive). HTTP target은 `huggingface`로 한정한다.
     v1.21.0은 publish 감사 로그 조회를 추가한다(#563, additive) — `GET /builds/{run_id}/publish/audit`(reconcile/reset 이력, 소유권 게이트, receipt 삭제 후에도 조회).
     v1.22.0은 `GET /datasets` 응답에 `total`을 추가한다(#488 후속, additive — 기존 필드/동작은 변경되지 않는다). `total`은 canonical dataset grouping과 ownership 필터를 적용한 뒤 pagination(limit) 이전의 접근 가능한 distinct dataset_id 개수이며, Studio Home의 DATASETS KPI가 `datasets` 길이나 limit을 total로 오인하지 않도록 authoritative aggregate를 제공한다. 같은 릴리스 범위에서 `/catalog` 응답의 `CatalogDataset`에 `request_parameters`와 `application`도 추가한다(additive — 기존 필드/동작은 변경되지 않는다). `raw_metadata`의 요청 파라미터 설명을 secret-free allowlist(`name`/`required`/`description`/`example`)로 직렬화한 것으로, `serviceKey` 등 시크릿 파라미터는 제외된다. Add Data가 선택한 Dataset의 필수 요청 파라미터를 사전에 안내하는 데 쓴다. metadata가 없는 dataset은 빈 배열. `application`은 공공데이터포털처럼 API Key 발급과 Dataset별 활용신청이 별개일 수 있는 경우의 안내(`{required, url}`)로, `raw_metadata.application`에서 그대로 전달하며 없으면 null이다 — Studio는 신청 완료/승인 여부를 추측하지 않는다.
+    v1.40.0 adds `quota` to `CatalogDataset` (#778, additive): the provider's rate limit as the kpubdata spec's licence declares it, verbatim, or null when nothing is declared.
+    v1.41.0 adds optional `semantic`, `display` and `unit` to column metadata (#813, additive; ADR 0019): `ColumnWireInfo`, the `/preview` schema items and `SilverColumnInfo`. They say what a column means, apart from how it is stored (`dtype`, `logical_type`) and sent (`wire_encoding`), and each carries its `origin`. They are metadata only: they never change a column's storage type, wire encoding or values. Absent when nothing describes the column.
+    Client compatibility (#814): a response may gain optional fields in any minor version, and a client ignores fields it does not know — `additionalProperties: false` on a response schema describes what this version sends, not what a client should reject. A required field keeps its name and type until the next major version. `contract/fixtures/responses.json` gives every named 2xx response example as sent, with an added unknown field, and with a required field retyped, for a client's contract tests.
+    v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
+    v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
+    v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
+    v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
+    v1.37.0 lets `POST /build` answer 409 with `warehouse_failures` when every source built but a table commit failed (#787, #788, additive): a build commits against the table revision it started from, so a refresh another build finished meanwhile is a conflict rather than overwritten. The manifest records the same failures.
+    v1.36.0 adds `status_axes` to `DatasetSummary` and `DatasetDetailResponse` (#781, additive): refresh, completeness, health, access and maturity as separate fields, each `unknown` when there is nothing to go on. Refresh shows a queued or running async refresh; completeness comes from the latest run's manifest; health, access and maturity are `unknown` until their sources reach Engine.
+    v1.35.0 adds `version` to `GET /version` (#777, additive): the installed application version, next to `api_version`, the wire contract version. They count different things (kpubdata ADR 0004 §3); Studio compares `version` with its own build to warn about a mismatched pair.
+    v1.34.0 adds the `source_fetch_progress` build event (#648, additive): one per finished `param_grid` combination, with `metrics` `{done, total}`, so a long fetch reports progress. Cancellation is now also checked between combinations, so a cancelled run stops fetching at the next combination instead of at the end of the source.
     v1.33.0 lets a BuildSpec state its source's own licence terms (#764, additive): `license_name` and `license_link` join `license`, and are both required when `license` is `other` — the way Hugging Face records a licence outside its list. The Hugging Face card's front matter carries both. `attribution`, accepted since ADR 0018, is now listed in the schema too.
     v1.32.0 checks JOIN cardinality on the keys that intersect (#698, additive): `JoinSpec` gains `keys` (a composite key as `{left, right}` column pairs; `left_key`/`right_key` stay as the single-pair shorthand, and exactly one form is given), `cardinality` (`one_to_one`/`one_to_many`/`many_to_one`/`many_to_many`, verified against the keys present on both sides) and `on_null_key` (`warn`/`fail`). `CompositionProvenance` gains optional `keys`, `cardinality`, `observed_cardinality`, `left_unmatched_ratio`, `right_unmatched_ratio`, `expansion_ratio`, `left_null_key_rows` and `right_null_key_rows`; manifests written before 1.32.0 lack them. `duplicate_key_warning` now fires only when a key present on both sides repeats on both sides, so duplicates that never meet no longer warn or fail.
     v1.31.0 adds `GET /datasets/{dataset_id}/runs/{run_id}` (studio#418, additive): one run found by id rather than in the newest-first page `/runs` returns. The server decides membership and ownership — 404 when no run with that id belongs to the dataset, 403 when it does but not to the caller — so a permalink to an older run opens, and a client can tell a missing run from a forbidden one.
@@ -130,7 +141,7 @@ paths:
   /version:
     get:
       operationId: getVersion
-      summary: Builder API 계약 버전 조회
+      summary: Engine API 계약 버전 조회
       responses:
         "200":
           description: 서비스/계약 버전
@@ -138,6 +149,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionResponse"
+              examples:
+                CurrentVersion:
+                  summary: Contract and application versions
+                  value:
+                    service: kpubdata-builder
+                    api_version: "1.40.0"
+                    version: "0.4.0"
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -792,6 +810,17 @@ paths:
                     error: run_id must be a path-safe single segment
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: >-
+            Every source built, but a warehouse table was not committed (#788) — most
+            often because another build committed it after this run started, so the
+            newer snapshot stays current (#787). `warehouse_failures` names each source
+            and the reason. The run's outputs and manifest exist; only the table did
+            not move.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildSuccessResponse"
         "502":
           description: >-
             하나 이상의 소스 fetch/stage 실패. upstream 소스 의존 실패이며 매니페스트는
@@ -1023,6 +1052,24 @@ paths:
                     errors: []
                     row_counts:
                       air: 25
+                    provenance:
+                      - provider: datago
+                        dataset: air_quality
+                        fetched_at: "2026-08-15T09:30:03+00:00"
+                        record_count: 25
+                        data_checksum: "sha256:example-checksum"
+                        api_version: unknown
+                        params: {sidoName: 서울}
+                        fetched_row_count: 25
+                        source_reported_total:
+                          status: reported
+                          value: 25
+                          observed_at: "2026-08-15T09:30:03+00:00"
+                          calls:
+                            - {index: 0, value: 25, status: reported, fetched_row_count: 25, pages: 1}
+                        coverage:
+                          status: complete
+                          reasons: []
                     inputs_fingerprint: "sha256:example-fingerprint"
                     created_by: "oidc:example-user"
                     quality_results:
@@ -1299,6 +1346,12 @@ paths:
                             silver: completed
                             gold: completed
                         quality: null
+                        status_axes:
+                          refresh: succeeded
+                          completeness: complete
+                          health: unknown
+                          access: unknown
+                          maturity: unknown
         "400":
           description: 잘못된 limit 파라미터
           content:
@@ -1343,6 +1396,12 @@ paths:
                         silver: completed
                         gold: completed
                     quality: null
+                    status_axes:
+                      refresh: succeeded
+                      completeness: complete
+                      health: unknown
+                      access: unknown
+                      maturity: unknown
                     run_count: 2
         "400":
           description: dataset_id가 비어 있음
@@ -2286,10 +2345,430 @@ paths:
                     error: query timed out
                     code: query_timeout
 
+  /warehouse/tables:
+    get:
+      operationId: listWarehouseTables
+      summary: List the caller's committed warehouse tables (#797)
+      responses:
+        "200":
+          description: Tables in the caller's workspace, by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseTableListResponse"
+              examples:
+                OneTable:
+                  summary: One committed table in the caller's workspace
+                  value:
+                    tables:
+                      - table_id: tbl_7f3a
+                        logical_name: seoul-air-quality.air
+                        current_snapshot_id: snap_20260929_01
+                        revision: 3
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: This deployment has no warehouse (`warehouse_not_configured`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /warehouse/tables/{name}:
+    get:
+      operationId: getWarehouseTable
+      summary: One warehouse table and its readable snapshots (#797)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The table's logical name, `<dataset_id>.<source_key>`.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The table and its committed or quarantined snapshots, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseTableDetailResponse"
+        "400":
+          description: The name is empty or more than one path segment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse (`warehouse_not_configured`), or no such table in the caller's
+            workspace (`table_not_found`) — another owner's table included.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /warehouse/query:
+    post:
+      operationId: queryWarehouseTable
+      summary: Read-only SQL against a pinned warehouse snapshot (#797)
+      description: >-
+        The SQL names the table as `dataset`, the same sandbox as `POST /query`.
+        `snapshot: current` (the default) is resolved to a snapshot id once, under a
+        lease, before the query starts: a refresh committed while it runs does not
+        change what it reads, and garbage collection leaves the snapshot alone until it
+        finishes. A snapshot id reads that snapshot, and only when it belongs to the
+        named table.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseQueryRequest"
+            examples:
+              CurrentSnapshot:
+                summary: Query the current snapshot of a table
+                value:
+                  table: seoul-air-quality.air
+                  sql: SELECT COUNT(*) AS n FROM dataset
+                  limit: 10
+      responses:
+        "200":
+          description: The snapshot that was read and the bounded result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseQueryResponse"
+              examples:
+                PinnedCount:
+                  summary: A query read the pinned current snapshot
+                  value:
+                    snapshot:
+                      table_id: tbl_7f3a
+                      logical_name: seoul-air-quality.air
+                      snapshot_id: snap_20260929_01
+                      revision: 3
+                    result:
+                      columns: [station_name, pm10, amount]
+                      column_meta:
+                        - {name: station_name, logical_type: string, wire_encoding: string}
+                        - {name: pm10, logical_type: int64, wire_encoding: number}
+                        - {name: amount, logical_type: decimal, wire_encoding: decimal_string}
+                      rows:
+                        - {station_name: 종로구, pm10: 42, amount: "12.50"}
+                      truncated: false
+                      execution_ms: 412
+                      startup_ms: 380
+                      engine_execution_ms: 12
+        "400":
+          description: Invalid request, unsafe SQL, or a failed execution.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse (`warehouse_not_configured`), no such table in the caller's
+            workspace (`table_not_found`), no such snapshot of it or nothing committed
+            yet (`snapshot_not_found`), or a snapshot without a table file
+            (`artifact_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >-
+            The snapshot cannot be read — it is being deleted or was never committed
+            (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Query capacity is exhausted (`query_busy`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The query timed out (`query_timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /warehouse/rows:
+    post:
+      operationId: readWarehouseRows
+      summary: One page of a pinned warehouse snapshot for a table screen (#815)
+      description: >-
+        Pins the snapshot like `POST /warehouse/query`: `current` (the default) is
+        resolved to a snapshot id once, under a lease, and the response names it. Pass
+        that `snapshot_id` for the next pages and every page reads the same snapshot,
+        whatever refresh is committed in between. Rows are ordered by `sort` and then by
+        their position in the snapshot, so rows that tie on every key keep one order and
+        no page repeats or skips them. Nulls sort last in either direction. That position
+        is valid inside one snapshot only and is not sent. `count` is `exact` or
+        `not_computed` — a count that was not computed is null, never 0. Paging is by
+        offset; `engine_execution_ms` reports what a page cost. Values use the same wire
+        encoding as a query (see `WireEncoding`). Another owner's table is a 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseRowsRequest"
+            examples:
+              FirstPage:
+                summary: The first page of the current snapshot, newest first
+                value:
+                  table: seoul-air-quality.air
+                  page_size: 50
+                  sort:
+                    - {column: measured_at, direction: desc}
+                  filters:
+                    - {column: station_code, op: in, values: ["111121", "111123"]}
+                  count: exact
+      responses:
+        "200":
+          description: The snapshot read, one page of rows, and the count with its status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseRowsResponse"
+              examples:
+                FirstPage:
+                  summary: A first page with more to come
+                  value:
+                    snapshot:
+                      table_id: tbl_7f3a
+                      logical_name: seoul-air-quality.air
+                      snapshot_id: snap_20260929_01
+                      revision: 3
+                    columns: [station_code, measured_at, pm10]
+                    column_meta:
+                      - {name: station_code, logical_type: string, wire_encoding: string}
+                      - {name: measured_at, logical_type: datetime, wire_encoding: string}
+                      - {name: pm10, logical_type: int64, wire_encoding: number}
+                    rows:
+                      - {station_code: "111121", measured_at: "2026-09-29T10:00:00", pm10: 42}
+                    order:
+                      - {column: measured_at, direction: desc}
+                    page: {offset: 0, page_size: 1, returned: 1, has_more: true, next_offset: 1}
+                    count: {status: exact, value: 48}
+                    execution_ms: 431
+                    startup_ms: 390
+                    engine_execution_ms: 14
+        "400":
+          description: >-
+            An invalid request (`invalid_request`) — an unknown field, a column the
+            snapshot lacks, a filter value that does not fit the column's type — or a
+            read that failed (`query_execution_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse (`warehouse_not_configured`), no such table in the caller's
+            workspace (`table_not_found`), no such snapshot of it (`snapshot_not_found`),
+            or a snapshot without a table file (`artifact_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Query capacity is exhausted (`query_busy`); a page takes a query slot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The read timed out (`query_timeout`). No count is reported as 0.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /analyses:
+    get:
+      operationId: listAnalyses
+      summary: The caller's saved analyses, newest first (#783)
+      responses:
+        "200":
+          description: Saved analyses in the caller's workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createAnalysis
+      summary: Run a warehouse query and save it bound to the snapshot it read (#783)
+      description: >-
+        Takes the `POST /warehouse/query` body plus `name`. The query runs once;
+        `snapshot: current` is resolved to a snapshot id and that id is what is stored.
+        A `saved_analysis` hold is placed on the snapshot before the query's lease is
+        released, so garbage collection keeps it for as long as the analysis exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAnalysisRequest"
+      responses:
+        "200":
+          description: The saved analysis and the result of the run that saved it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAnalysisResponse"
+        "400":
+          description: Invalid request, unsafe SQL, or a failed execution.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse, no such table or snapshot in the caller's workspace, or a
+            snapshot without a table file — the same codes as `POST /warehouse/query`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read or held (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Query capacity is exhausted (`query_busy`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The query timed out (`query_timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /analyses/{analysis_id}:
+    parameters:
+      - name: analysis_id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getAnalysis
+      summary: One saved analysis (#783)
+      responses:
+        "200":
+          description: The saved analysis.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedAnalysis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such analysis in the caller's workspace (`analysis_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteAnalysis
+      summary: Delete a saved analysis and release its snapshot hold (#783)
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisDeletedResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such analysis in the caller's workspace (`analysis_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /analyses/{analysis_id}/run:
+    parameters:
+      - name: analysis_id
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      operationId: runAnalysis
+      summary: Re-run a saved analysis against the snapshot it was saved with (#783)
+      description: >-
+        Reads the stored snapshot id, not the table's current snapshot, so the result
+        is the one the analysis was saved with even after the table was refreshed.
+      responses:
+        "200":
+          description: The snapshot that was read and the bounded result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseQueryResponse"
+        "400":
+          description: The stored query failed to execute.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No such analysis (`analysis_not_found`), or its table or snapshot is gone.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Query capacity is exhausted (`query_busy`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The query timed out (`query_timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /monitoring/summary:
     get:
       operationId: getMonitoringSummary
-      summary: Builder API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516)
+      summary: Engine API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516)
       description: >-
         시스템 aggregate만 반환하며 개별 run의 dataset/owner/credential 정보는
         포함하지 않는다. Async build queue/worker(#511/#513)는 이 서비스가 항상
@@ -2548,6 +3027,449 @@ components:
         sql: {type: string, maxLength: 65536}
         limit: {type: integer, minimum: 1, maximum: 500, default: 100}
 
+    CreateAnalysisRequest:
+      type: object
+      additionalProperties: false
+      required: [name, table, sql]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        table:
+          type: string
+          description: A table's logical name in the caller's workspace.
+        snapshot:
+          type: string
+          default: current
+          description: "`current`, or a snapshot id of this table. The resolved id is stored."
+        sql: {type: string, maxLength: 65536}
+        limit: {type: integer, minimum: 1, maximum: 500, default: 100}
+
+    SavedAnalysis:
+      type: object
+      additionalProperties: false
+      required: [analysis_id, name, sql, limit, bindings, result_meta, created_at]
+      properties:
+        analysis_id: {type: string}
+        name: {type: string}
+        sql: {type: string}
+        limit: {type: integer, minimum: 1, maximum: 500}
+        bindings:
+          type: array
+          description: >-
+            The snapshot each table was read at — concrete ids, never `current`. One
+            entry until multi-table queries (#704).
+          items:
+            type: object
+            additionalProperties: false
+            required: [table, snapshot_id]
+            properties:
+              table: {type: string}
+              snapshot_id: {type: string}
+        result_meta:
+          type: object
+          additionalProperties: false
+          required: [columns, column_meta, row_count, truncated, executed_at]
+          description: What the saving run returned. Rows are not stored.
+          properties:
+            columns:
+              type: array
+              items: {type: string}
+            column_meta:
+              type: array
+              items:
+                $ref: "#/components/schemas/ColumnWireInfo"
+            row_count: {type: integer, minimum: 0}
+            truncated: {type: boolean}
+            executed_at: {type: string}
+        created_at: {type: string}
+
+    AnalysisListResponse:
+      type: object
+      additionalProperties: false
+      required: [analyses]
+      properties:
+        analyses:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedAnalysis"
+
+    CreateAnalysisResponse:
+      type: object
+      additionalProperties: false
+      required: [analysis, result]
+      properties:
+        analysis:
+          $ref: "#/components/schemas/SavedAnalysis"
+        result:
+          $ref: "#/components/schemas/QueryResponse"
+
+    AnalysisDeletedResponse:
+      type: object
+      additionalProperties: false
+      required: [analysis_id, deleted]
+      properties:
+        analysis_id: {type: string}
+        deleted: {type: boolean, const: true}
+
+    WarehouseTable:
+      type: object
+      additionalProperties: false
+      required: [table_id, logical_name, current_snapshot_id, revision]
+      properties:
+        table_id: {type: string}
+        logical_name:
+          type: string
+          description: "`<dataset_id>.<source_key>` — the name to query the table by."
+        current_snapshot_id:
+          type: [string, "null"]
+          description: The snapshot a query reads by default; null before the first commit.
+        revision:
+          type: integer
+          minimum: 0
+          description: Increments every time the current snapshot moves.
+
+    WarehouseTableListResponse:
+      type: object
+      additionalProperties: false
+      required: [tables]
+      properties:
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarehouseTable"
+
+    WarehouseSnapshot:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, run_id, state, row_count, created_at, committed_at]
+      properties:
+        snapshot_id: {type: string}
+        run_id:
+          type: string
+          description: The build that produced it.
+        state: {type: string, enum: [committed, quarantined]}
+        row_count: {type: [integer, "null"], minimum: 0}
+        created_at: {type: string}
+        committed_at: {type: [string, "null"]}
+        coverage:
+          description: >-
+            Whether the fetch behind the snapshot collected what the provider reported
+            (#816). Null when not recorded — a snapshot committed before 1.42.0 or from
+            a source without a fetch record. Null is unknown, not complete.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SnapshotCoverage"
+
+    SourceProvenance:
+      type: object
+      additionalProperties: true
+      required: [provider, dataset, fetched_at, record_count, data_checksum]
+      properties:
+        provider: {type: string}
+        dataset: {type: string}
+        fetched_at: {type: string}
+        record_count: {type: integer, minimum: 0}
+        data_checksum: {type: string}
+        api_version: {type: string}
+        params:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        fetched_row_count:
+          type: integer
+          minimum: 0
+          description: Rows actually fetched (#816). Absent in manifests written before 1.42.0.
+        source_reported_total:
+          $ref: "#/components/schemas/SourceReportedTotal"
+        coverage:
+          $ref: "#/components/schemas/FetchCoverage"
+
+    SourceReportedTotal:
+      type: object
+      additionalProperties: false
+      required: [status, value, observed_at]
+      description: >-
+        What the provider said the total was (#816). Never a sum: pages repeat one
+        call's total, and `param_grid` combinations can overlap, so several calls give
+        `not_summed` with each call's total under `calls`.
+      properties:
+        status:
+          type: string
+          enum: [reported, unknown, inconsistent, not_summed, not_reported]
+          description: >-
+            `reported` — one call, and `value` is its total. `unknown` — the provider
+            stated none. `inconsistent` — pages of one call disagreed. `not_summed` —
+            several calls. `not_reported` — a file or URL source, with no provider total.
+        value:
+          type: [integer, "null"]
+          minimum: 0
+          description: The total when `status` is `reported` (0 is a reported zero); null otherwise.
+        observed_at:
+          type: string
+          description: When the total was read (the fetch's completion time).
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallTotal"
+
+    CallTotal:
+      type: object
+      additionalProperties: false
+      required: [index, value, status, fetched_row_count, pages]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: 0 for a plain source; the combination's position in `param_combinations` otherwise.
+        value: {type: [integer, "null"], minimum: 0}
+        status:
+          type: string
+          enum: [reported, unknown, inconsistent]
+        fetched_row_count: {type: integer, minimum: 0}
+        pages: {type: integer, minimum: 0}
+
+    FetchCoverage:
+      type: object
+      additionalProperties: false
+      required: [status, reasons]
+      description: >-
+        Whether the fetch collected what the provider reported (#816). `complete` —
+        every call returned exactly its reported total. `partial` — some call returned
+        fewer. `unknown` — nothing trustworthy to compare with. Show a partial snapshot
+        as partial wherever its rows are shown, charted or exported.
+      properties:
+        status:
+          type: string
+          enum: [complete, partial, unknown]
+        reasons:
+          type: array
+          items: {type: string}
+
+    SnapshotCoverage:
+      type: object
+      additionalProperties: false
+      required: [status, reasons, fetched_row_count, source_reported_total]
+      description: The fetch coverage recorded with a warehouse snapshot (#816).
+      properties:
+        status:
+          type: string
+          enum: [complete, partial, unknown]
+        reasons:
+          type: array
+          items: {type: string}
+        fetched_row_count: {type: [integer, "null"], minimum: 0}
+        source_reported_total:
+          type: object
+          additionalProperties: false
+          required: [status, value, observed_at]
+          properties:
+            status:
+              type: string
+              enum: [reported, unknown, inconsistent, not_summed, not_reported]
+            value: {type: [integer, "null"], minimum: 0}
+            observed_at: {type: string}
+
+    WarehouseTableDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [table_id, logical_name, current_snapshot_id, revision, snapshots]
+      properties:
+        table_id: {type: string}
+        logical_name: {type: string}
+        current_snapshot_id: {type: [string, "null"]}
+        revision: {type: integer, minimum: 0}
+        snapshots:
+          type: array
+          description: Readable snapshots, newest first.
+          items:
+            $ref: "#/components/schemas/WarehouseSnapshot"
+
+    WarehouseQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [table, sql]
+      properties:
+        table:
+          type: string
+          description: A table's logical name in the caller's workspace.
+        snapshot:
+          type: string
+          default: current
+          description: "`current`, or a snapshot id of this table."
+        sql: {type: string, maxLength: 65536}
+        limit: {type: integer, minimum: 1, maximum: 500, default: 100}
+
+    WarehouseRowsRequest:
+      type: object
+      additionalProperties: false
+      required: [table]
+      properties:
+        table:
+          type: string
+          description: A table's logical name in the caller's workspace.
+        snapshot:
+          type: string
+          default: current
+          description: "`current` for the first page; the returned `snapshot_id` for the next."
+        offset:
+          type: integer
+          minimum: 0
+          default: 0
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+        columns:
+          type: array
+          minItems: 1
+          description: Columns to return, in this order. All columns when omitted.
+          items: {type: string}
+        sort:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [column]
+            properties:
+              column: {type: string}
+              direction:
+                type: string
+                enum: [asc, desc]
+                default: asc
+        filters:
+          type: array
+          maxItems: 16
+          description: >-
+            Conditions that must all hold. `value` (for eq/ne/lt/lte/gt/gte) and
+            `values` (for `in`, at most 100) are cast to the column's type, so a
+            Decimal, a large integer or a date is sent the way it was received — as its
+            exact text.
+          items:
+            type: object
+            additionalProperties: false
+            required: [column, op]
+            properties:
+              column: {type: string}
+              op:
+                type: string
+                enum: [eq, ne, lt, lte, gt, gte, in, is_null, is_not_null]
+              value:
+                type: [string, number, boolean]
+              values:
+                type: array
+                items:
+                  type: [string, number, boolean]
+        count:
+          type: string
+          enum: [exact, none]
+          description: >-
+            `exact` counts the rows that pass the filters; `none` skips the count. The
+            default is `exact` without filters and `none` with them. Without filters the
+            snapshot's own row count is returned either way.
+
+    WarehouseRowsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - snapshot
+        - columns
+        - column_meta
+        - rows
+        - order
+        - page
+        - count
+        - execution_ms
+        - startup_ms
+        - engine_execution_ms
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [table_id, logical_name, snapshot_id, revision]
+          description: The snapshot this page read. Pass `snapshot_id` for the next page.
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision: {type: integer, minimum: 0}
+        columns:
+          type: array
+          items: {type: string}
+        column_meta:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnWireInfo"
+        rows:
+          type: array
+          items:
+            type: object
+            additionalProperties:
+              $ref: "#/components/schemas/JsonValue"
+        order:
+          type: array
+          description: >-
+            The sort keys applied. Ties are then broken by the row's position in the
+            snapshot, which is internal and not a cell key across snapshots.
+          items:
+            type: object
+            additionalProperties: false
+            required: [column, direction]
+            properties:
+              column: {type: string}
+              direction: {type: string, enum: [asc, desc]}
+        page:
+          type: object
+          additionalProperties: false
+          required: [offset, page_size, returned, has_more, next_offset]
+          properties:
+            offset: {type: integer, minimum: 0}
+            page_size: {type: integer, minimum: 1}
+            returned: {type: integer, minimum: 0}
+            has_more: {type: boolean}
+            next_offset:
+              type: [integer, "null"]
+              minimum: 0
+              description: The offset of the next page, or null on the last one.
+        count:
+          type: object
+          additionalProperties: false
+          required: [status, value]
+          properties:
+            status:
+              type: string
+              enum: [exact, estimated, not_computed]
+              description: >-
+                `exact` — counted. `not_computed` — not asked for; `value` is null, not
+                0. `estimated` is reserved and not sent yet.
+            value:
+              type: [integer, "null"]
+              minimum: 0
+        execution_ms: {type: integer, minimum: 0}
+        startup_ms: {type: integer, minimum: 0}
+        engine_execution_ms: {type: integer, minimum: 0}
+
+    WarehouseQueryResponse:
+      type: object
+      additionalProperties: false
+      required: [snapshot, result]
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [table_id, logical_name, snapshot_id, revision]
+          description: What the query read — record it to run the same query again.
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision:
+              type: integer
+              minimum: 0
+              description: The table revision when the snapshot was pinned.
+        result:
+          $ref: "#/components/schemas/QueryResponse"
+
     QueryResponse:
       type: object
       additionalProperties: false
@@ -2617,6 +3539,71 @@ components:
         every Decimal column and for an integer column holding any value outside
         ±(2^53−1) — do not convert these with Number(). `number`: a JSON number
         (non-finite floats are null). `string`: text, or ISO 8601 for dates and times.
+        **Decided per response, not per column type** (#794): an integer column is
+        `number` in a response whose values all fit and `decimal_string` in one where a
+        value does not, so the same column can arrive either way across pages, previews
+        and queries. Read `wire_encoding` from each response's column metadata; do not
+        cache it from an earlier one. A value outside this list, which a newer Engine may
+        add, is shown as raw text: never read it as a number.
+
+    ColumnMetaOrigin:
+      type: string
+      enum: [user_annotation, core_spec, catalog, engine_inferred]
+      description: >-
+        Where a column hint came from (#813, ADR 0019). When several sources describe a
+        column, each hint is taken from the highest one, in this order: a user's
+        annotation, the Core dataset spec, the catalog, an Engine inference. A hint with
+        origin `engine_inferred` is an estimate and is shown as one.
+
+    ColumnSemanticHint:
+      type: object
+      additionalProperties: false
+      required: [kind, origin]
+      description: >-
+        What kind of value the column holds (#813). Metadata only: it does not change
+        the column's storage type, wire encoding, casts, aggregation or row identity.
+      properties:
+        kind:
+          type: string
+          description: >-
+            `code`, `measure`, `date` or `period` today. An open string, not an enum: a
+            newer Engine may send a kind a client does not know, and the client then
+            shows the raw value rather than failing.
+        origin:
+          $ref: "#/components/schemas/ColumnMetaOrigin"
+
+    ColumnDisplayHint:
+      type: object
+      additionalProperties: false
+      required: [origin]
+      description: >-
+        How to present the column (#813). Core `FieldDescriptor.title` maps to `label`,
+        `description` to `description`, `FieldConstraints.format` to `format`.
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+        format:
+          type: string
+          description: A display format as the source states it, e.g. `YYYYMM`. Not parsed.
+        origin:
+          $ref: "#/components/schemas/ColumnMetaOrigin"
+
+    ColumnUnitHint:
+      type: object
+      additionalProperties: false
+      required: [name, origin]
+      description: >-
+        The unit a measure is counted in (#813). `scale` multiplies the sent value for
+        display (1000: a sent 12 is 12,000 of `name`); the sent value is never rescaled.
+      properties:
+        name:
+          type: string
+        scale:
+          type: number
+        origin:
+          $ref: "#/components/schemas/ColumnMetaOrigin"
 
     ColumnWireInfo:
       type: object
@@ -2630,6 +3617,12 @@ components:
           description: The column dtype without parameters, e.g. `int64`, `decimal`, `datetime`.
         wire_encoding:
           $ref: "#/components/schemas/WireEncoding"
+        semantic:
+          $ref: "#/components/schemas/ColumnSemanticHint"
+        display:
+          $ref: "#/components/schemas/ColumnDisplayHint"
+        unit:
+          $ref: "#/components/schemas/ColumnUnitHint"
 
     JsonValue:
       description: 표준 JSON으로 직렬화 가능한 값(null, scalar, array, object)
@@ -3237,6 +4230,12 @@ components:
           type: string
         api_version:
           type: string
+          description: The HTTP contract version (this document's info.version).
+        version:
+          type: string
+          description: >-
+            The installed application version (#777). Engine and Studio share it
+            (ADR 0004); it differs from api_version, which counts the wire contract.
 
     HealthResponse:
       type: object
@@ -3339,6 +4338,14 @@ components:
             그대로 전달한 것으로, 없으면 null(활용신청이 필요 없다는 뜻이 아니라
             알려진 바 없음). Studio는 신청 완료/승인 여부를 이 필드로 추측하지 않는다
             — Preview 성공이 실제 사용 가능 여부의 최종 확인이다.
+        quota:
+          type: [string, "null"]
+          description: >-
+            The provider's rate limit for this dataset, exactly as the kpubdata spec's
+            licence declares it (for example `개발계정 일 10,000건`), not parsed (#778,
+            additive). null when the spec declares no quota or the installed kpubdata
+            does not expose licence terms yet — unknown, not unlimited. Engine does not
+            count calls, so this is the budget, not the consumption.
 
     CatalogRequestParameter:
       type: object
@@ -3568,6 +4575,12 @@ components:
                 type: string
               wire_encoding:
                 $ref: "#/components/schemas/WireEncoding"
+              semantic:
+                $ref: "#/components/schemas/ColumnSemanticHint"
+              display:
+                $ref: "#/components/schemas/ColumnDisplayHint"
+              unit:
+                $ref: "#/components/schemas/ColumnUnitHint"
         sample:
           type: array
           items:
@@ -3943,6 +4956,21 @@ components:
           description: 기록된 manifest.json의 경로
         api_version:
           type: string
+        warehouse_failures:
+          type: object
+          description: >-
+            Present only when a table commit failed (#788): source key -> reason
+            (`conflict` when another build committed the table after this run
+            started, `commit_failed` otherwise) and a human-readable detail.
+          additionalProperties:
+            type: object
+            required: [reason, detail]
+            properties:
+              reason:
+                type: string
+                enum: [conflict, commit_failed]
+              detail:
+                type: string
 
     BuildFailureResponse:
       type: object
@@ -4037,6 +5065,15 @@ components:
           type: object
           additionalProperties:
             type: integer
+        provenance:
+          type: array
+          description: >-
+            Per source fetch: when, with which parameters, how many rows, and — from
+            1.42.0 — what the provider reported and whether the fetch collected it
+            (#816). `row_counts` is the Gold (snapshot) count, which filtering and
+            deduplication can make smaller than `fetched_row_count`.
+          items:
+            $ref: "#/components/schemas/SourceProvenance"
         inputs_fingerprint:
           type: [string, "null"]
         created_by:
@@ -4294,6 +5331,7 @@ components:
         - run_failed
         - run_cancelled
         - source_fetch_started
+        - source_fetch_progress
         - source_fetch_completed
         - source_fetch_failed
         - stage_started
@@ -4562,6 +5600,54 @@ components:
         quality:
           type: "null"
           description: "#486 선반영 안 함 — 구조화된 quality 결과가 없으므로 항상 null"
+        status_axes:
+          $ref: "#/components/schemas/DatasetStatusAxes"
+
+    DatasetStatusAxes:
+      type: object
+      description: >-
+        The table's state on each axis kpubdata's TERMINOLOGY keeps apart (#781) —
+        one field per axis, never merged into one badge. An axis with nothing to go on
+        is `unknown`, not a guess. health, access and maturity are always `unknown`
+        for now: stale needs a declared refresh interval, access needs kpubdata's probe
+        results, maturity the source spec's grade, and none of them reaches Engine yet.
+      required: [refresh, completeness, health, access, maturity]
+      properties:
+        refresh:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled, unknown]
+          description: >-
+            A queued or running async refresh this principal may see wins over the last
+            finished run's result.
+        completeness:
+          type: string
+          enum: [complete, partial, unknown]
+          description: >-
+            From the latest run's manifest — partial when marked partial or failed after
+            writing rows, complete when it succeeded.
+        health:
+          type: string
+          enum: [healthy, stale, degraded, unknown]
+        access:
+          type: string
+          enum:
+            - available
+            - auth_unknown
+            - application_required
+            - params_invalid
+            - rate_limited
+            - temporarily_unavailable
+            - network_error
+            - insufficient_metadata
+            - retired
+            - unknown
+          description: >-
+            kpubdata's probe classification (`kpubdata._probe.PROBE_STATUSES`) plus
+            `unknown` — the same identifiers, so the measured value and the word a user
+            sees cannot drift apart.
+        maturity:
+          type: string
+          enum: [stable, beta, experimental, unknown]
 
     DatasetDetailResponse:
       type: object
@@ -4604,6 +5690,8 @@ components:
           $ref: "#/components/schemas/DatasetStageMap"
         quality:
           type: "null"
+        status_axes:
+          $ref: "#/components/schemas/DatasetStatusAxes"
         run_count:
           type: integer
           description: 이 principal에게 접근 가능한 이 dataset_id의 run 총 개수
@@ -4762,6 +5850,12 @@ components:
           description: Absent for runs written before 1.30.0 (#735).
         wire_encoding:
           $ref: "#/components/schemas/WireEncoding"
+        semantic:
+          $ref: "#/components/schemas/ColumnSemanticHint"
+        display:
+          $ref: "#/components/schemas/ColumnDisplayHint"
+        unit:
+          $ref: "#/components/schemas/ColumnUnitHint"
 
     SilverValidationProblem:
       type: object
@@ -4898,7 +5992,7 @@ components:
     MonitoringApiStatus:
       type: object
       description: >-
-        Builder API 요청 처리 latency 상태. availability=available은 latency
+        Engine API 요청 처리 latency 상태. availability=available은 latency
         collector(ring buffer)가 정상적으로 표본을 읽어낼 수 있었다는 뜻이며,
         collector 자체가 손상되어 표본을 읽을 수 없으면(#527) unavailable +
         sample_count=null + p95_latency_ms=null이다 — "정상 무표본"

@@ -23,9 +23,10 @@ comparison logic singular in auth so both implementations do not drift.
 
 from __future__ import annotations
 
+import hashlib
 import os
 
-from .auth import Principal, _oidc_issuers, principal_owns
+from .auth import Principal, oidc_enabled, principal_owns
 
 _OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 
@@ -43,7 +44,25 @@ def multi_user_mode() -> bool:
     runs belong to different people. A single ``X-API-Key`` or dev mode alone is
     one user.
     """
-    return bool(_oidc_issuers()) or enforce_ownership()
+    return oidc_enabled() or enforce_ownership()
+
+
+PERSONAL_WORKSPACE = "ws_personal"
+
+
+def warehouse_workspace(owner_id: str | None) -> str:
+    """The warehouse workspace a build by ``owner_id`` commits into (#789).
+
+    Tables are unique per (workspace, logical name). With one shared workspace, two
+    owners building the same spec committed into the same table, and each refresh
+    replaced the other owner's current snapshot. When ownership is enforced, each owner
+    gets a workspace of their own, named from a hash of the owner id (it is a path and
+    a catalog key, so the id itself does not appear). Otherwise nothing changes: a
+    single-user deployment keeps its one personal workspace.
+    """
+    if owner_id is None or not enforce_ownership():
+        return PERSONAL_WORKSPACE
+    return "ws_" + hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:16]
 
 
 def _has_grandfathered_full_access(principal: Principal) -> bool:

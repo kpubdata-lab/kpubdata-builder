@@ -220,3 +220,42 @@ def test_the_cli_refuses_and_says_why(
 
     assert gate.main(["--base", "origin/main"]) == 1
     assert "Run.status: property removed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda props: props.pop("description"), "Run.description: property removed"),
+        (lambda props: props["description"].update(type="integer"), "Run.description: type"),
+        (lambda props: props.pop("summary"), "Run.summary: property removed"),
+    ],
+    ids=["removed", "retyped", "summary-removed"],
+)
+def test_a_property_named_like_prose_is_still_a_property(mutate: Any, expected: str) -> None:
+    """#791: `description` is a keyword as a schema's text, but a name as a property.
+
+    BuildSpec has a `description` property. Stripping every `description` key made its
+    removal or retyping invisible, so the change passed without a version raise.
+    """
+    base = copy.deepcopy(_BASE)
+    _schema(base)["properties"].update(
+        {"description": {"type": "string"}, "summary": {"type": "string"}}
+    )
+    head = copy.deepcopy(base)
+    head["info"]["version"] = "1.4.0"
+    mutate(_schema(head)["properties"])
+
+    problems = gate.check(base, head)
+
+    assert any("info.version stayed 1.4.0" in p for p in problems)
+    assert any(expected in p for p in problems)
+
+
+def test_prose_on_a_property_is_still_prose() -> None:
+    """The fix must not turn a property's own description text into a normative change."""
+    base = copy.deepcopy(_BASE)
+    _schema(base)["properties"]["run_id"]["description"] = "old text"
+    head = copy.deepcopy(base)
+    _schema(head)["properties"]["run_id"]["description"] = "new text"
+
+    assert gate.check(base, head) == []

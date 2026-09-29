@@ -78,7 +78,9 @@ from .errors import (
 #    CHECK constraint, so the table is rebuilt and copied row for row.
 # 4: snapshot_holds (#705) — saved analyses, retention and audit keep a snapshot
 #    past garbage collection.
-SCHEMA_VERSION = 4
+# 5: table_snapshots.coverage (#816) — whether the fetch behind a snapshot collected
+#    what the provider reported, as JSON. NULL for snapshots committed before it.
+SCHEMA_VERSION = 5
 
 CATALOG_FILENAME = "_warehouse.sqlite"
 
@@ -88,7 +90,7 @@ CATALOG_FILENAME = "_warehouse.sqlite"
 _SNAPSHOT_COLUMNS = (
     "id, table_id, run_id, schema_version, coverage_hash, artifact_digest,"
     " row_count, state, created_at, committed_at, owner_id, coverage_fingerprint,"
-    " source_params_fingerprint, schema_contract_version"
+    " source_params_fingerprint, schema_contract_version, coverage"
 )
 
 SnapshotState = Literal[
@@ -129,7 +131,12 @@ _HOLDS_INDEX = (
 
 # A hold with no expiry lasts until it is released. Leases always expire; holds need
 # not, because an audit does not end on a timer.
-_LIVE_HOLD = "snapshot_id = ? AND (expires_at IS NULL OR expires_at > ?)"
+# Compared as instants, not as text (#790): an ISO string with a -10:00 offset sorts
+# before a UTC one that is hours earlier, so a text comparison called a live hold
+# expired and let collection take a snapshot it was protecting. julianday() reads the
+# offset; rows written before this fix are compared correctly too.
+_LIVE_HOLD = "snapshot_id = ? AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))"
+_LIVE_LEASE = "snapshot_id = ? AND julianday(expires_at) > julianday(?)"
 
 
 # Each entry upgrades from the version that is its key to the next one. A column is
@@ -172,6 +179,7 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
         " ON table_snapshots(table_id, created_at DESC)",
     ),
     3: (_HOLDS_TABLE, _HOLDS_INDEX),
+    4: ("ALTER TABLE table_snapshots ADD COLUMN coverage TEXT",),
 }
 
 
@@ -215,6 +223,10 @@ class SnapshotRow:
         source_params_fingerprint: The request parameters behind the collection.
         schema_contract_version: The schema contract in force. A volume baseline
             across a contract change is compared silently otherwise.
+        coverage: Whether the fetch behind this snapshot collected everything the
+            provider reported, as JSON (#816): ``status`` (complete/partial/unknown),
+            ``reasons``, ``fetched_row_count`` and ``source_reported_total``. None when
+            it was not recorded — never read that as complete.
     """
 
     id: str
@@ -231,6 +243,7 @@ class SnapshotRow:
     coverage_fingerprint: str | None = None
     source_params_fingerprint: str | None = None
     schema_contract_version: str | None = None
+    coverage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -271,6 +284,21 @@ class SnapshotHold:
     reason: str
     created_at: str
     expires_at: str | None
+
+
+def _utc_instant(value: str, *, field: str) -> str:
+    """``value`` as a UTC ISO 8601 string; an instant without an offset is refused (#790).
+
+    A naive time means whatever the writing machine's clock zone was, which the next
+    reader cannot know — the same ambiguity that made hold expiry wrong.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise SnapshotStateError(f"{field} is not an ISO 8601 time: {value!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise SnapshotStateError(f"{field} needs a UTC offset: {value!r}")
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _now() -> str:
@@ -384,7 +412,8 @@ class TableCatalog:
                 " owner_id TEXT,"
                 " coverage_fingerprint TEXT,"
                 " source_params_fingerprint TEXT,"
-                " schema_contract_version TEXT)"
+                " schema_contract_version TEXT,"
+                " coverage TEXT)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
@@ -457,6 +486,20 @@ class TableCatalog:
             )
         return TableRow(new_id, workspace_id, logical_name, None, 0)
 
+    def table_revision(self, workspace_id: str, logical_name: str) -> int:
+        """The table's current revision, or 0 when it does not exist yet (#787).
+
+        A build reads this when it starts and commits against it, so a refresh that
+        another build finished in the meantime is a conflict rather than overwritten.
+        0 matches a table created later at revision 0, so the first build of a table
+        still commits.
+        """
+        row = self._conn.execute(
+            "SELECT revision FROM tables WHERE workspace_id = ? AND logical_name = ?",
+            (workspace_id, logical_name),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def get_table(self, table_id: str) -> TableRow:
         """Read a table row.
 
@@ -503,6 +546,7 @@ class TableCatalog:
         coverage_fingerprint: str | None = None,
         source_params_fingerprint: str | None = None,
         schema_contract_version: str | None = None,
+        coverage: str | None = None,
     ) -> SnapshotRow:
         """Register a snapshot in ``staging`` state.
 
@@ -523,8 +567,8 @@ class TableCatalog:
                 "INSERT INTO table_snapshots (id, table_id, run_id, schema_version,"
                 " coverage_hash, artifact_digest, row_count, state, created_at,"
                 " committed_at, owner_id, coverage_fingerprint,"
-                " source_params_fingerprint, schema_contract_version)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, 'staging', ?, NULL, ?, ?, ?, ?)",
+                " source_params_fingerprint, schema_contract_version, coverage)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'staging', ?, NULL, ?, ?, ?, ?, ?)",
                 (
                     new_id,
                     table_id,
@@ -538,6 +582,7 @@ class TableCatalog:
                     coverage_fingerprint,
                     source_params_fingerprint,
                     schema_contract_version,
+                    coverage,
                 ),
             )
         return SnapshotRow(
@@ -555,6 +600,7 @@ class TableCatalog:
             coverage_fingerprint,
             source_params_fingerprint,
             schema_contract_version,
+            coverage,
         )
 
     def get_snapshot(self, snapshot_id: str) -> SnapshotRow:
@@ -740,7 +786,7 @@ class TableCatalog:
                     f"{snapshot.table_id!r}; deleting it would leave nothing to read"
                 )
             live = conn.execute(
-                "SELECT COUNT(*) FROM snapshot_leases WHERE snapshot_id = ? AND expires_at > ?",
+                f"SELECT COUNT(*) FROM snapshot_leases WHERE {_LIVE_LEASE}",
                 (snapshot_id, moment),
             ).fetchone()[0]
             if live:
@@ -826,7 +872,8 @@ class TableCatalog:
 
         Raises:
             SnapshotStateError: The snapshot was never committed, is retiring, the
-                kind is unknown, or the reason is empty.
+                kind is unknown, the reason is empty, or ``expires_at`` is not an
+                ISO 8601 time with a UTC offset.
             SnapshotNotFound: No such snapshot.
         """
         if kind not in HOLD_KINDS:
@@ -841,7 +888,10 @@ class TableCatalog:
             kind=kind,
             reason=reason,
             created_at=_now(),
-            expires_at=expires_at,
+            # Stored as UTC so the row reads the same to every later comparison (#790).
+            expires_at=(
+                _utc_instant(expires_at, field="expires_at") if expires_at is not None else None
+            ),
         )
         with self._immediate() as conn:
             row = conn.execute(
@@ -1072,7 +1122,7 @@ class TableCatalog:
         """
         moment = now or _now()
         row = self._conn.execute(
-            "SELECT COUNT(*) FROM snapshot_leases WHERE snapshot_id = ? AND expires_at > ?",
+            f"SELECT COUNT(*) FROM snapshot_leases WHERE {_LIVE_LEASE}",
             (snapshot_id, moment),
         ).fetchone()
         return int(row[0])
@@ -1081,7 +1131,10 @@ class TableCatalog:
         """Delete expired leases and return how many went."""
         moment = now or _now()
         with self._immediate() as conn:
-            cursor = conn.execute("DELETE FROM snapshot_leases WHERE expires_at <= ?", (moment,))
+            cursor = conn.execute(
+                "DELETE FROM snapshot_leases WHERE julianday(expires_at) <= julianday(?)",
+                (moment,),
+            )
         return cursor.rowcount
 
     # -------------------------------------------------------------- deletion

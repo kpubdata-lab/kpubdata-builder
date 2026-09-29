@@ -16,10 +16,14 @@ from .composition import CompositionProvenance, JoinKeyProvenance
 from .environment import BuildEnvironment, capture_build_environment
 from .models import MANIFEST_SCHEMA_VERSION, BuildManifest
 from .provenance import (
+    FetchCoverage,
     SourceProvenance,
+    SourceReportedTotal,
     build_source_provenance,
     compute_data_checksum,
     compute_inputs_fingerprint,
+    snapshot_coverage,
+    summarize_reported_totals,
 )
 from .schema_summary import FieldSummary, SchemaSummary, build_schema_summary
 from .status import status_from_manifest
@@ -30,16 +34,20 @@ __all__ = [
     "BuildEnvironment",
     "BuildManifest",
     "CompositionProvenance",
+    "FetchCoverage",
     "FieldSummary",
     "JoinKeyProvenance",
     "SchemaSummary",
     "SourceProvenance",
+    "SourceReportedTotal",
     "build_schema_summary",
     "build_source_provenance",
     "capture_build_environment",
     "compute_data_checksum",
     "compute_inputs_fingerprint",
     "manifest_writer",
+    "snapshot_coverage",
     "status_from_manifest",
+    "summarize_reported_totals",
     "write_manifest",
 ]

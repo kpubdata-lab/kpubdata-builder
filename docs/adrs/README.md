@@ -21,6 +21,7 @@ KPubData Builder의 주요 설계 결정을 기록합니다. 각 ADR은 배경·
 | [0015](./0015-email-password-oidc-idp-keycloak.md) | 사용자 인증 IdP: 이메일/비밀번호-capable OIDC(Keycloak) 전환 | 승인됨 | #515 |
 | [0016](./0016-cubrid-state-backend.md) | CUBRID 상태 백엔드 전환 + OCI Compute VM 배포 | 승인됨 | #579 |
 | [0017](./0017-fullstack-oci-deployment.md) | 풀스택 배포 토폴로지: OCI 단일 VM(Builder) + Cloudflare Pages(Studio) | 제안됨 | — |
+| [0019](./0019-column-metadata-semantics.md) | 컬럼 메타: 저장 타입·의미·표시·단위·출처의 분리 | 제안됨 | #813 |
 
 ## 작성 규칙
 

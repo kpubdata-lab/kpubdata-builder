@@ -7,7 +7,7 @@ import os
 import socket
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Protocol, cast
 
@@ -35,6 +35,23 @@ logger = logging.getLogger("kpubdata_builder.service.providers")
 _REQUIRE_OWN_PROVIDER_CREDENTIAL_ENV = "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL"
 
 
+class ProviderCredentialRequired(Exception):
+    """The requester has no credential of their own and the operator's may not be used.
+
+    Raised before a client is made, so the refusal is an answer (403) rather than an
+    upstream authentication error — and so no path reaches the operator key (#786).
+    """
+
+    def __init__(self, providers: Iterable[str]) -> None:
+        self.providers = tuple(sorted(providers))
+        super().__init__("your own credential is required for: " + ", ".join(self.providers))
+
+
+def require_own_provider_credential() -> bool:
+    """Public name of the switch, for callers outside this module (#786)."""
+    return _require_own_provider_credential()
+
+
 def _require_own_provider_credential() -> bool:
     """Whether the operator credential fallback is switched off.
 
@@ -49,7 +66,7 @@ def _require_own_provider_credential() -> bool:
     )
 
 
-CredentialSource = Literal["user", "server", "none"]
+CredentialSource = Literal["user", "server", "none", "refused"]
 ProviderState = Literal["connected", "failed", "not_configured"]
 ProviderErrorCategory = Literal["auth", "network", "timeout", "provider", "unknown"]
 
@@ -68,7 +85,8 @@ class ResolvedCredential:
     """Interpreted credential. Not used as an API response model."""
 
     source: CredentialSource
-    value: str | None
+    # Kept out of repr: a repr reaches logs, exception messages and test output (#686).
+    value: str | None = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -147,17 +165,30 @@ class CredentialResolver:
                     "their own and REQUIRE_OWN_PROVIDER_CREDENTIAL is set",
                     provider,
                 )
-                return ResolvedCredential("none", None)
+                # "refused", not "none": the caller must stop, not carry on keyless —
+                # a keyless client falls back to the environment by itself (#786).
+                return ResolvedCredential("refused", None)
         server_value = KPubDataConfig.from_env().get_provider_key(self.client_key_slot(provider))
         if server_value:
             return ResolvedCredential("server", server_value)
         return ResolvedCredential("none", None)
 
     def provider_keys(self, owner_id: str | None, providers: Iterable[str]) -> dict[str, str]:
-        """Create new Client key mapping from only the providers needed for the request."""
+        """Create new Client key mapping from only the providers needed for the request.
+
+        Raises:
+            ProviderCredentialRequired: A provider the request needs resolved to
+                ``refused`` (#786). Checked for every provider first, so the message
+                names them all.
+            ProviderCredentialConflictError: Two providers sharing a key slot resolved
+                to different keys.
+        """
         resolved: dict[str, str] = {}
-        for provider in providers:
-            credential = self.resolve(owner_id, provider)
+        credentials = {provider: self.resolve(owner_id, provider) for provider in providers}
+        refused = [p for p, c in credentials.items() if c.source == "refused"]
+        if refused:
+            raise ProviderCredentialRequired(refused)
+        for provider, credential in credentials.items():
             if credential.value is None:
                 continue
             slot = self.client_key_slot(provider)
@@ -300,6 +331,7 @@ def test_result_body(result: ProviderTestResult) -> dict[str, object]:
 __all__ = [
     "CredentialResolver",
     "ProviderCredentialConflictError",
+    "ProviderCredentialRequired",
     "ProviderDescriptor",
     "RuntimeProviderCatalog",
     "ProviderTestOperation",
@@ -307,6 +339,7 @@ __all__ = [
     "categorize_provider_error",
     "default_provider_test",
     "provider_descriptors",
+    "require_own_provider_credential",
     "runtime_provider_catalog",
     "reliable_response_code",
     "run_provider_test",
