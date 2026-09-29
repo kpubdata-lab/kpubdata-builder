@@ -131,6 +131,22 @@ def _catalog_application(dataset: DatasetRef) -> JsonValue:
     return {"required": required, "url": url}
 
 
+def _catalog_quota(dataset: DatasetRef) -> str | None:
+    """The spec licence's quota as the provider words it, or None (#778).
+
+    Read with ``getattr`` because ``DatasetRef.license`` arrives in a kpubdata release
+    after the one this package pins (kpubdata#609); until then every quota is None,
+    which the contract defines as "unknown", never "unlimited". The text is passed
+    through unparsed: providers phrase it differently, and a guessed number would be
+    worse than the sentence.
+    """
+    terms = getattr(dataset, "license", None)
+    quota = getattr(terms, "quota", None)
+    if not isinstance(quota, str) or not quota.strip():
+        return None
+    return quota
+
+
 def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> dict[str, JsonValue]:
     """Serialize only public/canonical metadata from DatasetRef as an allowlist (#490).
 
@@ -160,6 +176,7 @@ def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> di
         "requires_service_key": requires_service_key,
         "request_parameters": cast(JsonValue, _catalog_request_parameters(dataset)),
         "application": _catalog_application(dataset),
+        "quota": _catalog_quota(dataset),
     }
 
 

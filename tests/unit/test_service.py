@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from http.server import HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -2158,6 +2159,7 @@ class _FakeCatalogRef:
         operations: frozenset[object] = frozenset(),
         query_support: object = None,
         raw_metadata_extra: dict[str, object] | None = None,
+        license: object = None,  # noqa: A002 - mirrors DatasetRef.license
     ) -> None:
         from kpubdata.core.models import Representation
 
@@ -2175,6 +2177,8 @@ class _FakeCatalogRef:
         )
         if raw_metadata_extra:
             self.raw_metadata.update(raw_metadata_extra)
+        if license is not None:
+            self.license = license
 
 
 class TestCatalog:
@@ -2366,6 +2370,29 @@ class TestCatalog:
         assert dataset["requires_service_key"] is False
         assert dataset["request_parameters"] == []
         assert dataset["application"] is None
+        assert dataset["quota"] is None
+
+    @pytest.mark.parametrize(
+        ("terms", "expected"),
+        [
+            (SimpleNamespace(quota="개발계정 일 10,000건"), "개발계정 일 10,000건"),
+            (SimpleNamespace(quota=None), None),
+            (SimpleNamespace(quota="  "), None),
+            (SimpleNamespace(quota=10000), None),
+            (None, None),
+        ],
+        ids=["declared", "undeclared", "blank", "not-text", "no-licence-attribute"],
+    )
+    def test_catalog_passes_the_declared_quota_through_verbatim(
+        self, tmp_path: Path, terms: object, expected: str | None
+    ) -> None:
+        """The spec licence's quota, unparsed; anything else is null, not 0 (#778)."""
+        ref = _FakeCatalogRef("datago", "air_quality", "대기오염", license=terms)
+
+        resp = self._service_with_catalog(tmp_path, [ref]).catalog()
+
+        providers = cast(list[dict[str, object]], resp.body["providers"])
+        assert cast(dict[str, object], providers[0]["datasets"][0])["quota"] == expected
 
     def test_catalog_serializes_application_when_declared(self, tmp_path: Path) -> None:
         """Pass raw_metadata.application as-is (usage guide, no secret)."""
@@ -2487,6 +2514,7 @@ class TestCatalog:
             "requires_service_key",
             "request_parameters",
             "application",
+            "quota",
         }
         # service_key_param presence passed only as requires_service_key boolean.
         assert dataset["requires_service_key"] is True
