@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: KPubData Builder Service API
+  title: KPubData Engine Service API
   version: "1.39.0"
   description: >-
-    Builder 중심 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
+    KPubData Engine(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
     공유한다. 본 문서는 BuilderService(service/app.py)의 dispatch 라우팅과 실제
     wire 형태를 기계 판독용(OpenAPI 3.1) 단일 소스로 고정하며, Studio 같은 소비자가
@@ -30,8 +30,8 @@ info:
     Monitoring 화면을 위한 시스템/집계 observability만 다루며 Run 단위 이벤트는
     별도(#496)다. Async build queue/worker 상태는 기존
     `AsyncBuildExecutor`/`AsyncBuildJobRegistry`(#511/#513)의 read-only
-    snapshot을 반영한다 — 정상 Builder runtime에서는 `availability: available`
-    이며 실제 0건과 `unavailable`을 구분한다. Builder API latency는
+    snapshot을 반영한다 — 정상 Engine runtime에서는 `availability: available`
+    이며 실제 0건과 `unavailable`을 구분한다. Engine API latency는
     healthy/degraded 임계값 근거가 없어 판정 없이 raw
     `sample_count`/`p95_latency_ms`만 제공한다. 대신
     `MonitoringSummaryResponse.status`(`healthy`/`degraded`)는 required
@@ -136,7 +136,7 @@ paths:
   /version:
     get:
       operationId: getVersion
-      summary: Builder API 계약 버전 조회
+      summary: Engine API 계약 버전 조회
       responses:
         "200":
           description: 서비스/계약 버전
@@ -2607,7 +2607,7 @@ paths:
   /monitoring/summary:
     get:
       operationId: getMonitoringSummary
-      summary: Builder API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516)
+      summary: Engine API/Queue/Worker/Artifact Store 시스템 상태 요약 (#516)
       description: >-
         시스템 aggregate만 반환하며 개별 run의 dataset/owner/credential 정보는
         포함하지 않는다. Async build queue/worker(#511/#513)는 이 서비스가 항상
@@ -3739,7 +3739,7 @@ components:
         version:
           type: string
           description: >-
-            The installed application version (#777). Builder and Studio share it
+            The installed application version (#777). Engine and Studio share it
             (ADR 0004); it differs from api_version, which counts the wire contract.
 
     HealthResponse:
@@ -5468,7 +5468,7 @@ components:
     MonitoringApiStatus:
       type: object
       description: >-
-        Builder API 요청 처리 latency 상태. availability=available은 latency
+        Engine API 요청 처리 latency 상태. availability=available은 latency
         collector(ring buffer)가 정상적으로 표본을 읽어낼 수 있었다는 뜻이며,
         collector 자체가 손상되어 표본을 읽을 수 없으면(#527) unavailable +
         sample_count=null + p95_latency_ms=null이다 — "정상 무표본"

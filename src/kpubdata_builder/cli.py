@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="kpubdata-builder",
-        description="KPubData Builder command-line interface.",
+        description="KPubData Engine command-line interface.",
     )
     parser.add_argument(
         "--version",
@@ -154,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve_cmd = subparsers.add_parser(
         "serve",
-        help="Run the Builder HTTP service.",
+        help="Run the Engine HTTP service.",
     )
     serve_cmd.add_argument(
         "--host",
