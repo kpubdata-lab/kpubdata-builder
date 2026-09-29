@@ -4,6 +4,8 @@
 
 ### Documentation
 
+- The product is KPubData Builder again (#829), reverting the KPubData Engine name from #779. The README, docs, API contract prose, `info.title` and CLI help say Builder, and the family is described by dependency direction — KPubData is a standalone SDK, Builder its downstream consumer, Studio a visual workspace for Builder — instead of `Core → Engine → Studio`. Wire values such as `core_spec` and `engine_inferred`, SQLAlchemy/query "engine" and every identifier are unchanged; past changelog entries are left as written.
+
 - The README, docs, API contract and CLI help call the product KPubData Engine, following kpubdata's BRAND.md (#779). The repository, the `kpubdata-builder` package and CLI, `BuilderService` and the `KPUBDATA_BUILDER_*` variables keep their names, and ADRs and past changelog entries are left as written.
 
 ### Documentation

@@ -20,8 +20,8 @@ Core(kpubdata)에는 이미 `FieldDescriptor.title`·`description`, `FieldConstr
 
 | 개념 | 필드 | 뜻 | 누가 정하나 |
 | :--- | :--- | :--- | :--- |
-| 저장 타입 | `dtype` (Silver·preview), `logical_type` | Engine 이 실제로 들고 있는 Polars 타입. `logical_type` 은 매개변수를 뺀 이름 | 데이터 자체. **힌트로 바꿀 수 없다** |
-| wire encoding | `wire_encoding` | 이 응답에서 값이 JSON 으로 어떻게 실리는가(#735, #794) | 응답마다 Engine 이 값으로 판정 |
+| 저장 타입 | `dtype` (Silver·preview), `logical_type` | Builder 가 실제로 들고 있는 Polars 타입. `logical_type` 은 매개변수를 뺀 이름 | 데이터 자체. **힌트로 바꿀 수 없다** |
+| wire encoding | `wire_encoding` | 이 응답에서 값이 JSON 으로 어떻게 실리는가(#735, #794) | 응답마다 Builder 가 값으로 판정 |
 | 의미 종류 | `semantic.kind` | `code`·`measure`·`date`·`period`. 열린 문자열 | 힌트(출처 포함) |
 | 표시 | `display.label`·`description`·`format` | 사람에게 보여 줄 이름·설명·표시 형식 | 힌트(출처 포함) |
 | 단위 | `unit.name`·`scale` | 측정값의 단위와 배율(1000 = 천 단위) | 힌트(출처 포함) |
@@ -38,7 +38,7 @@ Core(kpubdata)에는 이미 `FieldDescriptor.title`·`description`, `FieldConstr
 | `FieldDescriptor.title` | `display.label` |
 | `FieldDescriptor.description` | `display.description` |
 | `FieldConstraints.format` | `display.format`(원문 그대로). 날짜 형식(`date`, `YYYYMMDD`, `YYYY-MM-DD`)이면 `semantic.kind: date`, 기간 형식(`YYYYMM`, `YYYY-MM`, `YYYY`…)이면 `period`. 그 밖의 형식은 종류를 말하지 않는다 |
-| `FieldDescriptor.type`, `nullable` | **쓰지 않는다.** 원천이 주장한 타입이지 Engine 이 가진 저장 타입이 아니다 |
+| `FieldDescriptor.type`, `nullable` | **쓰지 않는다.** 원천이 주장한 타입이지 Builder 가 가진 저장 타입이 아니다 |
 | (Core 에 단위 필드 없음) | `unit` 은 Core 에서 오지 않는다 |
 
 이 매핑은 `semantics.from_field_descriptor` 한 곳에 있다. Core 의 특정 릴리스에 묶이지
@@ -75,9 +75,9 @@ user_annotation > core_spec > catalog > engine_inferred
 
 ## 이번 범위와 남은 일
 
-이번 변경(계약 1.41.0)은 계약·매핑·우선순위·보존 테스트까지다. **현재 Engine 은 이 힌트를
+이번 변경(계약 1.41.0)은 계약·매핑·우선순위·보존 테스트까지다. **현재 Builder 는 이 힌트를
 아무 응답에도 싣지 않는다.** Core 스키마(`SchemaDescriptor`)를 받아 오는 경로, 카탈로그
-힌트, 사용자 주석 저장소가 아직 Engine 에 없기 때문이다. 이것들이 생기면
+힌트, 사용자 주석 저장소가 아직 Builder 에 없기 때문이다. 이것들이 생기면
 `semantics.with_semantics` 로 컬럼 메타에 붙인다.
 
 Studio 의 `silverColumnInfoSchema` 는 `.strict()` 라 Silver stage 상세에 이 필드가 실리면

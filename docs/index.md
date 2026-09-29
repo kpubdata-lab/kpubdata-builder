@@ -1,9 +1,9 @@
-# KPubData Engine — 한국 공공데이터 실행·웨어하우스 엔진
+# KPubData Builder — 한국 공공데이터 빌드·웨어하우스 도구
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/yeongseon/kpubdata-builder/blob/main/LICENSE)
 
-**KPubData Engine**(패키지 `kpubdata-builder`)은 [`kpubdata`](https://github.com/yeongseon/kpubdata)가 수집한 한국 공공데이터를 다양한 형식의 결과물로 만들어주는 데이터셋 빌드 파이프라인입니다.
+**KPubData Builder**(패키지 `kpubdata-builder`)는 [`kpubdata`](https://github.com/yeongseon/kpubdata)가 수집한 한국 공공데이터를 다양한 형식의 결과물로 만들어주는 데이터셋 빌드 파이프라인입니다.
 
 ---
 
@@ -63,7 +63,7 @@ EX --> M["Manifest<br/>(결과 기록)"]
 5. **Export**: Gold 패키지를 Markdown, JSONL, Parquet, CSV 등 원하는 형식으로 변환합니다.
 6. **Manifest**: 빌드 결과에 대한 상세 기록(버전, 생성일, 포함 항목 수 등)을 자동으로 생성합니다.
 
-> Bronze/Silver/Gold 단계는 사용자가 BuildSpec에 직접 입력하는 필드가 아니라, Engine의 orchestrator가 내부적으로 관리하는 실행 단계입니다.
+> Bronze/Silver/Gold 단계는 사용자가 BuildSpec에 직접 입력하는 필드가 아니라, Builder의 orchestrator가 내부적으로 관리하는 실행 단계입니다.
 
 ## 설치 방법
 
@@ -202,7 +202,7 @@ src/kpubdata_builder/
 - [작업 계획](https://github.com/yeongseon/kpubdata-builder/blob/main/.github/PLAN.md): 초기 구축 및 작업 계획
 
 ### 자세한 참고
-- [ADR 0001: 오케스트레이터로서의 Builder(현 Engine)](adrs/0001-builder-as-orchestrator.md): 아키텍처 결정 기록
+- [ADR 0001: 오케스트레이터로서의 Builder](adrs/0001-builder-as-orchestrator.md): 아키텍처 결정 기록
 - [에러 처리](guides/error-handling.md): 예외 계층 및 오류 응답 정책
 - [제품군 전체 아키텍처](https://github.com/yeongseon/kpubdata/blob/main/docs/product-family-architecture.md): **KPubData 3개 저장소의 전체 시스템 아키텍처**
 
@@ -238,7 +238,7 @@ src/kpubdata_builder/
 ### KPubData Product Family
 | 저장소 | 문서 | 설명 |
 | :--- | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | [ARCHITECTURE.md](https://github.com/yeongseon/kpubdata/blob/main/ARCHITECTURE.md) | Core 아키텍처 |
+| [kpubdata](https://github.com/yeongseon/kpubdata) | [ARCHITECTURE.md](https://github.com/yeongseon/kpubdata/blob/main/ARCHITECTURE.md) | KPubData 아키텍처 |
 | [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | [ARCHITECTURE.md](https://github.com/yeongseon/kpubdata-studio/blob/main/ARCHITECTURE.md) | Studio 아키텍처 |
 
 ---

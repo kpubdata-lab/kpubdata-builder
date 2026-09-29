@@ -4,7 +4,7 @@
 Adding an optional field to a response is additive under the contract (ADR 0013), but a
 client whose parser rejects unknown keys breaks on it anyway: Studio's
 `silverColumnInfoSchema.strict()` did exactly that when 1.30.0 added `logical_type`
-(#735). The contract's `additionalProperties: false` describes what this Engine sends at
+(#735). The contract's `additionalProperties: false` describes what this Builder sends at
 this version; it is not a rule for a client to reject what a later minor adds.
 
 So every named 2xx response example in `contract/builder-api.yaml` becomes three bodies:
