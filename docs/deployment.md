@@ -193,6 +193,48 @@ kpubdata-builder serve
 kpubdata-builder serve --host 0.0.0.0 --port 8080
 ```
 
+### 웨어하우스 운영 — 회수·보존·백업 (#705)
+
+`build --warehouse DIR` 가 커밋한 table snapshot 은 불변이고, 갱신은 새 snapshot 을
+쓰고 포인터를 옮긴다(#699). 그래서 지우는 일은 따로 해야 한다.
+
+```bash
+# 테이블마다 최근 3개를 남기고 회수, 24시간 넘은 미커밋 snapshot 은 버려진 것으로 본다
+kpubdata-builder warehouse-gc DIR --keep 3 --stale-hours 24
+```
+
+**`--stale-hours` 는 "빌드 한 번이 이보다 오래 걸리지 않는다" 는 운영자의 진술이다.**
+카탈로그는 크래시로 멈춘 빌드와 느린 빌드를 구별하지 못한다 — 둘 다 `staging` 행이다.
+기본값 24시간은 가장 긴 예약 빌드(서울 전월세 1,500회 호출)보다 넉넉히 길다. 빌드가
+그보다 오래 걸리는 환경이면 값을 올린다. 너무 짧으면 진행 중인 빌드의 snapshot 을
+버려진 것으로 표시하고, 그 빌드는 커밋 단계에서 실패한다(데이터는 잃지 않는다).
+
+GC 가 **절대 지우지 않는** 것 — 모두 snapshot 을 `retiring` 으로 바꾸는 트랜잭션 안에서
+확인한다:
+
+| 보호 | 설정 |
+|---|---|
+| 어느 테이블이든 current snapshot | 자동 |
+| 질의 lease 가 살아 있는 snapshot | 자동 (`resolve_current`·`pin`, 기본 1시간) |
+| hold 가 걸린 snapshot — 저장된 분석·보존 기간·감사 | `TableCatalog.place_hold(snapshot_id, kind=..., reason=..., expires_at=...)` |
+
+hold 에는 이유가 필수다 — 이유 없는 hold 는 아무도 풀지 못한다. `expires_at` 이 없으면
+`release_hold` 할 때까지 유지된다.
+
+```bash
+# catalog 와 snapshot 파일을 함께 백업 (대상 디렉터리는 비어 있어야 한다)
+kpubdata-builder warehouse-backup DIR BACKUP
+
+# 빈 디렉터리로 복원 — catalog 와 파일을 서로 대조한 뒤에만 복원한다
+kpubdata-builder warehouse-restore BACKUP NEW_DIR
+```
+
+복원은 다음 중 하나라도 어긋나면 **아무것도 복원하지 않고** 문제를 전부 나열한다:
+snapshot 이 가리키는 테이블 존재, current 포인터가 커밋된 snapshot 을 가리킴, 각
+snapshot 디렉터리 존재·비어 있지 않음·digest 일치. 파일이 빠진 백업이 빈 테이블로
+복원되는 일은 없다. 백업은 읽을 수 있는 snapshot(`committed`·`quarantined`)과 hold 를
+담고, lease 와 `staging`·`abandoned`·`retiring` snapshot 은 담지 않는다.
+
 ---
 
 ## HTTP API 인증

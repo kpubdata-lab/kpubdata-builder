@@ -12,6 +12,16 @@ are *not* automatically safe: a query that resolved the pointer before the newer
 commit is still reading one. That is what leases are for, and
 :meth:`TableCatalog.assert_deletable` is the gate.
 
+What collection never removes (#705), each refused inside the transaction that
+would retire the snapshot:
+
+- the current snapshot of any table;
+- a snapshot under a live query lease;
+- a snapshot under a live hold — a saved analysis, a retention period, an audit.
+
+What it may remove: staging directories the catalog does not know, snapshots marked
+``abandoned``, and committed snapshots past ``keep`` that nothing above protects.
+
 Deletion order matters. Files first, then the catalog row. The other way round
 leaves files that nothing knows about, which is how an orphan is created in the
 first place.
@@ -23,7 +33,7 @@ import shutil
 from dataclasses import dataclass, field
 
 from .catalog import TableCatalog
-from .errors import ImmutableSnapshot, SnapshotInUse
+from .errors import ImmutableSnapshot, SnapshotHeld, SnapshotInUse
 from .layout import SnapshotLayout, thaw
 
 
@@ -36,6 +46,7 @@ class GCReport:
         snapshots_removed: Superseded snapshots deleted.
         kept_current: Snapshots skipped for being current.
         kept_leased: Snapshots skipped for having a live lease.
+        kept_held: Snapshots skipped for having a live hold (#705).
         leases_expired: Expired lease rows purged.
     """
 
@@ -43,6 +54,7 @@ class GCReport:
     snapshots_removed: list[str] = field(default_factory=list)
     kept_current: list[str] = field(default_factory=list)
     kept_leased: list[str] = field(default_factory=list)
+    kept_held: list[str] = field(default_factory=list)
     leases_expired: int = 0
 
     @property
@@ -81,6 +93,7 @@ def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     Raises:
         ImmutableSnapshot: It is the table's current snapshot.
         SnapshotInUse: A query holds a live lease on it.
+        SnapshotHeld: A saved analysis, retention period or audit holds it (#705).
         SnapshotNotFound: No such snapshot.
     """
     snapshot = catalog.begin_retiring(snapshot_id)
@@ -128,7 +141,7 @@ def collect(
 
     Removes orphaned staging directories, then superseded snapshots beyond the
     ``keep`` most recent, skipping the current snapshot and anything under a live
-    lease.
+    lease or a live hold.
 
     Args:
         catalog: The catalog to work against.
@@ -159,6 +172,8 @@ def collect(
             report.kept_current.append(snapshot.id)
         except SnapshotInUse:
             report.kept_leased.append(snapshot.id)
+        except SnapshotHeld:
+            report.kept_held.append(snapshot.id)
         else:
             report.snapshots_removed.append(snapshot.id)
 
@@ -174,6 +189,8 @@ def collect(
             report.kept_current.append(snapshot.id)
         except SnapshotInUse:
             report.kept_leased.append(snapshot.id)
+        except SnapshotHeld:
+            report.kept_held.append(snapshot.id)
         else:
             report.snapshots_removed.append(snapshot.id)
     return report

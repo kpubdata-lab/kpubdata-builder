@@ -28,7 +28,8 @@ from .spec import load_spec
 from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
 from .tabular import DEFAULT_PREVIEW_LIMIT
-from .warehouse import TableCatalog
+from .warehouse import CATALOG_FILENAME, BackupInvalid, TableCatalog
+from .warehouse import backup as warehouse_backup
 from .warehouse import gc as warehouse_gc
 
 
@@ -341,6 +342,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace-id",
         default=None,
         help="Only collect tables of this workspace (default: every workspace).",
+    )
+
+    backup_cmd = subparsers.add_parser(
+        "warehouse-backup",
+        help="Back up the table catalog and its snapshot files together (#705).",
+    )
+    backup_cmd.add_argument("warehouse", metavar="DIR", help="Table catalog root.")
+    backup_cmd.add_argument(
+        "destination",
+        metavar="DEST",
+        help="Backup directory. Must not exist or be empty; nothing is overwritten.",
+    )
+
+    restore_cmd = subparsers.add_parser(
+        "warehouse-restore",
+        help=(
+            "Restore a warehouse backup into an empty directory, after checking the "
+            "catalog and the snapshot files against each other (#705)."
+        ),
+    )
+    restore_cmd.add_argument("backup", metavar="BACKUP", help="A warehouse-backup directory.")
+    restore_cmd.add_argument(
+        "warehouse",
+        metavar="DIR",
+        help="Where to restore. Must not exist or be empty; nothing is overwritten.",
     )
 
     return parser
@@ -701,6 +727,41 @@ def _run_rebuild_index(output_dir: str) -> int:
         return 1
 
 
+def _run_warehouse_backup(*, warehouse: str, destination: str) -> int:
+    """Back up a warehouse; exit 1 with every problem when the copy would not be whole."""
+    root = Path(warehouse)
+    if not (root / CATALOG_FILENAME).is_file():
+        print(f"error: no table catalog under {root}", file=sys.stderr)
+        return 1
+    try:
+        report = warehouse_backup.backup(TableCatalog(root), Path(destination))
+    except BackupInvalid as exc:
+        print("error: backup refused:", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    print(
+        f"backed up {report.tables} table(s), {len(report.snapshots)} snapshot(s) "
+        f"to {report.path}"
+        + (f"; left out {len(report.left_out)} unreadable snapshot(s)" if report.left_out else "")
+    )
+    return 0
+
+
+def _run_warehouse_restore(*, backup: str, warehouse: str) -> int:
+    """Restore a backup; exit 1 with every problem rather than restore part of it."""
+    try:
+        catalog = warehouse_backup.restore(Path(backup), Path(warehouse))
+    except BackupInvalid as exc:
+        print("error: restore refused — nothing was restored:", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    tables = catalog.list_tables()
+    print(f"restored {len(tables)} table(s) into {warehouse}")
+    return 0
+
+
 def _run_warehouse_gc(
     *,
     warehouse: str,
@@ -756,6 +817,8 @@ def _run_warehouse_gc(
             details.append(f"marked {len(marked)} stale")
         if report.kept_leased:
             details.append(f"kept {len(report.kept_leased)} leased")
+        if report.kept_held:
+            details.append(f"kept {len(report.kept_held)} held")
         if report.kept_current:
             details.append(f"kept {len(report.kept_current)} current")
         print(f"  {table.logical_name}: " + ", ".join(details))
@@ -1100,6 +1163,10 @@ def dispatch(args: argparse.Namespace) -> int:
             stale_hours=args.stale_hours,
             workspace_id=args.workspace_id,
         )
+    if command == "warehouse-backup":
+        return _run_warehouse_backup(warehouse=args.warehouse, destination=args.destination)
+    if command == "warehouse-restore":
+        return _run_warehouse_restore(backup=args.backup, warehouse=args.warehouse)
     if command == "prune-cancelled":
         return _run_prune_cancelled(
             output_dir=args.output_dir,
