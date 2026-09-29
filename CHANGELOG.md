@@ -4,6 +4,10 @@
 
 ### Documentation
 
+- The README, docs, API contract and CLI help call the product KPubData Engine, following kpubdata's BRAND.md (#779). The repository, the `kpubdata-builder` package and CLI, `BuilderService` and the `KPUBDATA_BUILDER_*` variables keep their names, and ADRs and past changelog entries are left as written.
+
+### Documentation
+
 - The contract now says `wire_encoding` is decided per response: an integer column can be `number` in one response and `decimal_string` in another, so clients read it from each response (#794).
 
 ### Security

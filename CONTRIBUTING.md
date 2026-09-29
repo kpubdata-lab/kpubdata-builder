@@ -1,11 +1,11 @@
-# KPubData-Builder 기여 가이드 (CONTRIBUTING.md)
+# KPubData Engine (`kpubdata-builder`) 기여 가이드 (CONTRIBUTING.md)
 
 > **프로젝트 관리·리뷰 정책의 정본은 [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 하나다.**
 > Epic · Issue · Priority · Review Level · Verification · Release 규칙은 그 문서를 따른다.
 > 이 문서에는 이 저장소 고유의 절차(빌드 명령, 디렉터리 규칙)만 남긴다.
 > 충돌하면 POLICY.md 가 우선한다.
 
-KPubData-Builder 프로젝트에 기여하고 싶으신가요? 환영합니다! 이 프로젝트는 KPubData에서 가져온 데이터를 다양한 형식(CSV, JSON, SQL 등)으로 가공하고 내보내는 역할을 합니다.
+KPubData Engine 프로젝트에 기여하고 싶으신가요? 환영합니다! 이 프로젝트는 KPubData에서 가져온 데이터를 다양한 형식(CSV, JSON, SQL 등)으로 가공하고 내보내는 역할을 합니다.
 
 ## 1. 환영 인사 및 프로젝트 소개
 
@@ -106,7 +106,7 @@ uv sync --extra dev --extra publish --no-sources
 
 #### 핀 범위(`>=0.7.0,<0.8`)를 이렇게 설정한 이유
 
-`kpubdata-builder`는 `kpubdata` 0.7.x의 API(`Client.dataset(...).list` 등)에 의존합니다. kpubdata 0.7.0은 datago 카탈로그에서 `hospital_info`·`apt_trade`·`village_fcst`를 뺀 breaking 릴리스이지만, 세 데이터셋은 spec 실행기로 계속 조회되고 Builder 전체 스위트가 그 변경을 포함한 kpubdata main에서 통과했습니다(2026-09-28, #746). 0.8 이상은 검증 전이라 허용하지 않습니다 (관련 이슈: #213).
+`kpubdata-builder`는 `kpubdata` 0.7.x의 API(`Client.dataset(...).list` 등)에 의존합니다. kpubdata 0.7.0은 datago 카탈로그에서 `hospital_info`·`apt_trade`·`village_fcst`를 뺀 breaking 릴리스이지만, 세 데이터셋은 spec 실행기로 계속 조회되고 이 저장소의 전체 스위트가 그 변경을 포함한 kpubdata main에서 통과했습니다(2026-09-28, #746). 0.8 이상은 검증 전이라 허용하지 않습니다 (관련 이슈: #213).
 
 핀의 정본은 `pyproject.toml`의 `dependencies`입니다. 이 표와 어긋나면 `pyproject.toml`이 맞습니다.
 

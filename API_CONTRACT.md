@@ -1,8 +1,8 @@
-# API 계약 — KPubData Builder
+# API 계약 — KPubData Engine
 
 ## 1. 단일 소스
 
-Builder HTTP wire 계약의 단일 소스는 [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml)입니다.
+KPubData Engine(패키지 `kpubdata-builder`) HTTP wire 계약의 단일 소스는 [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml)입니다.
 
 - endpoint, request body, response body, status code, security scheme은 OpenAPI 문서를 기준으로 합니다.
 - `contract/builder-api.yaml`의 `info.version`은 `kpubdata_builder.service.API_CONTRACT_VERSION`과 일치해야 합니다.
@@ -29,12 +29,12 @@ Builder HTTP wire 계약의 단일 소스는 [contract/builder-api.yaml](https:/
 
 ## 2. 실행 모델
 
-v0.4 Builder service는 동기식 실행 모델을 유지합니다.
+v0.4 Engine service는 동기식 실행 모델을 유지합니다.
 
 | 범위 | 모델 | 기준 |
 | :--- | :--- | :--- |
 | `/validate`, `/preview`, `/build`, 조회 계열 | 요청-응답 동기 처리 | ADR 0002 |
-| 비동기 job 모델 (`POST /builds`, `GET /builds/{run_id}`, `POST /builds/{run_id}/cancel`) | 접수 후 즉시 반환, 상태는 polling | ADR 0008 / Builder #334 |
+| 비동기 job 모델 (`POST /builds`, `GET /builds/{run_id}`, `POST /builds/{run_id}/cancel`) | 접수 후 즉시 반환, 상태는 polling | ADR 0008 / #334 |
 
 원칙:
 
@@ -248,7 +248,7 @@ v0.4 Builder service는 동기식 실행 모델을 유지합니다.
   `sample_count=0`/`p95_latency_ms=null` 자체나 `queue`/`workers`의 실제 0건은
   degraded 근거가 아닙니다(availability가 실제로 `unavailable`/`partial`일 때만
   degraded). Provider 상태(#492)는 optional이라 이 판정에 포함되지 않습니다.
-- **Builder API 상태**: `dispatch()` 실행 시간을 최근 최대 1000개 요청의 bounded
+- **Engine API 상태**: `dispatch()` 실행 시간을 최근 최대 1000개 요청의 bounded
   ring buffer로 기록하고 nearest-rank(보간 없음) 방식으로 p95를 계산합니다.
   `sample_count=0`이면 `p95_latency_ms=null`입니다. collector 자체가 손상되어
   표본을 읽을 수 없으면(#527) `availability=unavailable` +
@@ -394,6 +394,6 @@ build_response = service.build(spec_yaml_str, run_id="my-run-001")
 | [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml) | HTTP wire 계약 SSOT |
 | [BUILD_SPEC.md](./BUILD_SPEC.md) | BuildSpec 입력 계약 |
 | [BUILD_STATE.md](./BUILD_STATE.md) | build 상태 모델 |
-| [BOUNDARY.md](./BOUNDARY.md) | Builder-Studio 경계 |
+| [BOUNDARY.md](./BOUNDARY.md) | Engine-Studio 경계 |
 | [docs/adrs/0002-build-execution-model.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0002-build-execution-model.md) | v0.4 동기 build 모델 결정 |
 | [docs/adrs/0005-api-contract-single-source.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0005-api-contract-single-source.md) | OpenAPI SSOT 결정 |

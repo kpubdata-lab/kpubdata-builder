@@ -31,7 +31,7 @@
 
 | # | 지점 | 판정 | 근거 |
 |---|---|---|---|
-| 1 | Builder provider credential API | **남는다** | `routes/providers.py:45` `PUT /providers/{p}/credential` → 저장소에 씀 |
+| 1 | Engine provider credential API | **남는다** | `routes/providers.py:45` `PUT /providers/{p}/credential` → 저장소에 씀 |
 | 2 | DB credential table | **남는다** | `credentials/store.py:76` `provider_credentials(owner_id, provider, ciphertext, updated_at)` |
 | 3 | encryption master key | **남는다(운영자 보유)** | `service/app.py:93` `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` |
 | 4 | HF token | **남는다** | `publish_credentials.py:39` `publish-huggingface-hf-token` slot, 동일 저장소 |
