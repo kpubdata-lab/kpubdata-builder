@@ -1,7 +1,9 @@
 dataset_id: kpubdata/seoul-apartment-rent
 title: 서울시 아파트 전월세 실거래
 description: 국토교통부 아파트 전월세 실거래 자료 중 서울시 25개 자치구, 2020-01~2024-12.
-license: cc-by-4.0
+license: other
+license_name: korea-public-data-unrestricted
+license_link: https://www.data.go.kr/data/15126474/openapi.do
 sources:
 - provider: datago
   dataset: apt_rent

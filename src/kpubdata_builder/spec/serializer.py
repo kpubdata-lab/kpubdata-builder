@@ -279,6 +279,12 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
     # unmotivatedly (same reason as #640).
     if spec.attribution is not None:
         mapping["attribution"] = spec.attribution
+    # Same rule for the licence's name and link (#764): a spec that does not use
+    # `license: other` keeps its digest.
+    if spec.license_name is not None:
+        mapping["license_name"] = spec.license_name
+    if spec.license_link is not None:
+        mapping["license_link"] = spec.license_link
     return mapping
 
 

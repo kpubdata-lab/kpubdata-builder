@@ -824,6 +824,28 @@ def _license_problems(spec: BuildSpec) -> list[ValidationProblem]:
                 "license is required when publish=true (재배포 가능성 명시, #443)",
             )
         )
+    # `other` is how a licence outside the standard list is recorded, and it carries no
+    # terms by itself: a card that says only "other" tells a reader nothing (#764).
+    if spec.license == "other":
+        for field_name in ("license_name", "license_link"):
+            if not getattr(spec, field_name):
+                problems.append(
+                    _p(
+                        "license_other_needs_terms",
+                        field_name,
+                        f"license is 'other', so {field_name} is required — 'other' alone "
+                        "does not say what the terms are",
+                    )
+                )
+    elif spec.license_name or spec.license_link:
+        problems.append(
+            _p(
+                "license_terms_without_other",
+                "license",
+                "license_name and license_link describe a licence outside the standard "
+                "list, so license must be 'other'",
+            )
+        )
     return problems
 
 

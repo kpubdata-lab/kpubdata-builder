@@ -13,7 +13,9 @@
 dataset_id: kpubdata/seoul-bike-rent-month
 title: 서울 공공자전거 월별 이용정보
 description: 서울 열린데이터광장 공공자전거 월별 이용정보. G1+G2+I1+G3 통합 스냅샷, 2020-01~2023-12.
-license: cc-by-4.0
+license: other
+license_name: kogl-type-1
+license_link: https://www.kogl.or.kr/info/licenseType1.do
 sources:
 - kind: file
   alias: bike
