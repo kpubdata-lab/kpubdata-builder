@@ -6,6 +6,7 @@ import os
 import threading
 from pathlib import Path
 
+from .aggregate import aggregate_worker
 from .engine import QueryEngine
 from .models import QueryResult
 from .rows import rows_worker
@@ -53,11 +54,13 @@ class QueryService:
         engine: QueryEngine | None = None,
         max_concurrency: int | None = None,
         rows_engine: QueryEngine | None = None,
+        aggregate_engine: QueryEngine | None = None,
     ) -> None:
         """Args:
         rows_engine: Runs paged row reads (#815). Defaults to a child-process engine
             with the same memory cap, and shares this service's concurrency limit:
             a page read costs a query slot like any query.
+        aggregate_engine: Runs validated aggregates (#818), on the same terms.
         """
         capacity = query_max_concurrency_from_env() if max_concurrency is None else max_concurrency
         if capacity < 1:
@@ -66,6 +69,9 @@ class QueryService:
         self._engine = engine or QueryEngine(memory_limit_bytes=memory_limit)
         self._rows_engine = rows_engine or QueryEngine(
             worker=rows_worker, memory_limit_bytes=memory_limit
+        )
+        self._aggregate_engine = aggregate_engine or QueryEngine(
+            worker=aggregate_worker, memory_limit_bytes=memory_limit
         )
         self._capacity = threading.BoundedSemaphore(capacity)
 
@@ -83,6 +89,15 @@ class QueryService:
             raise QueryBusyError("query capacity is exhausted")
         try:
             return self._rows_engine.execute(table_path, plan_json, limit=limit)
+        finally:
+            self._capacity.release()
+
+    def execute_aggregate(self, table_path: Path, plan_json: str, *, limit: int) -> QueryResult:
+        """Run a validated aggregate (#818), under the same limits as a query."""
+        if not self._capacity.acquire(blocking=False):
+            raise QueryBusyError("query capacity is exhausted")
+        try:
+            return self._aggregate_engine.execute(table_path, plan_json, limit=limit)
         finally:
             self._capacity.release()
 
