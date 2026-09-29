@@ -48,9 +48,32 @@ class SnapshotInUse(WarehouseError):
     """
 
 
+class SnapshotHeld(WarehouseError):
+    """A hold keeps this snapshot: a saved analysis, a retention period or an audit (#705).
+
+    Distinct from :class:`SnapshotInUse`. A lease ends when a query finishes or its
+    lifetime runs out; a hold is a statement that the snapshot must outlive both.
+    """
+
+
+class BackupInvalid(WarehouseError):
+    """A backup, or a restore from one, would not reproduce the warehouse (#705).
+
+    Carries every problem found rather than the first, because a restore is usually
+    attempted when something has already gone wrong, and fixing one problem only to
+    meet the next is how an operator gives up and restores a broken copy.
+    """
+
+    def __init__(self, problems: list[str]) -> None:
+        self.problems = list(problems)
+        super().__init__("; ".join(self.problems))
+
+
 __all__ = [
+    "BackupInvalid",
     "ImmutableSnapshot",
     "SnapshotConflict",
+    "SnapshotHeld",
     "SnapshotInUse",
     "SnapshotNotFound",
     "SnapshotStateError",

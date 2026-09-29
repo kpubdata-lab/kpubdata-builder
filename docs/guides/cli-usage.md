@@ -41,8 +41,15 @@ positional arguments:
     verify           Verify dataset specs against live APIs.
     prune-cancelled  List (and optionally delete) cancelled partial-run
                      artifacts past a TTL (#549).
-    warehouse-gc     Reclaim snapshots and staging directories nothing
-                     needs any more (#738).
+    warehouse-gc     Reclaim snapshots and staging directories nothing needs
+                     any more (#738).
+    warehouse-backup
+                     Back up the table catalog and its snapshot files together
+                     (#705).
+    warehouse-restore
+                     Restore a warehouse backup into an empty directory, after
+                     checking the catalog and the snapshot files against each
+                     other (#705).
 
 options:
   -h, --help  show this help message and exit

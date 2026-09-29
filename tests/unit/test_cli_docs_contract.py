@@ -33,8 +33,10 @@ def _documented_subcommands() -> set[str]:
     text = _DOC.read_text(encoding="utf-8")
     block = text.split("positional arguments:", 1)[1].split("options:", 1)[0]
     # Extract name only from lines like "    name  Help text...". Following description lines
-    # have deeper indent and don't match.
-    return set(re.findall(r"^ {4}([a-z][a-z-]+) {2,}\S", block, flags=re.MULTILINE))
+    # have deeper indent and don't match. A name too long for the help column stands on
+    # its own line, with the help below it — argparse does that from about 17 characters
+    # (`warehouse-restore`), so a name alone on its line counts too.
+    return set(re.findall(r"^ {4}([a-z][a-z-]+)(?: {2,}\S|$)", block, flags=re.MULTILINE))
 
 
 def test_every_subcommand_is_documented() -> None:

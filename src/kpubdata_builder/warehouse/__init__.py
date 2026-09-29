@@ -19,7 +19,10 @@ Three pieces:
 - :class:`~kpubdata_builder.warehouse.layout.SnapshotLayout` — paths. Staging and
   committed snapshots are separate directories, and promotion is a single rename.
 - :mod:`~kpubdata_builder.warehouse.gc` — reclaims orphaned staging directories
-  and superseded snapshots, refusing anything current or under a lease.
+  and superseded snapshots, refusing anything current, under a lease, or held by a
+  saved analysis, retention period or audit (#705).
+- :mod:`~kpubdata_builder.warehouse.backup` — backs up the catalog and the snapshot
+  files together and restores them only after checking each against the other.
 - :mod:`~kpubdata_builder.warehouse.baseline` — picks the committed snapshot drift
   may compare against (#700), scoped by owner, coverage and schema contract, and
   returning a stated reason rather than ``None`` when nothing qualifies.
@@ -39,6 +42,7 @@ leaves the previous current snapshot readable, because nothing ever wrote over i
 
 from __future__ import annotations
 
+from .backup import BackupReport
 from .baseline import (
     BaselineFound,
     BaselineOutcome,
@@ -50,16 +54,21 @@ from .baseline import (
 from .catalog import (
     CATALOG_FILENAME,
     DEFAULT_LEASE_SECONDS,
+    HOLD_KINDS,
     SCHEMA_VERSION,
+    HoldKind,
     PinnedSnapshot,
+    SnapshotHold,
     SnapshotRow,
     SnapshotState,
     TableCatalog,
     TableRow,
 )
 from .errors import (
+    BackupInvalid,
     ImmutableSnapshot,
     SnapshotConflict,
+    SnapshotHeld,
     SnapshotInUse,
     SnapshotNotFound,
     SnapshotStateError,
@@ -70,7 +79,13 @@ from .layout import MANIFEST_FILENAME, SnapshotLayout, SnapshotManifest
 from .materialize import MaterializeResult, materialize
 
 __all__ = [
+    "BackupInvalid",
+    "BackupReport",
     "CATALOG_FILENAME",
+    "HOLD_KINDS",
+    "HoldKind",
+    "SnapshotHeld",
+    "SnapshotHold",
     "BaselineFound",
     "BaselineOutcome",
     "DEFAULT_LEASE_SECONDS",

@@ -18,11 +18,19 @@ Schema::
     snapshot_leases
       lease_id, snapshot_id, acquired_at, expires_at
 
+    snapshot_holds
+      hold_id, snapshot_id, kind, reason, created_at, expires_at
+
 ``state``: ``staging`` -> ``validated`` -> ``committed``, or ``quarantined``.
 A snapshot that lost a compare-and-swap, or that a crash left behind, becomes
 ``abandoned`` so garbage collection can reclaim it — a ``validated`` row that
 nobody will ever commit would otherwise keep its files forever.
 ``retiring`` marks a snapshot being deleted: no new lease is issued for one.
+
+A lease protects a snapshot while a query reads it. A **hold** protects it for
+longer than any query: a saved analysis that must re-run on the same input, a
+retention period, an audit (#705). Garbage collection refuses both, in the same
+transaction that would retire the snapshot.
 
 The pointer update is a compare-and-swap::
 
@@ -52,6 +60,7 @@ from typing import Literal, cast
 from .errors import (
     ImmutableSnapshot,
     SnapshotConflict,
+    SnapshotHeld,
     SnapshotInUse,
     SnapshotNotFound,
     SnapshotStateError,
@@ -67,7 +76,9 @@ from .errors import (
 #    coverage_fingerprint, source_params_fingerprint, schema_contract_version.
 # 3: 'abandoned' and 'retiring' states (#699 N-01, N-03). SQLite cannot alter a
 #    CHECK constraint, so the table is rebuilt and copied row for row.
-SCHEMA_VERSION = 3
+# 4: snapshot_holds (#705) — saved analyses, retention and audit keep a snapshot
+#    past garbage collection.
+SCHEMA_VERSION = 4
 
 CATALOG_FILENAME = "_warehouse.sqlite"
 
@@ -91,6 +102,34 @@ SnapshotState = Literal[
 
 # Default lease lifetime, so a crashed query cannot pin a snapshot forever.
 DEFAULT_LEASE_SECONDS = 3600
+
+HoldKind = Literal["saved_analysis", "retention", "audit"]
+"""Why a snapshot is kept past garbage collection (#705).
+
+``saved_analysis`` — a stored query run pinned this snapshot and must be able to
+re-run against it. ``retention`` — a policy keeps it for a period. ``audit`` — it was
+named as evidence. The kinds behave the same; they exist so a report can say *why*
+something could not be reclaimed.
+"""
+
+HOLD_KINDS: tuple[HoldKind, ...] = ("saved_analysis", "retention", "audit")
+
+_HOLDS_TABLE = (
+    "CREATE TABLE IF NOT EXISTS snapshot_holds ("
+    " hold_id TEXT PRIMARY KEY,"
+    " snapshot_id TEXT NOT NULL REFERENCES table_snapshots(id),"
+    " kind TEXT NOT NULL CHECK (kind IN ('saved_analysis','retention','audit')),"
+    " reason TEXT NOT NULL,"
+    " created_at TEXT NOT NULL,"
+    " expires_at TEXT)"
+)
+_HOLDS_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_holds_snapshot ON snapshot_holds(snapshot_id, expires_at)"
+)
+
+# A hold with no expiry lasts until it is released. Leases always expire; holds need
+# not, because an audit does not end on a timer.
+_LIVE_HOLD = "snapshot_id = ? AND (expires_at IS NULL OR expires_at > ?)"
 
 
 # Each entry upgrades from the version that is its key to the next one. A column is
@@ -132,6 +171,7 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
         " ON table_snapshots(table_id, created_at DESC)",
     ),
+    3: (_HOLDS_TABLE, _HOLDS_INDEX),
 }
 
 
@@ -212,6 +252,27 @@ class PinnedSnapshot:
     revision: int
 
 
+@dataclass(frozen=True)
+class SnapshotHold:
+    """A reason a snapshot must survive garbage collection (#705).
+
+    Attributes:
+        hold_id: Identifier to pass to ``release_hold``.
+        snapshot_id: The held snapshot.
+        kind: Why it is held.
+        reason: Free text a person can act on — which analysis, which audit.
+        created_at: When the hold was placed.
+        expires_at: When it lapses, or None for "until released".
+    """
+
+    hold_id: str
+    snapshot_id: str
+    kind: HoldKind
+    reason: str
+    created_at: str
+    expires_at: str | None
+
+
 def _now() -> str:
     """Current time as a UTC ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
@@ -242,6 +303,11 @@ class TableCatalog:
     def root(self) -> Path:
         """Warehouse root."""
         return self._root
+
+    @property
+    def path(self) -> Path:
+        """The catalog database file. Backup copies it through SQLite, not the filesystem."""
+        return self._path
 
     @property
     def _conn(self) -> sqlite3.Connection:
@@ -335,6 +401,8 @@ class TableCatalog:
                 "CREATE INDEX IF NOT EXISTS idx_leases_snapshot"
                 " ON snapshot_leases(snapshot_id, expires_at)"
             )
+            conn.execute(_HOLDS_TABLE)
+            conn.execute(_HOLDS_INDEX)
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
 
@@ -651,6 +719,7 @@ class TableCatalog:
         Raises:
             ImmutableSnapshot: It is the table's current snapshot.
             SnapshotInUse: A live lease exists.
+            SnapshotHeld: A live hold exists (#705).
             SnapshotNotFound: No such snapshot.
         """
         moment = now or _now()
@@ -677,6 +746,15 @@ class TableCatalog:
             if live:
                 raise SnapshotInUse(
                     f"snapshot {snapshot_id!r} has {live} live lease(s); a query is reading it"
+                )
+            held = conn.execute(
+                f"SELECT kind, reason FROM snapshot_holds WHERE {_LIVE_HOLD} ORDER BY created_at",
+                (snapshot_id, moment),
+            ).fetchall()
+            if held:
+                raise SnapshotHeld(
+                    f"snapshot {snapshot_id!r} is held: "
+                    + "; ".join(f"{kind} ({reason})" for kind, reason in held)
                 )
             conn.execute(
                 "UPDATE table_snapshots SET state = 'retiring' WHERE id = ?", (snapshot_id,)
@@ -731,6 +809,78 @@ class TableCatalog:
                 ),
             )
         return PinnedSnapshot(snapshot_id, lease_id, revision)
+
+    def place_hold(
+        self,
+        snapshot_id: str,
+        *,
+        kind: HoldKind,
+        reason: str,
+        expires_at: str | None = None,
+    ) -> SnapshotHold:
+        """Keep a snapshot past garbage collection until released or ``expires_at``.
+
+        Only a snapshot someone could read is held — a committed or quarantined one.
+        Holding a staging row would keep bytes nobody can query, and holding a
+        ``retiring`` one would race the delete already under way.
+
+        Raises:
+            SnapshotStateError: The snapshot was never committed, is retiring, the
+                kind is unknown, or the reason is empty.
+            SnapshotNotFound: No such snapshot.
+        """
+        if kind not in HOLD_KINDS:
+            raise SnapshotStateError(f"unknown hold kind {kind!r}; expected one of {HOLD_KINDS}")
+        if not reason.strip():
+            raise SnapshotStateError(
+                "a hold needs a reason — an unexplained hold is one nobody dares release"
+            )
+        hold = SnapshotHold(
+            hold_id=f"hold_{secrets.token_hex(12)}",
+            snapshot_id=snapshot_id,
+            kind=kind,
+            reason=reason,
+            created_at=_now(),
+            expires_at=expires_at,
+        )
+        with self._immediate() as conn:
+            row = conn.execute(
+                "SELECT state FROM table_snapshots WHERE id = ?", (snapshot_id,)
+            ).fetchone()
+            if row is None:
+                raise SnapshotNotFound(f"no such snapshot: {snapshot_id!r}")
+            if row[0] not in ("committed", "quarantined"):
+                raise SnapshotStateError(
+                    f"snapshot {snapshot_id!r} is in state {row[0]!r}; only a snapshot "
+                    "that was committed can be held"
+                )
+            conn.execute(
+                "INSERT INTO snapshot_holds (hold_id, snapshot_id, kind, reason, created_at,"
+                " expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    hold.hold_id,
+                    hold.snapshot_id,
+                    hold.kind,
+                    hold.reason,
+                    hold.created_at,
+                    hold.expires_at,
+                ),
+            )
+        return hold
+
+    def release_hold(self, hold_id: str) -> None:
+        """Release a hold; do nothing when it is already gone."""
+        with self._immediate() as conn:
+            conn.execute("DELETE FROM snapshot_holds WHERE hold_id = ?", (hold_id,))
+
+    def live_holds(self, snapshot_id: str, *, now: str | None = None) -> list[SnapshotHold]:
+        """Holds on a snapshot that have not lapsed, oldest first."""
+        rows = self._conn.execute(
+            "SELECT hold_id, snapshot_id, kind, reason, created_at, expires_at"
+            f" FROM snapshot_holds WHERE {_LIVE_HOLD} ORDER BY created_at",
+            (snapshot_id, now or _now()),
+        ).fetchall()
+        return [SnapshotHold(*row) for row in rows]
 
     def _transition(self, snapshot_id: str, *, expected: tuple[str, ...], new: str) -> None:
         """Change state, refusing when the current state is not in ``expected``."""
@@ -959,6 +1109,8 @@ class TableCatalog:
             raise SnapshotInUse(
                 f"snapshot {snapshot_id!r} has {live} live lease(s); a query is reading it"
             )
+        if self.live_holds(snapshot_id, now=now):
+            raise SnapshotHeld(f"snapshot {snapshot_id!r} is held and cannot be deleted")
         return snapshot
 
     def forget_snapshot(self, snapshot_id: str) -> None:
@@ -969,6 +1121,8 @@ class TableCatalog:
         """
         with self._immediate() as conn:
             conn.execute("DELETE FROM snapshot_leases WHERE snapshot_id = ?", (snapshot_id,))
+            # Only lapsed holds can remain: a live one made begin_retiring refuse.
+            conn.execute("DELETE FROM snapshot_holds WHERE snapshot_id = ?", (snapshot_id,))
             conn.execute("DELETE FROM table_snapshots WHERE id = ?", (snapshot_id,))
 
     def close(self) -> None:
@@ -982,8 +1136,11 @@ class TableCatalog:
 __all__ = [
     "CATALOG_FILENAME",
     "DEFAULT_LEASE_SECONDS",
+    "HOLD_KINDS",
     "SCHEMA_VERSION",
+    "HoldKind",
     "PinnedSnapshot",
+    "SnapshotHold",
     "SnapshotRow",
     "SnapshotState",
     "TableCatalog",
