@@ -29,6 +29,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from typing_extensions import assert_never
 
 from ..events import BuildEvent, BuildEventStore
@@ -60,6 +61,23 @@ keys come back too, because the build redacts them from what it returns. Raises
 ``ProviderCredentialConflictError``/``ValueError`` for a bad credential request and
 anything else when no client can be made.
 """
+
+
+def _declared_dataset_id(spec_yaml: str) -> str | None:
+    """The spec's top-level ``dataset_id``, or None — read only to label the job (#781).
+
+    Not validation: the worker validates the whole spec when it runs, and a spec that
+    fails here fails there with a proper answer. This only lets a table show that a
+    refresh is queued or running before the run finishes.
+    """
+    try:
+        document = yaml.safe_load(spec_yaml)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(document, dict):
+        return None
+    dataset_id = document.get("dataset_id")
+    return dataset_id if isinstance(dataset_id, str) and dataset_id else None
 
 
 class BuildRunsApiService:
@@ -370,6 +388,7 @@ class BuildRunsApiService:
                 run_id=resolved_run_id,
                 created_by=created_by,
                 owner_id=owner_id,
+                dataset_id=_declared_dataset_id(spec_yaml),
                 runner=runner,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
