@@ -25,10 +25,13 @@ credential, and a failed publish cannot touch a snapshot that already exists.
 
 from __future__ import annotations
 
+import json
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..spec import JsonValue
 from .catalog import SnapshotRow, TableCatalog, TableRow
 from .errors import SnapshotConflict, SnapshotStateError
 from .layout import SnapshotLayout, SnapshotManifest, content_digest
@@ -64,6 +67,7 @@ def materialize(
     schema_contract_version: str | None = None,
     row_count: int | None = None,
     expected_revision: int | None = None,
+    coverage: Mapping[str, JsonValue] | None = None,
 ) -> MaterializeResult:
     """Commit the contents of ``source_dir`` as a new snapshot of a table.
 
@@ -94,6 +98,9 @@ def materialize(
             committed by another build since then makes this commit a conflict — the
             older data does not replace the newer. None reads the revision just before
             the commit, which only protects against a commit racing this one.
+        coverage: Whether the fetch collected what the provider reported (#816), stored
+            with the snapshot as JSON. None records nothing — which reads as unknown,
+            never as complete.
 
     Returns:
         The committed snapshot and where it lives.
@@ -125,6 +132,7 @@ def materialize(
         coverage_fingerprint=coverage_fingerprint,
         source_params_fingerprint=source_params_fingerprint,
         schema_contract_version=schema_contract_version,
+        coverage=json.dumps(coverage, sort_keys=True) if coverage is not None else None,
     )
 
     layout = SnapshotLayout(catalog.root, table.id)

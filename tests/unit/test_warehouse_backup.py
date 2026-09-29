@@ -155,6 +155,8 @@ class TestAHoldOutlivesCollection:
         old.close()
         with closing(sqlite3.connect(root / CATALOG_FILENAME)) as conn:
             conn.execute("DROP TABLE snapshot_holds")
+            # Version 3 predates the coverage column too (#816).
+            conn.execute("ALTER TABLE table_snapshots DROP COLUMN coverage")
             conn.execute("UPDATE schema_version SET version = 3")
             conn.commit()
 
@@ -163,8 +165,8 @@ class TestAHoldOutlivesCollection:
         assert reopened.get_snapshot(first).state == "committed"
         reopened.place_hold(first, kind="retention", reason="migrated")
         with closing(sqlite3.connect(root / CATALOG_FILENAME)) as conn:
-            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
-        assert SCHEMA_VERSION == 4
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 5
+        assert SCHEMA_VERSION == 5
 
 
 # ------------------------------------------------------------------ backup/restore

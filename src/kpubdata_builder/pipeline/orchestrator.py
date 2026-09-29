@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -47,6 +47,7 @@ from ..manifest import (
     capture_build_environment,
     compute_inputs_fingerprint,
     manifest_writer,
+    snapshot_coverage,
 )
 from ..quality import (
     DriftEvaluation,
@@ -305,13 +306,7 @@ def _volume_comparability(source: SourceRef) -> Callable[[Path], str | None]:
 
 def _retag_bronze_artifact(artifact: BronzeArtifact, *, output_key: str) -> BronzeArtifact:
     """Keep fetch provenance; replace only source_key for output paths."""
-    return BronzeArtifact(
-        source_key=output_key,
-        raw_records=artifact.raw_records,
-        fetch_params=artifact.fetch_params,
-        fetched_at=artifact.fetched_at,
-        provenance=artifact.provenance,
-    )
+    return replace(artifact, source_key=output_key)
 
 
 def _record_output_paths(outputs: list[str], *paths: Path) -> None:
@@ -508,6 +503,8 @@ def _run_source_pipeline(
             # encoding, url has endpoint/method without query string,
             # public_api has original source.params unchanged.
             params=bronze.fetch_params,
+            # Reported totals are kept per call, never summed (#816).
+            call_totals=bronze.call_totals,
         )
 
         # Boundary 1 (#481): Bronze outputs written to disk and provenance
@@ -1145,6 +1142,7 @@ def run_build(
     row_counts: dict[str, int] = {}
     schema_summaries: dict[str, SchemaSummary] = {}
     provenance: list[SourceProvenance] = []
+    provenance_by_key: dict[str, SourceProvenance] = {}
     quality_results: dict[str, tuple[QualityCheckResult, ...]] = {}
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = {}
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
@@ -1157,6 +1155,7 @@ def run_build(
             schema_summaries[result.outcome.source_key] = result.schema_summary
         if result.provenance_entry is not None:
             provenance.append(result.provenance_entry)
+            provenance_by_key[result.outcome.source_key] = result.provenance_entry
         # quality_evaluated tracks whether evaluate_quality was actually called
         # (#486) — even if FAIL fails source, result survives. Bronze/Silver
         # failure never reaches evaluate_quality, so manifest lacks that key
@@ -1271,6 +1270,9 @@ def run_build(
                     ),
                     row_count=row_counts.get(outcome.source_key),
                     expected_revision=start_revisions.get(outcome.source_key),
+                    # A snapshot of a partial fetch says so (#816), so a reader can show
+                    # it rather than present part of the data as the whole.
+                    coverage=snapshot_coverage(provenance_by_key.get(outcome.source_key)),
                 )
             except SnapshotConflict:
                 # Another build committed this table after this one started (#787).

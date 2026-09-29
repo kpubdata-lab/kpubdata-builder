@@ -293,12 +293,14 @@ _BuildListEntry = dict[str, str | None]
 #   null (#778, additive).
 # 1.40.0 -> 1.41.0: column metadata gains optional semantic, display and unit hints, each
 #   with its origin (#813, additive; ADR 0019). Metadata only; absent when undescribed.
+# 1.41.0 -> 1.42.0: manifest provenance gains fetched_row_count, source_reported_total and
+#   coverage; WarehouseSnapshot gains coverage (#816, additive). Totals are never summed.
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.41.0"
+API_CONTRACT_VERSION = "1.42.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

@@ -18,8 +18,102 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Literal
 
 from ..spec import JsonValue
+from ..stages.bronze.models import CallTotal
+
+ReportedTotalStatus = Literal["reported", "unknown", "inconsistent", "not_summed", "not_reported"]
+CoverageStatus = Literal["complete", "partial", "unknown"]
+
+
+@dataclass(frozen=True)
+class SourceReportedTotal:
+    """How many records the provider said there were, kept apart from what was fetched.
+
+    Attributes:
+        status: ``reported`` — one call, its pages agreed, ``value`` is the total (``0``
+            included). ``unknown`` — the provider stated none. ``inconsistent`` — pages
+            of one call disagreed. ``not_summed`` — several calls (``param_grid``); their
+            totals are in ``calls`` and deliberately not added up, because combinations
+            can overlap. ``not_reported`` — the source has no provider total (a file or
+            URL).
+        value: The total when ``status`` is ``reported``; None otherwise — never a sum.
+        observed_at: When the total was read (the fetch's completion time).
+        calls: Each call's reported total and fetched rows, in call order.
+    """
+
+    status: ReportedTotalStatus
+    value: int | None
+    observed_at: str
+    calls: tuple[CallTotal, ...] = ()
+
+
+@dataclass(frozen=True)
+class FetchCoverage:
+    """Whether the fetch collected everything the provider said there was (#816).
+
+    Attributes:
+        status: ``complete`` — every call returned exactly its reported total.
+            ``partial`` — some call returned fewer rows than it reported.
+            ``unknown`` — no reported total to compare against, or one that cannot be
+            trusted.
+        reasons: Why it is not complete, one entry per affected call
+            (``call <i>: <reason>``) or for the whole source.
+    """
+
+    status: CoverageStatus
+    reasons: tuple[str, ...] = ()
+
+
+def summarize_reported_totals(
+    call_totals: Sequence[CallTotal], *, observed_at: str
+) -> tuple[SourceReportedTotal, FetchCoverage]:
+    """The source's reported total and its fetch coverage, from its calls' totals.
+
+    A total is never added up: not across a call's pages (each page repeats it) and not
+    across ``param_grid`` combinations (their ranges can overlap). Coverage compares each
+    call with its own total.
+    """
+    calls = tuple(call_totals)
+    if not calls:
+        return (
+            SourceReportedTotal(status="not_reported", value=None, observed_at=observed_at),
+            FetchCoverage(status="unknown", reasons=("the source reports no total",)),
+        )
+    if len(calls) == 1:
+        only = calls[0]
+        total = SourceReportedTotal(
+            status=only.status, value=only.value, observed_at=observed_at, calls=calls
+        )
+    else:
+        total = SourceReportedTotal(
+            status="not_summed", value=None, observed_at=observed_at, calls=calls
+        )
+
+    partial: list[str] = []
+    unknown: list[str] = []
+    for call in calls:
+        if call.status == "unknown":
+            unknown.append(f"call {call.index}: the provider reported no total")
+        elif call.status == "inconsistent":
+            unknown.append(f"call {call.index}: pages reported different totals")
+        elif call.value is not None and call.fetched_row_count < call.value:
+            partial.append(
+                f"call {call.index}: fetched {call.fetched_row_count} of {call.value} reported"
+            )
+        elif call.value is not None and call.fetched_row_count > call.value:
+            unknown.append(
+                f"call {call.index}: fetched {call.fetched_row_count}, more than the "
+                f"{call.value} reported"
+            )
+    if partial:
+        coverage = FetchCoverage(status="partial", reasons=tuple(partial + unknown))
+    elif unknown:
+        coverage = FetchCoverage(status="unknown", reasons=tuple(unknown))
+    else:
+        coverage = FetchCoverage(status="complete")
+    return total, coverage
 
 
 @dataclass(frozen=True)
@@ -34,6 +128,14 @@ class SourceProvenance:
         data_checksum: Reproducible data checksum ("sha256:..." format).
         api_version: Source API version. "unknown" if unavailable.
         params: Fetch request parameter snapshot.
+        fetched_row_count: Records actually fetched — the same number as
+            ``record_count``, under the name that says which count it is (#816). The
+            snapshot's row count is the Gold count (``row_counts``), which filtering and
+            deduplication can make smaller.
+        source_reported_total: What the provider said the total was (#816). None for
+            manifests written before it.
+        coverage: Whether the fetch collected that total (#816). None for manifests
+            written before it.
     """
 
     provider: str
@@ -43,6 +145,31 @@ class SourceProvenance:
     data_checksum: str
     api_version: str = "unknown"
     params: dict[str, JsonValue] = field(default_factory=dict)
+    fetched_row_count: int | None = None
+    source_reported_total: SourceReportedTotal | None = None
+    coverage: FetchCoverage | None = None
+
+
+def snapshot_coverage(entry: SourceProvenance | None) -> dict[str, JsonValue] | None:
+    """What a committed snapshot records about its fetch (#816), or None when unknown.
+
+    The snapshot's own row count is the Gold count the catalog already keeps; this adds
+    the fetched count, the provider's reported total and the coverage verdict, so a
+    partial collection is visible wherever the snapshot is read.
+    """
+    if entry is None or entry.coverage is None or entry.source_reported_total is None:
+        return None
+    total = entry.source_reported_total
+    return {
+        "status": entry.coverage.status,
+        "reasons": list(entry.coverage.reasons),
+        "fetched_row_count": entry.fetched_row_count,
+        "source_reported_total": {
+            "status": total.status,
+            "value": total.value,
+            "observed_at": total.observed_at,
+        },
+    }
 
 
 def compute_data_checksum(records: Sequence[Mapping[str, JsonValue]]) -> str:
@@ -75,6 +202,7 @@ def build_source_provenance(
     records: Sequence[Mapping[str, JsonValue]],
     params: Mapping[str, JsonValue],
     api_version: str = "unknown",
+    call_totals: Sequence[CallTotal] | None = None,
 ) -> SourceProvenance:
     """Create SourceProvenance from raw fetch info.
 
@@ -85,18 +213,28 @@ def build_source_provenance(
         records: Fetched records (used for count and checksum calculation).
         params: Fetch request parameters.
         api_version: Source API version. "unknown" if omitted.
+        call_totals: The provider's reported totals per call (#816). None leaves the
+            reported total and coverage out, as for manifests written before them.
 
     Returns:
         SourceProvenance: Provenance snapshot filled with UTC ISO time and checksum.
     """
+    observed_at = fetched_at.astimezone(timezone.utc).isoformat()
+    total: SourceReportedTotal | None = None
+    coverage: FetchCoverage | None = None
+    if call_totals is not None:
+        total, coverage = summarize_reported_totals(call_totals, observed_at=observed_at)
     return SourceProvenance(
         provider=provider,
         dataset=dataset,
-        fetched_at=fetched_at.astimezone(timezone.utc).isoformat(),
+        fetched_at=observed_at,
         record_count=len(records),
         data_checksum=compute_data_checksum(records),
         api_version=api_version,
         params=dict(params),
+        fetched_row_count=len(records),
+        source_reported_total=total,
+        coverage=coverage,
     )
 
 
@@ -120,7 +258,11 @@ def compute_inputs_fingerprint(provenance: Sequence[SourceProvenance]) -> str | 
 
 
 __all__ = [
+    "FetchCoverage",
     "SourceProvenance",
+    "SourceReportedTotal",
+    "snapshot_coverage",
+    "summarize_reported_totals",
     "build_source_provenance",
     "compute_data_checksum",
     "compute_inputs_fingerprint",

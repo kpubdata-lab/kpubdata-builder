@@ -395,6 +395,22 @@ def dataset_summary_renderable(output_root: Path, record: RunRecord) -> bool:
 _REFRESH_BY_RUN_STATUS = {"ok": "succeeded", "failed": "failed", "cancelled": "cancelled"}
 
 
+def _fetched_part_of_a_source(manifest: dict[str, object]) -> bool:
+    """Whether any source's fetch collected fewer rows than its provider reported (#816).
+
+    Only an explicit ``partial`` counts. A manifest written before coverage was recorded,
+    or a source with no reported total, says nothing either way.
+    """
+    provenance = manifest.get("provenance")
+    if not isinstance(provenance, list):
+        return False
+    for entry in provenance:
+        coverage = entry.get("coverage") if isinstance(entry, dict) else None
+        if isinstance(coverage, dict) and coverage.get("status") == "partial":
+            return True
+    return False
+
+
 def status_axes(
     manifest: dict[str, object], record: RunRecord, active_statuses: Sequence[str] = ()
 ) -> dict[str, JsonValue]:
@@ -405,7 +421,8 @@ def status_axes(
 
     - **refresh** — a queued or running refresh wins over the last finished one.
     - **completeness** — from the latest run's manifest: ``partial`` when it is marked
-      partial or failed with some sources written, ``complete`` when it succeeded,
+      partial, failed with some sources written, or a source fetched fewer rows than
+      its provider reported (#816); ``complete`` when it succeeded,
       ``unknown`` when there is no manifest or nothing was written.
     - **health**, **access**, **maturity** — ``unknown``. Stale needs a declared
       refresh interval, access needs kpubdata's probe results, maturity the source
@@ -424,7 +441,7 @@ def status_axes(
     )
     if not manifest:
         completeness = "unknown"
-    elif manifest.get("partial") is True:
+    elif manifest.get("partial") is True or _fetched_part_of_a_source(manifest):
         completeness = "partial"
     elif record.status == "ok":
         completeness = "complete"

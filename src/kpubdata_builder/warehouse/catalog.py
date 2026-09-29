@@ -78,7 +78,9 @@ from .errors import (
 #    CHECK constraint, so the table is rebuilt and copied row for row.
 # 4: snapshot_holds (#705) — saved analyses, retention and audit keep a snapshot
 #    past garbage collection.
-SCHEMA_VERSION = 4
+# 5: table_snapshots.coverage (#816) — whether the fetch behind a snapshot collected
+#    what the provider reported, as JSON. NULL for snapshots committed before it.
+SCHEMA_VERSION = 5
 
 CATALOG_FILENAME = "_warehouse.sqlite"
 
@@ -88,7 +90,7 @@ CATALOG_FILENAME = "_warehouse.sqlite"
 _SNAPSHOT_COLUMNS = (
     "id, table_id, run_id, schema_version, coverage_hash, artifact_digest,"
     " row_count, state, created_at, committed_at, owner_id, coverage_fingerprint,"
-    " source_params_fingerprint, schema_contract_version"
+    " source_params_fingerprint, schema_contract_version, coverage"
 )
 
 SnapshotState = Literal[
@@ -177,6 +179,7 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
         " ON table_snapshots(table_id, created_at DESC)",
     ),
     3: (_HOLDS_TABLE, _HOLDS_INDEX),
+    4: ("ALTER TABLE table_snapshots ADD COLUMN coverage TEXT",),
 }
 
 
@@ -220,6 +223,10 @@ class SnapshotRow:
         source_params_fingerprint: The request parameters behind the collection.
         schema_contract_version: The schema contract in force. A volume baseline
             across a contract change is compared silently otherwise.
+        coverage: Whether the fetch behind this snapshot collected everything the
+            provider reported, as JSON (#816): ``status`` (complete/partial/unknown),
+            ``reasons``, ``fetched_row_count`` and ``source_reported_total``. None when
+            it was not recorded — never read that as complete.
     """
 
     id: str
@@ -236,6 +243,7 @@ class SnapshotRow:
     coverage_fingerprint: str | None = None
     source_params_fingerprint: str | None = None
     schema_contract_version: str | None = None
+    coverage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -404,7 +412,8 @@ class TableCatalog:
                 " owner_id TEXT,"
                 " coverage_fingerprint TEXT,"
                 " source_params_fingerprint TEXT,"
-                " schema_contract_version TEXT)"
+                " schema_contract_version TEXT,"
+                " coverage TEXT)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
@@ -537,6 +546,7 @@ class TableCatalog:
         coverage_fingerprint: str | None = None,
         source_params_fingerprint: str | None = None,
         schema_contract_version: str | None = None,
+        coverage: str | None = None,
     ) -> SnapshotRow:
         """Register a snapshot in ``staging`` state.
 
@@ -557,8 +567,8 @@ class TableCatalog:
                 "INSERT INTO table_snapshots (id, table_id, run_id, schema_version,"
                 " coverage_hash, artifact_digest, row_count, state, created_at,"
                 " committed_at, owner_id, coverage_fingerprint,"
-                " source_params_fingerprint, schema_contract_version)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, 'staging', ?, NULL, ?, ?, ?, ?)",
+                " source_params_fingerprint, schema_contract_version, coverage)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'staging', ?, NULL, ?, ?, ?, ?, ?)",
                 (
                     new_id,
                     table_id,
@@ -572,6 +582,7 @@ class TableCatalog:
                     coverage_fingerprint,
                     source_params_fingerprint,
                     schema_contract_version,
+                    coverage,
                 ),
             )
         return SnapshotRow(
@@ -589,6 +600,7 @@ class TableCatalog:
             coverage_fingerprint,
             source_params_fingerprint,
             schema_contract_version,
+            coverage,
         )
 
     def get_snapshot(self, snapshot_id: str) -> SnapshotRow:
