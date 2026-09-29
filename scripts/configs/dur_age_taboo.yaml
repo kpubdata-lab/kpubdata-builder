@@ -5,7 +5,7 @@
 source:
   provider: datago
   dataset: dur_age_taboo
-  source_url: "https://www.data.go.kr/data/15075057/openapi.do"
+  source_url: "https://www.data.go.kr/data/15059486/openapi.do"
   list_all: true
   fetch_params:
     - {}
@@ -38,6 +38,11 @@ card:
     Drug Utilization Review (DUR) data for drugs contraindicated
     in specific age groups, from Korea's MFDS (식약처).
   license: cc-by-4.0
+  attribution: |
+    데이터 출처: 식품의약품안전처, 의약품안전사용서비스(DUR)품목정보
+    (Ministry of Food and Drug Safety — DUR product information service)
+    원문: https://www.data.go.kr/data/15059486/openapi.do
+    이용허락범위: 제한 없음 (공공데이터포털 표기)
   language:
     - ko
   tags:
