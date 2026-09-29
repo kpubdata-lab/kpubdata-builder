@@ -1,0 +1,14 @@
+# gitleaks findings reviewed and judged not to be secrets (#691).
+#
+# Each line is a fingerprint `commit:file:rule:line` from `gitleaks git`. Add one only
+# after reading the matched value, and say here what it is — an unexplained entry is
+# how a real key gets waved through.
+
+# docs/deployment.md, README.md — curl examples with the placeholder `your-api-key`.
+f224f8f77b913077c857d52413a9369011bcdaa5:docs/deployment.md:curl-auth-header:201
+613c97c0c1f8c25491c1cc332db21d5d504ad629:README.md:curl-auth-header:211
+
+# tests — invalid keys a test sends on purpose (`INVALID_TEST_KEY_12345`), and a fake
+# token a redaction test checks never reaches a response (`hf_leak_me_1234567890`).
+067f19fba5fa95eb4179ed0c979c1a91d9ceee50:tests/integration/test_verify_integration.py:generic-api-key:53
+5dd505fb3c3e238f50a4b96336d87d0cafacaabb:tests/unit/test_service_publish.py:generic-api-key:631
