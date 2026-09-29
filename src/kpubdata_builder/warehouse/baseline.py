@@ -163,27 +163,28 @@ def select_baseline(
         for s in catalog.list_snapshots(table_id)
         if s.state == "committed" and s.id != exclude_snapshot_id
     ]
+    # "Only someone else's snapshots exist" must read exactly like "none exist" —
+    # same reason, same text (#700 N-04). Saying how many belong to another owner, or
+    # that any do, is the metadata side channel the owner filter exists to close.
+    nothing_to_compare = NotEvaluated(
+        NotEvaluatedReason.NO_COMMITTED_SNAPSHOT,
+        axis,
+        f"table {table_id} has no committed snapshot to compare against",
+    )
     if not candidates:
-        return NotEvaluated(
-            NotEvaluatedReason.NO_COMMITTED_SNAPSHOT,
-            axis,
-            f"table {table_id} has no committed snapshot to compare against",
-        )
+        return nothing_to_compare
 
     owned = [s for s in candidates if s.owner_id == owner_id]
     if not owned:
-        # Distinguish "everything belongs to someone else" from "nothing says who
-        # owns it". The second is a recording gap worth fixing; the first is the
-        # isolation working.
-        unlabelled = any(s.owner_id is None for s in candidates)
-        return NotEvaluated(
-            NotEvaluatedReason.OWNER_UNKNOWN
-            if unlabelled
-            else NotEvaluatedReason.NO_COMMITTED_SNAPSHOT,
-            axis,
-            f"no committed snapshot of {table_id} belongs to {owner_id}"
-            + (" and some carry no owner" if unlabelled else ""),
-        )
+        # A snapshot that recorded no owner is a recording gap worth reporting; one
+        # that belongs to someone else is the isolation working, and says nothing.
+        if any(s.owner_id is None for s in candidates):
+            return NotEvaluated(
+                NotEvaluatedReason.OWNER_UNKNOWN,
+                axis,
+                f"a snapshot of {table_id} recorded no owner, so it cannot be shown to be yours",
+            )
+        return nothing_to_compare
 
     if axis is DriftAxis.SCHEMA:
         # Coverage may differ: which region was collected should not change the

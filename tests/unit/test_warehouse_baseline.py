@@ -110,9 +110,10 @@ def test_another_users_run_is_never_the_baseline(catalog: TableCatalog) -> None:
     )
     assert isinstance(outcome, NotEvaluated)
     assert not outcome.evaluated
-    assert BOB in outcome.detail
-    # And specifically: Alice's snapshot was not returned under any guise.
+    # Alice's snapshot was not returned under any guise — and the reason does not
+    # even say that someone else's snapshot exists (N-04).
     assert alice not in outcome.detail
+    assert ALICE not in outcome.detail
 
     # Alice still gets her own.
     mine = select_baseline(
@@ -491,3 +492,65 @@ def test_a_version_1_catalog_migrates_in_place(tmp_path: Path) -> None:
     )
     assert isinstance(outcome, NotEvaluated)
     assert outcome.reason is NotEvaluatedReason.OWNER_UNKNOWN
+
+
+def test_the_reason_does_not_reveal_that_other_owners_have_snapshots(
+    catalog: TableCatalog, tmp_path: Path
+) -> None:
+    """N-04 (negative): "only other people's snapshots" reads exactly like "none".
+
+    The count of another owner's snapshots, or the fact that there are any, is the
+    same metadata side channel the owner filter closes. The reason and the text must
+    be identical to an empty table's, and carry no number.
+    """
+    crowded = catalog.create_table(WORKSPACE, "trade")
+    for index in range(3):
+        _commit(
+            catalog,
+            crowded.id,
+            run_id=f"alice-{index}",
+            owner_id=ALICE,
+            coverage=SEOUL_2025,
+            contract=CONTRACT_1,
+        )
+    other = TableCatalog(tmp_path / "other")
+    empty = other.create_table(WORKSPACE, "trade", table_id=crowded.id)
+
+    for axis in DriftAxis:
+        seen = select_baseline(
+            catalog,
+            crowded.id,
+            axis=axis,
+            owner_id=BOB,
+            coverage_fingerprint=SEOUL_2025,
+            schema_contract_version=CONTRACT_1,
+        )
+        nothing = select_baseline(
+            other,
+            empty.id,
+            axis=axis,
+            owner_id=BOB,
+            coverage_fingerprint=SEOUL_2025,
+            schema_contract_version=CONTRACT_1,
+        )
+        assert isinstance(seen, NotEvaluated) and isinstance(nothing, NotEvaluated)
+        assert (seen.reason, seen.detail) == (nothing.reason, nothing.detail)
+        assert not any(ch.isdigit() for ch in seen.detail.replace(crowded.id, ""))
+
+
+def test_the_file_path_and_the_catalog_share_one_reason_vocabulary() -> None:
+    """`stages.silver.drift` repeats these as literals to avoid importing the warehouse.
+
+    Its comment promises a test keeps the two in step; this is that test. A reason the
+    execution path writes to a manifest must be one a catalog reader understands.
+    """
+    from kpubdata_builder.stages.silver import drift
+
+    literals = {
+        drift.NO_COMMITTED_SNAPSHOT,
+        drift.OWNER_UNKNOWN,
+        drift.COVERAGE_MISMATCH,
+        drift.COVERAGE_UNKNOWN,
+        drift.SCHEMA_CONTRACT_CHANGED,
+    }
+    assert literals == {reason.value for reason in NotEvaluatedReason}

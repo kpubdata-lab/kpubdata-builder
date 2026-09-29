@@ -344,3 +344,143 @@ class TestDriftIntegration:
         # a-run1 and a-run2 are same schema so must have no drift (if compared with dataset.b,
         # false drift appears related to totally_different_column).
         assert schema_drift.get("datago.apt_trade", []) == []
+
+
+def _source(region: str, *, schema: SchemaContract | None = None, key: str = "k") -> SourceRef:
+    return SourceRef(
+        provider="datago",
+        dataset="apt_trade",
+        params={"region": region, "serviceKey": key},
+        schema=schema,
+    )
+
+
+def _rows(count: int) -> _FakeClient:
+    return _FakeClient({"datago.apt_trade": [{"id": str(i)} for i in range(count)]})
+
+
+def _evaluation(tmp_path: Path, run_id: str) -> dict[str, dict[str, object]]:
+    entries = cast(
+        list[dict[str, object]],
+        cast(dict[str, object], _manifest(tmp_path, run_id)["drift_evaluation"])[
+            "datago.apt_trade"
+        ],
+    )
+    return {cast(str, entry["axis"]): entry for entry in entries}
+
+
+def _drift_kinds(tmp_path: Path, run_id: str) -> set[str]:
+    drift = cast(dict[str, object], _manifest(tmp_path, run_id).get("schema_drift", {}))
+    findings = cast(list[dict[str, object]], drift.get("datago.apt_trade", []))
+    return {cast(str, finding["kind"]) for finding in findings}
+
+
+class TestVolumeBaselineIsComparable:
+    """A row count is compared only against the same population under the same contract.
+
+    #700: collect Seoul, then Busan, and the row-count "drift" between them is two
+    different populations. The schema axis may still compare — the columns should
+    not depend on the region — but the volume axis must say why it did not.
+    """
+
+    def _build(self, tmp_path: Path, run_id: str, source: SourceRef, rows: int) -> None:
+        result = run_build(_spec(source), client=_rows(rows), output_root=tmp_path, run_id=run_id)
+        assert result.status == "ok"
+
+    def test_the_same_coverage_reports_a_row_count_jump(self, tmp_path: Path) -> None:
+        self._build(tmp_path, "run1", _source("seoul"), rows=10)
+        self._build(tmp_path, "run2", _source("seoul"), rows=1)
+
+        assert "row_count_jump" in _drift_kinds(tmp_path, "run2")
+        volume = _evaluation(tmp_path, "run2")["volume"]
+        assert volume["evaluated"] is True
+        assert volume["baseline_snapshot_id"] == "run1"
+
+    def test_different_coverage_does_not_share_a_volume_baseline(self, tmp_path: Path) -> None:
+        """Acceptance (negative): Seoul's row count is not Busan's baseline."""
+        self._build(tmp_path, "run1", _source("seoul"), rows=10)
+        self._build(tmp_path, "run2", _source("busan"), rows=1)
+
+        assert "row_count_jump" not in _drift_kinds(tmp_path, "run2")
+        evaluation = _evaluation(tmp_path, "run2")
+        assert evaluation["volume"]["evaluated"] is False
+        assert evaluation["volume"]["reason"] == "coverage_mismatch"
+        # The column set is still compared: it should not depend on the region.
+        assert evaluation["schema"]["evaluated"] is True
+        assert evaluation["schema"]["baseline_snapshot_id"] == "run1"
+
+    def test_a_schema_contract_change_invalidates_the_volume_baseline(self, tmp_path: Path) -> None:
+        """Acceptance (negative): a contract change is reported, not compared silently."""
+        self._build(tmp_path, "run1", _source("seoul"), rows=10)
+        self._build(
+            tmp_path, "run2", _source("seoul", schema=SchemaContract(required=("id",))), rows=1
+        )
+
+        assert "row_count_jump" not in _drift_kinds(tmp_path, "run2")
+        volume = _evaluation(tmp_path, "run2")["volume"]
+        assert volume["evaluated"] is False
+        assert volume["reason"] == "schema_contract_changed"
+
+    def test_the_volume_baseline_is_the_newest_comparable_run(self, tmp_path: Path) -> None:
+        """A newer run of another region does not hide an older run of this one."""
+        self._build(tmp_path, "run1", _source("seoul"), rows=10)
+        self._build(tmp_path, "run2", _source("busan"), rows=10)
+        self._build(tmp_path, "run3", _source("seoul"), rows=1)
+
+        evaluation = _evaluation(tmp_path, "run3")
+        assert evaluation["volume"]["baseline_snapshot_id"] == "run1"
+        assert evaluation["schema"]["baseline_snapshot_id"] == "run2"
+        assert "row_count_jump" in _drift_kinds(tmp_path, "run3")
+
+    def test_a_rotated_key_is_not_a_new_population(self, tmp_path: Path) -> None:
+        """Credentials are redacted before fingerprinting, so rotation keeps the baseline."""
+        self._build(tmp_path, "run1", _source("seoul", key="old-key"), rows=10)
+        self._build(tmp_path, "run2", _source("seoul", key="new-key"), rows=1)
+
+        assert _evaluation(tmp_path, "run2")["volume"]["evaluated"] is True
+
+    def test_a_materialised_snapshot_records_its_fingerprints(self, tmp_path: Path) -> None:
+        """The catalog path gets the same fingerprints, so `select_baseline` can use them."""
+        from kpubdata_builder.spec.fingerprints import fingerprint_source
+        from kpubdata_builder.warehouse import TableCatalog
+        from kpubdata_builder.warehouse.baseline import (
+            BaselineFound,
+            DriftAxis,
+            NotEvaluated,
+            select_baseline,
+        )
+
+        catalog = TableCatalog(tmp_path / "warehouse")
+        seoul, busan = _source("seoul"), _source("busan")
+        for run_id, source in (("run1", seoul), ("run2", busan)):
+            result = run_build(
+                _spec(source),
+                client=_rows(3),
+                output_root=tmp_path / "runs",
+                run_id=run_id,
+                catalog=catalog,
+                manifest_owner_id="oidc:owner-a",
+            )
+            assert result.status == "ok"
+
+        snapshot = result.materialized["datago.apt_trade"].snapshot
+        expected = fingerprint_source(busan)
+        assert snapshot.coverage_fingerprint == expected.coverage
+        assert snapshot.source_params_fingerprint == expected.source_params
+        assert snapshot.schema_contract_version == expected.schema_contract
+
+        def volume_baseline(source: SourceRef) -> object:
+            fingerprints = fingerprint_source(source)
+            return select_baseline(
+                catalog,
+                snapshot.table_id,
+                axis=DriftAxis.VOLUME,
+                owner_id="oidc:owner-a",
+                coverage_fingerprint=fingerprints.coverage,
+                schema_contract_version=fingerprints.schema_contract,
+            )
+
+        found = volume_baseline(seoul)
+        assert isinstance(found, BaselineFound) and found.snapshot.run_id == "run1"
+        missing = volume_baseline(_source("daegu"))
+        assert isinstance(missing, NotEvaluated) and missing.reason.value == "coverage_mismatch"

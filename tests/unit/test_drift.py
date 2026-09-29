@@ -234,7 +234,31 @@ class TestBaselineOwnerScoping:
         )
 
         assert isinstance(found, NoSilverBaseline)
-        assert _BOB in found.detail
+        assert _ALICE not in found.detail
+
+    def test_the_reason_does_not_reveal_that_other_owners_have_runs(self, tmp_path: Path) -> None:
+        """N-04 (negative): "only other people's runs" reads exactly like "no runs".
+
+        How many runs another owner has, or that they have any, is the metadata side
+        channel the owner filter closes. Reason and text must match an empty
+        workspace's, and carry no number.
+        """
+        crowded = tmp_path / "crowded"
+        for index in range(3):
+            _write_run(crowded, f"alice-{index}", dataset_id="d.a", row_count=1000, owner_id=_ALICE)
+        empty = tmp_path / "empty"
+        empty.mkdir()
+
+        seen = find_previous_silver(
+            crowded, "bob-1", dataset_id="d.a", source_key=_APT_TRADE, owner_id=_BOB
+        )
+        nothing = find_previous_silver(
+            empty, "bob-1", dataset_id="d.a", source_key=_APT_TRADE, owner_id=_BOB
+        )
+
+        assert isinstance(seen, NoSilverBaseline) and isinstance(nothing, NoSilverBaseline)
+        assert (seen.reason, seen.detail) == (nothing.reason, nothing.detail)
+        assert "3" not in seen.detail and _ALICE not in seen.detail
 
     def test_the_same_owner_still_gets_a_baseline(self, tmp_path: Path) -> None:
         """Scoping must not break the case it is meant to preserve."""
