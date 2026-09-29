@@ -133,9 +133,7 @@ _HOLDS_INDEX = (
 # before a UTC one that is hours earlier, so a text comparison called a live hold
 # expired and let collection take a snapshot it was protecting. julianday() reads the
 # offset; rows written before this fix are compared correctly too.
-_LIVE_HOLD = (
-    "snapshot_id = ? AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))"
-)
+_LIVE_HOLD = "snapshot_id = ? AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))"
 _LIVE_LEASE = "snapshot_id = ? AND julianday(expires_at) > julianday(?)"
 
 
