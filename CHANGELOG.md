@@ -5,6 +5,7 @@
 ### Security
 
 - Dependencies with known vulnerabilities are upgraded in `uv.lock` (#691): pyarrow 17.0.0 → 25.0.1 (PYSEC-2026-113), idna 3.11 → 3.20, bleach 6.3.0 → 6.4.0, pytest 8.4.2 → 9.1.1, setuptools 82.0.1 → 84.0.0, mkdocs-material 9.7.6 → 9.7.7 and pymdown-extensions 10.21.2 → 12.1 — 18 advisories across 7 packages, none left. A new `Security` workflow audits the locked dependencies with pip-audit, scans the full git history with gitleaks (reviewed false positives are listed with a reason in `.gitleaksignore`) and runs CodeQL, on every pull request and weekly.
+- The provider response cache is off for every client in a multi-user deployment (`OIDC_ISSUER` or `ENFORCE_OWNERSHIP` set), whatever `KPUBDATA_CACHE` says (#684). kpubdata's cache key does not carry the credential (kpubdata#263), so a shared cache answered one user's query with the response fetched under another user's key. It used to be disabled only for clients carrying a personal key, which left keyless requests and catalog lookups on it. A client factory that cannot take `cache` is refused in that mode. Single-user deployments keep their cache.
 - Move to kpubdata 0.7 (`kpubdata>=0.7.0,<0.8`, #746). 0.4.0 was pinned below 0.7 and so installed kpubdata 0.6.x, which can leak provider API keys into logs and tracebacks, disables TLS verification for lofin, and would send a provider key to any host a spec named. See the [kpubdata 0.7.0 release](https://github.com/yeongseon/kpubdata/releases/tag/v0.7.0).
 
 ### Added
