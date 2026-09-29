@@ -6,6 +6,10 @@
 
 - Move to kpubdata 0.7 (`kpubdata>=0.7.0,<0.8`, #746). 0.4.0 was pinned below 0.7 and so installed kpubdata 0.6.x, which can leak provider API keys into logs and tracebacks, disables TLS verification for lofin, and would send a provider key to any host a spec named. See the [kpubdata 0.7.0 release](https://github.com/yeongseon/kpubdata/releases/tag/v0.7.0).
 
+### Added
+
+- `GET /datasets/{dataset_id}/runs/{run_id}` finds one run by id, not only among the newest page `/runs` returns, so a permalink to an older run opens (studio#418, API contract 1.31.0). Membership and ownership are decided by the server: 404 when no run with that id belongs to the dataset, 403 when it does but not to the caller.
+
 ### Fixed
 
 - Values no longer lose precision on the way to a client (#735). `/query`, `/preview` and the silver stage sample send every Decimal column, and any integer column holding a value outside ±(2^53−1), as exact decimal text: `9007199254740993` used to arrive as `…992`, and `Decimal("0.1")` as `0.1000000000000000055…`. In-range integers and floats are still JSON numbers. Column metadata gains `logical_type` and `wire_encoding` so a client knows which columns arrive as text (`QueryResponse.column_meta`, API contract 1.30.0). Non-finite floats are sent as `null`, and a Decimal column no longer makes the silver sample write fail. **Wire change:** `/preview` dates and datetimes in `sample`, `source_sample` and the diff are now ISO 8601 (`2025-01-01T12:30:00`), matching `/query` and the stage sample; they were `str()` output with a space separator.

@@ -365,6 +365,55 @@ class TestDatasetGrouping:
         assert [r["run_id"] for r in runs] == ["r2", "r1"]
         assert runs[0]["spec_digest"] is not None
 
+    def test_a_run_older_than_the_page_is_found_directly(self, tmp_path: Path) -> None:
+        # studio#418: the list returns the newest `limit` runs; a permalink to an older
+        # one must still open, not be read as invalid.
+        service = _service(tmp_path)
+        for run_id in ("r1", "r2", "r3"):
+            dispatch(
+                service, "POST", "/build", {"spec": _spec_yaml("dataset.old"), "run_id": run_id}
+            )
+
+        page = dispatch(service, "GET", "/datasets/dataset.old/runs", None, query="limit=2")
+        assert [r["run_id"] for r in cast(list[dict[str, object]], page.body["runs"])] == [
+            "r3",
+            "r2",
+        ]
+
+        resp = dispatch(service, "GET", "/datasets/dataset.old/runs/r1", None)
+        assert resp.status_code == 200
+        assert resp.body["dataset_id"] == "dataset.old"
+        run = cast(dict[str, object], resp.body["run"])
+        assert run["run_id"] == "r1"
+        # Same item shape as the list, so a client handles both alike.
+        listed = cast(
+            list[dict[str, object]],
+            dispatch(service, "GET", "/datasets/dataset.old/runs", None).body["runs"],
+        )
+        assert run == next(r for r in listed if r["run_id"] == "r1")
+
+    def test_another_datasets_run_is_not_found_here(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+        dispatch(service, "POST", "/build", {"spec": _spec_yaml("dataset.a"), "run_id": "ra"})
+        dispatch(service, "POST", "/build", {"spec": _spec_yaml("dataset.b"), "run_id": "rb"})
+
+        assert dispatch(service, "GET", "/datasets/dataset.a/runs/rb", None).status_code == 404
+        assert dispatch(service, "GET", "/datasets/dataset.a/runs/missing", None).status_code == 404
+
+    def test_an_unsafe_run_id_is_rejected(self, tmp_path: Path) -> None:
+        resp = dispatch(_service(tmp_path), "GET", "/datasets/dataset.a/runs/..", None)
+        assert resp.status_code == 400
+
+    def test_direct_run_lookup_with_a_slash_in_the_dataset_id(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+        dispatch(
+            service, "POST", "/build", {"spec": _spec_yaml("dataset/with-slash"), "run_id": "r1"}
+        )
+
+        resp = dispatch(service, "GET", "/datasets/dataset%2Fwith-slash/runs/r1", None)
+        assert resp.status_code == 200
+        assert resp.body["dataset_id"] == "dataset/with-slash"
+
     def test_dataset_id_with_slash_is_percent_encoded_in_route(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
         dispatch(
@@ -575,6 +624,32 @@ class TestDatasetOwnership:
 
         detail = dispatch(service, "GET", "/datasets/dataset.shared", None)
         assert detail.status_code == 404
+
+    def test_another_users_run_is_forbidden_not_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # studio#418: the server, not the screen, refuses a run the caller does not own,
+        # and says so differently from a run that does not exist.
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        service = _service(tmp_path)
+        self._build_as(service, "dataset.shared", "r-a", "userA")
+
+        monkeypatch.setattr(
+            app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="userB")
+        )
+        assert (
+            dispatch(service, "GET", "/datasets/dataset.shared/runs/r-a", None).status_code == 403
+        )
+        assert (
+            dispatch(service, "GET", "/datasets/dataset.shared/runs/nope", None).status_code == 404
+        )
+
+        monkeypatch.setattr(
+            app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="userA")
+        )
+        assert (
+            dispatch(service, "GET", "/datasets/dataset.shared/runs/r-a", None).status_code == 200
+        )
 
     def test_latest_selection_does_not_leak_other_users_newer_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -421,7 +421,10 @@ _BuildListEntry = dict[str, str | None]
 #   additive) on /query (column_meta), /preview schema items and SilverColumnInfo.
 #   Decimal columns and integer columns holding a value outside ±(2**53 - 1) are sent
 #   as exact decimal text, because a JSON number is read as a double.
-API_CONTRACT_VERSION = "1.30.0"
+# 1.30.0 -> 1.31.0: GET /datasets/{dataset_id}/runs/{run_id} (studio#418, additive).
+#   One run by id, not only the newest page; 404 when it is not the dataset's, 403
+#   when it is but not the caller's.
+API_CONTRACT_VERSION = "1.31.0"
 
 
 def _encodings(schema: SchemaInfo) -> dict[str, str]:
@@ -1443,6 +1446,12 @@ class BuilderService:
         """Query dataset_id's accessible run history in reverse chronological order
         (#488)."""
         return self._datasets_api.list_dataset_runs(dataset_id, limit=limit, principal=principal)
+
+    def get_dataset_run(
+        self, dataset_id: str, run_id: str, *, principal: Principal | None = None
+    ) -> ServiceResponse:
+        """One run of dataset_id by id, with dataset and ownership checked here (studio#418)."""
+        return self._datasets_api.get_dataset_run(dataset_id, run_id, principal=principal)
 
     def get_dataset_quality_history(
         self, dataset_id: str, *, limit: int = 30, principal: Principal | None = None
