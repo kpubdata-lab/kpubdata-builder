@@ -391,7 +391,60 @@ def dataset_summary_renderable(output_root: Path, record: RunRecord) -> bool:
     return spec is not None and spec.dataset_id == record.dataset_id
 
 
-def build_dataset_summary(output_root: Path, record: RunRecord) -> dict[str, JsonValue] | None:
+#: The last finished run's manifest status, in the Refresh axis's words (TERMINOLOGY).
+_REFRESH_BY_RUN_STATUS = {"ok": "succeeded", "failed": "failed", "cancelled": "cancelled"}
+
+
+def status_axes(
+    manifest: dict[str, object], record: RunRecord, active_statuses: Sequence[str] = ()
+) -> dict[str, JsonValue]:
+    """The table's state on each axis kpubdata's TERMINOLOGY keeps apart (#781).
+
+    Each axis answers a different question, so each is its own field, and an axis
+    with nothing to go on says ``unknown`` rather than a guess:
+
+    - **refresh** — a queued or running refresh wins over the last finished one.
+    - **completeness** — from the latest run's manifest: ``partial`` when it is marked
+      partial or failed with some sources written, ``complete`` when it succeeded,
+      ``unknown`` when there is no manifest or nothing was written.
+    - **health**, **access**, **maturity** — ``unknown``. Stale needs a declared
+      refresh interval, access needs kpubdata's probe results, maturity the source
+      spec's grade; none of these reaches Engine yet (#781 leaves each a decision).
+    """
+    if any(status in ("running", "cancelling") for status in active_statuses):
+        refresh = "running"
+    elif "queued" in active_statuses:
+        refresh = "queued"
+    else:
+        refresh = _REFRESH_BY_RUN_STATUS.get(record.status, "unknown")
+
+    row_counts = manifest.get("row_counts")
+    wrote_rows = isinstance(row_counts, dict) and any(
+        isinstance(count, int) and count > 0 for count in row_counts.values()
+    )
+    if not manifest:
+        completeness = "unknown"
+    elif manifest.get("partial") is True:
+        completeness = "partial"
+    elif record.status == "ok":
+        completeness = "complete"
+    elif record.status == "failed" and wrote_rows:
+        completeness = "partial"
+    else:
+        completeness = "unknown"
+
+    return {
+        "refresh": refresh,
+        "completeness": completeness,
+        "health": "unknown",
+        "access": "unknown",
+        "maturity": "unknown",
+    }
+
+
+def build_dataset_summary(
+    output_root: Path, record: RunRecord, *, active_statuses: Sequence[str] = ()
+) -> dict[str, JsonValue] | None:
     """Build dataset response from latest run's canonical snapshot+manifest+stage status.
 
     Re-read snapshot to re-verify dataset_id — record.dataset_id was already
@@ -452,12 +505,14 @@ def build_dataset_summary(output_root: Path, record: RunRecord) -> dict[str, Jso
         "total_row_count": total_row_count,
         "stages": stages,
         "quality": None,
+        "status_axes": status_axes(manifest, record, active_statuses),
     }
 
 
 __all__ = [
     "RunRecord",
     "build_dataset_summary",
+    "status_axes",
     "canonical_records_for_run_ids",
     "collect_run_records_from_filesystem",
     "collect_run_records_from_index",

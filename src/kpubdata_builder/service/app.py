@@ -279,10 +279,12 @@ _BuildListEntry = dict[str, str | None]
 #   duplicate_key_warning is judged on keys present on both sides only.
 # 1.32.0 -> 1.33.0: BuildSpec gains license_name and license_link, and publishes the
 #   attribution it already accepted (#764, additive). `license: other` needs both.
+# 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
+#   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.35.0"
+API_CONTRACT_VERSION = "1.36.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -375,7 +377,11 @@ class BuilderService:
         self._uploads_service = UploadsService(repository=lambda: self._upload_repository)
         self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
         self._datasets_api = DatasetsApiService(
-            output_root=self._output_root, build_index=self._build_index, store=self._store
+            output_root=self._output_root,
+            build_index=self._build_index,
+            store=self._store,
+            # Resolved at call time: the job registry is created further down (#781).
+            active_runs=lambda: self._async_builds.registry.active_snapshots(),
         )
         self._stages_api = StagesApiService(output_root=self._output_root, store=self._store)
         self._builds_api = BuildArtifactsApiService(

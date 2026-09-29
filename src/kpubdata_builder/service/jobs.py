@@ -166,6 +166,11 @@ class BuildJobSnapshot:
     owner_id: str | None = None
     response: dict[str, JsonValue] | None = None
     error: str | None = None
+    #: The BuildSpec's dataset_id, read at submit time so a table can say it is being
+    #: refreshed while the run is still queued or running (#781). Internal, like
+    #: ``owner_id`` — ``to_body()`` does not expose it. None when the spec could not
+    #: be read; the run then simply does not show as in progress for any table.
+    dataset_id: str | None = None
 
     def to_body(self) -> dict[str, JsonValue]:
         body: dict[str, JsonValue] = {
@@ -226,7 +231,12 @@ class AsyncBuildJobRegistry:
         self._max_terminal_jobs = max(0, max_terminal_jobs)
 
     def create(
-        self, *, run_id: str, created_by: str | None, owner_id: str | None = None
+        self,
+        *,
+        run_id: str,
+        created_by: str | None,
+        owner_id: str | None = None,
+        dataset_id: str | None = None,
     ) -> BuildJobSnapshot:
         now = _utc_now_text()
         snapshot = BuildJobSnapshot(
@@ -236,6 +246,7 @@ class AsyncBuildJobRegistry:
             updated_at=now,
             created_by=created_by,
             owner_id=owner_id,
+            dataset_id=dataset_id,
         )
         with self._lock:
             self._jobs[run_id] = snapshot
@@ -249,6 +260,7 @@ class AsyncBuildJobRegistry:
         created_by: str | None,
         owner_id: str | None = None,
         max_queued: int,
+        dataset_id: str | None = None,
     ) -> tuple[str, BuildJobSnapshot | None]:
         """Check existence/queue capacity/create in **single lock scope** (#482 follow-up).
 
@@ -273,6 +285,7 @@ class AsyncBuildJobRegistry:
                 updated_at=now,
                 created_by=created_by,
                 owner_id=owner_id,
+                dataset_id=dataset_id,
             )
             self._jobs[run_id] = snapshot
             self._cancellations[run_id] = RunCancellation()
@@ -427,6 +440,18 @@ class AsyncBuildJobRegistry:
         with self._lock:
             return sum(1 for job in self._jobs.values() if job.status == "queued")
 
+    def active_snapshots(self) -> tuple[BuildJobSnapshot, ...]:
+        """Jobs still queued or running (``cancelling`` counts as running), in one lock.
+
+        For showing that a table is being refreshed (#781). Copies, never the dict.
+        """
+        with self._lock:
+            return tuple(
+                job
+                for job in self._jobs.values()
+                if job.status in ("queued", "running", "cancelling")
+            )
+
     def snapshot_counts(self) -> AsyncBuildJobCounts:
         """Aggregate queued/running job count in single lock scope (#516).
 
@@ -550,6 +575,7 @@ class AsyncBuildExecutor:
         owner_id: str | None = None,
         on_accept: Callable[[], None] | None = None,
         on_enqueue_failure: Callable[[], None] | None = None,
+        dataset_id: str | None = None,
     ) -> BuildJobSubmitResult:
         """Queue job. If "existing"/"queue_full", new submission not counted, so
         ``on_accept`` not called.
@@ -589,6 +615,7 @@ class AsyncBuildExecutor:
             created_by=created_by,
             owner_id=owner_id,
             max_queued=self._max_queue_size,
+            dataset_id=dataset_id,
         )
         if outcome == "existing":
             return BuildJobSubmitResult(status="existing", snapshot=snapshot)
@@ -707,6 +734,9 @@ def _transition(
         owner_id=current.owner_id,
         response=response,
         error=error,
+        # Carried through every transition: a table shows its refresh as running only
+        # if the running snapshot still knows which table it belongs to (#781).
+        dataset_id=current.dataset_id,
     )
 
 
