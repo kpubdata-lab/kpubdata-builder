@@ -1,6 +1,7 @@
 # 사용자 키가 남는 지점 — 전수 조사 (BYOK-01)
 
 기준: 2026-09-27, `kpubdata-builder` main + `kpubdata` main + `kpubdata-studio` main
+(17·18번과 3번 보강: 2026-09-29, builder `fbbdd16` 이후 main)
 
 이 문서는 **조사**다. 고치지 않는다 — 수정은 #682(ADR)·#683(ephemeral context)이
 한다. 여기서 하는 일은 "키가 어디에 남는가" 를 빈칸 없이 적는 것이다.
@@ -26,7 +27,7 @@
 
 ---
 
-## 조사 결과 — 16개 지점
+## 조사 결과 — 18개 지점
 
 | # | 지점 | 판정 | 근거 |
 |---|---|---|---|
@@ -47,6 +48,8 @@
 | 14 | reverse proxy logs | **확인 못 했다** | 배포가 정하는 영역. 권고가 문서에 없다 |
 | 15 | APM / traces | 해당 없음 | APM 연동이 없다 |
 | 16 | crash dump | **확인 못 했다** | Python 기본 traceback 에 지역변수는 실리지 않지만, `faulthandler`·코어덤프 설정은 배포가 정한다 |
+| 17 | GitHub Actions 로그·artifact | 사용자 키는 **해당 없음**, 운영자 키는 남지 않는다(마스킹) | 아래 참조 |
+| 18 | 설정 객체의 `__repr__` | **남는다(조건부)** — 두 dataclass 가 평문을 repr 에 싣는다 | 아래 참조 |
 
 ---
 
@@ -98,6 +101,52 @@ Kubi 키는 `#256` 에서 provider credential 과 **다른 BYOK 정책**으로 �
 LLM 전송 경로에는 스크러빙이 있다 (`features/assistant/scrub.ts`) — 키 이름
 패턴 + Shannon 엔트로피 4.0. 이것은 **다른 문제**(사용자 키가 외부 LLM 사업자로
 나가는 것)를 막는 장치이고, 로컬 저장과는 무관하다.
+
+## 3. master key 는 ciphertext 와 같은 호스트에 있다
+
+OCI 배포(`deploy.yml` → `ops/deploy/app-01-rollout.sh:17`)는
+`KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` 를 VM 의 `.env`(chmod 600)에 렌더한다.
+credential SQLite 도 같은 VM 의 볼륨에 있다. 즉 **그 호스트의 파일 두 개를 읽을 수
+있는 사람은 모든 사용자의 키를 복호화할 수 있다.** 암호화는 DB 파일만 유출되는
+경우를 막고, 호스트 유출은 막지 않는다. 11번(backup)의 "ciphertext 와 master key 를
+같은 곳에 백업하지 말 것" 은 호스트 자체에 대해서도 이미 성립하지 않는다.
+
+`deploy.yml` 은 secret 을 원격 커맨드라인이 아니라 `bash -s` 의 stdin 으로 넘긴다 —
+`ps` 로 보이지 않게 하려는 것이고, 실제로 인자에 남지 않는다.
+
+## 17. GitHub Actions 로그·artifact
+
+**사용자 키는 Actions 에 들어가지 않는다.** Actions 가 쓰는 것은 운영자의 secret 이다:
+`KPUBDATA_DATAGO_API_KEY`·`HF_TOKEN`(scheduled-*·publish-dataset),
+`KPUBDATA_BUILDER_API_KEY`·`KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`·SSH 키(deploy).
+
+| 경로 | 판정 | 근거 |
+|---|---|---|
+| 로그 | 남지 않는다 | GitHub 이 등록된 secret 값을 로그에서 가린다. `set -x` 는 없고, deploy 는 값을 `printf %q` 로 **ssh stdin** 에만 쓴다 |
+| artifact | 남지 않는다 | `actions/upload-artifact` 를 쓰는 워크플로가 **0개**다 |
+| Docker 빌드 캐시 (`type=gha`) | 남지 않는다 | `docker.yml` 빌드에 secret·build-arg 로 키가 들어가지 않는다 |
+
+**한계:** 마스킹은 등록된 값의 **원문**만 가린다. base64·URL 인코딩처럼 변형된 값은
+가리지 않는다. 지금 변형해 출력하는 곳은 없지만, 그것을 확인하는 장치는 없다 —
+9번과 같은 공백이고 `#686` 이 메운다.
+
+## 18. 설정 객체의 `__repr__`
+
+repr 은 로그 포맷(`%r`, f-string `!r`), 예외 메시지, 테스트 실패 출력, 디버거로 새어
+나간다. 호출 지점을 하나하나 조심하는 것으로는 막을 수 없다 — 객체가 스스로 가려야 한다.
+
+| 객체 | 판정 |
+|---|---|
+| `kpubdata.config.KPubDataConfig` | 남지 않는다 — `__repr__` 이 provider **이름**만 싣는다 (kpubdata 0.7) |
+| `credentials.crypto.AesGcmCredentialCipher` | 남지 않는다 — 기본 object repr, 키 필드를 노출하지 않는다 |
+| `credentials.store.SQLiteCredentialRepository` | 남지 않는다 — 경로와 cipher 객체뿐 |
+| **`service.providers.ResolvedCredential`** | **남는다** — frozen dataclass 기본 repr 이 `value='<평문 키>'` 를 싣는다 |
+| **`service.publish_credentials.PublishCredentialResolution`** | **남는다** — `values` Mapping(HF 토큰 평문)이 repr 에 실린다 |
+
+지금 이 두 객체를 로그에 포맷하는 코드는 없다(`grep` 0건). 그래서 **조건부**다 — 누가
+`logger.debug("%r", resolved)` 한 줄을 쓰거나 테스트가 이 객체를 비교하다 실패하면
+키가 출력된다. 수정은 `field(repr=False)` 한 줄씩이고, `#686`(canary 게이트)이 이런
+경로를 기계적으로 잡는 장치다.
 
 ## 9·11·14·16 — "확인 못 했다" 의 의미
 
