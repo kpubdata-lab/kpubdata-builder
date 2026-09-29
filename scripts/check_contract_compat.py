@@ -183,12 +183,40 @@ def breaking_changes(base: Document, head: Document) -> list[str]:
 _NON_NORMATIVE = frozenset({"description", "summary", "example", "examples", "externalDocs"})
 
 
-def _normative(value: Any) -> Any:
+# Maps whose keys are names a document chose — a property, a path, a status code, a
+# media type, a component — rather than OpenAPI keywords. A property may be called
+# `description` (BuildSpec has one); stripping it as prose would hide its removal or a
+# change to its type (#791). Inside these maps every key is kept.
+_NAME_MAPS = frozenset(
+    {
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "schemas",
+        "paths",
+        "responses",
+        "content",
+        "headers",
+        "links",
+        "callbacks",
+        "encoding",
+        "variables",
+        "securitySchemes",
+        "mapping",
+        "requestBodies",
+        "parameters",
+    }
+)
+
+
+def _normative(value: Any, *, names: bool = False) -> Any:
+    """``value`` without prose, where "prose" means a keyword — never a chosen name."""
     if isinstance(value, Mapping):
         return {
-            key: _normative(item)
+            key: _normative(item, names=not names and key in _NAME_MAPS)
             for key, item in value.items()
-            if key not in _NON_NORMATIVE and not str(key).startswith("x-")
+            if names or (key not in _NON_NORMATIVE and not str(key).startswith("x-"))
         }
     if isinstance(value, list):
         return [_normative(item) for item in value]
