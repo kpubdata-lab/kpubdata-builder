@@ -184,7 +184,15 @@ class _World:
 def world(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> Iterator[_World]:
-    for name in ("KPUBDATA_DATAGO_API_KEY", "KPUBDATA_CACHE", "OIDC_ISSUER", "ENFORCE_OWNERSHIP"):
+    # KPUBDATA_REPLAY_DIR (set by the cross-repo job) swaps HTTP for recorded fixtures;
+    # the gate has to drive the HTTP path it inspects.
+    for name in (
+        "KPUBDATA_DATAGO_API_KEY",
+        "KPUBDATA_CACHE",
+        "KPUBDATA_REPLAY_DIR",
+        "OIDC_ISSUER",
+        "ENFORCE_OWNERSHIP",
+    ):
         monkeypatch.delenv(name, raising=False)
     caplog.set_level(logging.DEBUG)
     # Retries run for real; only their waiting is skipped.
