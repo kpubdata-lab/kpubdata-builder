@@ -41,7 +41,9 @@ card:
     via the localdata.go.kr API.
 
     '
-  license: cc-by-4.0
+  # licence: not recorded — this source's own terms have not been checked on its page, so
+  # none is claimed and scripts/pipeline/package.py refuses to package it (#758, #792).
+  # Add license: other + license_name + license_link once they are.
   language:
   - ko
   tags:
