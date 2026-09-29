@@ -63,6 +63,7 @@ def materialize(
     source_params_fingerprint: str | None = None,
     schema_contract_version: str | None = None,
     row_count: int | None = None,
+    expected_revision: int | None = None,
 ) -> MaterializeResult:
     """Commit the contents of ``source_dir`` as a new snapshot of a table.
 
@@ -89,6 +90,10 @@ def materialize(
         source_params_fingerprint: The request parameters behind the collection.
         schema_contract_version: The schema contract in force.
         row_count: Records in the table, when known.
+        expected_revision: The table revision the build started from (#787). A refresh
+            committed by another build since then makes this commit a conflict — the
+            older data does not replace the newer. None reads the revision just before
+            the commit, which only protects against a commit racing this one.
 
     Returns:
         The committed snapshot and where it lives.
@@ -153,7 +158,11 @@ def materialize(
     try:
         updated = catalog.commit_snapshot(
             snapshot.id,
-            expected_revision=catalog.get_table(table.id).revision,
+            expected_revision=(
+                expected_revision
+                if expected_revision is not None
+                else catalog.get_table(table.id).revision
+            ),
             verify_before_commit=True,
         )
     except (SnapshotConflict, SnapshotStateError):

@@ -90,7 +90,13 @@ from ..stages.silver.pii import scan_pii
 from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..uploads import UploadRepository
-from ..warehouse import MaterializeResult, TableCatalog, materialize
+from ..warehouse import (
+    MaterializeResult,
+    SnapshotConflict,
+    TableCatalog,
+    WarehouseError,
+    materialize,
+)
 from ..warehouse import gc as warehouse_gc
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .context import BuildContext
@@ -235,6 +241,9 @@ class BuildResult:
     spec_digest: str
     composition_outcome: CompositionOutcome | None = None
     materialized: dict[str, MaterializeResult] = field(default_factory=dict)
+    #: Sources whose table commit failed, with the reason (#788). The build itself
+    #: succeeded; the table was not moved to its output.
+    warehouse_failures: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def _fetch_source_key(source: SourceRef) -> str:
@@ -1086,6 +1095,17 @@ def run_build(
     _, spec_digest = write_buildspec_snapshot(
         spec, output_root=context.output_root, run_id=context.run_id
     )
+    # The revision each table has *now*, before anything is fetched (#787). Committing
+    # against it makes a refresh another build finished meanwhile a conflict: the
+    # older data loses instead of replacing the newer snapshot.
+    start_revisions: dict[str, int] = (
+        {
+            key: catalog.table_revision(workspace_id, f"{spec.dataset_id}.{key}")
+            for key in (_output_source_key(source) for source in spec.sources)
+        }
+        if catalog is not None
+        else {}
+    )
 
     # composition (#506) referenced aliases' Silver only survives thread results
     # — non-composition builds unchanged, no extra preservation.
@@ -1212,6 +1232,70 @@ def run_build(
         status = "ok"
         recorder.run_finished()
 
+    # Materialise after every source is done, in the single-threaded merge. Committing
+    # from the worker pool would put four threads through the same compare-and-swap and
+    # make three of them lose for no reason (#699).
+    #
+    # Before the manifest, not after (#788): a commit that fails is part of what this
+    # run did, so the manifest records it, the index still gets its row, and the caller
+    # gets an answer instead of an exception after a manifest that already said ok.
+    materialized: dict[str, MaterializeResult] = {}
+    warehouse_failures: dict[str, dict[str, str]] = {}
+    if catalog is not None and status == "ok":
+        sources_by_key = {_output_source_key(source): source for source in spec.sources}
+        for outcome in outcomes:
+            if outcome.status != "ok":
+                continue
+            gold_dir = context.output_root / context.run_id / "gold" / outcome.source_key
+            if not gold_dir.is_dir():
+                continue
+            # Recorded so a later refresh can pick a volume baseline that collected the
+            # same population under the same contract (#700). Without them the catalog
+            # can only answer "coverage unknown" for every snapshot a build commits.
+            source_ref = sources_by_key.get(outcome.source_key)
+            fingerprints = fingerprint_source(source_ref) if source_ref is not None else None
+            try:
+                committed = materialize(
+                    catalog,
+                    workspace_id=workspace_id,
+                    logical_name=f"{spec.dataset_id}.{outcome.source_key}",
+                    source_dir=gold_dir,
+                    run_id=context.run_id,
+                    owner_id=effective_manifest_owner_id,
+                    coverage_fingerprint=fingerprints.coverage if fingerprints else None,
+                    source_params_fingerprint=(
+                        fingerprints.source_params if fingerprints else None
+                    ),
+                    schema_contract_version=(
+                        fingerprints.schema_contract if fingerprints else None
+                    ),
+                    row_count=row_counts.get(outcome.source_key),
+                    expected_revision=start_revisions.get(outcome.source_key),
+                )
+            except SnapshotConflict:
+                # Another build committed this table after this one started (#787).
+                # Not retried (#699): this run's data is older than what is current.
+                warehouse_failures[outcome.source_key] = {
+                    "reason": "conflict",
+                    "detail": "another build committed this table after this run started; "
+                    "the newer snapshot stays current",
+                }
+                continue
+            except (WarehouseError, OSError) as exc:
+                logger.exception("warehouse commit failed for %s", outcome.source_key)
+                warehouse_failures[outcome.source_key] = {
+                    "reason": "commit_failed",
+                    "detail": f"the snapshot could not be committed ({type(exc).__name__})",
+                }
+                continue
+            materialized[outcome.source_key] = committed
+            logger.info(
+                "materialised %s as snapshot %s",
+                outcome.source_key,
+                committed.snapshot.id,
+            )
+            _reclaim(catalog, committed.table.id, warehouse_keep)
+
     manifest = BuildManifest(
         build_id=context.run_id,
         status=status,
@@ -1240,45 +1324,10 @@ def run_build(
         schema_drift=schema_drift,
         drift_evaluation=drift_evaluation,
         composition=composition_provenance,
+        warehouse_failures=warehouse_failures,
     )
     manifest_path = context.output_root / context.run_id / "manifest.json"
     manifest_writer(manifest, manifest_path)
-
-    # Materialise after every source is done, in the single-threaded merge. Committing
-    # from the worker pool would put four threads through the same compare-and-swap and
-    # make three of them lose for no reason (#699).
-    materialized: dict[str, MaterializeResult] = {}
-    if catalog is not None and status == "ok":
-        sources_by_key = {_output_source_key(source): source for source in spec.sources}
-        for outcome in outcomes:
-            if outcome.status != "ok":
-                continue
-            gold_dir = context.output_root / context.run_id / "gold" / outcome.source_key
-            if not gold_dir.is_dir():
-                continue
-            # Recorded so a later refresh can pick a volume baseline that collected the
-            # same population under the same contract (#700). Without them the catalog
-            # can only answer "coverage unknown" for every snapshot a build commits.
-            source_ref = sources_by_key.get(outcome.source_key)
-            fingerprints = fingerprint_source(source_ref) if source_ref is not None else None
-            materialized[outcome.source_key] = materialize(
-                catalog,
-                workspace_id=workspace_id,
-                logical_name=f"{spec.dataset_id}.{outcome.source_key}",
-                source_dir=gold_dir,
-                run_id=context.run_id,
-                owner_id=effective_manifest_owner_id,
-                coverage_fingerprint=fingerprints.coverage if fingerprints else None,
-                source_params_fingerprint=fingerprints.source_params if fingerprints else None,
-                schema_contract_version=fingerprints.schema_contract if fingerprints else None,
-                row_count=row_counts.get(outcome.source_key),
-            )
-            logger.info(
-                "materialised %s as snapshot %s",
-                outcome.source_key,
-                materialized[outcome.source_key].snapshot.id,
-            )
-            _reclaim(catalog, materialized[outcome.source_key].table.id, warehouse_keep)
 
     return BuildResult(
         context=context,
@@ -1288,4 +1337,5 @@ def run_build(
         spec_digest=spec_digest,
         composition_outcome=composition_outcome,
         materialized=materialized,
+        warehouse_failures=warehouse_failures,
     )

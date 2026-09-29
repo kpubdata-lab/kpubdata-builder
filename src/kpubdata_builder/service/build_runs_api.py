@@ -219,6 +219,11 @@ class BuildRunsApiService:
         # partial manifest recorded below.
         cancelled = result.status == "cancelled"
         status_code = 200 if result.status == "ok" else 409 if cancelled else 502
+        # The build succeeded but a table was not committed (#788) — most often another
+        # build refreshed it after this one started (#787). 409, not 500: nothing broke,
+        # the table kept the newer snapshot, and the body says which source and why.
+        if result.warehouse_failures and status_code == 200:
+            status_code = 409
         body: dict[str, JsonValue] = {
             "status": result.status,
             "run_id": result.context.run_id,
@@ -242,6 +247,10 @@ class BuildRunsApiService:
         # deployment has no warehouse: an empty object would say "nothing was
         # committed", and a caller cannot tell that from "committing was never
         # configured". The same distinction #700 drew for drift baselines.
+        if result.warehouse_failures:
+            body["warehouse_failures"] = {
+                key: dict(value) for key, value in result.warehouse_failures.items()
+            }
         if self._warehouse_configured:
             body["materialized"] = {
                 source_key: {

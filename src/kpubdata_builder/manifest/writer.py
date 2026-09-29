@@ -78,6 +78,12 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         # run is null — legacy consumers harmless if unaware of this key.
         "composition": asdict(manifest.composition) if manifest.composition is not None else None,
     }
+    # additive (#788): only when a table commit failed, so every other manifest keeps
+    # its shape. A manifest saying "ok" must also say when the table did not move.
+    if manifest.warehouse_failures:
+        payload["warehouse_failures"] = {
+            key: dict(value) for key, value in manifest.warehouse_failures.items()
+        }
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
