@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.44.0",
+  "contract_version": "1.45.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -3634,6 +3634,929 @@
         "engine_execution_ms": 9
       },
       "broken_path": "$.snapshot"
+    },
+    {
+      "operation_id": "createWarehouseExport",
+      "method": "POST",
+      "path": "/warehouse/exports",
+      "status": 200,
+      "example": "Completed",
+      "current": {
+        "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+        "status": "completed",
+        "created_at": "2026-09-30T09:00:00Z",
+        "expires_at": "2026-10-01T09:00:00Z",
+        "request": {
+          "table": "seoul-air-quality.air",
+          "snapshot": "current",
+          "sql": "SELECT station_code, pm10 FROM dataset",
+          "format": "csv",
+          "profile": "spreadsheet",
+          "max_rows": 100000
+        },
+        "manifest": {
+          "manifest_version": 1,
+          "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+          "created_at": "2026-09-30T09:00:00Z",
+          "expires_at": "2026-10-01T09:00:00Z",
+          "query": {
+            "sql": "SELECT station_code, pm10 FROM dataset",
+            "user_derived": true
+          },
+          "snapshot": {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "run_id": "run_20260929_0100",
+            "artifact_digest": "sha256:9c1e",
+            "row_count": 48,
+            "coverage": null
+          },
+          "source": {
+            "dataset_id": "seoul-air-quality",
+            "terms": {
+              "status": "declared",
+              "license": "other",
+              "license_name": "kogl-type-1",
+              "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+              "attribution": "서울특별시, 서울시 대기환경정보"
+            },
+            "provenance": [
+              {
+                "provider": "seoul",
+                "dataset": "air",
+                "fetched_at": "2026-09-29T01:00:00Z",
+                "api_version": "unknown",
+                "params": {
+                  "MSRDT": "202609290100"
+                }
+              }
+            ]
+          },
+          "output": {
+            "format": "csv",
+            "profile": "spreadsheet",
+            "encoding": "utf-8",
+            "bom": true,
+            "row_count": 48,
+            "completeness": "full",
+            "columns": [
+              {
+                "name": "station_code",
+                "logical_type": "string",
+                "wire_encoding": "string"
+              },
+              {
+                "name": "pm10",
+                "logical_type": "int64",
+                "wire_encoding": "number"
+              }
+            ],
+            "values_altered": [],
+            "file": {
+              "name": "data.csv",
+              "bytes": 1024,
+              "sha256": "sha256:5d41"
+            }
+          },
+          "pii": {
+            "policy": "block",
+            "allowed_findings": []
+          }
+        },
+        "bundle": {
+          "filename": "export.zip",
+          "media_type": "application/zip",
+          "bytes": 1432,
+          "sha256": "sha256:7a2b",
+          "files": [
+            "data.csv",
+            "manifest.json",
+            "NOTICE.md"
+          ]
+        },
+        "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download"
+      },
+      "with_additive_fields": {
+        "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+        "status": "completed",
+        "created_at": "2026-09-30T09:00:00Z",
+        "expires_at": "2026-10-01T09:00:00Z",
+        "request": {
+          "table": "seoul-air-quality.air",
+          "snapshot": "current",
+          "sql": "SELECT station_code, pm10 FROM dataset",
+          "format": "csv",
+          "profile": "spreadsheet",
+          "max_rows": 100000,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "manifest": {
+          "manifest_version": 1,
+          "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+          "created_at": "2026-09-30T09:00:00Z",
+          "expires_at": "2026-10-01T09:00:00Z",
+          "query": {
+            "sql": "SELECT station_code, pm10 FROM dataset",
+            "user_derived": true,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "snapshot": {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "run_id": "run_20260929_0100",
+            "artifact_digest": "sha256:9c1e",
+            "row_count": 48,
+            "coverage": null,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "source": {
+            "dataset_id": "seoul-air-quality",
+            "terms": {
+              "status": "declared",
+              "license": "other",
+              "license_name": "kogl-type-1",
+              "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+              "attribution": "서울특별시, 서울시 대기환경정보",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "provenance": [
+              {
+                "provider": "seoul",
+                "dataset": "air",
+                "fetched_at": "2026-09-29T01:00:00Z",
+                "api_version": "unknown",
+                "params": {
+                  "MSRDT": "202609290100"
+                }
+              }
+            ],
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "output": {
+            "format": "csv",
+            "profile": "spreadsheet",
+            "encoding": "utf-8",
+            "bom": true,
+            "row_count": 48,
+            "completeness": "full",
+            "columns": [
+              {
+                "name": "station_code",
+                "logical_type": "string",
+                "wire_encoding": "string",
+                "future_optional_field": "added by a later minor contract version"
+              },
+              {
+                "name": "pm10",
+                "logical_type": "int64",
+                "wire_encoding": "number",
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "values_altered": [],
+            "file": {
+              "name": "data.csv",
+              "bytes": 1024,
+              "sha256": "sha256:5d41",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "pii": {
+            "policy": "block",
+            "allowed_findings": [],
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "bundle": {
+          "filename": "export.zip",
+          "media_type": "application/zip",
+          "bytes": 1432,
+          "sha256": "sha256:7a2b",
+          "files": [
+            "data.csv",
+            "manifest.json",
+            "NOTICE.md"
+          ],
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.request",
+        "$.manifest.query",
+        "$.manifest.snapshot",
+        "$.manifest.source.terms",
+        "$.manifest.source",
+        "$.manifest.output.columns[0]",
+        "$.manifest.output.columns[1]",
+        "$.manifest.output.file",
+        "$.manifest.output",
+        "$.manifest.pii",
+        "$.manifest",
+        "$.bundle",
+        "$"
+      ],
+      "required_type_broken": {
+        "export_id": 12345,
+        "status": "completed",
+        "created_at": "2026-09-30T09:00:00Z",
+        "expires_at": "2026-10-01T09:00:00Z",
+        "request": {
+          "table": "seoul-air-quality.air",
+          "snapshot": "current",
+          "sql": "SELECT station_code, pm10 FROM dataset",
+          "format": "csv",
+          "profile": "spreadsheet",
+          "max_rows": 100000
+        },
+        "manifest": {
+          "manifest_version": 1,
+          "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+          "created_at": "2026-09-30T09:00:00Z",
+          "expires_at": "2026-10-01T09:00:00Z",
+          "query": {
+            "sql": "SELECT station_code, pm10 FROM dataset",
+            "user_derived": true
+          },
+          "snapshot": {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "run_id": "run_20260929_0100",
+            "artifact_digest": "sha256:9c1e",
+            "row_count": 48,
+            "coverage": null
+          },
+          "source": {
+            "dataset_id": "seoul-air-quality",
+            "terms": {
+              "status": "declared",
+              "license": "other",
+              "license_name": "kogl-type-1",
+              "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+              "attribution": "서울특별시, 서울시 대기환경정보"
+            },
+            "provenance": [
+              {
+                "provider": "seoul",
+                "dataset": "air",
+                "fetched_at": "2026-09-29T01:00:00Z",
+                "api_version": "unknown",
+                "params": {
+                  "MSRDT": "202609290100"
+                }
+              }
+            ]
+          },
+          "output": {
+            "format": "csv",
+            "profile": "spreadsheet",
+            "encoding": "utf-8",
+            "bom": true,
+            "row_count": 48,
+            "completeness": "full",
+            "columns": [
+              {
+                "name": "station_code",
+                "logical_type": "string",
+                "wire_encoding": "string"
+              },
+              {
+                "name": "pm10",
+                "logical_type": "int64",
+                "wire_encoding": "number"
+              }
+            ],
+            "values_altered": [],
+            "file": {
+              "name": "data.csv",
+              "bytes": 1024,
+              "sha256": "sha256:5d41"
+            }
+          },
+          "pii": {
+            "policy": "block",
+            "allowed_findings": []
+          }
+        },
+        "bundle": {
+          "filename": "export.zip",
+          "media_type": "application/zip",
+          "bytes": 1432,
+          "sha256": "sha256:7a2b",
+          "files": [
+            "data.csv",
+            "manifest.json",
+            "NOTICE.md"
+          ]
+        },
+        "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download"
+      },
+      "broken_path": "$.export_id"
+    },
+    {
+      "operation_id": "listWarehouseExports",
+      "method": "GET",
+      "path": "/warehouse/exports",
+      "status": 200,
+      "example": "One",
+      "current": {
+        "exports": [
+          {
+            "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+            "status": "completed",
+            "created_at": "2026-09-30T09:00:00Z",
+            "expires_at": "2026-10-01T09:00:00Z",
+            "request": {
+              "table": "seoul-air-quality.air",
+              "snapshot": "current",
+              "sql": "SELECT station_code, pm10 FROM dataset",
+              "format": "csv",
+              "profile": "spreadsheet",
+              "max_rows": 100000
+            },
+            "manifest": {
+              "manifest_version": 1,
+              "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+              "created_at": "2026-09-30T09:00:00Z",
+              "expires_at": "2026-10-01T09:00:00Z",
+              "query": {
+                "sql": "SELECT station_code, pm10 FROM dataset",
+                "user_derived": true
+              },
+              "snapshot": {
+                "table_id": "tbl_7f3a",
+                "logical_name": "seoul-air-quality.air",
+                "snapshot_id": "snap_20260929_01",
+                "revision": 3,
+                "run_id": "run_20260929_0100",
+                "artifact_digest": "sha256:9c1e",
+                "row_count": 48,
+                "coverage": null
+              },
+              "source": {
+                "dataset_id": "seoul-air-quality",
+                "terms": {
+                  "status": "declared",
+                  "license": "other",
+                  "license_name": "kogl-type-1",
+                  "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+                  "attribution": "서울특별시, 서울시 대기환경정보"
+                },
+                "provenance": [
+                  {
+                    "provider": "seoul",
+                    "dataset": "air",
+                    "fetched_at": "2026-09-29T01:00:00Z",
+                    "api_version": "unknown",
+                    "params": {
+                      "MSRDT": "202609290100"
+                    }
+                  }
+                ]
+              },
+              "output": {
+                "format": "csv",
+                "profile": "spreadsheet",
+                "encoding": "utf-8",
+                "bom": true,
+                "row_count": 48,
+                "completeness": "full",
+                "columns": [
+                  {
+                    "name": "station_code",
+                    "logical_type": "string",
+                    "wire_encoding": "string"
+                  },
+                  {
+                    "name": "pm10",
+                    "logical_type": "int64",
+                    "wire_encoding": "number"
+                  }
+                ],
+                "values_altered": [],
+                "file": {
+                  "name": "data.csv",
+                  "bytes": 1024,
+                  "sha256": "sha256:5d41"
+                }
+              },
+              "pii": {
+                "policy": "block",
+                "allowed_findings": []
+              }
+            },
+            "bundle": {
+              "filename": "export.zip",
+              "media_type": "application/zip",
+              "bytes": 1432,
+              "sha256": "sha256:7a2b",
+              "files": [
+                "data.csv",
+                "manifest.json",
+                "NOTICE.md"
+              ]
+            },
+            "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download"
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "exports": [
+          {
+            "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+            "status": "completed",
+            "created_at": "2026-09-30T09:00:00Z",
+            "expires_at": "2026-10-01T09:00:00Z",
+            "request": {
+              "table": "seoul-air-quality.air",
+              "snapshot": "current",
+              "sql": "SELECT station_code, pm10 FROM dataset",
+              "format": "csv",
+              "profile": "spreadsheet",
+              "max_rows": 100000,
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "manifest": {
+              "manifest_version": 1,
+              "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+              "created_at": "2026-09-30T09:00:00Z",
+              "expires_at": "2026-10-01T09:00:00Z",
+              "query": {
+                "sql": "SELECT station_code, pm10 FROM dataset",
+                "user_derived": true,
+                "future_optional_field": "added by a later minor contract version"
+              },
+              "snapshot": {
+                "table_id": "tbl_7f3a",
+                "logical_name": "seoul-air-quality.air",
+                "snapshot_id": "snap_20260929_01",
+                "revision": 3,
+                "run_id": "run_20260929_0100",
+                "artifact_digest": "sha256:9c1e",
+                "row_count": 48,
+                "coverage": null,
+                "future_optional_field": "added by a later minor contract version"
+              },
+              "source": {
+                "dataset_id": "seoul-air-quality",
+                "terms": {
+                  "status": "declared",
+                  "license": "other",
+                  "license_name": "kogl-type-1",
+                  "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+                  "attribution": "서울특별시, 서울시 대기환경정보",
+                  "future_optional_field": "added by a later minor contract version"
+                },
+                "provenance": [
+                  {
+                    "provider": "seoul",
+                    "dataset": "air",
+                    "fetched_at": "2026-09-29T01:00:00Z",
+                    "api_version": "unknown",
+                    "params": {
+                      "MSRDT": "202609290100"
+                    }
+                  }
+                ],
+                "future_optional_field": "added by a later minor contract version"
+              },
+              "output": {
+                "format": "csv",
+                "profile": "spreadsheet",
+                "encoding": "utf-8",
+                "bom": true,
+                "row_count": 48,
+                "completeness": "full",
+                "columns": [
+                  {
+                    "name": "station_code",
+                    "logical_type": "string",
+                    "wire_encoding": "string",
+                    "future_optional_field": "added by a later minor contract version"
+                  },
+                  {
+                    "name": "pm10",
+                    "logical_type": "int64",
+                    "wire_encoding": "number",
+                    "future_optional_field": "added by a later minor contract version"
+                  }
+                ],
+                "values_altered": [],
+                "file": {
+                  "name": "data.csv",
+                  "bytes": 1024,
+                  "sha256": "sha256:5d41",
+                  "future_optional_field": "added by a later minor contract version"
+                },
+                "future_optional_field": "added by a later minor contract version"
+              },
+              "pii": {
+                "policy": "block",
+                "allowed_findings": [],
+                "future_optional_field": "added by a later minor contract version"
+              },
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "bundle": {
+              "filename": "export.zip",
+              "media_type": "application/zip",
+              "bytes": 1432,
+              "sha256": "sha256:7a2b",
+              "files": [
+                "data.csv",
+                "manifest.json",
+                "NOTICE.md"
+              ],
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.exports[0].request",
+        "$.exports[0].manifest.query",
+        "$.exports[0].manifest.snapshot",
+        "$.exports[0].manifest.source.terms",
+        "$.exports[0].manifest.source",
+        "$.exports[0].manifest.output.columns[0]",
+        "$.exports[0].manifest.output.columns[1]",
+        "$.exports[0].manifest.output.file",
+        "$.exports[0].manifest.output",
+        "$.exports[0].manifest.pii",
+        "$.exports[0].manifest",
+        "$.exports[0].bundle",
+        "$.exports[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "exports": {
+          "not": "an array"
+        }
+      },
+      "broken_path": "$.exports"
+    },
+    {
+      "operation_id": "getWarehouseExport",
+      "method": "GET",
+      "path": "/warehouse/exports/{export_id}",
+      "status": 200,
+      "example": "Completed",
+      "current": {
+        "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+        "status": "completed",
+        "created_at": "2026-09-30T09:00:00Z",
+        "expires_at": "2026-10-01T09:00:00Z",
+        "request": {
+          "table": "seoul-air-quality.air",
+          "snapshot": "current",
+          "sql": "SELECT station_code, pm10 FROM dataset",
+          "format": "csv",
+          "profile": "spreadsheet",
+          "max_rows": 100000
+        },
+        "manifest": {
+          "manifest_version": 1,
+          "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+          "created_at": "2026-09-30T09:00:00Z",
+          "expires_at": "2026-10-01T09:00:00Z",
+          "query": {
+            "sql": "SELECT station_code, pm10 FROM dataset",
+            "user_derived": true
+          },
+          "snapshot": {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "run_id": "run_20260929_0100",
+            "artifact_digest": "sha256:9c1e",
+            "row_count": 48,
+            "coverage": null
+          },
+          "source": {
+            "dataset_id": "seoul-air-quality",
+            "terms": {
+              "status": "declared",
+              "license": "other",
+              "license_name": "kogl-type-1",
+              "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+              "attribution": "서울특별시, 서울시 대기환경정보"
+            },
+            "provenance": [
+              {
+                "provider": "seoul",
+                "dataset": "air",
+                "fetched_at": "2026-09-29T01:00:00Z",
+                "api_version": "unknown",
+                "params": {
+                  "MSRDT": "202609290100"
+                }
+              }
+            ]
+          },
+          "output": {
+            "format": "csv",
+            "profile": "spreadsheet",
+            "encoding": "utf-8",
+            "bom": true,
+            "row_count": 48,
+            "completeness": "full",
+            "columns": [
+              {
+                "name": "station_code",
+                "logical_type": "string",
+                "wire_encoding": "string"
+              },
+              {
+                "name": "pm10",
+                "logical_type": "int64",
+                "wire_encoding": "number"
+              }
+            ],
+            "values_altered": [],
+            "file": {
+              "name": "data.csv",
+              "bytes": 1024,
+              "sha256": "sha256:5d41"
+            }
+          },
+          "pii": {
+            "policy": "block",
+            "allowed_findings": []
+          }
+        },
+        "bundle": {
+          "filename": "export.zip",
+          "media_type": "application/zip",
+          "bytes": 1432,
+          "sha256": "sha256:7a2b",
+          "files": [
+            "data.csv",
+            "manifest.json",
+            "NOTICE.md"
+          ]
+        },
+        "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download"
+      },
+      "with_additive_fields": {
+        "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+        "status": "completed",
+        "created_at": "2026-09-30T09:00:00Z",
+        "expires_at": "2026-10-01T09:00:00Z",
+        "request": {
+          "table": "seoul-air-quality.air",
+          "snapshot": "current",
+          "sql": "SELECT station_code, pm10 FROM dataset",
+          "format": "csv",
+          "profile": "spreadsheet",
+          "max_rows": 100000,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "manifest": {
+          "manifest_version": 1,
+          "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+          "created_at": "2026-09-30T09:00:00Z",
+          "expires_at": "2026-10-01T09:00:00Z",
+          "query": {
+            "sql": "SELECT station_code, pm10 FROM dataset",
+            "user_derived": true,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "snapshot": {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "run_id": "run_20260929_0100",
+            "artifact_digest": "sha256:9c1e",
+            "row_count": 48,
+            "coverage": null,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "source": {
+            "dataset_id": "seoul-air-quality",
+            "terms": {
+              "status": "declared",
+              "license": "other",
+              "license_name": "kogl-type-1",
+              "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+              "attribution": "서울특별시, 서울시 대기환경정보",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "provenance": [
+              {
+                "provider": "seoul",
+                "dataset": "air",
+                "fetched_at": "2026-09-29T01:00:00Z",
+                "api_version": "unknown",
+                "params": {
+                  "MSRDT": "202609290100"
+                }
+              }
+            ],
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "output": {
+            "format": "csv",
+            "profile": "spreadsheet",
+            "encoding": "utf-8",
+            "bom": true,
+            "row_count": 48,
+            "completeness": "full",
+            "columns": [
+              {
+                "name": "station_code",
+                "logical_type": "string",
+                "wire_encoding": "string",
+                "future_optional_field": "added by a later minor contract version"
+              },
+              {
+                "name": "pm10",
+                "logical_type": "int64",
+                "wire_encoding": "number",
+                "future_optional_field": "added by a later minor contract version"
+              }
+            ],
+            "values_altered": [],
+            "file": {
+              "name": "data.csv",
+              "bytes": 1024,
+              "sha256": "sha256:5d41",
+              "future_optional_field": "added by a later minor contract version"
+            },
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "pii": {
+            "policy": "block",
+            "allowed_findings": [],
+            "future_optional_field": "added by a later minor contract version"
+          },
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "bundle": {
+          "filename": "export.zip",
+          "media_type": "application/zip",
+          "bytes": 1432,
+          "sha256": "sha256:7a2b",
+          "files": [
+            "data.csv",
+            "manifest.json",
+            "NOTICE.md"
+          ],
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.request",
+        "$.manifest.query",
+        "$.manifest.snapshot",
+        "$.manifest.source.terms",
+        "$.manifest.source",
+        "$.manifest.output.columns[0]",
+        "$.manifest.output.columns[1]",
+        "$.manifest.output.file",
+        "$.manifest.output",
+        "$.manifest.pii",
+        "$.manifest",
+        "$.bundle",
+        "$"
+      ],
+      "required_type_broken": {
+        "export_id": 12345,
+        "status": "completed",
+        "created_at": "2026-09-30T09:00:00Z",
+        "expires_at": "2026-10-01T09:00:00Z",
+        "request": {
+          "table": "seoul-air-quality.air",
+          "snapshot": "current",
+          "sql": "SELECT station_code, pm10 FROM dataset",
+          "format": "csv",
+          "profile": "spreadsheet",
+          "max_rows": 100000
+        },
+        "manifest": {
+          "manifest_version": 1,
+          "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+          "created_at": "2026-09-30T09:00:00Z",
+          "expires_at": "2026-10-01T09:00:00Z",
+          "query": {
+            "sql": "SELECT station_code, pm10 FROM dataset",
+            "user_derived": true
+          },
+          "snapshot": {
+            "table_id": "tbl_7f3a",
+            "logical_name": "seoul-air-quality.air",
+            "snapshot_id": "snap_20260929_01",
+            "revision": 3,
+            "run_id": "run_20260929_0100",
+            "artifact_digest": "sha256:9c1e",
+            "row_count": 48,
+            "coverage": null
+          },
+          "source": {
+            "dataset_id": "seoul-air-quality",
+            "terms": {
+              "status": "declared",
+              "license": "other",
+              "license_name": "kogl-type-1",
+              "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+              "attribution": "서울특별시, 서울시 대기환경정보"
+            },
+            "provenance": [
+              {
+                "provider": "seoul",
+                "dataset": "air",
+                "fetched_at": "2026-09-29T01:00:00Z",
+                "api_version": "unknown",
+                "params": {
+                  "MSRDT": "202609290100"
+                }
+              }
+            ]
+          },
+          "output": {
+            "format": "csv",
+            "profile": "spreadsheet",
+            "encoding": "utf-8",
+            "bom": true,
+            "row_count": 48,
+            "completeness": "full",
+            "columns": [
+              {
+                "name": "station_code",
+                "logical_type": "string",
+                "wire_encoding": "string"
+              },
+              {
+                "name": "pm10",
+                "logical_type": "int64",
+                "wire_encoding": "number"
+              }
+            ],
+            "values_altered": [],
+            "file": {
+              "name": "data.csv",
+              "bytes": 1024,
+              "sha256": "sha256:5d41"
+            }
+          },
+          "pii": {
+            "policy": "block",
+            "allowed_findings": []
+          }
+        },
+        "bundle": {
+          "filename": "export.zip",
+          "media_type": "application/zip",
+          "bytes": 1432,
+          "sha256": "sha256:7a2b",
+          "files": [
+            "data.csv",
+            "manifest.json",
+            "NOTICE.md"
+          ]
+        },
+        "download_path": "/warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download"
+      },
+      "broken_path": "$.export_id"
+    },
+    {
+      "operation_id": "deleteWarehouseExport",
+      "method": "DELETE",
+      "path": "/warehouse/exports/{export_id}",
+      "status": 200,
+      "example": "Deleted",
+      "current": {
+        "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+        "deleted": true
+      },
+      "with_additive_fields": {
+        "export_id": "exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69",
+        "deleted": true,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "export_id": 12345,
+        "deleted": true
+      },
+      "broken_path": "$.export_id"
     }
   ]
 }

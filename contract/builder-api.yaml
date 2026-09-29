@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.44.0"
+  version: "1.45.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.45.0 adds query exports (#819, additive): `POST /warehouse/exports` keeps a pinned query's **complete** result as a zip of the data file (csv or jsonl; `machine` or `spreadsheet` profile), `manifest.json` and `NOTICE.md`, after checking the source's licence (no-derivatives licences refused) and PII policy. Over `max_rows` or the byte limit nothing is kept (422). The manifest names the snapshot, revision and digest, copies the licence terms verbatim, and carries provenance, coverage, `user_derived` and every value the spreadsheet profile altered. `GET /warehouse/exports`, `GET`/`DELETE /warehouse/exports/{export_id}` and `GET /warehouse/exports/{export_id}/download` check ownership and expiry at the time of the call.
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
     v1.37.0 lets `POST /build` answer 409 with `warehouse_failures` when every source built but a table commit failed (#787, #788, additive): a build commits against the table revision it started from, so a refresh another build finished meanwhile is a conflict rather than overwritten. The manifest records the same failures.
@@ -2724,6 +2725,447 @@ paths:
                 $ref: "#/components/schemas/Error"
         "504":
           description: The aggregate timed out (`query_timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /warehouse/exports:
+    post:
+      operationId: createWarehouseExport
+      summary: Export a pinned query's full result through the policy checks (#819)
+      description: >-
+        Runs read-only SQL against a pinned snapshot (`current` is resolved once, like
+        `POST /warehouse/query`) and keeps its **complete** result as a zip bundle: the
+        data file, `manifest.json` and `NOTICE.md`. Policy is checked first: a source
+        whose declared licence forbids derivatives (KOGL type 3 or 4, a Creative Commons
+        `nd` licence) is refused before the query runs, since an export of a query is a
+        derived work; text values matching the build's PII patterns are refused unless
+        the source's PII policy is `allow` or lists the column in `allow_columns`. A
+        result over `max_rows` or the byte limit is refused (422) and nothing is kept —
+        never a short file presented as complete. The manifest records the SQL, the
+        snapshot id, the table revision and the snapshot's artifact digest, the source's
+        licence terms verbatim (never restated as another licence), its provenance and
+        coverage, `user_derived: true`, and every value the `spreadsheet` profile altered.
+        `machine` writes values exactly as the wire encoding sends them (UTF-8, no BOM,
+        nothing altered). `spreadsheet` adds a BOM and prefixes text cells starting with
+        `= + - @`, a tab or a CR with an apostrophe; the BOM does not stop a spreadsheet
+        from dropping leading zeros, rounding large integers or converting dates. Runs
+        synchronously in the query child process (memory cap, concurrency slot, a 60 s
+        timeout). Exports expire after 24 hours; a workspace keeps at most 20.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseExportRequest"
+            examples:
+              Spreadsheet:
+                summary: A query result for opening in a spreadsheet
+                value:
+                  table: seoul-air-quality.air
+                  sql: SELECT station_code, pm10 FROM dataset
+                  profile: spreadsheet
+      responses:
+        "200":
+          description: The export, complete, with its manifest and where to download it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseExport"
+              examples:
+                Completed:
+                  summary: A completed spreadsheet export
+                  value:
+                    export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                    status: completed
+                    created_at: '2026-09-30T09:00:00Z'
+                    expires_at: '2026-10-01T09:00:00Z'
+                    request:
+                      table: seoul-air-quality.air
+                      snapshot: current
+                      sql: SELECT station_code, pm10 FROM dataset
+                      format: csv
+                      profile: spreadsheet
+                      max_rows: 100000
+                    manifest:
+                      manifest_version: 1
+                      export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                      created_at: '2026-09-30T09:00:00Z'
+                      expires_at: '2026-10-01T09:00:00Z'
+                      query:
+                        sql: SELECT station_code, pm10 FROM dataset
+                        user_derived: true
+                      snapshot:
+                        table_id: tbl_7f3a
+                        logical_name: seoul-air-quality.air
+                        snapshot_id: snap_20260929_01
+                        revision: 3
+                        run_id: run_20260929_0100
+                        artifact_digest: sha256:9c1e
+                        row_count: 48
+                        coverage: null
+                      source:
+                        dataset_id: seoul-air-quality
+                        terms:
+                          status: declared
+                          license: other
+                          license_name: kogl-type-1
+                          license_link: https://www.kogl.or.kr/info/licenseType1.do
+                          attribution: 서울특별시, 서울시 대기환경정보
+                        provenance:
+                        - provider: seoul
+                          dataset: air
+                          fetched_at: '2026-09-29T01:00:00Z'
+                          api_version: unknown
+                          params:
+                            MSRDT: '202609290100'
+                      output:
+                        format: csv
+                        profile: spreadsheet
+                        encoding: utf-8
+                        bom: true
+                        row_count: 48
+                        completeness: full
+                        columns:
+                        - name: station_code
+                          logical_type: string
+                          wire_encoding: string
+                        - name: pm10
+                          logical_type: int64
+                          wire_encoding: number
+                        values_altered: []
+                        file:
+                          name: data.csv
+                          bytes: 1024
+                          sha256: sha256:5d41
+                      pii:
+                        policy: block
+                        allowed_findings: []
+                    bundle:
+                      filename: export.zip
+                      media_type: application/zip
+                      bytes: 1432
+                      sha256: sha256:7a2b
+                      files:
+                      - data.csv
+                      - manifest.json
+                      - NOTICE.md
+                    download_path: /warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download
+        "400":
+          description: >-
+            An invalid request (`invalid_request`), SQL that is not a single read-only
+            query (`unsafe_query`), or a query that failed (`query_execution_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            Refused by policy: the source's licence forbids derivatives
+            (`export_forbidden_by_license`, with `terms`), or the result holds PII values
+            its policy does not let out (`export_blocked_pii`, with `findings` — column,
+            kind and count, never a value).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >-
+            No warehouse (`warehouse_not_configured`), no such table in the caller's
+            workspace (`table_not_found`), no such snapshot of it (`snapshot_not_found`),
+            or a snapshot without a table file (`artifact_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: >-
+            The result exceeds `max_rows` (`row_limit_exceeded`) or the byte limit
+            (`byte_limit_exceeded`); `limit` names it. Nothing was exported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: >-
+            Query capacity is exhausted (`query_busy`), or the workspace already keeps
+            the most exports it may (`export_quota_exceeded`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: The export timed out (`query_timeout`); nothing was kept.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listWarehouseExports
+      summary: The caller's unexpired exports, newest first (#819)
+      responses:
+        "200":
+          description: Exports in the caller's workspace that have not expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseExportList"
+              examples:
+                One:
+                  summary: One export
+                  value:
+                    exports:
+                      - export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                        status: completed
+                        created_at: '2026-09-30T09:00:00Z'
+                        expires_at: '2026-10-01T09:00:00Z'
+                        request:
+                          table: seoul-air-quality.air
+                          snapshot: current
+                          sql: SELECT station_code, pm10 FROM dataset
+                          format: csv
+                          profile: spreadsheet
+                          max_rows: 100000
+                        manifest:
+                          manifest_version: 1
+                          export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                          created_at: '2026-09-30T09:00:00Z'
+                          expires_at: '2026-10-01T09:00:00Z'
+                          query:
+                            sql: SELECT station_code, pm10 FROM dataset
+                            user_derived: true
+                          snapshot:
+                            table_id: tbl_7f3a
+                            logical_name: seoul-air-quality.air
+                            snapshot_id: snap_20260929_01
+                            revision: 3
+                            run_id: run_20260929_0100
+                            artifact_digest: sha256:9c1e
+                            row_count: 48
+                            coverage: null
+                          source:
+                            dataset_id: seoul-air-quality
+                            terms:
+                              status: declared
+                              license: other
+                              license_name: kogl-type-1
+                              license_link: https://www.kogl.or.kr/info/licenseType1.do
+                              attribution: 서울특별시, 서울시 대기환경정보
+                            provenance:
+                            - provider: seoul
+                              dataset: air
+                              fetched_at: '2026-09-29T01:00:00Z'
+                              api_version: unknown
+                              params:
+                                MSRDT: '202609290100'
+                          output:
+                            format: csv
+                            profile: spreadsheet
+                            encoding: utf-8
+                            bom: true
+                            row_count: 48
+                            completeness: full
+                            columns:
+                            - name: station_code
+                              logical_type: string
+                              wire_encoding: string
+                            - name: pm10
+                              logical_type: int64
+                              wire_encoding: number
+                            values_altered: []
+                            file:
+                              name: data.csv
+                              bytes: 1024
+                              sha256: sha256:5d41
+                          pii:
+                            policy: block
+                            allowed_findings: []
+                        bundle:
+                          filename: export.zip
+                          media_type: application/zip
+                          bytes: 1432
+                          sha256: sha256:7a2b
+                          files:
+                          - data.csv
+                          - manifest.json
+                          - NOTICE.md
+                        download_path: /warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /warehouse/exports/{export_id}:
+    parameters:
+      - name: export_id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getWarehouseExport
+      summary: One export's status and manifest (#819)
+      description: >-
+        `status` is `expired` once `expires_at` has passed; its manifest stays readable
+        but `bundle` and `download_path` are null. Another owner's export is a 404.
+      responses:
+        "200":
+          description: The export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseExport"
+              examples:
+                Completed:
+                  summary: A completed export
+                  value:
+                    export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                    status: completed
+                    created_at: '2026-09-30T09:00:00Z'
+                    expires_at: '2026-10-01T09:00:00Z'
+                    request:
+                      table: seoul-air-quality.air
+                      snapshot: current
+                      sql: SELECT station_code, pm10 FROM dataset
+                      format: csv
+                      profile: spreadsheet
+                      max_rows: 100000
+                    manifest:
+                      manifest_version: 1
+                      export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                      created_at: '2026-09-30T09:00:00Z'
+                      expires_at: '2026-10-01T09:00:00Z'
+                      query:
+                        sql: SELECT station_code, pm10 FROM dataset
+                        user_derived: true
+                      snapshot:
+                        table_id: tbl_7f3a
+                        logical_name: seoul-air-quality.air
+                        snapshot_id: snap_20260929_01
+                        revision: 3
+                        run_id: run_20260929_0100
+                        artifact_digest: sha256:9c1e
+                        row_count: 48
+                        coverage: null
+                      source:
+                        dataset_id: seoul-air-quality
+                        terms:
+                          status: declared
+                          license: other
+                          license_name: kogl-type-1
+                          license_link: https://www.kogl.or.kr/info/licenseType1.do
+                          attribution: 서울특별시, 서울시 대기환경정보
+                        provenance:
+                        - provider: seoul
+                          dataset: air
+                          fetched_at: '2026-09-29T01:00:00Z'
+                          api_version: unknown
+                          params:
+                            MSRDT: '202609290100'
+                      output:
+                        format: csv
+                        profile: spreadsheet
+                        encoding: utf-8
+                        bom: true
+                        row_count: 48
+                        completeness: full
+                        columns:
+                        - name: station_code
+                          logical_type: string
+                          wire_encoding: string
+                        - name: pm10
+                          logical_type: int64
+                          wire_encoding: number
+                        values_altered: []
+                        file:
+                          name: data.csv
+                          bytes: 1024
+                          sha256: sha256:5d41
+                      pii:
+                        policy: block
+                        allowed_findings: []
+                    bundle:
+                      filename: export.zip
+                      media_type: application/zip
+                      bytes: 1432
+                      sha256: sha256:7a2b
+                      files:
+                      - data.csv
+                      - manifest.json
+                      - NOTICE.md
+                    download_path: /warehouse/exports/exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69/download
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such export in the caller's workspace (`export_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteWarehouseExport
+      summary: Delete an export and its file (#819)
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseExportDeleted"
+              examples:
+                Deleted:
+                  summary: Deleted
+                  value:
+                    export_id: exp_5b1f0c2e9a7d4c3b8e6f1a2d3c4b5a69
+                    deleted: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such export in the caller's workspace (`export_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /warehouse/exports/{export_id}/download:
+    parameters:
+      - name: export_id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: downloadWarehouseExport
+      summary: An export's zip bundle, checked at download time (#819)
+      description: >-
+        Ownership, expiry and the file's digest are checked now, not when the export was
+        made. The zip holds the data file, `manifest.json` and `NOTICE.md`.
+      responses:
+        "200":
+          description: The bundle.
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such export in the caller's workspace (`export_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The bundle is missing or no longer matches its digest (`export_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The export has expired (`export_expired`); its file is gone.
           content:
             application/json:
               schema:
@@ -6591,3 +7033,221 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MonitoringRecentRun"
+    WarehouseExportRequest:
+      type: object
+      additionalProperties: false
+      required: [table, sql]
+      properties:
+        table:
+          type: string
+          description: A table's logical name in the caller's workspace.
+        snapshot:
+          type: string
+          default: current
+          description: "`current`, or a `snapshot_id` returned by an earlier read to export that snapshot."
+        sql:
+          type: string
+          maxLength: 65536
+          description: One read-only query over `dataset`, as for `POST /warehouse/query`. Its own LIMIT is kept.
+        format:
+          type: string
+          enum: [csv, jsonl]
+          default: csv
+        profile:
+          type: string
+          enum: [machine, spreadsheet]
+          default: machine
+          description: >-
+            `machine` — values exactly as sent on the wire, UTF-8 without a BOM, nothing
+            altered. `spreadsheet` (csv only) — UTF-8 with a BOM, and text cells starting
+            with a formula trigger prefixed with an apostrophe, counted in
+            `manifest.output.values_altered`.
+        max_rows:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          default: 100000
+          description: A result with more rows is refused (422 `row_limit_exceeded`), not cut.
+    WarehouseExport:
+      type: object
+      additionalProperties: false
+      required: [export_id, status, created_at, expires_at, request, manifest, bundle, download_path]
+      properties:
+        export_id: {type: string}
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled, expired]
+          description: >-
+            `completed` or `expired` today: an export runs synchronously and is kept only
+            when complete. `queued`, `running`, `failed` and `cancelled` are reserved for
+            queued exports.
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        request:
+          type: object
+          additionalProperties: false
+          required: [table, snapshot, sql, format, profile, max_rows]
+          description: The request as it was made; `snapshot` may be `current`.
+          properties:
+            table: {type: string}
+            snapshot: {type: string}
+            sql: {type: string}
+            format: {type: string, enum: [csv, jsonl]}
+            profile: {type: string, enum: [machine, spreadsheet]}
+            max_rows: {type: integer, minimum: 1}
+        manifest:
+          $ref: "#/components/schemas/WarehouseExportManifest"
+        bundle:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [filename, media_type, bytes, sha256, files]
+              properties:
+                filename: {type: string}
+                media_type: {type: string}
+                bytes: {type: integer, minimum: 0}
+                sha256: {type: string}
+                files:
+                  type: array
+                  items: {type: string}
+          description: The zip bundle; null once expired.
+        download_path:
+          type: [string, "null"]
+          description: Where to GET the bundle; null once expired.
+    WarehouseExportManifest:
+      type: object
+      additionalProperties: false
+      description: >-
+        What the export holds and under which terms. The same object is `manifest.json`
+        in the bundle.
+      required: [manifest_version, export_id, created_at, expires_at, query, snapshot, source, output, pii]
+      properties:
+        manifest_version: {type: integer, const: 1}
+        export_id: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        query:
+          type: object
+          additionalProperties: false
+          required: [sql, user_derived]
+          properties:
+            sql: {type: string}
+            user_derived:
+              type: boolean
+              description: >-
+                Always true for a query export: Builder cannot tell a query that does not
+                reshape, filter or compute from one that does.
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [table_id, logical_name, snapshot_id, revision, run_id, artifact_digest, row_count, coverage]
+          description: The concrete snapshot read — never `current` — with its table revision and artifact digest.
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision: {type: integer, minimum: 0}
+            run_id: {type: string}
+            artifact_digest: {type: string}
+            row_count: {type: [integer, "null"], minimum: 0}
+            coverage:
+              description: The snapshot's fetch coverage (#816), or null when not recorded (unknown, not complete).
+              type: [object, "null"]
+              additionalProperties:
+                $ref: "#/components/schemas/JsonValue"
+        source:
+          type: object
+          additionalProperties: false
+          required: [dataset_id, terms, provenance]
+          properties:
+            dataset_id: {type: [string, "null"]}
+            terms:
+              type: object
+              additionalProperties: false
+              required: [status, license, license_name, license_link, attribution]
+              description: Copied verbatim from the build spec; never restated as another licence.
+              properties:
+                status:
+                  type: string
+                  enum: [declared, undeclared, unknown]
+                  description: "`unknown` when the build's spec could not be read."
+                license: {type: [string, "null"]}
+                license_name: {type: [string, "null"]}
+                license_link: {type: [string, "null"]}
+                attribution: {type: [string, "null"]}
+            provenance:
+              type: array
+              description: The build manifest's provenance entries for this table's source.
+              items:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
+        output:
+          type: object
+          additionalProperties: false
+          required: [format, profile, encoding, bom, row_count, completeness, columns, values_altered, file]
+          properties:
+            format: {type: string, enum: [csv, jsonl]}
+            profile: {type: string, enum: [machine, spreadsheet]}
+            encoding: {type: string}
+            bom: {type: boolean}
+            row_count: {type: integer, minimum: 0}
+            completeness:
+              type: string
+              enum: [full]
+              description: An export is only ever kept complete; a result over a limit is refused.
+            columns:
+              type: array
+              items:
+                $ref: "#/components/schemas/ColumnWireInfo"
+            values_altered:
+              type: array
+              description: Cells the spreadsheet profile changed, per column. Empty for `machine`.
+              items:
+                type: object
+                additionalProperties: false
+                required: [column, count, reason]
+                properties:
+                  column: {type: string}
+                  count: {type: integer, minimum: 1}
+                  reason: {type: string, enum: [formula_prefix]}
+            file:
+              type: object
+              additionalProperties: false
+              required: [name, bytes, sha256]
+              properties:
+                name: {type: string}
+                bytes: {type: integer, minimum: 0}
+                sha256: {type: string}
+        pii:
+          type: object
+          additionalProperties: false
+          required: [policy, allowed_findings]
+          properties:
+            policy:
+              type: [string, "null"]
+              description: The source spec's PII mode, or null when it declared none.
+            allowed_findings:
+              type: array
+              description: PII-pattern findings the policy let out (column, kind, count; never a value).
+              items:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/JsonValue"
+    WarehouseExportList:
+      type: object
+      additionalProperties: false
+      required: [exports]
+      properties:
+        exports:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarehouseExport"
+    WarehouseExportDeleted:
+      type: object
+      additionalProperties: false
+      required: [export_id, deleted]
+      properties:
+        export_id: {type: string}
+        deleted: {type: boolean, const: true}

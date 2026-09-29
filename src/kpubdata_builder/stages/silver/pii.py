@@ -44,20 +44,36 @@ class PiiFinding:
     count: int
 
 
-def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
-    """scans refined table with PII patterns + column name heuristics (#441)."""
+def scan_pii_values(table: pl.DataFrame) -> list[PiiFinding]:
+    """Findings from value patterns only: text cells that look like PII (#441, #819).
+
+    Evidence in the values themselves, without the column-name heuristic, which flags
+    any column whose name merely contains e.g. ``NM``.
+    """
     findings: list[PiiFinding] = []
     for column_name in table.columns:
         series = table.get_column(column_name)
-        # pattern matching only on string columns. non-string uses only column name heuristic.
-        if series.dtype == pl.Utf8:
-            non_null = series.drop_nulls()
-            for kind, pattern in _PATTERNS.items():
-                if non_null.len() == 0:
-                    continue
-                count = int(non_null.str.contains(pattern.pattern).sum())
-                if count > 0:
-                    findings.append(PiiFinding(column=column_name, kind=kind, count=count))
+        if series.dtype != pl.Utf8:
+            continue
+        non_null = series.drop_nulls()
+        if non_null.len() == 0:
+            continue
+        for kind, pattern in _PATTERNS.items():
+            count = int(non_null.str.contains(pattern.pattern).sum())
+            if count > 0:
+                findings.append(PiiFinding(column=column_name, kind=kind, count=count))
+    return findings
+
+
+def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
+    """scans refined table with PII patterns + column name heuristics (#441)."""
+    by_column: dict[str, list[PiiFinding]] = {}
+    for finding in scan_pii_values(table):
+        by_column.setdefault(str(finding.column), []).append(finding)
+    findings: list[PiiFinding] = []
+    for column_name in table.columns:
+        # pattern matches first, in pattern order, as before.
+        findings.extend(by_column.get(column_name, []))
         # column name heuristic — only first matching type per column.
         upper = column_name.upper()
         for kind, parts in _SUSPECT_PARTS.items():
@@ -67,4 +83,4 @@ def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
     return findings
 
 
-__all__ = ["PiiFinding", "scan_pii"]
+__all__ = ["PiiFinding", "scan_pii", "scan_pii_values"]
