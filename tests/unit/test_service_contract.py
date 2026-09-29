@@ -1420,6 +1420,28 @@ class TestBuildSpecSchemaContractIsPublished:
         declared = {f.name for f in fields(DerivedColumn)}
         assert declared <= published, f"OpenAPI에 없는 DerivedColumn 필드: {declared - published}"
 
+    def test_join_spec_properties_cover_the_dataclass(self) -> None:
+        from dataclasses import fields
+
+        from kpubdata_builder.spec import JoinSpec
+
+        published = set(self._schemas()["JoinSpec"]["properties"])
+        declared = {f.name for f in fields(JoinSpec)}
+        assert declared <= published, (
+            f"JoinSpec fields missing from OpenAPI: {declared - published}"
+        )
+
+    def test_composition_provenance_properties_cover_the_dataclass(self) -> None:
+        from dataclasses import fields
+
+        from kpubdata_builder.manifest import CompositionProvenance
+
+        published = set(self._schemas()["CompositionProvenance"]["properties"])
+        declared = {f.name for f in fields(CompositionProvenance)}
+        assert declared <= published, (
+            f"CompositionProvenance fields missing from OpenAPI: {declared - published}"
+        )
+
     def test_derived_column_kind_enum_matches_the_supported_kinds(self) -> None:
         from kpubdata_builder.spec.models import DERIVED_KINDS
 

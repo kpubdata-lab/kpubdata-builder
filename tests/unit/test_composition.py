@@ -367,6 +367,425 @@ def test_build_composed_gold_package_fails_closed_on_duplicate_key_when_severity
 
 
 # --------------------------------------------------------------------------
+# #698: cardinality judged on the keys that intersect
+# --------------------------------------------------------------------------
+
+
+def _keyed(values: list[JsonValue]) -> SilverDataset:
+    return _make_silver([{"k": v, "row": str(i)} for i, v in enumerate(values)])
+
+
+def test_non_intersecting_duplicates_on_both_sides_are_not_a_violation() -> None:
+    # Acceptance: left A,A / right B,B are non-unique on both sides but never meet.
+    # The pre-#698 structural hint warned here and on_duplicate_key="fail" refused it.
+    join = JoinSpec(
+        left="l",
+        right="r",
+        left_key="k",
+        right_key="k",
+        on_duplicate_key="fail",
+        cardinality="one_to_one",
+    )
+
+    package, stats = build_composed_gold_package(
+        left_silver=_keyed(["A", "A"]),
+        right_silver=_keyed(["B", "B"]),
+        join=join,
+        dataset_name="combined",
+    )
+
+    assert stats.duplicate_key_warning is False
+    assert stats.observed_cardinality == "one_to_one"
+    assert stats.output_row_count == 0
+    assert package.table.height == 0
+    assert stats.left_unmatched_ratio == 1.0
+    assert stats.right_unmatched_ratio == 1.0
+
+
+def test_key_repeated_on_both_sides_violates_many_to_one() -> None:
+    # Acceptance: one key repeated on both sides -> violation for many_to_one.
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k", cardinality="many_to_one")
+
+    with pytest.raises(CompositionError, match="declared cardinality 'many_to_one'") as exc_info:
+        build_composed_gold_package(
+            left_silver=_keyed(["A", "A", "C"]),
+            right_silver=_keyed(["A", "A"]),
+            join=join,
+            dataset_name="combined",
+        )
+    message = str(exc_info.value)
+    assert "intersecting keys are 'many_to_many'" in message
+    assert "k='A'" in message  # the offending key, with its counts
+    assert "2 left rows x 2 right rows" in message
+
+
+def test_key_repeated_on_both_sides_is_allowed_for_many_to_many() -> None:
+    # Acceptance: the same input is allowed when many_to_many is declared.
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k", cardinality="many_to_many")
+
+    package, stats = build_composed_gold_package(
+        left_silver=_keyed(["A", "A", "C"]),
+        right_silver=_keyed(["A", "A"]),
+        join=join,
+        dataset_name="combined",
+    )
+
+    assert stats.observed_cardinality == "many_to_many"
+    assert stats.duplicate_key_warning is True  # a real amplification, still reported
+    assert stats.output_row_count == 4
+    assert package.table.height == 4
+
+
+def test_many_to_one_fails_when_right_side_repeats_an_intersecting_key() -> None:
+    # Acceptance: declared many_to_one, right side not unique on an intersecting key.
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k", cardinality="many_to_one")
+
+    with pytest.raises(CompositionError, match="intersecting keys are 'one_to_many'"):
+        build_composed_gold_package(
+            left_silver=_keyed(["A", "B"]),
+            right_silver=_keyed(["A", "A", "B"]),
+            join=join,
+            dataset_name="combined",
+        )
+
+
+def test_many_to_one_passes_when_only_the_left_repeats() -> None:
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k", cardinality="many_to_one")
+
+    _, stats = build_composed_gold_package(
+        left_silver=_keyed(["A", "A", "B"]),
+        # "Z" repeats on the right but has no partner on the left, so it is not a violation.
+        right_silver=_keyed(["A", "B", "Z", "Z"]),
+        join=join,
+        dataset_name="combined",
+    )
+
+    assert stats.observed_cardinality == "many_to_one"
+    assert stats.output_row_count == 3
+
+
+@pytest.mark.parametrize(
+    ("left_values", "right_values", "observed"),
+    [
+        (["A", "A"], ["A"], "many_to_one"),
+        (["A"], ["A", "A"], "one_to_many"),
+    ],
+)
+def test_one_to_one_fails_when_either_side_is_not_unique(
+    left_values: list[JsonValue], right_values: list[JsonValue], observed: str
+) -> None:
+    # Acceptance: declared one_to_one with either side non-unique -> fail.
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k", cardinality="one_to_one")
+
+    with pytest.raises(CompositionError, match=f"intersecting keys are '{observed}'"):
+        build_composed_gold_package(
+            left_silver=_keyed(left_values),
+            right_silver=_keyed(right_values),
+            join=join,
+            dataset_name="combined",
+        )
+
+
+def test_composite_key_unique_as_a_pair_is_not_a_violation() -> None:
+    # Acceptance: each column alone repeats, but every (region_id, month) pair is unique.
+    pairs = [("r1", "m1"), ("r1", "m2"), ("r2", "m1")]
+    left = _make_silver(
+        [{"region_id": r, "month": m, "trade": str(i)} for i, (r, m) in enumerate(pairs)]
+    )
+    right = _make_silver([{"rid": r, "mon": m, "pop": str(i)} for i, (r, m) in enumerate(pairs)])
+    join = JoinSpec(
+        left="l",
+        right="r",
+        keys=(("region_id", "rid"), ("month", "mon")),
+        cardinality="one_to_one",
+        on_duplicate_key="fail",
+    )
+
+    package, stats = build_composed_gold_package(
+        left_silver=left, right_silver=right, join=join, dataset_name="combined"
+    )
+
+    assert stats.observed_cardinality == "one_to_one"
+    assert stats.duplicate_key_warning is False
+    assert stats.keys == (("region_id", "rid"), ("month", "mon"))
+    assert stats.left_distinct_key_count == 3
+    assert stats.output_row_count == 3
+    assert package.table.height == 3
+
+
+def test_composite_key_checks_dtype_per_pair() -> None:
+    left = _make_silver([{"a": "1", "b": 1}])
+    right = _make_silver([{"a": "1", "b": "1"}])
+    join = JoinSpec(left="l", right="r", keys=(("a", "a"), ("b", "b")))
+
+    with pytest.raises(CompositionError, match="dtype mismatch"):
+        build_composed_gold_package(
+            left_silver=left, right_silver=right, join=join, dataset_name="combined"
+        )
+
+
+def test_composite_key_reports_missing_column_by_index() -> None:
+    left = _make_silver([{"a": "1", "b": "1"}])
+    right = _make_silver([{"a": "1"}])
+    join = JoinSpec(left="l", right="r", keys=(("a", "a"), ("b", "b")))
+
+    with pytest.raises(CompositionError, match=r"composition\.join\.keys\[1\]\.right"):
+        build_composed_gold_package(
+            left_silver=left, right_silver=right, join=join, dataset_name="combined"
+        )
+
+
+def test_null_key_rows_are_counted_in_stats() -> None:
+    # Acceptance: a null key that drops rows from an inner join is reported, not hidden.
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k")
+
+    package, stats = build_composed_gold_package(
+        left_silver=_keyed(["A", None, None]),
+        right_silver=_keyed(["A", None]),
+        join=join,
+        dataset_name="combined",
+    )
+
+    assert stats.left_null_key_rows == 2
+    assert stats.right_null_key_rows == 1
+    assert stats.output_row_count == 1  # null never matches null
+    assert package.table.height == 1
+    assert stats.left_unmatched_ratio == pytest.approx(2 / 3)
+    assert stats.right_unmatched_ratio == pytest.approx(1 / 2)
+
+
+@pytest.mark.parametrize(
+    ("left_values", "right_values", "side"),
+    [
+        (["A", None], ["A"], "left"),
+        (["A"], ["A", None], "right"),
+    ],
+)
+def test_null_key_fails_when_on_null_key_is_fail(
+    left_values: list[JsonValue], right_values: list[JsonValue], side: str
+) -> None:
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k", on_null_key="fail")
+
+    with pytest.raises(CompositionError, match=f"1 {side} row"):
+        build_composed_gold_package(
+            left_silver=_keyed(left_values),
+            right_silver=_keyed(right_values),
+            join=join,
+            dataset_name="combined",
+        )
+
+
+def test_null_in_any_composite_key_column_counts_as_a_null_key() -> None:
+    left = _make_silver([{"a": "1", "b": "x"}, {"a": "1", "b": None}, {"a": None, "b": "x"}])
+    right = _make_silver([{"a": "1", "b": "x"}])
+    join = JoinSpec(left="l", right="r", keys=(("a", "a"), ("b", "b")))
+
+    _, stats = build_composed_gold_package(
+        left_silver=left, right_silver=right, join=join, dataset_name="combined"
+    )
+
+    assert stats.left_null_key_rows == 2
+    assert stats.output_row_count == 1
+
+
+def test_expansion_and_unmatched_ratios() -> None:
+    # left  A,A,B,C,null  / right A,B,B,D
+    # intersecting: A (2 left x 1 right), B (1 left x 2 right) -> 2 + 2 = 4 output rows.
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k")
+
+    _, stats = build_composed_gold_package(
+        left_silver=_keyed(["A", "A", "B", "C", None]),
+        right_silver=_keyed(["A", "B", "B", "D"]),
+        join=join,
+        dataset_name="combined",
+    )
+
+    assert stats.output_row_count == 4
+    assert stats.expansion_ratio == pytest.approx(4 / 5)
+    assert stats.left_unmatched_ratio == pytest.approx(2 / 5)  # C and the null row
+    assert stats.right_unmatched_ratio == pytest.approx(1 / 4)  # D
+    assert stats.left_null_key_rows == 1
+    assert stats.right_null_key_rows == 0
+    assert stats.left_distinct_key_count == 3
+    assert stats.right_distinct_key_count == 3
+    # Each side repeats a key, but no key repeats on both: no many-to-many amplification.
+    assert stats.observed_cardinality == "many_to_many"
+    assert stats.duplicate_key_warning is False
+
+
+def test_expansion_ratio_is_none_for_an_empty_left_side() -> None:
+    template = _make_silver([{"k": "A"}])
+    empty_left = SilverDataset(
+        table=template.table.clear(),
+        schema=template.schema,
+        statistics=template.statistics,
+        preview=template.preview,
+        validation=template.validation,
+        source_bronze="x",
+    )
+    join = JoinSpec(left="l", right="r", left_key="k", right_key="k")
+
+    _, stats = build_composed_gold_package(
+        left_silver=empty_left,
+        right_silver=_make_silver([{"k": "A"}]),
+        join=join,
+        dataset_name="combined",
+    )
+
+    assert stats.expansion_ratio is None
+    assert stats.left_unmatched_ratio == 0.0
+    assert stats.right_unmatched_ratio == 1.0
+
+
+def test_join_spec_normalises_the_shorthand_and_the_keys_form() -> None:
+    shorthand = JoinSpec(left="l", right="r", left_key="a", right_key="b")
+    assert shorthand.keys == (("a", "b"),)
+
+    composite = JoinSpec(left="l", right="r", keys=(("a", "b"), ("c", "d")))
+    assert (composite.left_key, composite.right_key) == ("a", "b")
+
+    with pytest.raises(ValueError, match="not both"):
+        JoinSpec(left="l", right="r", left_key="x", right_key="y", keys=(("a", "b"),))
+
+
+def _spec_with_join(join: object) -> dict[str, object]:
+    return {
+        "dataset_id": "d",
+        "title": "t",
+        "description": "desc",
+        "sources": [{"provider": "datago", "dataset": "sales", "alias": "sales"}],
+        "exports": [{"kind": "jsonl", "output_path": "data.jsonl"}],
+        "composition": {"name": "combined", "join": join},
+    }
+
+
+def test_parse_spec_reads_composite_keys_and_cardinality() -> None:
+    spec = parse_spec(
+        _spec_with_join(
+            {
+                "left": "trade",
+                "right": "population",
+                "keys": [
+                    {"left": "region_id", "right": "region_id"},
+                    {"left": "month", "right": "ym"},
+                ],
+                "cardinality": "many_to_one",
+                "on_null_key": "fail",
+            }
+        )
+    )
+
+    assert spec.composition is not None
+    join = spec.composition.join
+    assert join.keys == (("region_id", "region_id"), ("month", "ym"))
+    assert join.cardinality == "many_to_one"
+    assert join.on_null_key == "fail"
+    assert (join.left_key, join.right_key) == ("region_id", "region_id")
+
+
+def test_parse_spec_join_defaults_for_new_fields() -> None:
+    spec = parse_spec(
+        _spec_with_join({"left": "a", "right": "b", "left_key": "k", "right_key": "k"})
+    )
+
+    assert spec.composition is not None
+    assert spec.composition.join.cardinality is None
+    assert spec.composition.join.on_null_key == "warn"
+    assert spec.composition.join.keys == (("k", "k"),)
+
+
+def test_parse_spec_rejects_both_key_forms() -> None:
+    join: dict[str, object] = {
+        "left": "a",
+        "right": "b",
+        "left_key": "k",
+        "right_key": "k",
+        "keys": [{"left": "k", "right": "k"}],
+    }
+    with pytest.raises(Exception, match="either keys or left_key/right_key, not both"):
+        parse_spec(_spec_with_join(join))
+
+
+def test_parse_spec_rejects_neither_key_form() -> None:
+    with pytest.raises(Exception, match="requires keys"):
+        parse_spec(_spec_with_join({"left": "a", "right": "b"}))
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        [],
+        "k",
+        [{"left": "k"}],
+        [{"left": "k", "right": "k", "extra": "x"}],
+    ],
+)
+def test_parse_spec_rejects_malformed_keys(keys: object) -> None:
+    with pytest.raises(Exception, match=r"composition\.join\.keys"):
+        parse_spec(_spec_with_join({"left": "a", "right": "b", "keys": keys}))
+
+
+@pytest.mark.parametrize("field", ["cardinality", "on_null_key"])
+def test_parse_spec_rejects_unknown_698_vocabulary(field: str) -> None:
+    join: dict[str, object] = {"left": "a", "right": "b", "left_key": "k", "right_key": "k"}
+    join[field] = "bogus"
+    with pytest.raises(Exception, match=f"composition.join.{field}"):
+        parse_spec(_spec_with_join(join))
+
+
+def test_canonical_mapping_round_trips_composite_keys() -> None:
+    join = JoinSpec(
+        left="sales",
+        right="region",
+        keys=(("region_id", "id"), ("month", "ym")),
+        cardinality="many_to_one",
+        on_null_key="fail",
+    )
+    spec = _spec(CompositionSpec(name="combined", join=join))
+
+    mapping = canonical_spec_mapping(spec)
+    composition = cast(dict[str, JsonValue], mapping["composition"])
+    assert composition["join"] == {
+        "left": "sales",
+        "right": "region",
+        "keys": [{"left": "region_id", "right": "id"}, {"left": "month", "right": "ym"}],
+        "type": "inner",
+        "on_duplicate_key": "warn",
+        "cardinality": "many_to_one",
+        "on_null_key": "fail",
+    }
+    reparsed = parse_spec(_spec_with_join(composition["join"]))
+    assert reparsed.composition is not None
+    assert reparsed.composition.join == join
+
+
+def test_validate_spec_rejects_blank_composite_key_column() -> None:
+    spec = _spec(
+        CompositionSpec(
+            name="combined",
+            join=JoinSpec(left="sales", right="region", keys=(("region_id", "id"), ("", "ym"))),
+        )
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        validate_spec(spec)
+    problems = [str(p) for p in (exc_info.value.structured_problems or [])]
+    assert any("composition.join.keys[1].left" in p for p in problems)
+
+
+def test_validate_spec_rejects_repeated_key_column() -> None:
+    spec = _spec(
+        CompositionSpec(
+            name="combined",
+            join=JoinSpec(left="sales", right="region", keys=(("a", "x"), ("a", "y"))),
+        )
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        validate_spec(spec)
+    codes = [p.code for p in (exc_info.value.structured_problems or [])]
+    assert "duplicate_join_key_column" in codes
+
+
+# --------------------------------------------------------------------------
 # pipeline.orchestrator._run_composition: skip/failed branches
 # --------------------------------------------------------------------------
 
@@ -437,6 +856,15 @@ def test_run_build_produces_combined_gold_dataset(tmp_path: Path) -> None:
     assert composition_manifest["output_row_count"] == 2
     assert composition_manifest["left"] == "sales"
     assert composition_manifest["right"] == "region"
+    # #698 fields reach the manifest.
+    assert composition_manifest["keys"] == [{"left": "region_id", "right": "id"}]
+    assert composition_manifest["cardinality"] is None
+    assert composition_manifest["observed_cardinality"] == "one_to_one"
+    assert composition_manifest["left_unmatched_ratio"] == pytest.approx(1 / 3)
+    assert composition_manifest["right_unmatched_ratio"] == 0.0
+    assert composition_manifest["expansion_ratio"] == pytest.approx(2 / 3)
+    assert composition_manifest["left_null_key_rows"] == 0
+    assert composition_manifest["right_null_key_rows"] == 0
 
     # provenance individually exposed via source_refs (investigation result)
     # — appears two lines in card.

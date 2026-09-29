@@ -902,22 +902,30 @@ def _composition_problems(spec: BuildSpec) -> list[ValidationProblem]:
                 )
             )
 
-    if not join.left_key.strip():
-        problems.append(
-            _p(
-                "empty_field",
-                "composition.join.left_key",
-                "composition.join.left_key must be a non-empty string",
+    # A single pair reports under the left_key/right_key shorthand; a composite key
+    # reports each pair by index (#698).
+    single = len(join.keys) == 1
+    for index, (left_column, right_column) in enumerate(join.keys):
+        for side_name, column in (("left", left_column), ("right", right_column)):
+            if column.strip():
+                continue
+            path = (
+                f"composition.join.{side_name}_key"
+                if single
+                else f"composition.join.keys[{index}].{side_name}"
             )
-        )
-    if not join.right_key.strip():
-        problems.append(
-            _p(
-                "empty_field",
-                "composition.join.right_key",
-                "composition.join.right_key must be a non-empty string",
+            problems.append(_p("empty_field", path, f"{path} must be a non-empty string"))
+    for side_index, side_name in ((0, "left"), (1, "right")):
+        columns = [pair[side_index] for pair in join.keys]
+        repeated = sorted({c for c in columns if columns.count(c) > 1})
+        if repeated:
+            problems.append(
+                _p(
+                    "duplicate_join_key_column",
+                    "composition.join.keys",
+                    f"composition.join.keys names {side_name} column(s) {repeated} more than once",
+                )
             )
-        )
 
     return problems
 

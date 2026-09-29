@@ -487,16 +487,40 @@ composition:
     on_duplicate_key: warn
 ```
 
+복합 key와 cardinality 선언(#698):
+
+```yaml
+composition:
+  name: trade_with_population
+  join:
+    left: trade
+    right: population
+    keys:
+      - left: region_id
+        right: region_id
+      - left: month
+        right: month
+    cardinality: many_to_one
+    on_null_key: warn
+```
+
 | 필드 | 타입 | 필수 | 설명 |
 | :--- | :--- | :--- | :--- |
 | `name` | string | 예 | 결합 결과 Gold dataset 이름. 다른 source의 output key(alias 또는 `provider.dataset`)와 겹칠 수 없습니다. |
 | `join` | object | 예 | 아래 join 계약 |
 | `join.left` | string | 예 | 왼쪽 source의 alias (`sources[].alias` 참조) |
 | `join.right` | string | 예 | 오른쪽 source의 alias |
-| `join.left_key` | string | 예 | 왼쪽 테이블의 join key 컬럼명 |
-| `join.right_key` | string | 예 | 오른쪽 테이블의 join key 컬럼명 |
+| `join.keys` | list | `left_key`/`right_key`와 택일 | 복합 join key. `{left, right}` 컬럼 쌍의 목록이며, 모든 쌍이 같을 때 행이 매칭됩니다(#698). |
+| `join.left_key` | string | `keys`와 택일 | 왼쪽 테이블의 join key 컬럼명 (단일 쌍 축약형) |
+| `join.right_key` | string | `keys`와 택일 | 오른쪽 테이블의 join key 컬럼명 (단일 쌍 축약형) |
 | `join.type` | string | 아니오 | `inner`(기본) \| `left` |
 | `join.on_duplicate_key` | string | 아니오 | `warn`(기본) \| `fail` |
+| `join.cardinality` | string | 아니오 | `one_to_one` \| `one_to_many` \| `many_to_one` \| `many_to_many`. 생략하면 선언 없음(검증하지 않음) (#698) |
+| `join.on_null_key` | string | 아니오 | `warn`(기본) \| `fail`. key 컬럼 중 하나라도 null인 행의 처리 (#698) |
+
+`keys`와 `left_key`/`right_key`는 **정확히 하나만** 써야 합니다. 둘 다 쓰거나
+둘 다 없으면 스펙 로드가 실패합니다. `left_key`/`right_key`는 `keys`에 쌍이 하나인
+경우의 축약형이며, 기존 스펙은 그대로 동작합니다.
 
 **alias 필수/중복 규칙**: `composition.join.left`/`right`가 참조하는 두
 source는 반드시 비어 있지 않은 `alias`를 선언해야 하며, `composition`을
@@ -513,10 +537,33 @@ join key 컬럼의 **존재 여부와 dtype 호환성**은 두 source가 각각 
 맞추려면 `sources[].schema.casts`(§4.4, #437)로 Silver 단계에서 명시적으로
 정규화하세요.
 
-**duplicate-key row explosion guard**: 두 source가 동일 값으로 join key가
-모두 중복이면(many-to-many) 결과 행이 곱셈으로 폭증할 수 있습니다. 기본값
-`on_duplicate_key: warn`은 결과를 만들고 manifest에 경고와 함께 정확한 행 수/
-distinct key 수를 남기며, `fail`은 Gold 진입 전에 composition을 실패 처리합니다.
+**교집합 key 규칙(#698)**: cardinality와 중복 key는 **양쪽에 모두 나타나는
+key(교집합)**만으로 판정합니다. 한쪽에만 있는 key는 몇 번 반복되든 결과 행을
+곱할 수 없기 때문입니다. 예를 들어 왼쪽 key가 `A, A`, 오른쪽이 `B, B`이면 양쪽
+모두 non-unique이지만 교집합이 없으므로 위반도 경고도 아닙니다. 복합 key는
+컬럼 튜플 단위로 판정합니다 — 각 컬럼만 보면 중복이어도 쌍이 유일하면 유일한
+key입니다.
+
+**cardinality 검증**: 교집합 key마다 양쪽 행 수를 세어, 어떤 key든 왼쪽에서
+반복되면 왼쪽이 "many", 오른쪽에서 반복되면 오른쪽이 "many"인
+`observed_cardinality`를 얻습니다(왼쪽→오른쪽으로 읽습니다: `many_to_one`은
+왼쪽은 반복 가능, 오른쪽은 유일). 선언된 `cardinality`가 관측값을 허용하지
+않으면 composition이 실패하고, 오류 메시지에 선언값·관측값과 가장 많은 행을
+곱하는 key 하나의 좌우 행 수가 담깁니다. "many"는 반복을 허용할 뿐 요구하지
+않습니다 — `many_to_many`는 모든 관측값을, `one_to_one`은 `one_to_one`만
+허용합니다.
+
+**duplicate-key row explosion guard**: 교집합 key 중 하나라도 **양쪽 모두에서**
+반복되면(many-to-many) 결과 행이 곱셈으로 폭증하므로 `duplicate_key_warning`이
+켜집니다. 기본값 `on_duplicate_key: warn`은 결과를 만들고 manifest에 경고와
+함께 정확한 행 수/distinct key 수를 남기며, `fail`은 Gold 진입 전에
+composition을 실패 처리합니다. #698 이전에는 양쪽이 각각 non-unique이기만
+하면(교집합이 없어도) 경고했습니다.
+
+**null key**: key 컬럼 중 하나라도 null인 행은 어떤 행과도 매칭되지 않으므로
+inner join에서 조용히 빠집니다. 이 행 수를 `left_null_key_rows`/
+`right_null_key_rows`로 manifest에 기록하고 경고 로그를 남기며(`on_null_key:
+warn`), `on_null_key: fail`이면 composition을 실패시킵니다.
 
 **참조된 source가 실패한 경우**: `composition.join`이 참조하는 source 중
 하나라도 Bronze/Silver를 통과하지 못하면 join을 시도하지 않고
@@ -524,7 +571,11 @@ distinct key 수를 남기며, `fail`은 Gold 진입 전에 composition을 실�
 
 **provenance**: manifest의 `composition` 필드(`CompositionProvenance`)에
 join 조건(source/key/type)과 좌우 원본 행 수·distinct key 수·결과 행 수가
-그대로 기록되어 추적 가능합니다. `POST /build` 응답에도 `outcomes`(소스별)와
+그대로 기록되어 추적 가능합니다. #698부터는 `keys`, 선언된 `cardinality`,
+`observed_cardinality`, `left_unmatched_ratio`/`right_unmatched_ratio`(상대편에
+매칭되는 key가 없는 행 — null key 행 포함 — 의 비율, 빈 쪽은 0.0),
+`expansion_ratio`(결과 행 수 / 왼쪽 행 수, 왼쪽이 비면 null),
+`left_null_key_rows`/`right_null_key_rows`도 기록합니다. `POST /build` 응답에도 `outcomes`(소스별)와
 별도로 `composition`(결합 결과) 키가 노출됩니다.
 
 ## 5. 검증 규칙

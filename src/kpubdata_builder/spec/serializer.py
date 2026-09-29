@@ -233,17 +233,22 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
     composition: JsonValue = None
     if spec.composition is not None:
         join = spec.composition.join
-        composition = {
-            "name": spec.composition.name,
-            "join": {
-                "left": join.left,
-                "right": join.right,
-                "left_key": join.left_key,
-                "right_key": join.right_key,
-                "type": join.type,
-                "on_duplicate_key": join.on_duplicate_key,
-            },
-        }
+        join_mapping: dict[str, JsonValue] = {"left": join.left, "right": join.right}
+        # A single-pair key keeps the left_key/right_key shorthand and the #698
+        # fields appear only when declared, so a spec written before #698 keeps its
+        # spec_digest (same reason as #640).
+        if len(join.keys) == 1:
+            join_mapping["left_key"] = join.left_key
+            join_mapping["right_key"] = join.right_key
+        else:
+            join_mapping["keys"] = [{"left": lk, "right": rk} for lk, rk in join.keys]
+        join_mapping["type"] = join.type
+        join_mapping["on_duplicate_key"] = join.on_duplicate_key
+        if join.cardinality is not None:
+            join_mapping["cardinality"] = join.cardinality
+        if join.on_null_key != "warn":
+            join_mapping["on_null_key"] = join.on_null_key
+        composition = {"name": spec.composition.name, "join": join_mapping}
 
     mapping: dict[str, JsonValue] = {
         "dataset_id": spec.dataset_id,
