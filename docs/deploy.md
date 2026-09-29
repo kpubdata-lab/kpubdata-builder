@@ -1,6 +1,6 @@
 # 배포 가이드
 
-Engine HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포·인증 스토리. 본 문서는 [ADR 0006](./adrs/0006-service-auth-and-deployment.md)(인증·배포), ADR 0009(사용자 인증, PR #398 — [ADR 0015](./adrs/0015-email-password-oidc-idp-keycloak.md)로 대체됨)의 운영 가이드를 통합한다.
+Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포·인증 스토리. 본 문서는 [ADR 0006](./adrs/0006-service-auth-and-deployment.md)(인증·배포), ADR 0009(사용자 인증, PR #398 — [ADR 0015](./adrs/0015-email-password-oidc-idp-keycloak.md)로 대체됨)의 운영 가이드를 통합한다.
 
 > **상태**: ADR 0009는 제안됨(Proposed). 인증(Bearer) 구현은 B3(#385)/B4(#386) 진행 중이며, 본 문서의 Bearer 관련 절은 구현 완료 후 적용된다. 컨테이너 배포(fail-closed, HEALTHCHECK)는 이미 구현되었다.
 
@@ -8,7 +8,7 @@ Engine HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포·
 
 **Builder는 공개 인터넷 인그레스를 갖지 않는다** (ADR 0009 결정 3). Studio가 같은 네트워크/VPC에서 호출하는 구조가 기본형이다. 공격면을 최소화하고, 허용 목록을 심층 방어로 둔다.
 
-- ACA(Azure Container Apps) / K8s에서 Engine 서비스를 클러스터 내부 서비스로 노출.
+- ACA(Azure Container Apps) / K8s에서 Builder 서비스를 클러스터 내부 서비스로 노출.
 - Studio(정적 SPA)는 같은 네트워크에서 Builder를 호출. 외부 인터넷은 Studio 프론트만 접근.
 
 ## 2. 인증 — 두 경로 병행
@@ -32,14 +32,14 @@ Engine HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포·
    - 실배포: `https://<studio-host>`
 4. Client ID는 `VITE_GOOGLE_CLIENT_ID`로 Studio 빌드에 주입. **Client ID는 public 값**이라 번들 포함 무방.
 
-> **절대 금지**: Engine API 키(`KPUBDATA_BUILDER_API_KEY`)를 `VITE_*` 환경변수로 Studio에 주입하지 말 것. `VITE_*`는 빌드 타임에 번들에 **평문으로 박힌다**. Studio는 토큰을 발급받지 않고(서버가 없으므로) Builder가 직접 Bearer를 검증한다 (ADR 0009).
+> **절대 금지**: Builder API 키(`KPUBDATA_BUILDER_API_KEY`)를 `VITE_*` 환경변수로 Studio에 주입하지 말 것. `VITE_*`는 빌드 타임에 번들에 **평문으로 박힌다**. Studio는 토큰을 발급받지 않고(서버가 없으므로) Builder가 직접 Bearer를 검증한다 (ADR 0009).
 
-## 4. 오리진 정합 — Google Console ↔ Engine CORS
+## 4. 오리진 정합 — Google Console ↔ Builder CORS
 
 **같은 오리진 목록**을 양쪽에 등록해야 한다:
 
 - **Google Console**: Authorized JavaScript origins (§3)
-- **Engine**: `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 환경변수 (CORS default-deny, `service/http.py`)
+- **Builder**: `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 환경변수 (CORS default-deny, `service/http.py`)
 
 두 값이 어긋나면 증상이 **CORS 오류**로 나타나 원인 추적이 어렵다. 로컬과 실배포 오리진을 모두 양쪽에 등록할 것.
 
@@ -98,7 +98,7 @@ docker run --rm -p 8000:8000 \
 
 ## 8. 동시성·풀·백프레셔
 
-단일 Engine process 안에는 역할이 다른 실행 제한이 세 개 있다. 숫자가 같더라도 하나의
+단일 Builder process 안에는 역할이 다른 실행 제한이 세 개 있다. 숫자가 같더라도 하나의
 공유 pool이 아니며 서로 대신하지 않는다.
 
 | 계층 | 구현 | 기본값 | 포화 시 동작 |
@@ -218,7 +218,7 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 
 ## 12. OCI 단일 VM 프로덕션 배포 (ADR 0017)
 
-풀스택(Studio 프론트엔드 + Engine 백엔드)을 OCI에 배포하는 참조 토폴로지는
+풀스택(Studio 프론트엔드 + Builder 백엔드)을 OCI에 배포하는 참조 토폴로지는
 [ADR 0017](./adrs/0017-fullstack-oci-deployment.md)에 정의되어 있다. 핵심은 our-tax의
 split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM + `/data` 볼륨**만
 쓴다는 점이다 — Builder는 매니페스트(source of truth) + 파생 SQLite 인덱스를 파일로
@@ -227,13 +227,13 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 | 구성 요소 | 호스팅 | 산출물 |
 | :--- | :--- | :--- |
 | Studio(프론트엔드) | Cloudflare Pages 정적 배포 | studio 저장소 (`VITE_BUILDER_API_URL`=app-01) |
-| Engine(백엔드) | OCI `app-01` Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
+| Builder(백엔드) | OCI `app-01` Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
 | 상태 | `app-01` 로컬 블록 볼륨 `/data` | `builder-data` 볼륨 (네트워크 FS 금지, §6) |
 | CI/CD | GitHub Actions → GHCR → SSH | `.github/workflows/deploy.yml` |
 
 배포 산출물:
 
-- `docker-compose.prod.app.yml` — Engine + (opt-in) Caddy 스택. migration/ETL/DB 없음.
+- `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy 스택. migration/ETL/DB 없음.
 - `ops/caddy/Caddyfile` — Cloudflare → Caddy → `builder:8000` 리버스 프록시.
 - `.env.app.example` — VM-local `.env` 템플릿(placeholder secret만). `.env`는 커밋 금지.
 - `.github/workflows/deploy.yml` — 이미지 빌드/푸시 후 `app-01`에 SSH 배포 + `/healthz` 체크.

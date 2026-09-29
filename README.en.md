@@ -1,8 +1,8 @@
-# KPubData Engine
+# KPubData Builder
 
-**KPubData Engine is the execution and warehouse engine that turns public data into verifiable table snapshots.**
+**KPubData Builder is a reproducible dataset build and warehouse layer built on KPubData.**
 
-> The KPubData family: [Core](https://github.com/yeongseon/kpubdata) (access layer) → **Engine** (execution and warehouse) → [Studio](https://github.com/yeongseon/kpubdata-studio) (visual workspace). The product is KPubData Engine; the repository, the Python package and the CLI keep the name `kpubdata-builder`.
+> The KPubData family: [KPubData](https://github.com/yeongseon/kpubdata) is a standalone public-data access SDK, **KPubData Builder** is a downstream consumer of its public API, and [KPubData Studio](https://github.com/yeongseon/kpubdata-studio) is a visual workspace for Builder. Dependencies run one way: Studio → Builder → KPubData. The repository, the Python package and the CLI are named `kpubdata-builder`.
 
 It sits atop [kpubdata](https://github.com/yeongseon/kpubdata) and runs a Medallion pipeline: Bronze (raw) → Silver (typed/normalized) → Gold (exportable). BuildSpec is the declarative contract that ensures reproducibility — the same spec produces the same output.
 
@@ -100,15 +100,15 @@ build/{run_id}/
 
 ## Supported data
 
-KPubData Engine uses all Providers and Datasets that kpubdata supports. See [kpubdata's SUPPORTED_DATA.md](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md) for coverage.
+KPubData Builder uses all Providers and Datasets that kpubdata supports. See [kpubdata's SUPPORTED_DATA.md](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md) for coverage.
 
 ## KPubData Product Family
 
 | Package | Role |
 |---|---|
-| [kpubdata](https://github.com/yeongseon/kpubdata) | Public data access + normalization core |
-| **kpubdata-builder** (KPubData Engine) | Raw data → validated, distributable datasets and table snapshots |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | Dataset workbench UI |
+| [kpubdata](https://github.com/yeongseon/kpubdata) | Public data access and normalization SDK (usable on its own) |
+| **kpubdata-builder** (KPubData Builder) | Builds reproducible datasets and table snapshots with KPubData |
+| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | Visual workspace for Builder |
 
 ---
 
