@@ -65,7 +65,8 @@ def test_a_floor_that_is_not_released_fails_rather_than_shrinking() -> None:
 
 def test_an_empty_range_fails() -> None:
     with pytest.raises(SystemExit, match="no kpubdata release"):
-        matrix.supported_releases({"0.6.0": _FILE}, SpecifierSet("<0.7"))
+        # No floor in the range, and the only release sits above it.
+        matrix.supported_releases({"0.7.0": _FILE}, SpecifierSet("<0.7"))
 
 
 def test_the_range_is_read_from_pyproject() -> None:
