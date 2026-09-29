@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import (
     admin,
+    analyses,
     artifacts,
     builds,
     core,
@@ -31,6 +32,7 @@ ROUTE_ADAPTERS: tuple[RouteAdapter, ...] = (
     providers.route,
     query.route,
     warehouse.route,
+    analyses.route,
     datasets.route,
     builds.route,
     events.route,

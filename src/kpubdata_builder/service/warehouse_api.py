@@ -39,6 +39,7 @@ from kpubdata_builder.warehouse import (
     TableCatalog,
     TableNotFound,
     TableRow,
+    WarehouseError,
 )
 
 _ALLOWED_FIELDS = {"table", "snapshot", "sql", "limit"}
@@ -117,13 +118,33 @@ class WarehouseApiService:
     def query(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
     ) -> ServiceResponse:
+        try:
+            name, snapshot, sql, limit = parse_table_query(body)
+        except ValueError as exc:
+            return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
+        return self.run(name, snapshot, sql, limit=limit, principal=principal)
+
+    def run(
+        self,
+        name: str,
+        snapshot: str,
+        sql: str,
+        *,
+        limit: int,
+        principal: Principal,
+        while_pinned: Callable[[TableCatalog, str], JsonValue] | None = None,
+    ) -> ServiceResponse:
+        """Pin the snapshot, run ``sql`` against it, release the lease.
+
+        ``while_pinned`` runs after a successful query and before the lease is released,
+        with the catalog and the snapshot id; its return value is added to the body as
+        ``pinned``. A saved analysis places its hold there (#783), so garbage collection
+        has no window between the read and the hold. A ``WarehouseError`` it raises
+        answers 409.
+        """
         catalog = self._table_catalog()
         if catalog is None:
             return _not_configured()
-        try:
-            name, snapshot, sql, limit = _parse(body)
-        except ValueError as exc:
-            return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
         table = self._find(catalog, name, principal)
         if table is None:
             return _table_not_found(name)
@@ -134,6 +155,7 @@ class WarehouseApiService:
             return ServiceResponse(404, {"error": str(exc), "code": "snapshot_not_found"})
         except SnapshotStateError as exc:
             return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
+        pinned: JsonValue = None
         try:
             snapshot_dir = SnapshotLayout(catalog.root, table.id).snapshot_dir(pin.snapshot_id)
             table_path = snapshot_dir / _TABLE_FILE
@@ -151,22 +173,27 @@ class WarehouseApiService:
                     },
                 )
             response = execute_query(self._engine, table_path, sql, limit=limit)
+            if response.status_code != 200:
+                return response
+            if while_pinned is not None:
+                try:
+                    pinned = while_pinned(catalog, pin.snapshot_id)
+                except WarehouseError as exc:
+                    return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
         finally:
             catalog.release(pin.lease_id)
-        if response.status_code != 200:
-            return response
-        return ServiceResponse(
-            200,
-            {
-                "snapshot": {
-                    "table_id": table.id,
-                    "logical_name": table.logical_name,
-                    "snapshot_id": pin.snapshot_id,
-                    "revision": pin.revision,
-                },
-                "result": response.body,
+        body: dict[str, JsonValue] = {
+            "snapshot": {
+                "table_id": table.id,
+                "logical_name": table.logical_name,
+                "snapshot_id": pin.snapshot_id,
+                "revision": pin.revision,
             },
-        )
+            "result": response.body,
+        }
+        if while_pinned is not None:
+            body["pinned"] = pinned
+        return ServiceResponse(200, body)
 
 
 def _pin(catalog: TableCatalog, table: TableRow, snapshot: str) -> PinnedSnapshot:
@@ -180,11 +207,13 @@ def _pin(catalog: TableCatalog, table: TableRow, snapshot: str) -> PinnedSnapsho
     return catalog.pin(snapshot)
 
 
-def _parse(body: Mapping[str, JsonValue] | None) -> tuple[str, str, str, int]:
-    """Validate a ``POST /warehouse/query`` body, rejecting unknown fields."""
+def parse_table_query(
+    body: Mapping[str, JsonValue] | None, *, extra: frozenset[str] = frozenset()
+) -> tuple[str, str, str, int]:
+    """Validate a table query body, rejecting unknown fields other than ``extra``."""
     if body is None:
         raise ValueError("request body is required")
-    if not set(body).issubset(_ALLOWED_FIELDS):
+    if not set(body).issubset(_ALLOWED_FIELDS | extra):
         raise ValueError("request contains unknown fields")
     table = body.get("table")
     snapshot = body.get("snapshot", "current")
@@ -201,4 +230,4 @@ def _parse(body: Mapping[str, JsonValue] | None) -> tuple[str, str, str, int]:
     return table, snapshot, sql, limit
 
 
-__all__ = ["WarehouseApiService"]
+__all__ = ["WarehouseApiService", "parse_table_query"]
