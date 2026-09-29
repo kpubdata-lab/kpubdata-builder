@@ -94,6 +94,12 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
         license_obj = data.get("license")
         if license_obj is not None and not isinstance(license_obj, str):
             raise TypeError("license must be a string")
+        license_name_obj = data.get("license_name")
+        if license_name_obj is not None and not isinstance(license_name_obj, str):
+            raise TypeError("license_name must be a string")
+        license_link_obj = data.get("license_link")
+        if license_link_obj is not None and not isinstance(license_link_obj, str):
+            raise TypeError("license_link must be a string")
         attribution_obj = data.get("attribution")
         if attribution_obj is not None and not isinstance(attribution_obj, str):
             raise TypeError("attribution must be a string")
@@ -113,6 +119,8 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
         splits=splits,
         pii=pii,
         license=license_obj,
+        license_name=license_name_obj,
+        license_link=license_link_obj,
         attribution=attribution_obj,
         quality=quality,
         composition=composition,

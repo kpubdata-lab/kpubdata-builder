@@ -142,6 +142,12 @@ def _gold_package_metadata(spec: BuildSpec) -> dict[str, str]:
         # regardless of spec.license — the same build published different
         # licenses in dataset card vs. Kaggle metadata.
         metadata["license"] = declared_license
+    # `license: other` means nothing without its name and link; the exporters carry
+    # both where the platform has a place for them (#764).
+    if spec.license_name:
+        metadata["license_name"] = spec.license_name
+    if spec.license_link:
+        metadata["license_link"] = spec.license_link
     return metadata
 
 

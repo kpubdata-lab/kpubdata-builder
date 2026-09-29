@@ -427,7 +427,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.31.0 -> 1.32.0: JoinSpec gains keys, cardinality and on_null_key; the manifest's
 #   CompositionProvenance gains optional cardinality and ratio fields (#698, additive).
 #   duplicate_key_warning is judged on keys present on both sides only.
-API_CONTRACT_VERSION = "1.32.0"
+# 1.32.0 -> 1.33.0: BuildSpec gains license_name and license_link, and publishes the
+#   attribution it already accepted (#764, additive). `license: other` needs both.
+API_CONTRACT_VERSION = "1.33.0"
 
 
 def _encodings(schema: SchemaInfo) -> dict[str, str]:

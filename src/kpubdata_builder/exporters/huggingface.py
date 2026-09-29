@@ -77,6 +77,11 @@ def _render_card(artifact: ArtifactDataset) -> str:
     }
     if metadata.get("license"):
         front_matter["license"] = metadata["license"]
+    # Hugging Face records a licence outside its list as `license: other` with a name
+    # and a link. Without them the card says only "other" (#764).
+    for key in ("license_name", "license_link"):
+        if metadata.get(key):
+            front_matter[key] = metadata[key]
     front_yaml = yaml.safe_dump(front_matter, allow_unicode=True, sort_keys=True).strip()
 
     title = metadata.get("title", "dataset")

@@ -369,6 +369,11 @@ class BuildSpec:
             Must be declared when ``publish=True`` (#443). kpubdata does not
             provide license metadata, so user explicit declaration is the only
             source.
+        license_name: The licence's name when ``license`` is ``other`` — Hugging
+            Face's way of recording a licence outside its list, such as
+            ``korea-public-data-unrestricted`` or ``kogl-type-1`` (#764).
+        license_link: Where the licence's terms are stated, required together
+            with ``license_name`` when ``license`` is ``other``.
         attribution: Attribution text. KOGL requires attribution for
             types 1-4, but license alone cannot convey it — requires both type
             and institution and original URL. When declared, appears in the
@@ -393,6 +398,8 @@ class BuildSpec:
     splits: SplitSpec | None = None
     pii: PiiPolicy | None = None
     license: str | None = None
+    license_name: str | None = None
+    license_link: str | None = None
     attribution: str | None = None
     quality: QualityPolicy | None = None
     composition: CompositionSpec | None = None
