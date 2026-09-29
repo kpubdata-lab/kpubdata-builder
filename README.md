@@ -1,6 +1,8 @@
-# KPubData Builder — Korea Public Data Builder
+# KPubData Engine
 
-**KPubData Builder는 원시 공공데이터를 정제·검증·배포 가능한 데이터셋으로 변환하는 빌드 엔진입니다.**
+**KPubData Engine은 공공데이터를 검증 가능한 Table Snapshot으로 만드는 실행·웨어하우스 엔진입니다.**
+
+> KPubData 제품군: [Core](https://github.com/yeongseon/kpubdata) (접근 계층) → **Engine** (실행·웨어하우스) → [Studio](https://github.com/yeongseon/kpubdata-studio) (시각적 작업공간)
 
 `kpubdata`가 정규화한 데이터를 받아 Medallion Architecture (Bronze → Silver → Gold)를 거쳐 결과물을 만들고, Manifest로 추적 가능하게 기록합니다. BuildSpec이라는 선언형 스펙으로 같은 입력에서 같은 결과를 재현합니다.
 
