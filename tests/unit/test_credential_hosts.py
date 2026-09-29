@@ -47,6 +47,9 @@ exports:
 def requests_seen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[BuilderService, list]:
     monkeypatch.delenv("KPUBDATA_DATAGO_API_KEY", raising=False)
     monkeypatch.delenv("KPUBDATA_DATAGO_EXTRA_HOSTS", raising=False)
+    # The cross-repo job replays recorded fixtures instead of calling HTTP; this test
+    # needs the HTTP path it observes.
+    monkeypatch.delenv("KPUBDATA_REPLAY_DIR", raising=False)
     seen: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:

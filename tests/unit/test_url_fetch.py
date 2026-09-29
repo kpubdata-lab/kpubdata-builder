@@ -143,7 +143,7 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib
-        type(self).seen_headers.append([name.casefold() for name in self.headers.keys()])
+        type(self).seen_headers.append([name.casefold() for name in self.headers])
         if self.path == "/ok":
             body = b'[{"id": 1}]'
             self.send_response(200)
