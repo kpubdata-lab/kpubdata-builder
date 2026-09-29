@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Engine Service API
-  version: "1.40.0"
+  version: "1.41.0"
   description: >-
     KPubData Engine(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -78,6 +78,7 @@ info:
     v1.21.0은 publish 감사 로그 조회를 추가한다(#563, additive) — `GET /builds/{run_id}/publish/audit`(reconcile/reset 이력, 소유권 게이트, receipt 삭제 후에도 조회).
     v1.22.0은 `GET /datasets` 응답에 `total`을 추가한다(#488 후속, additive — 기존 필드/동작은 변경되지 않는다). `total`은 canonical dataset grouping과 ownership 필터를 적용한 뒤 pagination(limit) 이전의 접근 가능한 distinct dataset_id 개수이며, Studio Home의 DATASETS KPI가 `datasets` 길이나 limit을 total로 오인하지 않도록 authoritative aggregate를 제공한다. 같은 릴리스 범위에서 `/catalog` 응답의 `CatalogDataset`에 `request_parameters`와 `application`도 추가한다(additive — 기존 필드/동작은 변경되지 않는다). `raw_metadata`의 요청 파라미터 설명을 secret-free allowlist(`name`/`required`/`description`/`example`)로 직렬화한 것으로, `serviceKey` 등 시크릿 파라미터는 제외된다. Add Data가 선택한 Dataset의 필수 요청 파라미터를 사전에 안내하는 데 쓴다. metadata가 없는 dataset은 빈 배열. `application`은 공공데이터포털처럼 API Key 발급과 Dataset별 활용신청이 별개일 수 있는 경우의 안내(`{required, url}`)로, `raw_metadata.application`에서 그대로 전달하며 없으면 null이다 — Studio는 신청 완료/승인 여부를 추측하지 않는다.
     v1.40.0 adds `quota` to `CatalogDataset` (#778, additive): the provider's rate limit as the kpubdata spec's licence declares it, verbatim, or null when nothing is declared.
+    v1.41.0 adds optional `semantic`, `display` and `unit` to column metadata (#813, additive; ADR 0019): `ColumnWireInfo`, the `/preview` schema items and `SilverColumnInfo`. They say what a column means, apart from how it is stored (`dtype`, `logical_type`) and sent (`wire_encoding`), and each carries its `origin`. They are metadata only: they never change a column's storage type, wire encoding or values. Absent when nothing describes the column.
     Client compatibility (#814): a response may gain optional fields in any minor version, and a client ignores fields it does not know — `additionalProperties: false` on a response schema describes what this version sends, not what a client should reject. A required field keeps its name and type until the next major version. `contract/fixtures/responses.json` gives every named 2xx response example as sent, with an added unknown field, and with a required field retyped, for a client's contract tests.
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
@@ -3153,7 +3154,67 @@ components:
         `number` in a response whose values all fit and `decimal_string` in one where a
         value does not, so the same column can arrive either way across pages, previews
         and queries. Read `wire_encoding` from each response's column metadata; do not
-        cache it from an earlier one.
+        cache it from an earlier one. A value outside this list, which a newer Engine may
+        add, is shown as raw text: never read it as a number.
+
+    ColumnMetaOrigin:
+      type: string
+      enum: [user_annotation, core_spec, catalog, engine_inferred]
+      description: >-
+        Where a column hint came from (#813, ADR 0019). When several sources describe a
+        column, each hint is taken from the highest one, in this order: a user's
+        annotation, the Core dataset spec, the catalog, an Engine inference. A hint with
+        origin `engine_inferred` is an estimate and is shown as one.
+
+    ColumnSemanticHint:
+      type: object
+      additionalProperties: false
+      required: [kind, origin]
+      description: >-
+        What kind of value the column holds (#813). Metadata only: it does not change
+        the column's storage type, wire encoding, casts, aggregation or row identity.
+      properties:
+        kind:
+          type: string
+          description: >-
+            `code`, `measure`, `date` or `period` today. An open string, not an enum: a
+            newer Engine may send a kind a client does not know, and the client then
+            shows the raw value rather than failing.
+        origin:
+          $ref: "#/components/schemas/ColumnMetaOrigin"
+
+    ColumnDisplayHint:
+      type: object
+      additionalProperties: false
+      required: [origin]
+      description: >-
+        How to present the column (#813). Core `FieldDescriptor.title` maps to `label`,
+        `description` to `description`, `FieldConstraints.format` to `format`.
+      properties:
+        label:
+          type: string
+        description:
+          type: string
+        format:
+          type: string
+          description: A display format as the source states it, e.g. `YYYYMM`. Not parsed.
+        origin:
+          $ref: "#/components/schemas/ColumnMetaOrigin"
+
+    ColumnUnitHint:
+      type: object
+      additionalProperties: false
+      required: [name, origin]
+      description: >-
+        The unit a measure is counted in (#813). `scale` multiplies the sent value for
+        display (1000: a sent 12 is 12,000 of `name`); the sent value is never rescaled.
+      properties:
+        name:
+          type: string
+        scale:
+          type: number
+        origin:
+          $ref: "#/components/schemas/ColumnMetaOrigin"
 
     ColumnWireInfo:
       type: object
@@ -3167,6 +3228,12 @@ components:
           description: The column dtype without parameters, e.g. `int64`, `decimal`, `datetime`.
         wire_encoding:
           $ref: "#/components/schemas/WireEncoding"
+        semantic:
+          $ref: "#/components/schemas/ColumnSemanticHint"
+        display:
+          $ref: "#/components/schemas/ColumnDisplayHint"
+        unit:
+          $ref: "#/components/schemas/ColumnUnitHint"
 
     JsonValue:
       description: 표준 JSON으로 직렬화 가능한 값(null, scalar, array, object)
@@ -4119,6 +4186,12 @@ components:
                 type: string
               wire_encoding:
                 $ref: "#/components/schemas/WireEncoding"
+              semantic:
+                $ref: "#/components/schemas/ColumnSemanticHint"
+              display:
+                $ref: "#/components/schemas/ColumnDisplayHint"
+              unit:
+                $ref: "#/components/schemas/ColumnUnitHint"
         sample:
           type: array
           items:
@@ -5379,6 +5452,12 @@ components:
           description: Absent for runs written before 1.30.0 (#735).
         wire_encoding:
           $ref: "#/components/schemas/WireEncoding"
+        semantic:
+          $ref: "#/components/schemas/ColumnSemanticHint"
+        display:
+          $ref: "#/components/schemas/ColumnDisplayHint"
+        unit:
+          $ref: "#/components/schemas/ColumnUnitHint"
 
     SilverValidationProblem:
       type: object

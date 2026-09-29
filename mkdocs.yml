@@ -67,6 +67,7 @@ nav:
       - 이메일·비밀번호 / OIDC IdP(제안): adrs/0015-email-password-oidc-idp-keycloak.md
       - CUBRID 상태 백엔드: adrs/0016-cubrid-state-backend.md
       - 풀스택 OCI 배포 토폴로지(제안): adrs/0017-fullstack-oci-deployment.md
+      - 컬럼 메타 의미 분리(제안): adrs/0019-column-metadata-semantics.md
 
 markdown_extensions:
   - admonition
