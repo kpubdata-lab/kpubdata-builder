@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.42.0",
+  "contract_version": "1.43.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -3126,6 +3126,201 @@
           "startup_ms": 380,
           "engine_execution_ms": 12
         }
+      },
+      "broken_path": "$.snapshot"
+    },
+    {
+      "operation_id": "readWarehouseRows",
+      "method": "POST",
+      "path": "/warehouse/rows",
+      "status": 200,
+      "example": "FirstPage",
+      "current": {
+        "snapshot": {
+          "table_id": "tbl_7f3a",
+          "logical_name": "seoul-air-quality.air",
+          "snapshot_id": "snap_20260929_01",
+          "revision": 3
+        },
+        "columns": [
+          "station_code",
+          "measured_at",
+          "pm10"
+        ],
+        "column_meta": [
+          {
+            "name": "station_code",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "measured_at",
+            "logical_type": "datetime",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "pm10",
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          }
+        ],
+        "rows": [
+          {
+            "station_code": "111121",
+            "measured_at": "2026-09-29T10:00:00",
+            "pm10": 42
+          }
+        ],
+        "order": [
+          {
+            "column": "measured_at",
+            "direction": "desc"
+          }
+        ],
+        "page": {
+          "offset": 0,
+          "page_size": 1,
+          "returned": 1,
+          "has_more": true,
+          "next_offset": 1
+        },
+        "count": {
+          "status": "exact",
+          "value": 48
+        },
+        "execution_ms": 431,
+        "startup_ms": 390,
+        "engine_execution_ms": 14
+      },
+      "with_additive_fields": {
+        "snapshot": {
+          "table_id": "tbl_7f3a",
+          "logical_name": "seoul-air-quality.air",
+          "snapshot_id": "snap_20260929_01",
+          "revision": 3,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "columns": [
+          "station_code",
+          "measured_at",
+          "pm10"
+        ],
+        "column_meta": [
+          {
+            "name": "station_code",
+            "logical_type": "string",
+            "wire_encoding": "string",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "measured_at",
+            "logical_type": "datetime",
+            "wire_encoding": "string",
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "name": "pm10",
+            "logical_type": "int64",
+            "wire_encoding": "number",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "rows": [
+          {
+            "station_code": "111121",
+            "measured_at": "2026-09-29T10:00:00",
+            "pm10": 42
+          }
+        ],
+        "order": [
+          {
+            "column": "measured_at",
+            "direction": "desc",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "page": {
+          "offset": 0,
+          "page_size": 1,
+          "returned": 1,
+          "has_more": true,
+          "next_offset": 1,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "count": {
+          "status": "exact",
+          "value": 48,
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "execution_ms": 431,
+        "startup_ms": 390,
+        "engine_execution_ms": 14,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.snapshot",
+        "$.column_meta[0]",
+        "$.column_meta[1]",
+        "$.column_meta[2]",
+        "$.order[0]",
+        "$.page",
+        "$.count",
+        "$"
+      ],
+      "required_type_broken": {
+        "snapshot": [
+          "not",
+          "an object"
+        ],
+        "columns": [
+          "station_code",
+          "measured_at",
+          "pm10"
+        ],
+        "column_meta": [
+          {
+            "name": "station_code",
+            "logical_type": "string",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "measured_at",
+            "logical_type": "datetime",
+            "wire_encoding": "string"
+          },
+          {
+            "name": "pm10",
+            "logical_type": "int64",
+            "wire_encoding": "number"
+          }
+        ],
+        "rows": [
+          {
+            "station_code": "111121",
+            "measured_at": "2026-09-29T10:00:00",
+            "pm10": 42
+          }
+        ],
+        "order": [
+          {
+            "column": "measured_at",
+            "direction": "desc"
+          }
+        ],
+        "page": {
+          "offset": 0,
+          "page_size": 1,
+          "returned": 1,
+          "has_more": true,
+          "next_offset": 1
+        },
+        "count": {
+          "status": "exact",
+          "value": 48
+        },
+        "execution_ms": 431,
+        "startup_ms": 390,
+        "engine_execution_ms": 14
       },
       "broken_path": "$.snapshot"
     }
