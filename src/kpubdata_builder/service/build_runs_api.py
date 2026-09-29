@@ -44,7 +44,7 @@ from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
 from .auth import Principal
 from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
-from .providers import ProviderCredentialConflictError
+from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
 from .redaction import redact_json_secrets, redact_secret_text
 from .responses import ServiceResponse
 
@@ -168,6 +168,17 @@ class BuildRunsApiService:
         try:
             client, provider_keys = self._open_client(
                 principal, credential_owner_id, provider_names
+            )
+        except ProviderCredentialRequired as exc:
+            # The requester has no key of their own and the operator's may not be used
+            # (#786): an answer, before any client exists.
+            return ServiceResponse(
+                403,
+                {
+                    "error": str(exc),
+                    "code": "provider_credential_required",
+                    "providers": list(exc.providers),
+                },
             )
         except (ProviderCredentialConflictError, ValueError) as exc:
             return ServiceResponse(400, {"error": str(exc)})
