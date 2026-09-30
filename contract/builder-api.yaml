@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.48.0"
+  version: "1.49.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.49.0 adds `GET /quality/issues` (#843, additive): warn and fail checks and schema drift findings from the latest run of every table the caller may see, one row each with its table, run and source, filtered by `status`, `dataset_id` and `category`, failures first, paged by an opaque cursor. `coverage` counts tables that were evaluated, not evaluated, partially evaluated or unreadable, so a table without results is never read as passing.
     v1.48.0 names each run's table and snapshot in `GET /builds` (#844, additive): `BuildSummary` gains `dataset_id`, `dataset_title`, `snapshot_id` and `snapshots`, and `GET /builds?dataset_id=` keeps one dataset's runs.
     v1.47.0 summarises each table's current snapshot in `GET /warehouse/tables` (#841, additive): `current_snapshot` gives its id, row count, commit time and coverage, and `dataset_id` the dataset it was built for, so a table list needs no call per table.
     v1.46.0 adds column profiles (#817, additive): `GET /warehouse/tables/{name}/profile` describes each column of one pinned snapshot — row count, null count and ratio, NaN and infinite counts, and min/max for numeric and temporal columns — exactly, over every row, under the same limits as a query. NaN and infinity are counted and excluded from ranges; a range over fewer than 10 values is withheld; a column whose values or name suggest personal data is not profiled unless the BuildSpec's `pii` policy accepts it. The profile is a separate artifact tied to the snapshot id, its content digest and the algorithm version.
@@ -2195,6 +2196,56 @@ paths:
                   summary: manifest가 없는 run
                   value:
                     error: "manifest not found: missing-run"
+
+  /quality/issues:
+    get:
+      operationId: listQualityIssues
+      summary: Actionable quality findings across the caller's tables (#843)
+      description: >-
+        Reads each table's latest run. Every check with status `warn` or `fail` is a
+        row (`kind: check`, the per-run `QualityCheckResult` unchanged), and so is every
+        schema drift finding (`kind: drift`, `status: drift` — drift gates nothing and
+        is never counted as a failure). Rows are ordered fail, warn, drift, then by
+        table, source and rule. Filters apply before paging.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Comma-separated or repeated; default all three.
+          schema: {type: string}
+        - name: dataset_id
+          in: query
+          required: false
+          schema: {type: string, minLength: 1}
+        - name: category
+          in: query
+          required: false
+          description: A check category, or `schema_drift`.
+          schema: {type: string, minLength: 1}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+        - name: cursor
+          in: query
+          required: false
+          description: "`next_cursor` of the previous page."
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: One page of findings and the tables they were read from.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityIssuesResponse"
+        "400":
+          description: An unknown status, an empty filter, a bad limit or cursor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /quality/summary:
     get:
@@ -5725,6 +5776,60 @@ components:
         changed_rows:
           type: integer
           minimum: 0
+
+    QualityIssuesResponse:
+      type: object
+      additionalProperties: false
+      required: [issues, total, next_cursor, coverage]
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/QualityIssue"
+        total:
+          type: integer
+          minimum: 0
+          description: Rows matching the filters, across all pages.
+        next_cursor: {type: [string, "null"]}
+        coverage:
+          type: object
+          additionalProperties: false
+          required: [tables, evaluated, not_evaluated, partial, unreadable]
+          description: >-
+            Tables read (after the `dataset_id` filter) by what their latest run says
+            about quality. `not_evaluated`: no results or zero checks. `partial`: some
+            sources only. `unreadable`: the manifest cannot be read. None of these is
+            a pass.
+          properties:
+            tables: {type: integer, minimum: 0}
+            evaluated: {type: integer, minimum: 0}
+            not_evaluated: {type: integer, minimum: 0}
+            partial: {type: integer, minimum: 0}
+            unreadable: {type: integer, minimum: 0}
+
+    QualityIssue:
+      type: object
+      additionalProperties: false
+      required:
+        [dataset_id, title, run_id, finished_at, source_key, kind, status, category, check,
+         drift]
+      properties:
+        dataset_id: {type: string}
+        title: {type: [string, "null"]}
+        run_id: {type: string}
+        finished_at: {type: [string, "null"]}
+        source_key: {type: string}
+        kind: {type: string, enum: [check, drift]}
+        status: {type: string, enum: [fail, warn, drift]}
+        category: {type: [string, "null"]}
+        check:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/QualityCheckResult"
+        drift:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SchemaDriftFinding"
 
     QualityCheckResult:
       type: object

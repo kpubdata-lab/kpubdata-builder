@@ -70,7 +70,7 @@ from .providers import (
 )
 from .providers_service import ProvidersService
 from .publish_api import PublishApiService
-from .quality_api import QualityApiService
+from .quality_api import ISSUE_STATUSES, QualityApiService
 from .query_service_api import QueryApiService
 from .responses import FileResponse, ServiceResponse
 from .routes import ROUTE_ADAPTERS
@@ -310,12 +310,14 @@ _BuildListEntry = dict[str, str | None]
 #   dataset_id (#841, additive).
 # 1.47.0 -> 1.48.0: BuildSummary gains dataset_id, dataset_title, snapshot_id and snapshots,
 #   and GET /builds takes ?dataset_id= (#844, additive).
+# 1.48.0 -> 1.49.0: GET /quality/issues lists warn/fail checks and schema drift across the
+#   caller's tables with filters, a cursor and evaluation coverage (#843, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.48.0"
+API_CONTRACT_VERSION = "1.49.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -1010,6 +1012,26 @@ class BuilderService:
     def get_build_quality(self, run_id: str) -> ServiceResponse:
         """Query run's structured Quality results and schema drift (#486, #514)."""
         return self._quality_api.get_build_quality(run_id)
+
+    def list_quality_issues(
+        self,
+        *,
+        principal: Principal | None = None,
+        statuses: frozenset[str] | None = None,
+        dataset_id: str | None = None,
+        category: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ServiceResponse:
+        """Warn/fail checks and schema drift across the caller's tables (#843)."""
+        return self._quality_api.list_issues(
+            principal=principal,
+            statuses=statuses if statuses is not None else frozenset(ISSUE_STATUSES),
+            dataset_id=dataset_id,
+            category=category,
+            limit=limit,
+            cursor=cursor,
+        )
 
     def quality_summary(
         self, *, window: str, principal: Principal | None = None
