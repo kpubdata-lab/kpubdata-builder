@@ -160,7 +160,12 @@ def test_providers_service_keeps_available_provider_when_krx_pandas_is_missing(
 
     assert response.status_code == 200
     assert response.body["providers"] == [
-        {"provider": "datago", "requires_credential": True, "configured": False}
+        {
+            "provider": "datago",
+            "requires_credential": True,
+            "configured": False,
+            "last_test": None,
+        }
     ]
 
 
