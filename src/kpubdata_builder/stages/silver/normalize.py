@@ -21,6 +21,7 @@ Main functions:
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 
@@ -28,6 +29,7 @@ import duckdb
 
 from ...errors import TabularError
 from ...spec import ColumnNullTokens, DerivedColumn, JsonValue
+from ...tabular.cast_names import TEXT_CASTS, YEAR_MONTH_COMPACT_RE2, YEAR_MONTH_DASHED_RE2
 from ...tabular.convert import check_case_fold_collisions
 from ...tabular.duckdb_casts import (
     cast_expression,
@@ -44,7 +46,7 @@ from ...tabular.duckdb_load import (
     load_records,
     node_of,
 )
-from ...tabular.polars_helpers import TEXT_CASTS, YEAR_MONTH_COMPACT, YEAR_MONTH_DASHED
+from ...tabular.duckdb_runtime import reserve_row_seq
 from ..bronze.models import BronzeArtifact
 
 #: separator for join_key derived columns (#611).
@@ -85,6 +87,7 @@ def normalize_table(
     Bronze staging directory by default.
     """
     workdir = workdir or bronze.staging_dir
+    owns_connection = connection is None
     connection = connection or open_connection(workdir)
     register_functions(connection)
     # null_tokens applied *before* the table is typed: the type checks reject
@@ -96,23 +99,52 @@ def normalize_table(
         for record in bronze.iter_records():
             yield tokens(record) if tokens is not None else record
 
-    table = load_records(connection, records, table="silver_raw", workdir=workdir, read_as=read_as)
-    if coalesce:
-        for target, candidates in _coalesce_order(coalesce):
-            table = _apply_coalesce(connection, table, target, candidates)
-    if rename:
-        table = _apply_rename(table, rename)
-    if zfill:
-        for column, width in zfill.items():
-            table = _apply_zfill(connection, table, column, width)
-    if casts:
-        _check_year_month(connection, table, casts)
-        table = _apply_casts(connection, table, casts)
-    for rule in derived:
-        table = _apply_derived(connection, table, rule)
-    # After every declared transform, so a rename or a coalesce can resolve it (#868).
-    check_case_fold_collisions(table.names)
-    return TableHandle(connection, table, workdir)
+    try:
+        table = load_records(
+            connection, records, table="silver_raw", workdir=workdir, read_as=read_as
+        )
+        if coalesce:
+            for target, candidates in _coalesce_order(coalesce):
+                table = _advance(
+                    connection, table, _apply_coalesce(connection, table, target, candidates)
+                )
+        if rename:
+            table = _apply_rename(table, rename)
+        if zfill:
+            for column, width in zfill.items():
+                table = _advance(connection, table, _apply_zfill(connection, table, column, width))
+        if casts:
+            _check_year_month(connection, table, casts)
+            table = _advance(connection, table, _apply_casts(connection, table, casts))
+        for rule in derived:
+            table = _advance(connection, table, _apply_derived(connection, table, rule))
+        # After every declared transform, so a rename or a coalesce can resolve it
+        # (#868); the row ordinal's name is Builder's (ADR 0021 D8).
+        check_case_fold_collisions(table.names)
+        reserve_row_seq(table.names)
+    except BaseException:
+        if owns_connection:
+            connection.close()
+        raise
+    return TableHandle(connection, table, workdir, owns_connection=owns_connection)
+
+
+_STEPS = itertools.count()
+
+
+def _step_name(step: str) -> str:
+    """A table name no earlier step used, so no step reads and replaces one table."""
+    return f"silver_{step}_{next(_STEPS)}"
+
+
+def _advance(
+    connection: duckdb.DuckDBPyConnection, old: LoadedTable, new: LoadedTable
+) -> LoadedTable:
+    """``new`` from here on; the step before it is dropped, so a normalization holds one
+    table at a time, not one per declaration."""
+    if old.relation != new.relation:
+        connection.execute(f"DROP TABLE IF EXISTS {old.relation.sql}")
+    return new
 
 
 def _null_token_rule(
@@ -285,7 +317,7 @@ def _apply_coalesce(
     return derive_table(
         connection,
         table,
-        into="silver_coalesced",
+        into=_step_name("coalesced"),
         columns=[*_keep(table, kept), (target, merged, node)],
     )
 
@@ -347,7 +379,7 @@ def _apply_zfill(
     columns = [
         (name, sql, ("str",)) if name == column else _keep(table, [name])[0] for name in table.names
     ]
-    return derive_table(connection, table, into="silver_zfilled", columns=columns)
+    return derive_table(connection, table, into=_step_name("zfilled"), columns=columns)
 
 
 def _check_year_month(
@@ -365,7 +397,7 @@ def _check_year_month(
         row = connection.execute(
             f"SELECT count(*) FROM {table.relation.sql} WHERE {text} IS NOT NULL "
             f"AND NOT regexp_matches({text}, ?) AND NOT regexp_matches({text}, ?)",
-            [YEAR_MONTH_DASHED, YEAR_MONTH_COMPACT],
+            [YEAR_MONTH_DASHED_RE2, YEAR_MONTH_COMPACT_RE2],
         ).fetchone()
         bad = int(row[0]) if row else 0
         if bad:
@@ -394,7 +426,7 @@ def _apply_casts(
         )
         for name in table.names
     ]
-    cast_table = derive_table(connection, table, into="silver_cast", columns=columns)
+    cast_table = derive_table(connection, table, into=_step_name("cast"), columns=columns)
     before = _null_counts(connection, table, list(casts))
     after = _null_counts(connection, cast_table, list(casts))
     lost = {column: after[column] - before[column] for column in casts}
@@ -442,7 +474,7 @@ def _apply_derived(
         derived = derive_table(
             connection,
             table,
-            into="silver_derived",
+            into=_step_name("derived"),
             columns=[*_keep(table, table.names), (rule.name, sql, ("date",))],
         )
         # same as #188: rows where all pieces exist but form no date are losses by the
@@ -464,7 +496,7 @@ def _apply_derived(
         return derive_table(
             connection,
             table,
-            into="silver_derived",
+            into=_step_name("derived"),
             columns=[*_keep(table, table.names), (rule.name, sql, ("str",))],
         )
     raise TabularError(f"unsupported derived column kind: {rule.kind!r}")

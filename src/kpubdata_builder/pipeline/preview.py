@@ -309,6 +309,7 @@ def _preview_source(
             connection=resources.enter_context(build_connection(staging_dir, "preview")),
             workdir=staging_dir,
         )
+        resources.callback(silver.table.close)
         # Same shared evaluator as Build (#486) — no file persist.
         quality_results = evaluate_quality(
             silver,

@@ -63,17 +63,11 @@ def scan_pii_values(table: TableHandle) -> list[PiiFinding]:
     for column_name, dtype in zip(loaded.names, loaded.dtypes, strict=True):
         if dtype != "String":
             continue
-        column = loaded.column(column_name)
         counts = dict.fromkeys(_PATTERNS, 0)
-        cursor = table.connection.execute(
-            f"SELECT {column}, count(*) FROM {loaded.relation.sql} "
-            f"WHERE {column} IS NOT NULL GROUP BY {column}"
-        )
-        while batch := cursor.fetchmany(10_000):
-            for value, count in batch:
-                for kind, pattern in _PATTERNS.items():
-                    if pattern.search(value):
-                        counts[kind] += int(count)
+        for value, count in table.distinct_text_values(column_name):
+            for kind, pattern in _PATTERNS.items():
+                if pattern.search(value):
+                    counts[kind] += count
         for kind, count in counts.items():
             if count > 0:
                 findings.append(PiiFinding(column=column_name, kind=kind, count=count))

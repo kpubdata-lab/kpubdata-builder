@@ -19,6 +19,11 @@ from typing import Literal, overload
 
 import polars as pl
 
+from .cast_names import TEXT_CASTS as TEXT_CASTS
+from .cast_names import YEAR_MONTH_COMPACT as YEAR_MONTH_COMPACT
+from .cast_names import YEAR_MONTH_DASHED as YEAR_MONTH_DASHED
+from .cast_names import CastReport as CastReport
+
 DtypeSpec = str | pl.DataType | type[pl.DataType]
 
 #: Named cast for reading mixed-format strings as numbers (#611). Casting
@@ -29,15 +34,6 @@ _FORMATTED_CASTS: Mapping[str, pl.DataType] = {
     "int_comma": pl.Int64(),
     "float_comma": pl.Float64(),
 }
-
-#: named cast collecting mixed notation strings into canonical text (#620). Separate from
-#: _NAMED_DTYPES because it's casting strategy, not dtype.
-TEXT_CASTS: frozenset[str] = frozenset({"year_month"})
-
-#: Two notations year_month accepts. **Fix length too** — loose parser reads "20230" as
-#: "2023-0" etc., creating wrong year/month. Month range also blocked here.
-YEAR_MONTH_DASHED = r"^\d{4}-(0[1-9]|1[0-2])$"
-YEAR_MONTH_COMPACT = r"^\d{4}(0[1-9]|1[0-2])$"
 
 _TRUE_TOKENS = {"1", "t", "true", "y", "yes"}
 _FALSE_TOKENS = {"0", "f", "false", "n", "no"}
@@ -55,26 +51,6 @@ _NAMED_DTYPES: Mapping[str, pl.DataType] = {
     "string": pl.Utf8(),
     "utf8": pl.Utf8(),
 }
-
-
-@dataclass(frozen=True)
-class CastReport:
-    """Per-column count of null values added by strict=False casting.
-
-    Attributes:
-        column: Target column name.
-        nulls_before: Null count before casting.
-        nulls_after: Null count after casting.
-    """
-
-    column: str
-    nulls_before: int
-    nulls_after: int
-
-    @property
-    def nulls_introduced(self) -> int:
-        """Return count of newly created nulls from casting."""
-        return self.nulls_after - self.nulls_before
 
 
 @dataclass(frozen=True)

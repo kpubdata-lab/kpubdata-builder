@@ -43,6 +43,7 @@ from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
+from ..tabular.builder_parquet import scan_builder_parquet
 from .rows import RowFilter, filter_predicate, parse_filters, typed_literal
 
 if TYPE_CHECKING:
@@ -344,7 +345,7 @@ def run_aggregate(table_path: str, plan: AggregatePlan) -> AggregateOutcome:
     """Filter, aggregate every group, check units, then sort and take the top N."""
     import polars as pl
 
-    frame = pl.scan_parquet(table_path)
+    frame = scan_builder_parquet(table_path)
     schema = dict(frame.collect_schema())
     check_aggregate_plan(plan, schema)
     predicate = filter_predicate(plan.filters, schema)

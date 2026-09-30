@@ -552,9 +552,7 @@ class TestDiffSampleHelper:
             silver = real_build_silver_dataset(bronze, **kwargs)
             frame = to_polars(silver.table)
             dropped_table = handle_from_frame(
-                frame.head(frame.height - 1),
-                connection=silver.table.connection,
-                workdir=silver.table.workdir,
+                frame.head(frame.height - 1), workdir=silver.table.workdir
             )
             return type(silver)(
                 table=dropped_table,

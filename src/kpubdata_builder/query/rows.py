@@ -31,6 +31,7 @@ from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
+from ..tabular.builder_parquet import scan_builder_parquet
 
 if TYPE_CHECKING:
     import polars as pl
@@ -283,7 +284,7 @@ def read_page(table_path: str, plan: RowsPlan) -> tuple[pl.DataFrame, int | None
     """Read one page: the rows, the filtered count (None when not asked for), more rows?"""
     import polars as pl
 
-    frame = pl.scan_parquet(table_path)
+    frame = scan_builder_parquet(table_path)
     schema = dict(frame.collect_schema())
     check_plan(plan, schema)
     frame = frame.with_row_index(ROW_ORDER_COLUMN)

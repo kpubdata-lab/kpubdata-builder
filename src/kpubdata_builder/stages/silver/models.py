@@ -43,3 +43,13 @@ class SilverDataset:
     validation: ValidationResult
     source_bronze: str
     metadata: dict[str, str] = field(default_factory=dict)
+
+    def close(self) -> None:
+        """Close the table: its private connection, if it opened one (#869)."""
+        self.table.close()
+
+    def __enter__(self) -> SilverDataset:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()

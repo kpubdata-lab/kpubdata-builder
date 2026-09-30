@@ -109,7 +109,7 @@ from ..stages.silver.models import SilverDataset
 from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
 from ..tabular import DEFAULT_PREVIEW_LIMIT
-from ..tabular.duckdb_runtime import build_connection
+from ..tabular.duckdb_runtime import build_connection, clear_temp_root
 from ..tabular.polars_bridge import to_polars
 from ..tabular.polars_engine import artifact_writer, infer_schema
 from ..tabular.wire import encode_rows
@@ -612,6 +612,9 @@ def _run_source_pipeline(
             ),
             workdir=bronze.staging_dir,
         )
+        # Closed before its connection (ExitStack runs callbacks last-in first-out), so a
+        # late use of the table is a clear error, not a DuckDB one.
+        resources.callback(silver.table.close)
         evaluated_row_count = silver.statistics.row_count
 
         # Structured Quality/Schema evaluation (#486). Uses same common
@@ -767,7 +770,7 @@ def _run_source_pipeline(
         if capture_silver:
             # Composition reads this after the source's connection has closed: take its
             # frame now, while the table is there (#869).
-            to_polars(silver.table)
+            to_polars(silver.table, keep=True)
             captured_silver = silver
         _record_output_paths(
             outputs,
@@ -1383,6 +1386,9 @@ def run_build(
     # returns results in spec.sources order, not completion order, so
     # downstream merge (manifest) stays deterministic.
     max_workers = min(len(spec.sources), _MAX_PARALLEL_SOURCES)
+    # DuckDB spill directories a crashed attempt at this run left (#869): cleared once,
+    # before any source opens a connection, so none is taken over mid-run.
+    clear_temp_root(context.output_root / context.run_id)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(_worker, spec.sources))
 

@@ -73,8 +73,13 @@ def _restore(series: pl.Series, node: Node) -> pl.Series:
     return pl.Series(series.name, series.to_list(), dtype=target)
 
 
-def to_polars(handle: TableHandle) -> pl.DataFrame:
-    """The table as a Polars frame with its Builder dtypes; cached on the handle."""
+def to_polars(handle: TableHandle, *, keep: bool = False) -> pl.DataFrame:
+    """The table as a Polars frame with its Builder dtypes.
+
+    ``keep`` holds the frame on the handle, for a caller that reads it after the table's
+    connection has closed (composition); otherwise nothing is held beyond the call. A
+    kept frame is returned by later calls.
+    """
     cached = handle.cache.get(_FRAME)
     if isinstance(cached, pl.DataFrame):
         return cached
@@ -94,7 +99,8 @@ def to_polars(handle: TableHandle) -> pl.DataFrame:
             _restore(frame.get_column(name), node)
             for name, node in zip(table.names, table.nodes, strict=True)
         )
-    handle.cache[_FRAME] = frame
+    if keep:
+        handle.cache[_FRAME] = frame
     return frame
 
 
@@ -146,10 +152,17 @@ def handle_from_frame(
     frame: pl.DataFrame, *, connection: duckdb.DuckDBPyConnection | None = None, workdir: Path
 ) -> TableHandle:
     """A DuckDB table holding ``frame`` — for callers that already hold a frame
-    (library use, tests). The frame itself is kept as the handle's Polars view."""
+    (library use, tests). The frame itself is kept as the handle's Polars view. Without
+    ``connection`` a private one is opened through the runtime, and the handle closes it."""
     from .duckdb_load import LoadedTable, canonical
 
-    connection = connection or duckdb.connect()
+    owns_connection = connection is None
+    if connection is None:
+        from .duckdb_runtime import BuildProfile, connect
+
+        temp = workdir / ".duckdb_tmp"
+        temp.mkdir(parents=True, exist_ok=True)
+        connection = connect(BuildProfile(), temp)
     nodes = tuple(node_of_polars(dtype) for dtype in frame.dtypes)
     physical = tuple(f"c{i}" for i in range(frame.width))
     workdir.mkdir(parents=True, exist_ok=True)
@@ -188,7 +201,9 @@ def handle_from_frame(
         row_count=frame.height,
         nodes=nodes,
     )
-    return TableHandle(connection, loaded, workdir, cache={_FRAME: frame})
+    return TableHandle(
+        connection, loaded, workdir, owns_connection=owns_connection, cache={_FRAME: frame}
+    )
 
 
 __all__ = ["handle_from_frame", "node_of_polars", "polars_dtype", "to_polars"]

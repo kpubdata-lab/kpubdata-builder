@@ -33,10 +33,10 @@ from dataclasses import dataclass
 
 import duckdb
 
-from .polars_helpers import (
+from .cast_names import (
     TEXT_CASTS,
-    YEAR_MONTH_COMPACT,
-    YEAR_MONTH_DASHED,
+    YEAR_MONTH_COMPACT_RE2,
+    YEAR_MONTH_DASHED_RE2,
     CastReport,
 )
 from .sql import quote_identifier
@@ -226,8 +226,8 @@ def cast_expression(column: str, source: str, target: str) -> str:
         text = _strip(text_expression(column, source))
         compact = f"left({text}, 4) || '-' || substr({text}, 5, 2)"
         return (
-            f"CASE WHEN regexp_matches({text}, '{YEAR_MONTH_DASHED}') THEN {text} "
-            f"WHEN regexp_matches({text}, '{YEAR_MONTH_COMPACT}') THEN {compact} END"
+            f"CASE WHEN regexp_matches({text}, '{YEAR_MONTH_DASHED_RE2}') THEN {text} "
+            f"WHEN regexp_matches({text}, '{YEAR_MONTH_COMPACT_RE2}') THEN {compact} END"
         )
     if name not in _TARGETS:
         supported = ", ".join(sorted(_TARGETS))

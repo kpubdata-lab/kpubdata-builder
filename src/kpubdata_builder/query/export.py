@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
 from ..spec import JsonValue
+from ..tabular.builder_parquet import scan_builder_parquet
 
 if TYPE_CHECKING:
     from ..stages.silver.pii import PiiFinding
@@ -212,7 +213,7 @@ def export_worker(
         bounded_sql = (
             f"SELECT * FROM ({plan.canonical_sql}) AS _kpubdata_result LIMIT {plan.max_rows + 1}"
         )
-        frame = pl.scan_parquet(table_path)
+        frame = scan_builder_parquet(table_path)
         context = pl.SQLContext({"dataset": frame}, eager=False, register_globals=False)
         result = context.execute(bounded_sql).collect()
         meta: dict[str, JsonValue] = {"refusal": None}

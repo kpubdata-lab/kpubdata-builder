@@ -327,11 +327,11 @@ def test_the_bridge_gives_the_frame_polars_built(tmp_path: Path, name: str) -> N
     loaded = load_records(connection, lambda: iter(records), table="raw", workdir=tmp_path)
     handle = TableHandle(connection, loaded, tmp_path)
 
-    frame = to_polars(handle)
+    frame = to_polars(handle, keep=True)
 
     assert frame.columns == expected.columns
     assert frame.schema == expected.schema
     if expected.width:
         assert _same(frame.to_dicts(), expected.to_dicts())
-    connection.close()
-    assert to_polars(handle) is frame  # cached: readable after the connection closed
+    handle.close()
+    assert to_polars(handle) is frame  # kept: readable after the table closed

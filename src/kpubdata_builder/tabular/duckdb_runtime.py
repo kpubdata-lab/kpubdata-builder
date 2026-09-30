@@ -22,6 +22,7 @@ with :class:`TabularRelation`, which is deliberately not exported from the packa
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -136,9 +137,22 @@ def reserve_row_seq(columns: Iterable[str]) -> None:
 
 
 def worker_temp_directory(run_dir: Path, source_key: str, worker_id: int | str) -> Path:
-    """``<run>/_duckdb_tmp/<source>-<worker>/``, with both parts made path-safe."""
-    part = _SAFE_PART.sub("_", f"{source_key}-{worker_id}").strip(".") or "worker"
-    return run_dir / TEMP_DIRECTORY_NAME / part
+    """``<run>/_duckdb_tmp/<source>-<hash>-<worker>/``, path-safe and unique per source.
+
+    Making a name path-safe folds different names together (any two Hangul aliases
+    both become ``_``), so a short hash of the exact source key and worker id is part of the
+    name: two sources running side by side never share a spill directory.
+    """
+    exact = f"{source_key}\x00{worker_id}"
+    digest = hashlib.sha256(exact.encode("utf-8")).hexdigest()[:10]
+    readable = _SAFE_PART.sub("_", f"{source_key}").strip(".")[:40] or "source"
+    return run_dir / TEMP_DIRECTORY_NAME / f"{readable}-{digest}-{worker_id}"
+
+
+def clear_temp_root(run_dir: Path) -> None:
+    """Remove what earlier attempts at this run left in ``<run>/_duckdb_tmp`` — called
+    once when a run starts, before any connection opens."""
+    shutil.rmtree(run_dir / TEMP_DIRECTORY_NAME, ignore_errors=True)
 
 
 def connect(profile: BuildProfile, temp_directory: Path) -> duckdb.DuckDBPyConnection:
@@ -172,9 +186,10 @@ def build_connection(
 ) -> Iterator[duckdb.DuckDBPyConnection]:
     """A connection for one build worker, closed and its temp directory removed on exit."""
     temp_directory = worker_temp_directory(run_dir, source_key, worker_id)
-    # What a crashed attempt at the same run left is not this connection's to reuse.
-    shutil.rmtree(temp_directory, ignore_errors=True)
-    temp_directory.mkdir(parents=True)
+    # Unique per source (worker_temp_directory): an existing directory is another live
+    # connection's, or a crashed attempt's that clear_temp_root should have removed —
+    # never silently taken over.
+    temp_directory.mkdir(parents=True, exist_ok=False)
     try:
         connection = connect(profile or BuildProfile(), temp_directory)
         try:
@@ -189,6 +204,7 @@ def build_connection(
 
 
 __all__ = [
+    "clear_temp_root",
     "MINIMUM_DUCKDB_VERSION",
     "REQUIRED_SETTINGS",
     "ROW_SEQ_COLUMN",

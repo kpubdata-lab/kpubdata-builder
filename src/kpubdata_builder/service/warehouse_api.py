@@ -55,6 +55,7 @@ from kpubdata_builder.service.query_service_api import execute_query
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages._path_safety import ensure_within
+from kpubdata_builder.tabular.builder_parquet import read_builder_parquet_schema
 from kpubdata_builder.tabular.semantics import ColumnSemantics
 from kpubdata_builder.warehouse import (
     PinnedSnapshot,
@@ -274,10 +275,9 @@ class WarehouseApiService:
             table_path = _readable_table(catalog, table, pin.snapshot_id)
             if table_path is None:
                 return _no_table_file()
-            import polars as pl
 
             try:
-                check_plan(plan, pl.read_parquet_schema(table_path))
+                check_plan(plan, read_builder_parquet_schema(table_path))
             except ValueError as exc:
                 return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
             try:
@@ -376,10 +376,9 @@ class WarehouseApiService:
             table_path = _readable_table(catalog, table, pin.snapshot_id)
             if table_path is None:
                 return _no_table_file()
-            import polars as pl
 
             try:
-                check_aggregate_plan(plan, pl.read_parquet_schema(table_path))
+                check_aggregate_plan(plan, read_builder_parquet_schema(table_path))
             except ValueError as exc:
                 return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
             try:

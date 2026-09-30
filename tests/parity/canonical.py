@@ -20,6 +20,8 @@ from typing import Any
 
 import polars as pl
 
+from kpubdata_builder.tabular.builder_parquet import read_builder_parquet
+
 #: Keys whose values vary from run to run and are never compared.
 VOLATILE_KEYS = frozenset(
     {
@@ -105,8 +107,12 @@ def canonical_frame(frame: pl.DataFrame) -> dict[str, Any]:
 
 
 def canonical_parquet(path: Path) -> dict[str, Any]:
-    """A Parquet file's logical schema and values — never its bytes (R12)."""
-    return canonical_frame(pl.read_parquet(path))
+    """A Parquet file's logical schema and values — never its bytes (R12).
+
+    Read as Builder's readers read it (``builder_parquet``): with the Builder dtypes the
+    file records given back, so a file DuckDB wrote compares by what users see.
+    """
+    return canonical_frame(read_builder_parquet(path))
 
 
 #: Generated identifiers that show up inside text, such as a NOTICE naming its snapshot.

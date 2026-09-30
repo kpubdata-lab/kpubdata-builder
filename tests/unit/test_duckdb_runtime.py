@@ -134,10 +134,10 @@ def test_workers_in_threads_each_get_their_own_connection(tmp_path: Path) -> Non
 
 def test_temp_directory_is_per_worker_and_removed_on_close(tmp_path: Path) -> None:
     with build_connection(tmp_path, "datago.apt_trade", 1):
-        own = tmp_path / "_duckdb_tmp" / "datago.apt_trade-1"
+        own = worker_temp_directory(tmp_path, "datago.apt_trade", 1)
         assert own.is_dir()
         with build_connection(tmp_path, "datago.apt_trade", 2):
-            other = tmp_path / "_duckdb_tmp" / "datago.apt_trade-2"
+            other = worker_temp_directory(tmp_path, "datago.apt_trade", 2)
             assert other.is_dir()
         assert not other.exists()
         assert own.is_dir(), "a worker removes only its own directory"
@@ -168,19 +168,68 @@ def test_spill_files_go_to_the_workers_directory(tmp_path: Path) -> None:
     assert not (tmp_path / "_duckdb_tmp").exists()
 
 
-@pytest.mark.parametrize(
-    ("source_key", "expected"),
-    [
-        ("datago.apt_trade", "datago.apt_trade-0"),
-        ("../../etc", "_.._etc-0"),
-        ("서울 자전거", "_-0"),
-    ],
-)
-def test_temp_directory_names_are_path_safe(tmp_path: Path, source_key: str, expected: str) -> None:
+@pytest.mark.parametrize("source_key", ["datago.apt_trade", "../../etc", "서울 자전거", "a/b"])
+def test_temp_directory_names_are_path_safe(tmp_path: Path, source_key: str) -> None:
     path = worker_temp_directory(tmp_path, source_key, 0)
 
     assert path.parent == tmp_path / "_duckdb_tmp"
-    assert path.name == expected
+    assert re.fullmatch(r"[A-Za-z0-9._-]+", path.name)
+    assert not path.name.startswith(".")
+
+
+def test_names_that_fold_together_still_get_their_own_directory(tmp_path: Path) -> None:
+    """Two Hangul aliases are both ``_`` once made path-safe; their spill
+    directories must still differ (#891 review)."""
+    names = ["매매", "전월세", "a b", "a/b", "a_b"]
+
+    paths = {worker_temp_directory(tmp_path, name, 0) for name in names}
+
+    assert len(paths) == len(names)
+    assert worker_temp_directory(tmp_path, "매매", 0) != worker_temp_directory(tmp_path, "매매", 1)
+
+
+def test_sources_whose_names_fold_together_run_side_by_side(tmp_path: Path) -> None:
+    """Neither connection removes the other's live spill directory."""
+    seen: dict[str, bool] = {}
+
+    def work(name: str) -> None:
+        with build_connection(tmp_path, name) as connection:
+            directory = worker_temp_directory(tmp_path, name, 0)
+            connection.execute("CREATE TABLE t AS SELECT range AS v FROM range(1000)")
+            barrier.wait()
+            seen[name] = directory.is_dir()
+            barrier.wait()
+
+    barrier = threading.Barrier(2)
+    threads = [threading.Thread(target=work, args=(n,)) for n in ("매매", "전월세")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert seen == {"매매": True, "전월세": True}
+    assert not (tmp_path / "_duckdb_tmp").exists()
+
+
+def test_a_directory_in_use_is_never_taken_over(tmp_path: Path) -> None:
+    with (
+        build_connection(tmp_path, "s"),
+        pytest.raises(FileExistsError),
+        build_connection(tmp_path, "s"),
+    ):
+        pass
+
+
+def test_clear_temp_root_removes_what_a_crash_left(tmp_path: Path) -> None:
+    from kpubdata_builder.tabular.duckdb_runtime import clear_temp_root
+
+    leftover = worker_temp_directory(tmp_path, "s", 0)
+    leftover.mkdir(parents=True)
+
+    clear_temp_root(tmp_path)
+
+    with build_connection(tmp_path, "s"):
+        pass
 
 
 # ------------------------------------------------------------------ SQL helpers
