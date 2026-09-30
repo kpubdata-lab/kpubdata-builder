@@ -27,6 +27,9 @@ from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.store.artifacts import ArtifactStore
 
+#: Statuses a row of ``GET /quality/issues`` can have, in the order rows are sorted.
+ISSUE_STATUSES = ("fail", "warn", "drift")
+
 
 class QualityApiService:
     """Per-run structured quality retrieval and recent-window aggregate (#486/#514)."""
@@ -129,5 +132,135 @@ class QualityApiService:
         )
         return ServiceResponse(200, {**base, "availability": "available", **counts})
 
+    def list_issues(
+        self,
+        *,
+        principal: Principal | None = None,
+        statuses: frozenset[str] = frozenset(ISSUE_STATUSES),
+        dataset_id: str | None = None,
+        category: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ServiceResponse:
+        """Actionable quality findings across every table the caller may see (#843).
 
-__all__ = ["QualityApiService"]
+        Each table's **latest** run is read — the state its data is in now — and every
+        check with status ``warn`` or ``fail`` becomes a row, as do schema drift
+        findings (``status: drift``; drift gates nothing, so it is never counted as a
+        failure). Results use the per-run vocabulary unchanged; nothing is re-judged.
+
+        ``coverage`` counts tables apart from findings, so "no issues" is never read
+        off tables that were not evaluated: ``not_evaluated`` (no results, or zero
+        checks), ``partial`` (some sources only) and ``unreadable`` (manifest
+        missing). ``cursor`` is the opaque position returned as ``next_cursor``.
+        """
+        try:
+            offset = int(cursor) if cursor is not None else 0
+        except ValueError:
+            return ServiceResponse(400, {"error": "cursor is not one this endpoint returned"})
+        if offset < 0:
+            return ServiceResponse(400, {"error": "cursor is not one this endpoint returned"})
+        records = self._datasets.dataset_records(principal)
+        latest = datasets_service.group_latest_by_dataset(records)
+        coverage = {"tables": 0, "evaluated": 0, "not_evaluated": 0, "partial": 0, "unreadable": 0}
+        issues: list[dict[str, JsonValue]] = []
+        for record in sorted(latest.values(), key=lambda r: r.dataset_id):
+            if dataset_id is not None and record.dataset_id != dataset_id:
+                continue
+            coverage["tables"] += 1
+            manifest = datasets_service.read_manifest(self._output_root, record.run_id)
+            if manifest is None:
+                coverage["unreadable"] += 1
+                continue
+            availability, evaluated = quality_service.quality_availability(
+                manifest, stages_service.known_source_keys(manifest)
+            )
+            if availability == "unavailable" or evaluated == 0:
+                coverage["not_evaluated"] += 1
+            elif availability == "partial":
+                coverage["partial"] += 1
+            else:
+                coverage["evaluated"] += 1
+            spec = datasets_service.read_snapshot_spec(self._output_root, record.run_id)
+            base: dict[str, JsonValue] = {
+                "dataset_id": record.dataset_id,
+                "title": spec.title if spec is not None else None,
+                "run_id": record.run_id,
+                "finished_at": record.finished_at,
+            }
+            issues.extend(_issues_of(manifest, base))
+        selected = [
+            issue
+            for issue in issues
+            if issue["status"] in statuses and (category is None or issue["category"] == category)
+        ]
+        selected.sort(key=_issue_order)
+        page = selected[offset : offset + limit]
+        more = offset + limit < len(selected)
+        return ServiceResponse(
+            200,
+            {
+                "issues": cast(JsonValue, page),
+                "total": len(selected),
+                "next_cursor": str(offset + limit) if more else None,
+                "coverage": cast(JsonValue, coverage),
+            },
+        )
+
+
+def _issues_of(
+    manifest: dict[str, object], base: dict[str, JsonValue]
+) -> list[dict[str, JsonValue]]:
+    rows: list[dict[str, JsonValue]] = []
+    results = manifest.get("quality_results")
+    if isinstance(results, dict):
+        for source_key, checks in results.items():
+            if not isinstance(checks, list):
+                continue
+            for check in checks:
+                if isinstance(check, dict) and check.get("status") in ("warn", "fail"):
+                    rows.append(
+                        {
+                            **base,
+                            "source_key": str(source_key),
+                            "kind": "check",
+                            "status": cast(JsonValue, check["status"]),
+                            "category": cast(JsonValue, check.get("category")),
+                            "check": cast(JsonValue, check),
+                            "drift": None,
+                        }
+                    )
+    drift = manifest.get("schema_drift")
+    if isinstance(drift, dict):
+        for source_key, findings in drift.items():
+            if not isinstance(findings, list):
+                continue
+            for finding in findings:
+                if isinstance(finding, dict):
+                    rows.append(
+                        {
+                            **base,
+                            "source_key": str(source_key),
+                            "kind": "drift",
+                            "status": "drift",
+                            "category": "schema_drift",
+                            "check": None,
+                            "drift": cast(JsonValue, finding),
+                        }
+                    )
+    return rows
+
+
+def _issue_order(issue: dict[str, JsonValue]) -> tuple[int, str, str, str, str]:
+    detail = issue["check"] if isinstance(issue["check"], dict) else issue["drift"]
+    detail = detail if isinstance(detail, dict) else {}
+    return (
+        ISSUE_STATUSES.index(cast(str, issue["status"])),
+        str(issue["dataset_id"]),
+        str(issue["source_key"]),
+        str(issue["category"]),
+        str(detail.get("rule") or detail.get("kind") or "") + str(detail.get("column") or ""),
+    )
+
+
+__all__ = ["ISSUE_STATUSES", "QualityApiService"]
