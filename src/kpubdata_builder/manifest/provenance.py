@@ -8,16 +8,21 @@ Checksums reproducible: sorted-key JSON serialization then SHA-256.
 Key components:
     - SourceProvenance: Single source fetch provenance snapshot
     - compute_data_checksum: Reproducible SHA-256 checksum of records
+    - compute_data_checksum_from_jsonl: The same checksum of a Bronze file on disk
     - build_source_provenance: Raw input → SourceProvenance
 """
 
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
+import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
 from ..spec import JsonValue
@@ -194,15 +199,73 @@ def compute_data_checksum(records: Sequence[Mapping[str, JsonValue]]) -> str:
     return f"sha256:{digest}"
 
 
+#: How much of a Bronze file one sorted run holds in memory (#622). Below this the whole
+#: file is sorted in one go, as compute_data_checksum does.
+_SORT_RUN_BYTES = 64 * 1024 * 1024
+
+
+def compute_data_checksum_from_jsonl(path: Path, *, run_bytes: int = _SORT_RUN_BYTES) -> str:
+    """:func:`compute_data_checksum` of a canonical Bronze file, without loading it (#622).
+
+    A canonical Bronze line is the record serialised exactly as the checksum serialises
+    it (sorted keys, ``ensure_ascii=False``), so the checksum is the lines sorted and
+    joined. Sorting is done in runs of about ``run_bytes`` spilled beside the file and
+    merged, so a file larger than memory gives the same value the in-memory function
+    gives for its records.
+    """
+    runs: list[Path] = []
+    chunk: list[str] = []
+    size = 0
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix=".checksum-") as spill:
+        with path.open(encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.rstrip("\n")
+                if not line:
+                    continue
+                chunk.append(line)
+                size += len(line)
+                if size >= run_bytes:
+                    runs.append(_write_run(Path(spill), len(runs), chunk))
+                    chunk, size = [], 0
+        if runs and chunk:
+            runs.append(_write_run(Path(spill), len(runs), chunk))
+            chunk = []
+        digest = hashlib.sha256(b"[")
+        with ExitStack() as stack:
+            streams = [
+                (raw.rstrip("\n") for raw in stack.enter_context(run.open(encoding="utf-8")))
+                for run in runs
+            ]
+            ordered = heapq.merge(*streams) if runs else iter(sorted(chunk))
+            for position, line in enumerate(ordered):
+                if position:
+                    digest.update(b",")
+                digest.update(line.encode("utf-8"))
+        digest.update(b"]")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _write_run(directory: Path, number: int, lines: list[str]) -> Path:
+    run = directory / f"{number:06d}.txt"
+    lines.sort()
+    with run.open("w", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line)
+            handle.write("\n")
+    return run
+
+
 def build_source_provenance(
     *,
     provider: str,
     dataset: str,
     fetched_at: datetime,
-    records: Sequence[Mapping[str, JsonValue]],
+    records: Sequence[Mapping[str, JsonValue]] | None = None,
     params: Mapping[str, JsonValue],
     api_version: str = "unknown",
     call_totals: Sequence[CallTotal] | None = None,
+    records_path: Path | None = None,
+    record_count: int | None = None,
 ) -> SourceProvenance:
     """Create SourceProvenance from raw fetch info.
 
@@ -210,15 +273,27 @@ def build_source_provenance(
         provider: Data provider identifier.
         dataset: Dataset identifier.
         fetched_at: Fetch completion time (timezone-aware).
-        records: Fetched records (used for count and checksum calculation).
+        records: Fetched records (used for count and checksum calculation). Give
+            ``records_path`` and ``record_count`` instead for records on disk.
         params: Fetch request parameters.
         api_version: Source API version. "unknown" if omitted.
         call_totals: The provider's reported totals per call (#816). None leaves the
             reported total and coverage out, as for manifests written before them.
+        records_path: A canonical Bronze file (#622); its checksum is computed without
+            loading it. Needs ``record_count``.
+        record_count: How many records ``records_path`` holds.
 
     Returns:
         SourceProvenance: Provenance snapshot filled with UTC ISO time and checksum.
     """
+    if records_path is not None:
+        if record_count is None:
+            raise ValueError("records_path needs record_count")
+        count, checksum = record_count, compute_data_checksum_from_jsonl(records_path)
+    elif records is not None:
+        count, checksum = len(records), compute_data_checksum(records)
+    else:
+        raise ValueError("give records, or records_path and record_count")
     observed_at = fetched_at.astimezone(timezone.utc).isoformat()
     total: SourceReportedTotal | None = None
     coverage: FetchCoverage | None = None
@@ -228,11 +303,11 @@ def build_source_provenance(
         provider=provider,
         dataset=dataset,
         fetched_at=observed_at,
-        record_count=len(records),
-        data_checksum=compute_data_checksum(records),
+        record_count=count,
+        data_checksum=checksum,
         api_version=api_version,
         params=dict(params),
-        fetched_row_count=len(records),
+        fetched_row_count=count,
         source_reported_total=total,
         coverage=coverage,
     )
@@ -265,5 +340,6 @@ __all__ = [
     "summarize_reported_totals",
     "build_source_provenance",
     "compute_data_checksum",
+    "compute_data_checksum_from_jsonl",
     "compute_inputs_fingerprint",
 ]

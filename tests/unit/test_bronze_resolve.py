@@ -110,7 +110,7 @@ def test_public_api_source_delegates_to_existing_client_path() -> None:
     artifact = build_bronze_artifact_for_source(source, client=client)
 
     assert artifact.source_key == "datago.air_quality"
-    assert artifact.raw_records == ({"id": "1"},)
+    assert tuple(artifact.iter_records()) == ({"id": "1"},)
     assert artifact.fetch_params == {"page": 1}
 
 
@@ -147,7 +147,7 @@ def test_file_source_reads_and_parses_upload(tmp_path: Path) -> None:
     )
 
     assert artifact.source_key == f"file.{metadata.upload_id}"
-    assert artifact.raw_records == ({"id": 1, "v": 10},)
+    assert tuple(artifact.iter_records()) == ({"id": 1, "v": 10},)
     assert artifact.fetch_params == {
         "upload_id": metadata.upload_id,
         "format": "csv",
@@ -247,7 +247,7 @@ def test_url_source_uses_safe_fetch_and_declared_format(monkeypatch: pytest.Monk
     artifact = build_bronze_artifact_for_source(source, client=_FakeClient({}))
 
     assert artifact.source_key.startswith("url.example-org-")
-    assert artifact.raw_records == ({"id": 1},)
+    assert tuple(artifact.iter_records()) == ({"id": 1},)
     assert artifact.fetch_params == {"endpoint": "https://example.org/data.json", "method": "GET"}
 
 
@@ -264,7 +264,7 @@ def test_url_source_infers_format_from_content_type_when_unset(
 
     artifact = build_bronze_artifact_for_source(source, client=_FakeClient({}))
 
-    assert artifact.raw_records == ({"a": 1, "b": 2},)
+    assert tuple(artifact.iter_records()) == ({"a": 1, "b": 2},)
 
 
 def test_url_source_defaults_to_json_when_format_and_content_type_unknown(
@@ -280,7 +280,7 @@ def test_url_source_defaults_to_json_when_format_and_content_type_unknown(
 
     artifact = build_bronze_artifact_for_source(source, client=_FakeClient({}))
 
-    assert artifact.raw_records == ({"id": 1},)
+    assert tuple(artifact.iter_records()) == ({"id": 1},)
 
 
 def test_url_source_provenance_excludes_query_string(monkeypatch: pytest.MonkeyPatch) -> None:

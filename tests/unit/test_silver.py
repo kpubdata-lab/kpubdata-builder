@@ -36,9 +36,9 @@ def _bronze(
     records: tuple[Mapping[str, JsonValue], ...], *, source_key: str = "datago.apt_trade"
 ) -> BronzeArtifact:
     normalized_records = tuple(dict(record) for record in records)
-    return BronzeArtifact(
+    return BronzeArtifact.from_records(
         source_key=source_key,
-        raw_records=normalized_records,
+        records=normalized_records,
         fetched_at=utc_now(),
     )
 
@@ -142,7 +142,7 @@ class TestBuildSilverDataset:
 class TestRowPreservingInvariant:
     """Fix invariant that Bronze-Silver doesn't filter/dedup/reorder rows (#497).
 
-    Source-Silver diff in pipeline.preview compares ``bronze.raw_records[i]`` with
+    Source-Silver diff in pipeline.preview compares ``tuple(bronze.iter_records())[i]`` with
     This invariant that ``silver.table`` row i is always same logical row
     depends on (actual basis for diff_available judgment). normalize_table()
     records_to_dataframe() calls only per-column ops; validate_table() never

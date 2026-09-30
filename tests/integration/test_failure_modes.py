@@ -44,13 +44,13 @@ def test_load_spec_rejects_missing_required_fields(tmp_path: Path) -> None:
 
 
 def test_bronze_persist_rejects_path_traversal(tmp_path: Path) -> None:
-    artifact = BronzeArtifact(source_key="datago.test", raw_records=())
+    artifact = BronzeArtifact.from_records(source_key="datago.test", records=())
     with pytest.raises(ValueError, match="unsafe characters"):
         persist_bronze_artifact(artifact, output_root=tmp_path, run_id="../escape")
 
 
 def test_bronze_persist_rejects_empty_run_id(tmp_path: Path) -> None:
-    artifact = BronzeArtifact(source_key="datago.test", raw_records=())
+    artifact = BronzeArtifact.from_records(source_key="datago.test", records=())
     with pytest.raises(ValueError, match="must not be empty"):
         persist_bronze_artifact(artifact, output_root=tmp_path, run_id="")
 

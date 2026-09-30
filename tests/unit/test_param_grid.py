@@ -257,7 +257,7 @@ class TestBronzeCollectionAcrossCombinations:
 
         assert [c["LAWD_CD"] for c in calls] == ["11110", "11140"]
         assert all(c["numOfRows"] == 100 for c in calls)
-        assert [r["id"] for r in artifact.raw_records] == [  # type: ignore[attr-defined]
+        assert [r["id"] for r in tuple(artifact.iter_records())] == [  # type: ignore[attr-defined]
             "11110-1",
             "11110-2",
             "11140-1",
@@ -282,7 +282,7 @@ class TestBronzeCollectionAcrossCombinations:
             )
         )
 
-        assert first.raw_records == second.raw_records  # type: ignore[attr-defined]
+        assert tuple(first.iter_records()) == tuple(second.iter_records())  # type: ignore[attr-defined]
 
     def test_the_expansion_is_recorded_in_provenance(self) -> None:
         # Without recording combination that produced Bronze, reproducibility loses grounding.
