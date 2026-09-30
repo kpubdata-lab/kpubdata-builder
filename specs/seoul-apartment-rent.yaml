@@ -133,6 +133,34 @@ sources:
       - deal_year
       - deal_month
       - deal_day
+  # Gold keeps the published columns and rows (#659, ADR 0018 option C); Silver keeps
+  # all of them, and quality is measured there. Same as the legacy config's
+  # column_mapping + derived and filters (seoul_apartment_rent.yaml).
+  gold:
+    select:
+    - apartment_name
+    - build_year
+    - deal_year
+    - deal_month
+    - deal_day
+    - deposit
+    - monthly_rent
+    - exclusive_area
+    - floor
+    - jibun
+    - district
+    - region_code
+    - contract_type
+    - contract_term
+    - previous_deposit
+    - previous_monthly_rent
+    - use_request_right
+    - road_name
+    - deal_date
+    filters:
+    - column: deal_year
+      op: ge
+      value: 2020
 exports:
 - kind: parquet
   output_path: data/seoul-apartment-rent.parquet

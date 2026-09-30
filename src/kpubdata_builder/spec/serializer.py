@@ -163,6 +163,20 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
     # unrelated". For existing public_api-only specs, only the "kind":
     # "public_api" field grows additively.
     entry: dict[str, JsonValue] = {"kind": source.kind, "alias": source.alias, "schema": schema}
+    if source.gold is not None:
+        # Part of the recipe (#659): which columns and rows are published. Omitted when
+        # absent, so existing specs keep their digest.
+        entry["gold"] = {
+            "select": list(source.gold.select),
+            "filters": [
+                {
+                    "column": f.column,
+                    "op": f.op,
+                    **({} if f.op == "not_null" else {"value": f.value}),
+                }
+                for f in source.gold.filters
+            ],
+        }
     if source.kind == "file":
         entry["upload_id"] = source.upload_id
         entry["format"] = source.format

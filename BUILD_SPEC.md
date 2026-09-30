@@ -240,6 +240,39 @@ data-loss 가드가 빌드를 실패시킵니다.
 `rename`과 `derived`는 canonical BuildSpec snapshot에 실리므로 spec digest에 반영됩니다
 — 변환 규칙을 바꾸면 digest가 바뀝니다.
 
+#### `sources[].gold` — 게시본의 컬럼과 행 (#659)
+
+**Silver 는 Bronze 의 모든 컬럼과 행을 보존하고, 품질은 거기서 잰다**(#611). 게시되는 것은
+Gold 이므로 컬럼 선택과 행 필터는 Gold 에 둔다(ADR 0018 선택지 C).
+
+```yaml
+sources:
+  - provider: datago
+    dataset: apt_trade
+    gold:
+      select: [district_code, apartment_name, deal_amount_10k_krw, deal_date]
+      filters:
+        - column: deal_amount_10k_krw
+          op: gt
+          value: 0
+```
+
+| 필드 | 설명 |
+| :--- | :--- |
+| `select` | Gold 에 남길 컬럼, 이 순서대로. 생략하면 전부 |
+| `filters[].column` | 비교할 컬럼. `select` 가 버리는 컬럼도 쓸 수 있다(필터가 먼저) |
+| `filters[].op` | `eq` `ne` `gt` `ge` `lt` `le` `in`(리스트) `not_null`(값 없음) |
+| `filters[].value` | 비교할 값. 식(expression)이 아니라 값이다 — 평가하지 않는다 |
+
+- null 은 어떤 비교도 통과하지 않는다(`not_null` 과 null 이 아닌 값에 대한 `ne` 제외).
+- Silver 에 없는 컬럼이나 비교할 수 없는 타입이면 그 소스가 실패한다 — 스펙과 다른 표를
+  게시하지 않는다.
+- manifest 의 `gold_selection` 에 Silver 행 수(`input_rows`)·Gold 행 수(`output_rows`)·
+  `dropped_rows` 와 규칙이 남는다. `row_counts` 는 Silver 기준 그대로다. 웨어하우스
+  스냅샷의 행 수와 데이터셋 카드(컬럼·표본 행)는 Gold 를 따른다.
+- `composition` 과 함께 쓸 수 없다 — 합성은 소스별 Gold 대신 하나의 합성 Gold 를 만든다.
+- canonical snapshot 에 실리므로 digest 에 반영된다. 선언하지 않은 spec 의 digest 는 그대로다.
+
 ### 4.5 `exports` (배열)
 
 각 export 대상은 다음 필드를 가집니다.

@@ -321,6 +321,8 @@ _BuildListEntry = dict[str, str | None]
 # (#679, additive — existing paths·behavior unchanged). Both return metadata only,
 # 1.53.0 -> 1.54.0: the Builder sign-up ledger — /admin/users and approve/reject, and 403
 #   signup_pending/signup_rejected for OIDC users not admitted (#785, additive).
+# 1.54.0 -> 1.55.0: SourceRef gains gold (select/filters) and the manifest gold_selection
+#   (#659, additive).
 # 1.51.0 -> 1.52.0: preview/build/builds answer 403 url_source_forbidden for a url source in a
 #   multi-user deployment, and declare the existing provider_credential_required (#685).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
@@ -328,7 +330,7 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.54.0"
+API_CONTRACT_VERSION = "1.55.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

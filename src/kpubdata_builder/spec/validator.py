@@ -142,6 +142,7 @@ def validate_spec(spec: BuildSpec) -> None:
     problems.extend(_license_problems(spec))
     problems.extend(_quality_problems(spec))
     problems.extend(_composition_problems(spec))
+    problems.extend(_gold_selection_problems(spec))
     if problems:
         raise ValidationError([str(p) for p in problems], structured=problems)
 
@@ -847,6 +848,26 @@ def _license_problems(spec: BuildSpec) -> list[ValidationProblem]:
             )
         )
     return problems
+
+
+def _gold_selection_problems(spec: BuildSpec) -> list[ValidationProblem]:
+    """``sources[].gold`` shapes a source's own Gold (#659), which a composition replaces.
+
+    With ``composition`` there is one composed Gold, not one per source, so a per-source
+    selection would silently do nothing. It is refused rather than ignored.
+    """
+    if spec.composition is None:
+        return []
+    return [
+        _p(
+            "gold_selection_with_composition",
+            f"sources[{i}].gold",
+            f"sources[{i}].gold selects a source's own Gold, and composition builds one "
+            "composed Gold instead; remove it (#659)",
+        )
+        for i, source in enumerate(spec.sources)
+        if source.gold is not None
+    ]
 
 
 def _composition_problems(spec: BuildSpec) -> list[ValidationProblem]:
