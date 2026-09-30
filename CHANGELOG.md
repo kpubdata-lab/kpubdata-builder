@@ -9,6 +9,9 @@
 ### Documentation
 
 - ADR 0021 records the owner's 2026-09-30 plan to make DuckDB the single tabular engine (#864): big-bang cutover, staged implementation, with decisions D1–D9 (legacy publish keeps Polars temporarily, DuckDB as a core dependency with a verified minimum version, a Builder-owned dtype vocabulary, a replayable exporter data source, versioned checksums, saved-analysis dialects, `hash-sort-v2` splits, an explicit row ordinal, layered resource limits), the rejected alternatives, and its relation to ADR 0018, #622, #701 and #704 — replacing their "engine choice must follow a measured limit" sentences, with #622's 1,444 MiB failure as the measurement.
+### Added
+
+- The DuckDB runtime foundation (#866, step 03 of ADR 0021). `duckdb>=1.2.0,<2` is a core dependency: 1.2.0 is the first release with every sandbox setting the query profile needs (`allowed_paths`, `allowed_directories`, `lock_configuration`, `enable_external_access`, `max_temp_directory_size`), checked against the 1.1.3 and 1.2.0 wheels, and a new `DuckDB floor` CI job runs the DuckDB tests against it. `tabular/duckdb_runtime.py` opens one in-memory connection per build worker with its memory, thread and spill limits, `TimeZone` fixed to UTC whatever the host says, and no on-demand extension loading; spill files go to `<run>/_duckdb_tmp/<source>-<worker>/`, which the connection removes on close. `tabular/sql.py` is the one identifier-quoting path and binds every value as a parameter; `tabular/dtypes.py` maps DuckDB types onto the existing dtype strings (`Int64`, `Datetime(time_unit='us', time_zone=None)`, `Decimal(precision=10, scale=2)` …) and refuses types it has no spelling for. The internal row ordinal `_kpubdata_row_seq` is reserved: a source column with that name, in any case, is refused. Nothing in the build or query path uses DuckDB yet — Silver and Gold are still Polars.
 
 ### Documentation
 
