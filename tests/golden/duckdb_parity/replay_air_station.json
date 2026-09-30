@@ -2871,7 +2871,8 @@
      "reasons": [],
      "status": "complete"
     },
-    "data_checksum": "sha256:11fd21ced5b5118aae89bff038d3be7a84825cd6ce9a2df092006e4bbb0d9355",
+    "data_checksum": "sha256:4617a519e00dc826e6453a93d7dd414b704a132cc73afb1e9365feea28f2cccb",
+    "data_checksum_algorithm": "canonical-multiset-v2",
     "dataset": "air_station",
     "fetched_row_count": 22,
     "params": {

@@ -334,6 +334,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.57.0 -> 1.58.0: param_grid checkpoint resume and the manifest reproducibility mark (#648,
 # 1.58.0 -> 1.59.0: /revisions — immutable document revisions with concurrency checks, revert
 #   and an audit trail (#820, additive).
+# 1.59.0 -> 1.60.0: versioned checksums — SourceProvenance.data_checksum_algorithm, the
+#   manifest's inputs_fingerprint_algorithm and per-Gold artifacts {artifact_digest,
+#   artifact_writer} (#867, additive; new runs' data_checksum values change algorithm).
 # 1.51.0 -> 1.52.0: preview/build/builds answer 403 url_source_forbidden for a url source in a
 #   multi-user deployment, and declare the existing provider_credential_required (#685).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
@@ -341,7 +344,7 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.59.0"
+API_CONTRACT_VERSION = "1.60.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

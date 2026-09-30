@@ -27,6 +27,15 @@ from typing import Literal
 
 from ..spec import JsonValue
 from ..stages.bronze.models import CallTotal
+from .checksums import (
+    ALGORITHMS,
+    CURRENT_ALGORITHM,
+    FINGERPRINT_ALGORITHM,
+    LEGACY_ALGORITHM,
+    LEGACY_FINGERPRINT_ALGORITHM,
+    multiset_checksum,
+    multiset_checksum_of_jsonl,
+)
 
 ReportedTotalStatus = Literal["reported", "unknown", "inconsistent", "not_summed", "not_reported"]
 CoverageStatus = Literal["complete", "partial", "unknown"]
@@ -141,6 +150,8 @@ class SourceProvenance:
             manifests written before it.
         coverage: Whether the fetch collected that total (#816). None for manifests
             written before it.
+        data_checksum_algorithm: What made ``data_checksum`` (#867; ``checksums``). None
+            for manifests written before it, which used ``canonical-json-sort-v1``.
     """
 
     provider: str
@@ -153,6 +164,7 @@ class SourceProvenance:
     fetched_row_count: int | None = None
     source_reported_total: SourceReportedTotal | None = None
     coverage: FetchCoverage | None = None
+    data_checksum_algorithm: str | None = None
 
 
 def snapshot_coverage(entry: SourceProvenance | None) -> dict[str, JsonValue] | None:
@@ -178,10 +190,11 @@ def snapshot_coverage(entry: SourceProvenance | None) -> dict[str, JsonValue] | 
 
 
 def compute_data_checksum(records: Sequence[Mapping[str, JsonValue]]) -> str:
-    """Calculate reproducible SHA-256 checksum of records.
+    """The ``canonical-json-sort-v1`` checksum of records (legacy since #867).
 
     Sorted-key JSON serialization removes key order differences, so identical data
-    always produces identical hash.
+    always produces identical hash. New manifests use ``canonical-multiset-v2``
+    (``checksums.multiset_checksum``), which needs no sort.
 
     Args:
         records: Record sequence to calculate checksum from.
@@ -266,6 +279,7 @@ def build_source_provenance(
     call_totals: Sequence[CallTotal] | None = None,
     records_path: Path | None = None,
     record_count: int | None = None,
+    checksum_algorithm: str = CURRENT_ALGORITHM,
 ) -> SourceProvenance:
     """Create SourceProvenance from raw fetch info.
 
@@ -282,16 +296,27 @@ def build_source_provenance(
         records_path: A canonical Bronze file (#622); its checksum is computed without
             loading it. Needs ``record_count``.
         record_count: How many records ``records_path`` holds.
+        checksum_algorithm: Which checksum to compute (#867). New manifests use the
+            current one; the legacy one stays computable for comparing old runs.
 
     Returns:
         SourceProvenance: Provenance snapshot filled with UTC ISO time and checksum.
     """
+    if checksum_algorithm not in ALGORITHMS:
+        raise ValueError(f"unknown checksum algorithm: {checksum_algorithm!r}")
+    legacy = checksum_algorithm == LEGACY_ALGORITHM
     if records_path is not None:
         if record_count is None:
             raise ValueError("records_path needs record_count")
-        count, checksum = record_count, compute_data_checksum_from_jsonl(records_path)
+        count = record_count
+        checksum = (
+            compute_data_checksum_from_jsonl(records_path)
+            if legacy
+            else multiset_checksum_of_jsonl(records_path)
+        )
     elif records is not None:
-        count, checksum = len(records), compute_data_checksum(records)
+        count = len(records)
+        checksum = compute_data_checksum(records) if legacy else multiset_checksum(records)
     else:
         raise ValueError("give records, or records_path and record_count")
     observed_at = fetched_at.astimezone(timezone.utc).isoformat()
@@ -310,24 +335,53 @@ def build_source_provenance(
         fetched_row_count=count,
         source_reported_total=total,
         coverage=coverage,
+        data_checksum_algorithm=checksum_algorithm,
     )
 
 
-def compute_inputs_fingerprint(provenance: Sequence[SourceProvenance]) -> str | None:
+def compute_inputs_fingerprint(
+    provenance: Sequence[SourceProvenance], *, algorithm: str = FINGERPRINT_ALGORITHM
+) -> str | None:
     """Calculate reproducibility fingerprint for entire build input (#211).
 
-    Sort and combine per-source data checksums as ``provider.dataset=sha256:...`` format,
-    then hash once more. Regardless of source order, same input set produces same fingerprint.
+    Sort and combine per-source data checksums, then hash once more. Regardless of
+    source order, same input set produces same fingerprint.
+
+    ``sources-sha256-v2`` (#867) names each checksum's algorithm in its part —
+    ``provider.dataset=<algorithm>:sha256:...`` — and refuses checksums of different
+    algorithms, so two fingerprints are equal only over checksums that can be compared.
+    ``sources-sha256-v1`` is the earlier form, ``provider.dataset=sha256:...``, kept to
+    recompute old manifests' fingerprints.
 
     Args:
         provenance: Sequence of provenance snapshots per source.
+        algorithm: ``FINGERPRINT_ALGORITHM`` or ``LEGACY_FINGERPRINT_ALGORITHM``.
 
     Returns:
         str | None: Fingerprint with "sha256:" prefix. None if provenance empty.
+
+    Raises:
+        ValueError: The sources' checksums were made by different algorithms, or the
+            fingerprint algorithm is unknown.
     """
     if not provenance:
         return None
-    parts = sorted(f"{p.provider}.{p.dataset}={p.data_checksum}" for p in provenance)
+    if algorithm == LEGACY_FINGERPRINT_ALGORITHM:
+        parts = sorted(f"{p.provider}.{p.dataset}={p.data_checksum}" for p in provenance)
+    elif algorithm == FINGERPRINT_ALGORITHM:
+        algorithms = {p.data_checksum_algorithm or LEGACY_ALGORITHM for p in provenance}
+        if len(algorithms) > 1:
+            raise ValueError(
+                f"source checksums use different algorithms: {sorted(algorithms)}; "
+                "a fingerprint over them would compare what cannot be compared"
+            )
+        parts = sorted(
+            f"{p.provider}.{p.dataset}={p.data_checksum_algorithm or LEGACY_ALGORITHM}:"
+            f"{p.data_checksum}"
+            for p in provenance
+        )
+    else:
+        raise ValueError(f"unknown fingerprint algorithm: {algorithm!r}")
     digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 

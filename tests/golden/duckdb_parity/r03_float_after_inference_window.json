@@ -3709,7 +3709,8 @@
      ],
      "status": "unknown"
     },
-    "data_checksum": "sha256:22674508d0d6fbaa4ceec980bc56467439e5295d057704c9bcd9c76e634303bb",
+    "data_checksum": "sha256:67d9e9876c00b17579e81986e128c57a0b8903abe528328020c9f482375c7f2c",
+    "data_checksum_algorithm": "canonical-multiset-v2",
     "dataset": "air_quality",
     "fetched_row_count": 201,
     "params": {},

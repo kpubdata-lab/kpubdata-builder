@@ -52,7 +52,8 @@
       ],
       "status": "unknown"
      },
-     "data_checksum": "sha256:f7a017d9bfe86d3eca71c767689c1c01612ff254fd38ca640dc9495d99557b18",
+     "data_checksum": "sha256:255e0105f39de162eeb51aa807082652db0e35e0e9cde410e98f9e630380611f",
+     "data_checksum_algorithm": "canonical-multiset-v2",
      "dataset": "air_quality",
      "fetched_row_count": 5,
      "params": {},
@@ -134,7 +135,8 @@
       ],
       "status": "unknown"
      },
-     "data_checksum": "sha256:f7a017d9bfe86d3eca71c767689c1c01612ff254fd38ca640dc9495d99557b18",
+     "data_checksum": "sha256:255e0105f39de162eeb51aa807082652db0e35e0e9cde410e98f9e630380611f",
+     "data_checksum_algorithm": "canonical-multiset-v2",
      "dataset": "air_quality",
      "fetched_row_count": 5,
      "params": {},

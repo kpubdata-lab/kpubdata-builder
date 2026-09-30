@@ -572,7 +572,8 @@
      ],
      "status": "unknown"
     },
-    "data_checksum": "sha256:4498ed5308ca7ddd5976ba79a0666781f4026acf8f65fecf340baf6666b239c1",
+    "data_checksum": "sha256:a42e03fa57e49f6eaaad0a59723274ad54d4e49d1a768f4102e76f4bce4d3b18",
+    "data_checksum_algorithm": "canonical-multiset-v2",
     "dataset": "upl_<id>",
     "fetched_row_count": 5,
     "params": {

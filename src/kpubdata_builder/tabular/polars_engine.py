@@ -88,7 +88,17 @@ def generate_preview(df: pl.DataFrame, limit: int = DEFAULT_PREVIEW_LIMIT) -> Pr
     return PreviewSlice(rows=rows, total_rows=df.height)
 
 
+def artifact_writer() -> dict[str, str]:
+    """The engine that writes Gold tables, for a manifest's ``artifact_writer`` (#867).
+
+    The same rows written by another engine, or another version of this one, can be
+    different bytes; naming the writer next to the digest says why a digest moved.
+    """
+    return {"name": "polars", "version": pl.__version__}
+
+
 __all__ = [
+    "artifact_writer",
     "DEFAULT_PREVIEW_LIMIT",
     "compute_statistics",
     "dataframe_to_records",
