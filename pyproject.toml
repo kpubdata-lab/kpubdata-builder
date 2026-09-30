@@ -110,6 +110,12 @@ mypy_path = ["src"]
 module = ["sqlalchemy.*", "sqlalchemy_cubrid.*", "pycubrid.*"]
 ignore_missing_imports = true
 
+# Publishing SDKs come with the optional `publish`/`huggingface` extras; where they are
+# absent, their imports are unchecked rather than annotated line by line (#688).
+[[tool.mypy.overrides]]
+module = ["huggingface_hub.*", "kaggle.*"]
+ignore_missing_imports = true
+
 # 커버리지 게이트 (#594). 지금 수준(실측 90%)을 잠그는 것이 목적이지, 새 커버리지를
 # 강제하는 것이 아니다 — 하한은 실측보다 2%p 낮게 두어 정상 변동으로 CI 가 붉어지지
 # 않게 한다. `--cov` 는 기본 addopts 에 넣지 않는다: 테스트 잡이 5개(py3.10~3.13 +
@@ -134,6 +140,7 @@ addopts = "-ra -m 'not cubrid and not network'"
 testpaths = ["tests"]
 markers = [
   "cubrid: CUBRID 백엔드 계약/통합 테스트 (기본 제외; sqlalchemy 필요, ADR 0016).",
+  "real_catalog_terms: reads redistribution terms from the installed kpubdata catalog instead of the suite's pinned 'declares nothing' (#688).",
   "network: 외부 인터넷 호출이 필요한 테스트 (기본 제외). 제3자 서비스의 가용성에 결과가 달려 있어 CI 를 그 서비스의 상태에 묶는다. 실행: pytest -m network.",
 ]
 

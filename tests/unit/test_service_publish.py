@@ -121,9 +121,20 @@ class _DeferredPublisher(_SpyPublisher):
         )
 
 
-def _service(tmp_path: Path) -> BuilderService:
+def _service(
+    tmp_path: Path, *, terms: str | None = None, visibility: str = "absent"
+) -> BuilderService:
+    """``terms``: the redistribution every dataset declares (#688); when None, the
+    catalog lookup, which the suite pins to "declares nothing" (tests/conftest.py).
+    ``visibility``: what the remote says about the destination — by default it does
+    not exist yet."""
     client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}, {"id": "2", "v": 20}]})
-    return BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
+    return BuilderService(
+        output_root=tmp_path,
+        client_factory=lambda **_: client,
+        terms_lookup=(lambda _id: terms) if terms is not None else None,
+        publish_visibility_probe=lambda *_: visibility,
+    )
 
 
 def _build(service: BuilderService, run_id: str, spec_yaml: str) -> ServiceResponse:
@@ -528,7 +539,8 @@ class TestPublish:
         _with_credentials(monkeypatch, "huggingface")
         spy = _SpyPublisher("huggingface")
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
-        service = _service(tmp_path)
+        # A public publish needs terms that allow it (#688).
+        service = _service(tmp_path, terms="allowed")
         _build(service, f"run-private-{private}", LICENSED_SPEC_YAML)
 
         resp = _publish(service, f"run-private-{private}", options={"private": private})

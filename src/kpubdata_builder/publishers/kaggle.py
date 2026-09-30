@@ -99,6 +99,28 @@ class KagglePublisher(BasePublisher):
         # Kaggle API uploads per directory containing dataset-metadata.json (#176).
         return True
 
+    def destination_visibility(
+        self, destination: str, *, credentials: Mapping[str, str] | None = None
+    ) -> str:
+        """The dataset's visibility among the account's own datasets; absent if none.
+
+        Read as :meth:`publish` reads it before a private publish (#901).
+        """
+        from kaggle.api.kaggle_api_extended import KaggleApi
+
+        api = KaggleApi()
+        with _kaggle_environment(credentials):
+            api.authenticate()
+        for dataset in api.dataset_list(mine=True, search=destination.split("/")[-1]):
+            if str(dataset) == destination:
+                private = _dataset_is_private(dataset)
+                if private is None:
+                    raise PublishError(
+                        f"the visibility of Kaggle dataset {destination} was not reported"
+                    )
+                return "private" if private else "public"
+        return "absent"
+
     def publish(
         self,
         artifact_paths: tuple[Path, ...],
@@ -125,7 +147,7 @@ class KagglePublisher(BasePublisher):
                 visibility cannot be confirmed.
         """
         try:
-            from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore[import-not-found]
+            from kaggle.api.kaggle_api_extended import KaggleApi
         except ImportError as exc:
             raise RuntimeError(
                 "kaggle is required for Kaggle publishing. Install it with: pip install kaggle"

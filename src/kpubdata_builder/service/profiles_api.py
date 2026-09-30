@@ -37,6 +37,12 @@ from kpubdata_builder.service import ownership
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.column_semantics import spec_semantics, table_key
 from kpubdata_builder.service.datasets import read_snapshot_spec
+from kpubdata_builder.service.redistribution import (
+    TermsLookup,
+    build_verdict,
+    forbidden_response,
+    kpubdata_terms,
+)
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.service.warehouse_api import _pin, _readable_table
 from kpubdata_builder.spec import JsonValue
@@ -101,11 +107,13 @@ class ProfilesApiService:
         engine: QueryService,
         timeout_retry_seconds: float = PROFILE_TIMEOUT_RETRY_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        terms_lookup: TermsLookup = kpubdata_terms,
     ) -> None:
         self._output_root = output_root
         self._table_catalog = table_catalog
         self._engine = engine
         self._timeouts = _TimeoutRecord(timeout_retry_seconds, clock)
+        self._terms_lookup = terms_lookup
 
     def get(self, name: str, snapshot: str, *, principal: Principal) -> ServiceResponse:
         catalog = self._table_catalog()
@@ -124,6 +132,13 @@ class ProfilesApiService:
         try:
             row = catalog.get_snapshot(pin.snapshot_id)
             spec = read_snapshot_spec(self._output_root, row.run_id)
+            # A profile carries values (range min/max): the terms gate applies (#688),
+            # after the caller's own table and snapshot are found.
+            refusal = forbidden_response(
+                build_verdict(spec, self._terms_lookup), what="a column profile"
+            )
+            if refusal is not None:
+                return refusal
             semantics = spec_semantics(spec, table_key(spec, table.logical_name))
             layout = SnapshotLayout(catalog.root, table.id)
             cache = layout.profile_path(pin.snapshot_id)

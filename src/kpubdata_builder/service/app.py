@@ -71,9 +71,16 @@ from .providers import (
     require_own_provider_credential,
 )
 from .providers_service import ProvidersService
-from .publish_api import PublishApiService
+from .publish_api import PublishApiService, VisibilityProbe
 from .quality_api import ISSUE_STATUSES, QualityApiService
 from .query_service_api import QueryApiService
+from .redistribution import (
+    BuildVerdict,
+    TermsLookup,
+    build_verdict,
+    forbidden_response,
+    kpubdata_terms,
+)
 from .responses import FileResponse, ServiceResponse
 from .revisions import RevisionStore
 from .revisions_api import RevisionsApiService
@@ -354,7 +361,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.63.0 -> 1.64.0: the pii scan gate counts declared columns Gold masks as handled;
 #   manifest pii_masking gains declared_absent and masked[].masked_as, and a non-text
 #   masked column keeps its dtype as null (#902, additive).
-API_CONTRACT_VERSION = "1.64.0"
+# 1.64.0 -> 1.65.0: redistribution terms (#688) — publish readiness reports and enforces
+#   each source's verdict (option confirm_non_commercial), and data whose terms are
+#   forbidden answers 403 redistribution_forbidden on every way out (additive).
+API_CONTRACT_VERSION = "1.65.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -383,10 +393,14 @@ class BuilderService:
         async_max_workers: int = 10,
         async_max_queue_size: int = 10,
         warehouse_root: Path | None = None,
+        terms_lookup: TermsLookup | None = None,
+        publish_visibility_probe: VisibilityProbe | None = None,
     ) -> None:
         # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
         logging_redaction.install()
         self._output_root = output_root
+        # Each dataset's redistribution terms (#688): the kpubdata catalog, or a stand-in.
+        self._terms_lookup: TermsLookup = terms_lookup or kpubdata_terms
         # Configured, never taken from a request: a per-request path would let a
         # caller write a catalog anywhere the process can reach (#703).
         self._warehouse_root = warehouse_root
@@ -446,21 +460,28 @@ class BuilderService:
         # (even unused result) would eagerly initialize SQLite per request,
         # defeating lazy creation. Check need first here.
         self._uploads_service = UploadsService(repository=lambda: self._upload_repository)
-        self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
+        self._query_api = QueryApiService(
+            output_root=self._output_root,
+            engine=self._query_service,
+            terms_lookup=self._terms_lookup,
+        )
         self._warehouse_api = WarehouseApiService(
             table_catalog=lambda: self._table_catalog(),
             engine=self._query_service,
             output_root=self._output_root,
+            terms_lookup=self._terms_lookup,
         )
         self._exports_api = ExportsApiService(
             output_root=self._output_root,
             table_catalog=lambda: self._table_catalog(),
             engine=self._query_service,
+            terms_lookup=self._terms_lookup,
         )
         self._profiles_api = ProfilesApiService(
             output_root=self._output_root,
             table_catalog=lambda: self._table_catalog(),
             engine=self._query_service,
+            terms_lookup=self._terms_lookup,
         )
         self._analysis_store: AnalysisStore | None = None
         self._user_ledger_store: UserLedger | None = None
@@ -546,6 +567,8 @@ class BuilderService:
             publish_receipts=self._publish_receipts,
             async_builds=self._async_builds,
             credential_repository=self._credential_resolver.repository,
+            terms_lookup=self._terms_lookup,
+            visibility_probe=publish_visibility_probe,
         )
 
     @property
@@ -746,6 +769,11 @@ class BuilderService:
         """Execute one validated SQL query against server-resolved stage table."""
         return self._query_api.query(body, principal=principal)
 
+    def _run_verdict(self, run_id: str) -> BuildVerdict:
+        """The redistribution verdict of a run's sources (#688)."""
+        spec = datasets_service.read_snapshot_spec(self._output_root, run_id)
+        return build_verdict(spec, self._terms_lookup)
+
     def list_warehouse_tables(self, *, principal: Principal) -> ServiceResponse:
         """List the caller's committed warehouse tables (#797)."""
         return self._warehouse_api.list_tables(principal=principal)
@@ -863,6 +891,14 @@ class BuilderService:
         principal: Principal | None = None,
     ) -> ServiceResponse:
         """Each source's schema, sample rows and Source↔Silver diff; writes nothing."""
+        loaded = self._spec_api.load_validated(spec_yaml)
+        if isinstance(loaded, BuildSpec):
+            # Before anything is fetched (#688): the spec is the caller's own.
+            refusal = forbidden_response(
+                build_verdict(loaded, self._terms_lookup), what="a preview"
+            )
+            if refusal is not None:
+                return refusal
         return self._spec_api.preview(
             spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
         )
@@ -1036,7 +1072,12 @@ class BuilderService:
 
     def serve_artifact_file(self, run_id: str, file_path: str) -> ServiceResponse | FileResponse:
         """Serve one artifact file from run workspace."""
-        return self._builds_api.serve_artifact_file(run_id, file_path)
+        response = self._builds_api.serve_artifact_file(run_id, file_path)
+        if isinstance(response, FileResponse):
+            refusal = forbidden_response(self._run_verdict(run_id), what="an artifact")
+            if refusal is not None:
+                return refusal
+        return response
 
     def list_builds(
         self,
@@ -1146,7 +1187,19 @@ class BuilderService:
         self, run_id: str, stage: str, source_key: str, *, limit: int
     ) -> ServiceResponse:
         """Query specific stage detail for run (#488)."""
-        return self._stages_api.get_run_stage_detail(run_id, stage, source_key, limit=limit)
+        response = self._stages_api.get_run_stage_detail(run_id, stage, source_key, limit=limit)
+        if (
+            response.status_code == 200
+            and isinstance(response.body, dict)
+            and response.body.get("sample")
+            and self._run_verdict(run_id).verdict == "forbidden"
+        ):
+            # The stage's metadata stays; its sample rows do not leave (#688).
+            body = dict(response.body)
+            body["sample"] = []
+            body["sample_withheld"] = "redistribution_forbidden"
+            return ServiceResponse(response.status_code, body)
+        return response
 
     def monitoring_summary(self) -> ServiceResponse:
         """Query queue/build/latency summary (#516)."""
