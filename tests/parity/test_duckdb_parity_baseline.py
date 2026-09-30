@@ -8,11 +8,13 @@ the diff with the reason — the diff is the record of what changed for users.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 import pytest
 
 from .canonical import to_json
-from .scenarios import GOLDEN, SCENARIOS
+from .scenarios import GOLDEN, ROOT, SCENARIOS
 
 
 def test_every_scenario_has_a_baseline_and_no_baseline_is_orphaned() -> None:
@@ -34,9 +36,25 @@ def test_scenario_matches_its_baseline(name: str) -> None:
 
 
 def test_the_harness_needs_no_duckdb() -> None:
-    """The baseline is taken before DuckDB exists; it must not quietly depend on it."""
-    import sys
+    """The baseline pins the Polars engine; taking it must not quietly load DuckDB.
 
-    SCENARIOS["r15_sqlglot_dialect"]()
+    Checked in a fresh interpreter: this test session imports DuckDB elsewhere
+    (tests/unit/test_duckdb_runtime.py), so its own ``sys.modules`` proves nothing.
+    """
+    probe = (
+        "import sys\n"
+        "from tests.parity.scenarios import SCENARIOS\n"
+        "SCENARIOS['r15_sqlglot_dialect']()\n"
+        "SCENARIOS['r12_parquet_logical_equality']()\n"
+        "print('duckdb' in sys.modules)\n"
+    )
 
-    assert "duckdb" not in sys.modules
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip().splitlines()[-1] == "False"

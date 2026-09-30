@@ -7,6 +7,11 @@ Principles:
     - Single Polars engine (no dual-engine)
     - Public root API doesn't re-expose Polars return types directly
     - records ↔ DataFrame conversion used only internally/submodules (convert)
+
+The DuckDB migration (ADR 0021) adds its foundation beside the Polars engine —
+``duckdb_runtime`` (connections, temp directories, the version floor), ``sql``
+(identifier quoting, bound parameters) and ``dtypes`` (DuckDB types in Builder's dtype
+vocabulary). No build or query path uses them yet, and none is re-exported here.
 """
 
 from __future__ import annotations
