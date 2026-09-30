@@ -23,6 +23,7 @@ KPubData Builder의 주요 설계 결정을 기록합니다. 각 ADR은 배경·
 | [0017](./0017-fullstack-oci-deployment.md) | 풀스택 배포 토폴로지: OCI 단일 VM(Builder) + Cloudflare Pages(Studio) | 제안됨 | — |
 | [0018](./0018-legacy-publish-pipeline.md) | 레거시 publish 파이프라인과 BuildSpec 경로의 공존 | 승인됨(2026-09-30, 선택지 C) | #636, #659 |
 | [0019](./0019-column-metadata-semantics.md) | 컬럼 메타: 저장 타입·의미·표시·단위·출처의 분리 | 제안됨 | #813 |
+| [0020](./0020-credential-lifetime-by-deployment.md) | 배포 형태에 따른 자격 증명의 수명 | 제안됨(D1 문장화, 확인 필요) | #682, #683 |
 
 ## 작성 규칙
 

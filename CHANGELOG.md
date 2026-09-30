@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- ADR 0020 records the owner's 2026-09-30 decision D1 on credential lifetime by deployment and answers the nine items of #682: single-user deployments keep ADR 0012's stored and environment credentials; multi-user deployments keep keys only for a request or job, with no storage, no environment or operator fallback, no shared credentials, scheduled builds single-user only, restarts failing interrupted jobs as `credentials_required`, and a path for deleting keys stored before the switch. ADR 0012 is not superseded. Items derived from D1 rather than stated in it are marked for the owner to confirm; the publish-token half is noted as not yet implemented.
+
 ### Security
 
 - In a multi-user deployment a provider key lives only as long as its request or job (#683, ADR 0012 amendment of 2026-09-30; API contract 1.56.0). It arrives in the `X-Provider-Key` header (`<provider>=<key>`), never a URL, and is held in a per-request context; an async job's key is bound to its run id in memory at submission and dropped when the job succeeds, fails or is cancelled, or after `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` (default 3600). Stored and environment credentials are not used there — `REQUIRE_OWN_PROVIDER_CREDENTIAL` is forced on, `PUT /providers/{p}/credential` answers 403 `credential_storage_disabled` — and at startup runs a restart interrupted are failed as `credentials_required`, since their keys are gone. The job registry snapshot, events, manifests and files never hold a key. A single-user deployment is unchanged.

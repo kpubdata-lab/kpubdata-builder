@@ -69,6 +69,7 @@ nav:
       - 풀스택 OCI 배포 토폴로지(제안): adrs/0017-fullstack-oci-deployment.md
       - 레거시 publish 파이프라인: adrs/0018-legacy-publish-pipeline.md
       - 컬럼 메타 의미 분리(제안): adrs/0019-column-metadata-semantics.md
+      - 자격 증명의 수명(제안): adrs/0020-credential-lifetime-by-deployment.md
 
 markdown_extensions:
   - admonition
