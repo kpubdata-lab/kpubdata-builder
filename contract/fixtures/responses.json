@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.62.0",
+  "contract_version": "1.63.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [

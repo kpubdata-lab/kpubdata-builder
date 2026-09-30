@@ -18,6 +18,10 @@ from .rows import rows_worker
 DEFAULT_QUERY_MAX_CONCURRENCY = 2
 #: An export reads the whole result and writes it, so it gets longer than a query (#819).
 EXPORT_TIMEOUT_SECONDS = 60.0
+#: A profile scans every row of a snapshot, so it too gets longer than a query (#896).
+#: A timeout is remembered per snapshot (``service.profiles_api``), so a slow table
+#: holds a slot this long once, not on every retry.
+PROFILE_TIMEOUT_SECONDS = 60.0
 _QUERY_CONCURRENCY_ENV = "KPUBDATA_QUERY_MAX_CONCURRENCY"
 _QUERY_MEMORY_ENV = "KPUBDATA_QUERY_MAX_MEMORY_MB"
 _QUERY_BUDGET_ENV = "KPUBDATA_QUERY_MEMORY_BUDGET_MB"
@@ -120,7 +124,8 @@ class QueryService:
         aggregate_engine: Runs validated aggregates (#818), on the same terms.
         export_engine: Writes query exports (#819): the same memory cap and slot, and
             ``EXPORT_TIMEOUT_SECONDS`` rather than the query timeout.
-        profile_engine: Computes column profiles (#817), on the same terms as a query.
+        profile_engine: Computes column profiles (#817): the same memory cap and slot,
+            and ``PROFILE_TIMEOUT_SECONDS`` rather than the query timeout (#896).
         memory_budget_bytes: The deployment's memory budget for queries running at once
             (#701). Each query reserves its per-query cap from it; without a cap, a
             query reserves the whole budget, so queries run one at a time. None reads
@@ -144,7 +149,9 @@ class QueryService:
             timeout_seconds=EXPORT_TIMEOUT_SECONDS,
         )
         self._profile_engine = profile_engine or QueryEngine(
-            worker=profile_worker, memory_limit_bytes=memory_limit
+            worker=profile_worker,
+            memory_limit_bytes=memory_limit,
+            timeout_seconds=PROFILE_TIMEOUT_SECONDS,
         )
         self._capacity = threading.BoundedSemaphore(capacity)
         budget = (
@@ -210,6 +217,7 @@ class QueryService:
 __all__ = [
     "DEFAULT_QUERY_MAX_CONCURRENCY",
     "EXPORT_TIMEOUT_SECONDS",
+    "PROFILE_TIMEOUT_SECONDS",
     "MemoryBudget",
     "QueryBusyError",
     "QueryService",

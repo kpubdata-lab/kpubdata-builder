@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.62.0"
+  version: "1.63.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.63.0 tightens warehouse column profiles (#896, #897): profiling has its own 60-second timeout instead of the query timeout, and after a timeout the same snapshot answers 504 `query_timeout` for 5 minutes without profiling again. `ColumnProfile.nan_count` and `infinite_count` gain `minimum: 0`. The value-pattern PII check now reads `Categorical` and `Enum` columns as text and `List`/`Array` columns of text element by element (a row matches when any element does); a column of any other type that can hold text (`Struct`, `Object`, `Binary`, nested lists) is not pattern-checked and is `suspected` with the kind `unchecked_values`. The profile `algorithm_version` becomes 2, so cached profiles are recomputed.
     v1.62.0 masks declared PII in the published Gold by default (#689, additive): every column kpubdata's dataset spec declares in `license.pii_columns`, or the BuildSpec declares in `SourceRef.gold.pii_columns`, has each non-null value replaced by `[masked]` in Gold — the table exports, the dataset card, publishing, Gold `/query` and the warehouse read. Silver keeps the values. Nothing is detected from values. `SourceRef.gold.publish_unmasked` is the explicit opt-out for a declared column and adds a manifest warning. The manifest gains `pii_masking`, per Gold directory the masked and unmasked columns and who declared each. A composed Gold masks every declared column of both sides and has no opt-out.
     v1.61.0 reports kpubdata's code columns as identifiers (#702, additive): where a run's kpubdata dataset spec declares a field `semantic_kind: code` (kpubdata ADR 0006) and Builder stores it as text, its column metadata says `logical_type: identifier` — on `/query` and `/warehouse/query` `column_meta`, `/warehouse/rows`, `/warehouse/aggregate`, warehouse export `output.columns`, the `/preview` schema items and warehouse profile columns. An identifier's `wire_encoding` is always `string` and its values are the stored text, leading zeros kept; a client never converts it to a number. The declaration is also carried as `semantic` (`origin: core_spec`) with its `display` label, format and description where the spec has them. Builder does not guess identifiers from values: a column no spec declares a code, or a code stored as a number, keeps its storage logical type. `logical_type` stays an open string, so a client that does not know `identifier` shows the text it receives.
     v1.60.0 versions data checksums (#867, additive): each provenance entry names its `data_checksum_algorithm` — `canonical-multiset-v2` for new runs, a streaming order-independent multiset hash; an entry without it is `canonical-json-sort-v1`. Checksums of different algorithms are never compared. The manifest gains `inputs_fingerprint_algorithm` (`sources-sha256-v2`; absent means `sources-sha256-v1`) and `artifacts`, per Gold directory its `artifact_digest` (bytes, the same digest as a warehouse snapshot's) and `artifact_writer`, apart from the logical checksum.
@@ -2490,10 +2491,10 @@ paths:
       operationId: getWarehouseTableProfile
       summary: Column profile of one snapshot of a warehouse table (#817)
       description: >-
-        Computed exactly over every row, under the same limits as a query, and cached
-        per snapshot id, content digest and algorithm version. The snapshot is never
-        modified. Quantiles, histograms, distinct counts and top values are not
-        included.
+        Computed exactly over every row, under a query's memory cap and concurrency
+        slot with its own 60-second timeout, and cached per snapshot id, content digest
+        and algorithm version. The snapshot is never modified. Quantiles, histograms,
+        distinct counts and top values are not included.
       parameters:
         - name: name
           in: path
@@ -2540,7 +2541,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "504":
-          description: Profiling timed out (`query_timeout`).
+          description: >-
+            Profiling timed out (`query_timeout`). The timeout is remembered for this
+            snapshot for 5 minutes; until then the same request answers 504 at once,
+            without profiling again or taking a query slot.
           content:
             application/json:
               schema:
@@ -4483,7 +4487,12 @@ components:
               enum: [not_detected, suspected, allowed_by_spec]
               description: >-
                 `not_detected` is not a guarantee: only value patterns and column-name
-                heuristics are checked.
+                heuristics are checked. Value patterns are checked on `String`,
+                `Categorical` and `Enum` columns and on `List`/`Array` columns of those
+                (a row matches when any element does). A column of another type that can
+                hold text (`Struct`, `Object`, `Binary`, nested lists) is not
+                pattern-checked and is `suspected` with the kind `unchecked_values`;
+                numeric, boolean and temporal columns hold no text to check.
             kinds:
               type: array
               items: {type: string}
@@ -4494,9 +4503,11 @@ components:
           description: null for an empty table or a withheld column — not 0.
         nan_count:
           type: [integer, "null"]
+          minimum: 0
           description: Float columns only; null otherwise.
         infinite_count:
           type: [integer, "null"]
+          minimum: 0
           description: Float columns only; null otherwise.
         range:
           oneOf:

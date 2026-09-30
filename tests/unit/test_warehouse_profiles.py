@@ -3,15 +3,28 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import NoReturn, cast
 
 import polars as pl
 import pytest
+import yaml
 
-from kpubdata_builder.query.profile import MIN_RANGE_VALUES, ProfilePlan, profile_table
-from kpubdata_builder.query.service import QueryService
+from kpubdata_builder.query.engine import QueryEngine, QueryTimeoutError
+from kpubdata_builder.query.models import QueryResult
+from kpubdata_builder.query.profile import (
+    MIN_RANGE_VALUES,
+    UNCHECKED_VALUES_KIND,
+    ProfilePlan,
+    profile_table,
+)
+from kpubdata_builder.query.service import (
+    EXPORT_TIMEOUT_SECONDS,
+    PROFILE_TIMEOUT_SECONDS,
+    QueryService,
+)
 from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.ownership import PERSONAL_WORKSPACE, warehouse_workspace
@@ -19,6 +32,9 @@ from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.warehouse import SnapshotLayout, TableCatalog, materialize
 from kpubdata_builder.warehouse import gc as warehouse_gc
 
+from ._openapi import response_schema, validate
+
+_CONTRACT = Path(__file__).parents[2] / "contract" / "builder-api.yaml"
 _NAME = "air.station"
 _DEV = Principal("dev")
 
@@ -302,3 +318,150 @@ def test_a_build_reads_its_specs_pii_policy(tmp_path: Path, policy: str, expecte
     )
 
     assert cast(dict[str, JsonValue], columns["contact"]["sensitivity"])["status"] == expected
+
+
+_PHONE = "010-1234-5678"
+
+
+@pytest.mark.parametrize(
+    "series",
+    [
+        pl.Series("memo", [_PHONE] + ["x"] * 11, dtype=pl.Categorical),
+        pl.Series("memo", [_PHONE] + ["x"] * 11, dtype=pl.Enum([_PHONE, "x"])),
+        pl.Series("memo", [["a", _PHONE]] + [["x"]] * 11, dtype=pl.List(pl.String)),
+        pl.Series("memo", [["a", _PHONE]] + [["x", "y"]] * 11, dtype=pl.Array(pl.String, 2)),
+        pl.Series("memo", [[_PHONE]] + [None] * 11, dtype=pl.List(pl.Categorical)),
+    ],
+    ids=["categorical", "enum", "list-string", "array-string", "list-categorical"],
+)
+def test_text_values_are_pattern_checked_whatever_their_storage(
+    tmp_path: Path, series: pl.Series
+) -> None:
+    """#897: one phone number in a plainly named non-String text column is found."""
+    body = profile_table(_table(tmp_path / "t.parquet", series.to_frame()), _OPEN)
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+
+    assert column["sensitivity"] == {"status": "suspected", "kinds": ["phone"]}
+    assert column["status"] == "withheld"
+    assert column["null_count"] is None
+
+
+@pytest.mark.parametrize(
+    "series",
+    [
+        pl.Series("memo", ["x"] * 12, dtype=pl.Categorical),
+        pl.Series("memo", [["a", "b"]] * 12, dtype=pl.List(pl.String)),
+        pl.Series("memo", [[1, 2]] * 12, dtype=pl.List(pl.Int64)),
+        pl.Series("memo", [{"n": 1}] * 12, dtype=pl.Struct({"n": pl.Int64})),
+    ],
+    ids=["categorical", "list-string", "list-int", "struct-of-int"],
+)
+def test_checked_or_textless_columns_without_a_match_are_profiled(
+    tmp_path: Path, series: pl.Series
+) -> None:
+    """Negative: checking more types does not withhold columns that match nothing."""
+    body = profile_table(_table(tmp_path / "t.parquet", series.to_frame()), _OPEN)
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+
+    assert column["sensitivity"] == {"status": "not_detected", "kinds": []}
+    assert column["status"] == "profiled"
+
+
+@pytest.mark.parametrize(
+    "series",
+    [
+        pl.Series("memo", [{"note": "x"}] * 12, dtype=pl.Struct({"note": pl.String})),
+        pl.Series("memo", [[["x"]]] * 12, dtype=pl.List(pl.List(pl.String))),
+        pl.Series("memo", [b"x"] * 12, dtype=pl.Binary),
+    ],
+    ids=["struct", "list-of-list", "binary"],
+)
+def test_text_the_patterns_do_not_read_is_suspected(tmp_path: Path, series: pl.Series) -> None:
+    """#897: a type that can hold text but is not pattern-checked is never not_detected."""
+    body = profile_table(_table(tmp_path / "t.parquet", series.to_frame()), _OPEN)
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+
+    assert column["sensitivity"] == {"status": "suspected", "kinds": [UNCHECKED_VALUES_KIND]}
+    assert column["status"] == "withheld"
+    accepted = profile_table(str(tmp_path / "t.parquet"), ProfilePlan(False, ("memo",)))
+    (allowed,) = cast(list[dict[str, JsonValue]], accepted["columns"])
+    assert allowed["status"] == "profiled"
+
+
+def test_profiling_has_its_own_timeout() -> None:
+    """#896: a profile scans every row, so it does not share the query timeout."""
+    service = QueryService()
+
+    assert PROFILE_TIMEOUT_SECONDS == 60.0
+    assert service._profile_engine._timeout_seconds == PROFILE_TIMEOUT_SECONDS
+    assert service._engine._timeout_seconds == 10.0
+    assert service._export_engine._timeout_seconds == EXPORT_TIMEOUT_SECONDS
+
+
+class _TimingOutEngine(QueryEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def execute(self, table_path: Path, canonical_sql: str, *, limit: int) -> QueryResult:
+        self.calls += 1
+        raise QueryTimeoutError("query execution timed out")
+
+
+def test_a_timeout_is_not_rescanned_until_the_retry_window_passes(tmp_path: Path) -> None:
+    """#896: refreshing after a timeout answers 504 at once and holds no query slot."""
+    engine = _TimingOutEngine()
+    service = _service(tmp_path, QueryService(profile_engine=engine, max_concurrency=1))
+    now = [1000.0]
+    service._profiles_api._timeouts._clock = lambda: now[0]
+    catalog = _catalog(service)
+    _commit(catalog, tmp_path, pl.DataFrame({"v": list(range(20))}), PERSONAL_WORKSPACE)
+
+    first = service.get_warehouse_profile(_NAME, "current", principal=_DEV)
+    again = service.get_warehouse_profile(_NAME, "current", principal=_DEV)
+
+    assert (first.status_code, first.body["code"]) == (504, "query_timeout")
+    assert (again.status_code, again.body["code"]) == (504, "query_timeout")
+    assert engine.calls == 1
+    assert catalog.live_lease_count(catalog.list_tables()[0].current_snapshot_id or "") == 0
+
+    now[0] += 301.0
+    service.get_warehouse_profile(_NAME, "current", principal=_DEV)
+    assert engine.calls == 2
+
+
+def test_a_timeout_on_one_snapshot_does_not_block_another(tmp_path: Path) -> None:
+    engine = _TimingOutEngine()
+    service = _service(tmp_path, QueryService(profile_engine=engine))
+    catalog = _catalog(service)
+    old = _commit(catalog, tmp_path, pl.DataFrame({"v": list(range(20))}), PERSONAL_WORKSPACE)
+    service.get_warehouse_profile(_NAME, old, principal=_DEV)
+    _commit(catalog, tmp_path, pl.DataFrame({"v": list(range(30))}), PERSONAL_WORKSPACE)
+
+    service.get_warehouse_profile(_NAME, "current", principal=_DEV)
+
+    assert engine.calls == 2
+
+
+def _profile_schema() -> tuple[dict[str, object], dict[str, object]]:
+    contract = yaml.safe_load(_CONTRACT.read_text(encoding="utf-8"))
+    schema = response_schema(contract, "/warehouse/tables/{name}/profile", "get", 200)
+    assert schema is not None
+    return contract, schema
+
+
+def test_the_profile_matches_the_contract_and_negative_counts_do_not(tmp_path: Path) -> None:
+    """#896: nan_count and infinite_count are counts; -1 fails the schema."""
+    service = _service(tmp_path)
+    frame = pl.DataFrame({"v": [float(i) for i in range(19)] + [float("nan")]})
+    _commit(_catalog(service), tmp_path, frame, PERSONAL_WORKSPACE)
+    response = service.get_warehouse_profile(_NAME, "current", principal=_DEV)
+    contract, schema = _profile_schema()
+    assert validate(response.body, schema, contract) == []
+
+    for field in ("nan_count", "infinite_count"):
+        body = cast(dict[str, JsonValue], json.loads(json.dumps(response.body)))
+        profile = cast(dict[str, JsonValue], body["profile"])
+        cast(list[dict[str, JsonValue]], profile["columns"])[0][field] = -1
+
+        assert any("minimum" in error for error in validate(body, schema, contract)), field
