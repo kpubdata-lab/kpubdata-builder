@@ -102,11 +102,11 @@ CI(`publish-dataset.yml`)와 패키지 배포 환경에서는 `--no-sources` 플
 uv sync --extra dev --extra publish --no-sources
 ```
 
-`--no-sources`는 `[tool.uv.sources]`를 무시하고, `pyproject.toml`의 `dependencies`에 명시된 **PyPI 릴리스 핀**(`kpubdata>=0.7.0,<0.8`)을 직접 설치합니다. 형제 디렉터리가 없어도 작동합니다.
+`--no-sources`는 `[tool.uv.sources]`를 무시하고, `pyproject.toml`의 `dependencies`에 명시된 **PyPI 릴리스 핀**(`kpubdata>=0.8.0,<0.9`)을 직접 설치합니다. 형제 디렉터리가 없어도 작동합니다.
 
-#### 핀 범위(`>=0.7.0,<0.8`)를 이렇게 설정한 이유
+#### 핀 범위(`>=0.8.0,<0.9`)를 이렇게 설정한 이유
 
-`kpubdata-builder`는 `kpubdata` 0.7.x의 API(`Client.dataset(...).list` 등)에 의존합니다. kpubdata 0.7.0은 datago 카탈로그에서 `hospital_info`·`apt_trade`·`village_fcst`를 뺀 breaking 릴리스이지만, 세 데이터셋은 spec 실행기로 계속 조회되고 이 저장소의 전체 스위트가 그 변경을 포함한 kpubdata main에서 통과했습니다(2026-09-28, #746). 0.8 이상은 검증 전이라 허용하지 않습니다 (관련 이슈: #213).
+`kpubdata-builder`는 `kpubdata`의 공개 API만 씁니다(kpubdata ADR 0007, `scripts/check_kpubdata_imports.py`). kpubdata 0.8.0은 코드 열의 앞자리 0을 보존해 `str`로 돌려주는 breaking 릴리스이며(kpubdata#613), #702·#688·#689가 기다리던 라이선스·열 메타데이터 필드를 더합니다. 0.9 이상은 검증 전이라 허용하지 않습니다 (관련 이슈: #213). CI 의 `kpubdata <버전>` 잡이 범위 안의 모든 릴리스로 스위트를 돌립니다(#832).
 
 핀의 정본은 `pyproject.toml`의 `dependencies`입니다. 이 표와 어긋나면 `pyproject.toml`이 맞습니다.
 
@@ -115,7 +115,7 @@ uv sync --extra dev --extra publish --no-sources
 | 환경 | 명령 | `kpubdata` 소스 |
 | :--- | :--- | :--- |
 | 로컬 개발 | `uv sync --extra dev` | `../kpubdata` (editable, 형제 디렉터리 필요) |
-| CI / 배포 | `uv sync ... --no-sources` | PyPI (`kpubdata>=0.7.0,<0.8`) |
+| CI / 배포 | `uv sync ... --no-sources` | PyPI (`kpubdata>=0.8.0,<0.9`) |
 
 ## 3. 브랜치 전략과 협업 규칙
 

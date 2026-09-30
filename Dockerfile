@@ -3,7 +3,7 @@
 # KPubData Builder — serve 배포 이미지 (#320, ADR 0006).
 #
 # uv sync --no-sources: [tool.uv.sources]의 editable ../kpubdata 오버라이드를 무시하고
-# pyproject의 PyPI 핀(kpubdata>=0.7.0,<0.8, #213)대로 kpubdata를 설치한다. 진입점은
+# pyproject의 PyPI 핀(kpubdata>=0.8.0,<0.9, #213)대로 kpubdata를 설치한다. 진입점은
 # kpubdata-builder serve이며, 환경변수로 설정을 주입한다 (docker-entrypoint.sh).
 #
 # ADR 0006 결정: 컨테이너는 fail-closed로 동작한다. KPUBDATA_BUILDER_API_KEY 없이는
