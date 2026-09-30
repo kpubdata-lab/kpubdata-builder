@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
 from ...spec import JsonValue
 from ..auth import Principal
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 _PREFIX = "/warehouse/tables/"
 _EXPORTS = "/warehouse/exports"
+_PROFILE = "/profile"
 
 
 def route(
@@ -26,7 +27,6 @@ def route(
     query: str,
     principal: Principal,
 ) -> RouteResponse | None:
-    del query
     if method == "POST" and path == "/warehouse/query":
         return service.query_warehouse(body, principal=principal)
     if method == "POST" and path == "/warehouse/rows":
@@ -37,6 +37,13 @@ def route(
         return _exports(service, method, path, body, principal)
     if method == "GET" and path == "/warehouse/tables":
         return service.list_warehouse_tables(principal=principal)
+    if method == "GET" and path.startswith(_PREFIX) and path.endswith(_PROFILE):
+        name = unquote(path[len(_PREFIX) : -len(_PROFILE)])
+        if not name or "/" in name:
+            return ServiceResponse(400, {"error": "table name must be one path segment"})
+        values = parse_qs(query).get("snapshot", ["current"])
+        snapshot = values[-1] if values and values[-1] else "current"
+        return service.get_warehouse_profile(name, snapshot, principal=principal)
     if method == "GET" and path.startswith(_PREFIX):
         name = unquote(path[len(_PREFIX) :])
         if not name or "/" in name:

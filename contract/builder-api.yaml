@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.45.0"
+  version: "1.46.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.46.0 adds column profiles (#817, additive): `GET /warehouse/tables/{name}/profile` describes each column of one pinned snapshot — row count, null count and ratio, NaN and infinite counts, and min/max for numeric and temporal columns — exactly, over every row, under the same limits as a query. NaN and infinity are counted and excluded from ranges; a range over fewer than 10 values is withheld; a column whose values or name suggest personal data is not profiled unless the BuildSpec's `pii` policy accepts it. The profile is a separate artifact tied to the snapshot id, its content digest and the algorithm version.
     v1.45.0 adds query exports (#819, additive): `POST /warehouse/exports` keeps a pinned query's **complete** result as a zip of the data file (csv or jsonl; `machine` or `spreadsheet` profile), `manifest.json` and `NOTICE.md`, after checking the source's licence (no-derivatives licences refused) and PII policy. Over `max_rows` or the byte limit nothing is kept (422). The manifest names the snapshot, revision and digest, copies the licence terms verbatim, and carries provenance, coverage, `user_derived` and every value the spreadsheet profile altered. `GET /warehouse/exports`, `GET`/`DELETE /warehouse/exports/{export_id}` and `GET /warehouse/exports/{export_id}/download` check ownership and expiry at the time of the call.
     v1.39.0 adds saved analyses (#783, additive): `POST /analyses` runs a warehouse query once and saves it bound to the concrete snapshot id it read — never `current` — and places a `saved_analysis` hold on that snapshot while the query's lease is still held; `POST /analyses/{analysis_id}/run` runs it again against that snapshot, so a refresh does not change its input. Only result metadata is stored, not rows. `DELETE` releases the hold. Analyses are scoped like warehouse tables: another owner's is a 404.
     v1.38.0 reads committed warehouse tables (#797, additive): `GET /warehouse/tables` and `GET /warehouse/tables/{name}` list the caller's tables and a table's readable snapshots, and `POST /warehouse/query` runs read-only SQL against one of them. `snapshot: current` is resolved to a snapshot id once, under a lease, before the query starts, so a refresh committed while it runs does not change what it reads; the response names the snapshot that was read. A caller sees only the workspace its own builds commit into, so another owner's table answers 404 like one never built. `POST /query` is unchanged.
@@ -2376,6 +2377,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /warehouse/tables/{name}/profile:
+    get:
+      operationId: getWarehouseTableProfile
+      summary: Column profile of one snapshot of a warehouse table (#817)
+      description: >-
+        Computed exactly over every row, under the same limits as a query, and cached
+        per snapshot id, content digest and algorithm version. The snapshot is never
+        modified. Quantiles, histograms, distinct counts and top values are not
+        included.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - name: snapshot
+          in: query
+          required: false
+          description: "`current` (default) or a snapshot id of this table."
+          schema: {type: string}
+      responses:
+        "200":
+          description: The pinned snapshot and its column profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotProfileResponse"
+        "400":
+          description: The name is not one path segment, or profiling failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >-
+            No warehouse, no such table or snapshot in the caller's workspace, or a
+            snapshot without a table file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The snapshot cannot be read (`snapshot_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Query capacity is exhausted (`query_busy`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "504":
+          description: Profiling timed out (`query_timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /warehouse/tables/{name}:
     get:
       operationId: getWarehouseTable
@@ -3838,6 +3900,122 @@ components:
               enum: [reported, unknown, inconsistent, not_summed, not_reported]
             value: {type: [integer, "null"], minimum: 0}
             observed_at: {type: string}
+
+    SnapshotProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [snapshot, profile]
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: false
+          required: [table_id, logical_name, snapshot_id, revision]
+          properties:
+            table_id: {type: string}
+            logical_name: {type: string}
+            snapshot_id: {type: string}
+            revision: {type: integer, minimum: 0}
+        profile:
+          $ref: "#/components/schemas/SnapshotProfile"
+
+    SnapshotProfile:
+      type: object
+      additionalProperties: false
+      required:
+        [snapshot_id, artifact_digest, algorithm_version, computed_at, scope, accuracy,
+         min_range_values, row_count, columns]
+      properties:
+        snapshot_id: {type: string}
+        artifact_digest:
+          type: string
+          description: The snapshot content digest the profile was computed from.
+        algorithm_version: {type: integer, minimum: 1}
+        computed_at: {type: string}
+        scope:
+          type: object
+          additionalProperties: false
+          required: [mode, sampled, sample_size]
+          properties:
+            mode: {type: string, enum: [full]}
+            sampled: {type: boolean}
+            sample_size: {type: [integer, "null"], minimum: 0}
+        accuracy: {type: string, enum: [exact]}
+        min_range_values:
+          type: integer
+          minimum: 1
+          description: A range over fewer finite values than this is withheld.
+        row_count: {type: integer, minimum: 0}
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnProfile"
+
+    ColumnProfile:
+      type: object
+      additionalProperties: false
+      required:
+        [name, storage_type, logical_type, time_zone, sensitivity, status, null_count,
+         null_ratio, nan_count, infinite_count, range]
+      description: >-
+        One column. A `withheld` column (suspected personal data the BuildSpec does not
+        accept) has only its name, types and sensitivity; every statistic is null.
+      properties:
+        name: {type: string}
+        storage_type: {type: string}
+        logical_type: {type: string}
+        time_zone:
+          type: [string, "null"]
+          description: A datetime column's time zone; null when naive or not a datetime.
+        sensitivity:
+          type: object
+          additionalProperties: false
+          required: [status, kinds]
+          properties:
+            status:
+              type: string
+              enum: [not_detected, suspected, allowed_by_spec]
+              description: >-
+                `not_detected` is not a guarantee: only value patterns and column-name
+                heuristics are checked.
+            kinds:
+              type: array
+              items: {type: string}
+        status: {type: string, enum: [profiled, withheld]}
+        null_count: {type: [integer, "null"], minimum: 0}
+        null_ratio:
+          type: [number, "null"]
+          description: null for an empty table or a withheld column — not 0.
+        nan_count:
+          type: [integer, "null"]
+          description: Float columns only; null otherwise.
+        infinite_count:
+          type: [integer, "null"]
+          description: Float columns only; null otherwise.
+        range:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ColumnRange"
+
+    ColumnRange:
+      type: object
+      additionalProperties: false
+      required: [status]
+      description: >-
+        `exact` min/max over finite, non-null values, sent by `wire_encoding`;
+        `withheld_small_group` when fewer than `min_range_values` values exist;
+        `no_values` when none do; `not_applicable` for non-numeric, non-temporal
+        columns. `excluded_count` is how many NaN or infinite values were left out.
+      properties:
+        status:
+          type: string
+          enum: [exact, withheld_small_group, no_values, not_applicable]
+        min:
+          $ref: "#/components/schemas/JsonValue"
+        max:
+          $ref: "#/components/schemas/JsonValue"
+        wire_encoding: {type: string, enum: [number, decimal_string, string]}
+        value_count: {type: integer, minimum: 0}
+        excluded_count: {type: integer, minimum: 0}
 
     WarehouseTableDetailResponse:
       type: object

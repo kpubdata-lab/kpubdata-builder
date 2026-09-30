@@ -37,6 +37,7 @@ from .errors import ImmutableSnapshot
 _TABLES_DIRNAME = "tables"
 _STAGING_DIRNAME = "_staging"
 _SNAPSHOTS_DIRNAME = "snapshots"
+_PROFILES_DIRNAME = "_profiles"
 
 MANIFEST_FILENAME = "_snapshot.json"
 
@@ -124,6 +125,20 @@ class SnapshotLayout:
         """Path where ``snapshot_id`` is being written."""
         validate_path_segment(snapshot_id, field_name="snapshot_id")
         return self.staging_root / snapshot_id
+
+    @property
+    def profiles_root(self) -> Path:
+        """Directory holding derived column profiles, outside the immutable snapshots."""
+        return self._table_dir / _PROFILES_DIRNAME
+
+    def profile_path(self, snapshot_id: str) -> Path:
+        """Where ``snapshot_id``'s column profile is cached (#817)."""
+        validate_path_segment(snapshot_id, field_name="snapshot_id")
+        return self.profiles_root / f"{snapshot_id}.json"
+
+    def discard_profile(self, snapshot_id: str) -> None:
+        """Remove ``snapshot_id``'s cached profile; do nothing when there is none."""
+        self.profile_path(snapshot_id).unlink(missing_ok=True)
 
     def snapshot_dir(self, snapshot_id: str) -> Path:
         """Final, immutable path of ``snapshot_id``."""

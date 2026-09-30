@@ -270,6 +270,15 @@ kpubdata-builder warehouse-restore BACKUP NEW_DIR
   — `current` 는 질의 시작 전에 한 번 snapshot id 로 해석되고 lease 로 고정된다. 질의 중
   커밋이 일어나도 읽는 것은 바뀌지 않고, 응답의 `snapshot.snapshot_id` 로 같은 질의를
   다시 돌릴 수 있다. SQL 샌드박스는 `POST /query` 와 같다(테이블 이름은 `dataset`).
+- `GET /warehouse/tables/{name}/profile?snapshot=current|<id>` — 열 프로파일(#817). 행 수,
+  null 수·비율, float 열의 NaN·무한대 수, 숫자·시간 열의 최소·최대를 **전 행에서 정확히**
+  계산한다(표본 없음). NaN·무한대는 범위에서 빼고 `excluded_count` 로 센다. 값이 10개 미만인
+  범위는 공개하지 않는다. 값 패턴이나 열 이름으로 개인정보가 의심되는 열은 BuildSpec 의
+  `pii` 정책(`mode: allow` 또는 `allow_columns`)이 받아들이지 않는 한 통계를 전부 비운다.
+  질의와 같은 한도(자식 프로세스·메모리 상한·동시 실행 슬롯)로 돌고, 결과는 스냅샷을 건드리지
+  않고 `tables/<table_id>/_profiles/<snapshot_id>.json` 에 snapshot id·콘텐츠 다이제스트·
+  알고리즘 버전과 함께 캐시된다. GC 가 스냅샷을 지우면 함께 지운다. 분위수·히스토그램·
+  고유값·상위 값은 비용과 공개 위험을 따져 본 뒤로 미뤘다.
 
 저장된 분석(#783)은 `POST /analyses` `{"name", "table", "snapshot", "sql", "limit"}` 로 만든다.
 질의를 한 번 실행하고, 읽은 **구체적 snapshot id** 를 저장하며(`current` 를 저장하지 않는다),
