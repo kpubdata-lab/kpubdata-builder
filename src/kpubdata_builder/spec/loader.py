@@ -19,6 +19,7 @@ from typing import cast
 import yaml
 
 from ..errors import SpecLoadError
+from .cadence import parse_cadence
 from .models import (
     GOLD_FILTER_OPS,
     SOURCE_KINDS,
@@ -109,6 +110,11 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
             raise TypeError("attribution must be a string")
         quality = _parse_quality(data.get("quality"))
         composition = _parse_composition(data.get("composition"))
+        cadence_obj = data.get("refresh_cadence")
+        if cadence_obj is not None:
+            if not isinstance(cadence_obj, str):
+                raise TypeError("refresh_cadence must be a string")
+            parse_cadence(cadence_obj)
     except (KeyError, TypeError, ValueError) as exc:
         raise SpecLoadError(f"Failed to parse build spec: {exc}") from exc
 
@@ -128,6 +134,7 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
         attribution=attribution_obj,
         quality=quality,
         composition=composition,
+        refresh_cadence=cadence_obj,
     )
 
 

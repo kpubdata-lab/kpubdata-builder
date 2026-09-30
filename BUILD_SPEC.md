@@ -386,6 +386,20 @@ license: CC-BY-4.0
 SPDX 식별자 또는 자유 텍스트 라이선스 선언입니다. `publish: true`이면 반드시
 지정해야 합니다.
 
+### 4.10a `refresh_cadence` (optional)
+
+테이블을 얼마나 자주 갱신할 것으로 기대하는지 — ISO 8601 기간의 주·일·시간(`P1D`, `PT6H`,
+`P1W`, `P1DT12H`)만 받는다. 월·연은 길이가 달라 받지 않는다(#781, 소유자 결정 D7).
+
+```yaml
+refresh_cadence: P1D
+```
+
+`GET /datasets` 의 `status_axes.health` 가 이것으로 정해진다: 마지막 **성공한** 갱신이 한 주기보다
+오래됐으면 `stale`, 아니면 `healthy`. 선언이 없거나 성공한 갱신이 없으면 `unknown` — 실제
+실행 간격에서 추측하지 않는다. canonical snapshot 에 실리므로 digest 에 반영되고, 선언하지 않은
+spec 의 digest 는 그대로다.
+
 ### 4.11 `quality` (optional)
 
 Silver 통계·테이블에 대한 품질 규칙 선언입니다. 각 규칙 위반은 `quality.evaluator`가

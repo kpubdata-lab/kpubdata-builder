@@ -299,6 +299,9 @@ def canonical_spec_mapping(spec: BuildSpec) -> dict[str, JsonValue]:
         mapping["license_name"] = spec.license_name
     if spec.license_link is not None:
         mapping["license_link"] = spec.license_link
+    # Omitted when absent (#781), so specs without a cadence keep their digest.
+    if spec.refresh_cadence is not None:
+        mapping["refresh_cadence"] = spec.refresh_cadence
     return mapping
 
 

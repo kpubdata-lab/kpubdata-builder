@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.56.0"
+  version: "1.57.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.57.0 decides `status_axes.health` (#781, owner decision D7): a BuildSpec may declare `refresh_cadence` (an ISO 8601 duration of weeks, days or hours), and a table whose last successful refresh is older than one cadence is `stale`, otherwise `healthy`; without a cadence or a successful refresh it stays `unknown`.
     v1.56.0 makes provider keys live only as long as their request or job in a multi-user deployment (#683, ADR 0012 amendment of 2026-09-30). A key is sent in the `X-Provider-Key` request header (`<provider>=<key>`, repeated or comma-separated) — never a URL query — and a malformed header answers 400 `invalid_provider_key` on any route. Nothing stored and nothing from the environment is used; `PUT /providers/{provider}/credential` answers 403 `credential_storage_disabled` and `GET` reports not configured. An async job's key is held in memory until the job ends, is cancelled or its TTL passes; runs a restart interrupted are failed as `credentials_required`. A single-user deployment is unchanged.
     v1.55.0 adds `SourceRef.gold` (#659, additive): the columns (`select`) and rows (`filters`) a source's Gold keeps, while Silver keeps everything; the manifest gains `gold_selection` with the rows in, out and dropped.
     v1.54.0 adds the Builder sign-up ledger (#785, option B of ADR 0012's 2026-09-30 amendment): an OIDC user on no `OIDC_ALLOWED_*` list signs up as `pending` and every authenticated request answers 403 `signup_pending` until an administrator approves them with `POST /admin/users/{user_id}/approve`; `POST /admin/users/{user_id}/reject` answers 403 `signup_rejected` from then on, even to a user a list admits. `GET /admin/users` lists the ledger. Administrators are never refused. A deployment without OIDC is unaffected.
@@ -4965,6 +4966,13 @@ components:
           description: >-
             Attribution text shown on the dataset card. Every KOGL type requires it,
             and a licence identifier alone cannot satisfy that (ADR 0018).
+        refresh_cadence:
+          type: [string, "null"]
+          pattern: "^P(?:\\d+W|\\d+D|T\\d+H|\\d+DT\\d+H)$"
+          description: >-
+            How often the table is expected to be refreshed, an ISO 8601 duration of
+            weeks, days or hours (`P1D`, `PT6H`, `P1W`, `P1DT12H`) (#781). Months and
+            years are refused — their length varies. It decides `status_axes.health`.
         quality:
           oneOf:
             - $ref: "#/components/schemas/QualityPolicy"
@@ -7038,9 +7046,9 @@ components:
       description: >-
         The table's state on each axis kpubdata's TERMINOLOGY keeps apart (#781) —
         one field per axis, never merged into one badge. An axis with nothing to go on
-        is `unknown`, not a guess. health, access and maturity are always `unknown`
-        for now: stale needs a declared refresh interval, access needs kpubdata's probe
-        results, maturity the source spec's grade, and none of them reaches Builder yet.
+        is `unknown`, not a guess. health comes from the spec's declared
+        `refresh_cadence` (#781); access and maturity are always `unknown` for now:
+        access needs kpubdata's probe results and maturity the source spec's grade.
       required: [refresh, completeness, health, access, maturity]
       properties:
         refresh:
@@ -7058,6 +7066,11 @@ components:
         health:
           type: string
           enum: [healthy, stale, degraded, unknown]
+          description: >-
+            `stale` when the last successful refresh is older than the spec's
+            `refresh_cadence`, `healthy` when it is not, `unknown` without a declared
+            cadence or without any successful refresh (#781). `degraded` is not produced
+            yet.
         access:
           type: string
           enum:

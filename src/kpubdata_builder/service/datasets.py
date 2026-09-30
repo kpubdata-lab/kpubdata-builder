@@ -22,12 +22,14 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
 from ..manifest import status_from_manifest
 from ..spec import BuildSpec, JsonValue, parse_spec
+from ..spec.cadence import parse_cadence
 from ..spec.serializer import BUILDSPEC_SNAPSHOT_FILENAME
 from ..stages._path_safety import ensure_within
 from ..stages.bronze.resolve import source_identity
@@ -425,7 +427,13 @@ def _fetched_part_of_a_source(manifest: dict[str, object]) -> bool:
 
 
 def status_axes(
-    manifest: dict[str, object], record: RunRecord, active_statuses: Sequence[str] = ()
+    manifest: dict[str, object],
+    record: RunRecord,
+    active_statuses: Sequence[str] = (),
+    *,
+    refresh_cadence: str | None = None,
+    last_success_at: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, JsonValue]:
     """The table's state on each axis kpubdata's TERMINOLOGY keeps apart (#781).
 
@@ -437,9 +445,12 @@ def status_axes(
       partial, failed with some sources written, or a source fetched fewer rows than
       its provider reported (#816); ``complete`` when it succeeded,
       ``unknown`` when there is no manifest or nothing was written.
-    - **health**, **access**, **maturity** — ``unknown``. Stale needs a declared
-      refresh interval, access needs kpubdata's probe results, maturity the source
-      spec's grade; none of these reaches Builder yet (#781 leaves each a decision).
+    - **health** — from the spec's declared ``refresh_cadence`` (owner decision D7):
+      ``stale`` when the last successful refresh is older than one cadence,
+      ``healthy`` when it is not, ``unknown`` without a cadence or without any
+      successful refresh — never guessed from how often the table happens to run.
+    - **access**, **maturity** — ``unknown``. Access needs kpubdata's probe results,
+      maturity the source spec's grade; neither reaches Builder yet (a later issue).
     """
     if any(status in ("running", "cancelling") for status in active_statuses):
         refresh = "running"
@@ -466,7 +477,7 @@ def status_axes(
     return {
         "refresh": refresh,
         "completeness": completeness,
-        "health": "unknown",
+        "health": _health(refresh_cadence, last_success_at, now),
         # No probe result reaches Builder yet; access_status(None) is Builder's
         # "unknown", and a probe status Builder has not mapped would be too (#831).
         "access": access_status(None),
@@ -474,8 +485,38 @@ def status_axes(
     }
 
 
+def last_success_at(records: Iterable[RunRecord], dataset_id: str) -> str | None:
+    """When ``dataset_id`` last refreshed successfully, among ``records`` (#781)."""
+    times = [
+        r.finished_at
+        for r in records
+        if r.dataset_id == dataset_id and r.status == "ok" and r.finished_at
+    ]
+    return max(times, default=None)
+
+
+def _health(cadence: str | None, last_success_at: str | None, now: datetime | None) -> str:
+    """``healthy``/``stale`` against the declared cadence; ``unknown`` without evidence."""
+    if cadence is None or last_success_at is None:
+        return "unknown"
+    try:
+        interval = parse_cadence(cadence)
+        succeeded = datetime.fromisoformat(last_success_at)
+    except ValueError:
+        return "unknown"
+    if succeeded.tzinfo is None:
+        # A naive time cannot be placed on the clock; unknown rather than a guess.
+        return "unknown"
+    moment = now or datetime.now(timezone.utc)
+    return "stale" if moment - succeeded > interval else "healthy"
+
+
 def build_dataset_summary(
-    output_root: Path, record: RunRecord, *, active_statuses: Sequence[str] = ()
+    output_root: Path,
+    record: RunRecord,
+    *,
+    active_statuses: Sequence[str] = (),
+    last_success_at: str | None = None,
 ) -> dict[str, JsonValue] | None:
     """Build dataset response from latest run's canonical snapshot+manifest+stage status.
 
@@ -537,7 +578,13 @@ def build_dataset_summary(
         "total_row_count": total_row_count,
         "stages": stages,
         "quality": None,
-        "status_axes": status_axes(manifest, record, active_statuses),
+        "status_axes": status_axes(
+            manifest,
+            record,
+            active_statuses,
+            refresh_cadence=spec.refresh_cadence,
+            last_success_at=last_success_at,
+        ),
     }
 
 
