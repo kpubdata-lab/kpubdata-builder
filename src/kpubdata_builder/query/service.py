@@ -10,6 +10,7 @@ from .aggregate import aggregate_worker
 from .engine import QueryEngine
 from .export import export_worker
 from .models import QueryResult
+from .profile import profile_worker
 from .rows import rows_worker
 
 DEFAULT_QUERY_MAX_CONCURRENCY = 2
@@ -59,6 +60,7 @@ class QueryService:
         rows_engine: QueryEngine | None = None,
         aggregate_engine: QueryEngine | None = None,
         export_engine: QueryEngine | None = None,
+        profile_engine: QueryEngine | None = None,
     ) -> None:
         """Args:
         rows_engine: Runs paged row reads (#815). Defaults to a child-process engine
@@ -67,6 +69,7 @@ class QueryService:
         aggregate_engine: Runs validated aggregates (#818), on the same terms.
         export_engine: Writes query exports (#819): the same memory cap and slot, and
             ``EXPORT_TIMEOUT_SECONDS`` rather than the query timeout.
+        profile_engine: Computes column profiles (#817), on the same terms as a query.
         """
         capacity = query_max_concurrency_from_env() if max_concurrency is None else max_concurrency
         if capacity < 1:
@@ -83,6 +86,9 @@ class QueryService:
             worker=export_worker,
             memory_limit_bytes=memory_limit,
             timeout_seconds=EXPORT_TIMEOUT_SECONDS,
+        )
+        self._profile_engine = profile_engine or QueryEngine(
+            worker=profile_worker, memory_limit_bytes=memory_limit
         )
         self._capacity = threading.BoundedSemaphore(capacity)
 
@@ -109,6 +115,15 @@ class QueryService:
             raise QueryBusyError("query capacity is exhausted")
         try:
             return self._aggregate_engine.execute(table_path, plan_json, limit=limit)
+        finally:
+            self._capacity.release()
+
+    def execute_profile(self, table_path: Path, plan_json: str) -> QueryResult:
+        """Profile a snapshot's columns (#817), under a query slot and its limits."""
+        if not self._capacity.acquire(blocking=False):
+            raise QueryBusyError("query capacity is exhausted")
+        try:
+            return self._profile_engine.execute(table_path, plan_json, limit=0)
         finally:
             self._capacity.release()
 

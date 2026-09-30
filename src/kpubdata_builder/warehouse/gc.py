@@ -109,6 +109,8 @@ def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     # what ``collect_orphan_staging`` refuses to touch. Deleting only the promoted
     # path left them for a *later* pass to find, after this one forgot the row (#738).
     layout.discard_staging(snapshot_id)
+    # A profile describes bytes that are now gone (#817).
+    layout.discard_profile(snapshot_id)
     # Files first, catalog second. The other order creates the orphan it is meant
     # to clean up.
     catalog.forget_snapshot(snapshot_id)

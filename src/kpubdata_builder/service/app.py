@@ -60,6 +60,7 @@ from .datasets_api import DatasetsApiService
 from .exports_api import ExportsApiService
 from .jobs import AsyncBuildExecutor
 from .monitoring_api import MonitoringApiService
+from .profiles_api import ProfilesApiService
 from .providers import (
     CredentialResolver,
     ProviderDescriptor,
@@ -302,12 +303,15 @@ _BuildListEntry = dict[str, str | None]
 #   top N after the whole aggregate, mixed units refused or split (#818, additive).
 # 1.44.0 -> 1.45.0: /warehouse/exports writes a pinned query's full result as a bundle with
 #   its manifest and terms, checked by licence and PII policy (#819, additive).
+# 1.45.0 -> 1.46.0: GET /warehouse/tables/{name}/profile describes a snapshot's columns —
+#   nulls, NaN/infinite counts, value ranges — withholding suspected PII columns and
+#   small groups (#817, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.45.0"
+API_CONTRACT_VERSION = "1.46.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -403,6 +407,11 @@ class BuilderService:
             table_catalog=lambda: self._table_catalog(), engine=self._query_service
         )
         self._exports_api = ExportsApiService(
+            output_root=self._output_root,
+            table_catalog=lambda: self._table_catalog(),
+            engine=self._query_service,
+        )
+        self._profiles_api = ProfilesApiService(
             output_root=self._output_root,
             table_catalog=lambda: self._table_catalog(),
             engine=self._query_service,
@@ -665,6 +674,12 @@ class BuilderService:
     def list_warehouse_tables(self, *, principal: Principal) -> ServiceResponse:
         """List the caller's committed warehouse tables (#797)."""
         return self._warehouse_api.list_tables(principal=principal)
+
+    def get_warehouse_profile(
+        self, name: str, snapshot: str, *, principal: Principal
+    ) -> ServiceResponse:
+        """Column profile of one snapshot of a warehouse table (#817)."""
+        return self._profiles_api.get(name, snapshot, principal=principal)
 
     def get_warehouse_table(self, name: str, *, principal: Principal) -> ServiceResponse:
         """One warehouse table and its readable snapshots (#797)."""

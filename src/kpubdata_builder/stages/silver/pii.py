@@ -65,6 +65,19 @@ def scan_pii_values(table: pl.DataFrame) -> list[PiiFinding]:
     return findings
 
 
+#: Value patterns by kind, for callers that count matches without loading the table.
+VALUE_PATTERNS: dict[str, re.Pattern[str]] = dict(_PATTERNS)
+
+
+def suspect_column_kind(column_name: str) -> str | None:
+    """The PII kind a column's name suggests, or None — the heuristic ``scan_pii`` uses."""
+    upper = column_name.upper()
+    for kind, parts in _SUSPECT_PARTS.items():
+        if any(part in upper for part in parts):
+            return kind
+    return None
+
+
 def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
     """scans refined table with PII patterns + column name heuristics (#441)."""
     by_column: dict[str, list[PiiFinding]] = {}
@@ -83,4 +96,10 @@ def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
     return findings
 
 
-__all__ = ["PiiFinding", "scan_pii", "scan_pii_values"]
+__all__ = [
+    "VALUE_PATTERNS",
+    "PiiFinding",
+    "scan_pii",
+    "scan_pii_values",
+    "suspect_column_kind",
+]
