@@ -44,7 +44,7 @@ from ..errors import TabularError
 from ..spec import JsonValue
 from .convert import RecordTypeScan, apply_read_as
 from .duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation, reserve_row_seq
-from .sql import quote_identifier
+from .sql import quote_identifier, quote_literal
 
 #: A type as inferred: ``("int",)``, ``("decimal", 2)``, ``("list", node)``,
 #: ``("struct", {name: node})``, ``("datetime", zone)`` …
@@ -413,10 +413,11 @@ class TableHandle:
                 column = f"CAST({column} AS TIMESTAMPTZ)"
             alias = physical if physical_names else name
             parts.append(f"{column} AS {quote_identifier(alias)}")
+        # DuckDB 1.2 takes no bound parameter as a COPY target: the path — Builder's
+        # own, under the run — goes in as a quoted literal.
         self.connection.execute(
             f"COPY (SELECT {', '.join(parts)} FROM {self.table.relation.sql} "
-            f"{self.table.order_by}) TO ? (FORMAT PARQUET)",
-            [str(path)],
+            f"{self.table.order_by}) TO {quote_literal(str(path))} (FORMAT PARQUET)"
         )
 
     def _fits_decimal(self, physical: str) -> bool:

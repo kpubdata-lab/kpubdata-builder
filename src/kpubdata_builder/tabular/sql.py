@@ -39,6 +39,20 @@ def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def quote_literal(text: str) -> str:
+    """``text`` as a SQL string literal: single-quoted, with ``'`` doubled.
+
+    For the few places a statement cannot take a bound parameter — a ``COPY … TO``
+    target on DuckDB 1.2 — never for a value a parameter could carry.
+
+    Raises:
+        ValueError: ``text`` holds a NUL character.
+    """
+    if "\x00" in text:
+        raise ValueError("a string literal cannot contain a NUL character")
+    return "'" + text.replace("'", "''") + "'"
+
+
 def identifier_list(names: Iterable[str]) -> str:
     """Comma-separated quoted identifiers, for a select or group-by list."""
     return ", ".join(quote_identifier(name) for name in names)
@@ -94,4 +108,5 @@ __all__ = [
     "identifier_list",
     "placeholders",
     "quote_identifier",
+    "quote_literal",
 ]
