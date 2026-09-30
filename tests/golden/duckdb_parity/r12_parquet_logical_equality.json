@@ -1,0 +1,108 @@
+{
+ "logically_equal": true,
+ "table": {
+  "t": {
+   "export_csv": [
+    [
+     "a",
+     "b"
+    ],
+    [
+     "1",
+     "x"
+    ],
+    [
+     "2",
+     ""
+    ]
+   ],
+   "export_huggingface": {
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## 출처\n\n- t\n",
+    "data/train-00000-of-00001.jsonl": [
+     {
+      "a": 1,
+      "b": "x"
+     },
+     {
+      "a": 2,
+      "b": null
+     }
+    ],
+    "dataset_infos.json": {
+     "features": {
+      "a": "Int64",
+      "b": "String"
+     },
+     "metadata": {
+      "dataset_id": "parity.tiny",
+      "description": "d",
+      "title": "Parity"
+     },
+     "num_examples": 2,
+     "provenance": [
+      "t"
+     ]
+    }
+   },
+   "export_jsonl": [
+    {
+     "a": 1,
+     "b": "x"
+    },
+    {
+     "a": 2,
+     "b": null
+    }
+   ],
+   "export_markdown": "# Parity\n\nd\n\n- Records: 2\n\n## Schema\n\n| field | type |\n| --- | --- |\n| a | Int64 |\n| b | String |\n\n## Sample Rows\n\n| a | b |\n| --- | --- |\n| 1 | x |\n| 2 |  |\n\n## Provenance\n\n- t\n\n",
+   "export_parquet": {
+    "columns": [
+     "a",
+     "b"
+    ],
+    "dtypes": [
+     "Int64",
+     "String"
+    ],
+    "nullable": [
+     false,
+     true
+    ],
+    "rows": [
+     [
+      1,
+      "x"
+     ],
+     [
+      2,
+      null
+     ]
+    ]
+   },
+   "table": {
+    "columns": [
+     "a",
+     "b"
+    ],
+    "dtypes": [
+     "Int64",
+     "String"
+    ],
+    "nullable": [
+     false,
+     true
+    ],
+    "rows": [
+     [
+      1,
+      "x"
+     ],
+     [
+      2,
+      null
+     ]
+    ]
+   }
+  }
+ }
+}

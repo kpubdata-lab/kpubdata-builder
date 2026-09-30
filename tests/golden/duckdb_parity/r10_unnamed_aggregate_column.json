@@ -1,0 +1,35 @@
+{
+ "SELECT COUNT(*) FROM dataset": {
+  "body": {
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "uint32",
+      "name": "len",
+      "wire_encoding": "number"
+     }
+    ],
+    "columns": [
+     "len"
+    ],
+    "rows": [
+     {
+      "len": 2
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ },
+ "SELECT SUM(v), MAX(v) FROM dataset": {
+  "body": {
+   "code": "query_execution_failed",
+   "error": "query execution failed"
+  },
+  "status_code": 400
+ }
+}

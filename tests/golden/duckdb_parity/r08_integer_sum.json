@@ -1,0 +1,106 @@
+{
+ "aggregate": {
+  "body": {
+   "column_meta": [
+    {
+     "logical_type": "string",
+     "name": "g",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "int64",
+     "name": "total",
+     "wire_encoding": "decimal_string"
+    }
+   ],
+   "columns": [
+    "g",
+    "total"
+   ],
+   "group_by": [
+    "g"
+   ],
+   "input": {
+    "row_count": 3,
+    "sampled": false
+   },
+   "measures": [
+    {
+     "additive": true,
+     "as": "total",
+     "column": "v",
+     "fn": "sum",
+     "unit_column": null
+    }
+   ],
+   "order": [
+    {
+     "direction": "asc",
+     "key": "g"
+    }
+   ],
+   "result": {
+    "completeness": "full",
+    "group_count": 2,
+    "limit": 100,
+    "returned": 2
+   },
+   "rows": [
+    {
+     "g": "a",
+     "total": "18014398509481984"
+    },
+    {
+     "g": "b",
+     "total": "1"
+    }
+   ],
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   },
+   "unit": {
+    "check": "not_checked",
+    "column": null,
+    "policy": "reject"
+   }
+  },
+  "status_code": 200
+ },
+ "sql": {
+  "body": {
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "string",
+      "name": "g",
+      "wire_encoding": "string"
+     },
+     {
+      "logical_type": "int64",
+      "name": "total",
+      "wire_encoding": "decimal_string"
+     }
+    ],
+    "columns": [
+     "g",
+     "total"
+    ],
+    "rows": [
+     {
+      "g": "a",
+      "total": "18014398509481984"
+     },
+     {
+      "g": "b",
+      "total": "1"
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ }
+}

@@ -1,0 +1,44 @@
+{
+ "SELECT * FROM '/etc/passwd'": {
+  "body": {
+   "code": "unsafe_query",
+   "error": "quoted table identifiers are not allowed"
+  },
+  "status_code": 400
+ },
+ "SELECT * FROM dataset, pragma_version()": {
+  "body": {
+   "code": "unsafe_query",
+   "error": "table functions are not allowed"
+  },
+  "status_code": 400
+ },
+ "SELECT * FROM duckdb_settings()": {
+  "body": {
+   "code": "unsafe_query",
+   "error": "table functions are not allowed"
+  },
+  "status_code": 400
+ },
+ "SELECT * FROM information_schema.tables": {
+  "body": {
+   "code": "unsafe_query",
+   "error": "qualified tables are not allowed"
+  },
+  "status_code": 400
+ },
+ "SELECT * FROM read_parquet('/etc/passwd')": {
+  "body": {
+   "code": "unsafe_query",
+   "error": "table functions are not allowed"
+  },
+  "status_code": 400
+ },
+ "SELECT current_setting('home_directory')": {
+  "body": {
+   "code": "unsafe_query",
+   "error": "query must reference the logical dataset table"
+  },
+  "status_code": 400
+ }
+}

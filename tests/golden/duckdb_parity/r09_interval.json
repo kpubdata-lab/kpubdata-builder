@@ -1,0 +1,16 @@
+{
+ "SELECT CAST(d AS DATE) + INTERVAL '1' DAY AS next_day FROM dataset": {
+  "body": {
+   "code": "query_execution_failed",
+   "error": "query execution failed"
+  },
+  "status_code": 400
+ },
+ "SELECT CAST(d AS DATE) + INTERVAL '1' MONTH AS next_month FROM dataset": {
+  "body": {
+   "code": "query_execution_failed",
+   "error": "query execution failed"
+  },
+  "status_code": 400
+ }
+}

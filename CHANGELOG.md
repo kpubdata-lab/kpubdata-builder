@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Tests
+
+- A parity baseline pins what the current Polars engine produces, so each step of the DuckDB migration (ADR 0021) can be checked against it (#865). Twenty scenarios run the real build and warehouse paths on fixed inputs with no network or key: three `specs/` BuildSpecs on recorded provider rows (one with a seeded split, one through a file upload), a two-source composition, the bundled replay fixture, the risk cases R1–R15, and the five query workers. Each result is reduced to an engine-neutral form — names, dtypes, nullability, typed values, never Parquet bytes, ids, times or paths — and committed under `tests/golden/duckdb_parity/`. `scripts/generate_duckdb_parity_baseline.py` is the only writer and refuses a scenario whose two runs differ; `tests/parity/` only compares. No production code changes and nothing needs DuckDB.
+
 ### Documentation
 
 - ADR 0021 records the owner's 2026-09-30 plan to make DuckDB the single tabular engine (#864): big-bang cutover, staged implementation, with decisions D1–D9 (legacy publish keeps Polars temporarily, DuckDB as a core dependency with a verified minimum version, a Builder-owned dtype vocabulary, a replayable exporter data source, versioned checksums, saved-analysis dialects, `hash-sort-v2` splits, an explicit row ordinal, layered resource limits), the rejected alternatives, and its relation to ADR 0018, #622, #701 and #704 — replacing their "engine choice must follow a measured limit" sentences, with #622's 1,444 MiB failure as the measurement.

@@ -1,0 +1,166 @@
+{
+ "float": {
+  "bronze": {
+   "t": {
+    "metadata": {
+     "artifact_paths": {
+      "metadata": "metadata.json",
+      "records": "raw_records.jsonl"
+     },
+     "fetch_params": {},
+     "provenance": {
+      "fetch_params": {},
+      "operation": "fetch",
+      "source_key": "datago.air_quality"
+     },
+     "record_count": 5,
+     "source_key": "t"
+    },
+    "record_count": 5,
+    "records": [
+     {
+      "v": "1"
+     },
+     {
+      "v": " 2"
+     },
+     {
+      "v": "3.0"
+     },
+     {
+      "v": "x"
+     },
+     {
+      "v": ""
+     }
+    ]
+   }
+  },
+  "manifest": {
+   "composition": null,
+   "errors": [
+    "t: pipeline failed for source 't'"
+   ],
+   "gold_selection": null,
+   "partial": false,
+   "provenance": [
+    {
+     "api_version": "unknown",
+     "coverage": {
+      "reasons": [
+       "call 0: the provider reported no total"
+      ],
+      "status": "unknown"
+     },
+     "data_checksum": "sha256:f7a017d9bfe86d3eca71c767689c1c01612ff254fd38ca640dc9495d99557b18",
+     "dataset": "air_quality",
+     "fetched_row_count": 5,
+     "params": {},
+     "provider": "datago",
+     "record_count": 5,
+     "source_reported_total": {
+      "calls": [
+       {
+        "fetched_row_count": 5,
+        "index": 0,
+        "pages": 1,
+        "status": "unknown",
+        "value": null
+       }
+      ],
+      "status": "unknown",
+      "value": null
+     }
+    }
+   ],
+   "quality_results": {},
+   "row_counts": {},
+   "schema_drift": {},
+   "schema_summaries": {},
+   "status": "failed"
+  },
+  "status_code": 502
+ },
+ "int": {
+  "bronze": {
+   "t": {
+    "metadata": {
+     "artifact_paths": {
+      "metadata": "metadata.json",
+      "records": "raw_records.jsonl"
+     },
+     "fetch_params": {},
+     "provenance": {
+      "fetch_params": {},
+      "operation": "fetch",
+      "source_key": "datago.air_quality"
+     },
+     "record_count": 5,
+     "source_key": "t"
+    },
+    "record_count": 5,
+    "records": [
+     {
+      "v": "1"
+     },
+     {
+      "v": " 2"
+     },
+     {
+      "v": "3.0"
+     },
+     {
+      "v": "x"
+     },
+     {
+      "v": ""
+     }
+    ]
+   }
+  },
+  "manifest": {
+   "composition": null,
+   "errors": [
+    "t: pipeline failed for source 't'"
+   ],
+   "gold_selection": null,
+   "partial": false,
+   "provenance": [
+    {
+     "api_version": "unknown",
+     "coverage": {
+      "reasons": [
+       "call 0: the provider reported no total"
+      ],
+      "status": "unknown"
+     },
+     "data_checksum": "sha256:f7a017d9bfe86d3eca71c767689c1c01612ff254fd38ca640dc9495d99557b18",
+     "dataset": "air_quality",
+     "fetched_row_count": 5,
+     "params": {},
+     "provider": "datago",
+     "record_count": 5,
+     "source_reported_total": {
+      "calls": [
+       {
+        "fetched_row_count": 5,
+        "index": 0,
+        "pages": 1,
+        "status": "unknown",
+        "value": null
+       }
+      ],
+      "status": "unknown",
+      "value": null
+     }
+    }
+   ],
+   "quality_results": {},
+   "row_counts": {},
+   "schema_drift": {},
+   "schema_summaries": {},
+   "status": "failed"
+  },
+  "status_code": 502
+ }
+}

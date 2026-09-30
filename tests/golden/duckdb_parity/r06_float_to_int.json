@@ -1,0 +1,254 @@
+{
+ "bronze": {
+  "t": {
+   "metadata": {
+    "artifact_paths": {
+     "metadata": "metadata.json",
+     "records": "raw_records.jsonl"
+    },
+    "fetch_params": {},
+    "provenance": {
+     "fetch_params": {},
+     "operation": "fetch",
+     "source_key": "datago.air_quality"
+    },
+    "record_count": 3,
+    "source_key": "t"
+   },
+   "record_count": 3,
+   "records": [
+    {
+     "v": 1.9
+    },
+    {
+     "v": -1.9
+    },
+    {
+     "v": 2.5
+    }
+   ]
+  }
+ },
+ "gold": {
+  "t": {
+   "export_csv": [
+    [
+     "v"
+    ],
+    [
+     "1"
+    ],
+    [
+     "-1"
+    ],
+    [
+     "2"
+    ]
+   ],
+   "export_huggingface": {
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## 출처\n\n- t\n",
+    "data/train-00000-of-00001.jsonl": [
+     {
+      "v": 1
+     },
+     {
+      "v": -1
+     },
+     {
+      "v": 2
+     }
+    ],
+    "dataset_infos.json": {
+     "features": {
+      "v": "Int64"
+     },
+     "metadata": {
+      "dataset_id": "parity.tiny",
+      "description": "d",
+      "title": "Parity"
+     },
+     "num_examples": 3,
+     "provenance": [
+      "t"
+     ]
+    }
+   },
+   "export_jsonl": [
+    {
+     "v": 1
+    },
+    {
+     "v": -1
+    },
+    {
+     "v": 2
+    }
+   ],
+   "export_markdown": "# Parity\n\nd\n\n- Records: 3\n\n## Schema\n\n| field | type |\n| --- | --- |\n| v | Int64 |\n\n## Sample Rows\n\n| v |\n| --- |\n| 1 |\n| -1 |\n| 2 |\n\n## Provenance\n\n- t\n\n",
+   "export_parquet": {
+    "columns": [
+     "v"
+    ],
+    "dtypes": [
+     "Int64"
+    ],
+    "nullable": [
+     false
+    ],
+    "rows": [
+     [
+      1
+     ],
+     [
+      -1
+     ],
+     [
+      2
+     ]
+    ]
+   },
+   "table": {
+    "columns": [
+     "v"
+    ],
+    "dtypes": [
+     "Int64"
+    ],
+    "nullable": [
+     false
+    ],
+    "rows": [
+     [
+      1
+     ],
+     [
+      -1
+     ],
+     [
+      2
+     ]
+    ]
+   }
+  }
+ },
+ "manifest": {
+  "composition": null,
+  "errors": [],
+  "gold_selection": null,
+  "partial": false,
+  "provenance": [
+   {
+    "api_version": "unknown",
+    "coverage": {
+     "reasons": [
+      "call 0: the provider reported no total"
+     ],
+     "status": "unknown"
+    },
+    "data_checksum": "sha256:220a28956e7828639318c4aa52a86f192e37470e9af9d44f9f34f3f28d80afa4",
+    "dataset": "air_quality",
+    "fetched_row_count": 3,
+    "params": {},
+    "provider": "datago",
+    "record_count": 3,
+    "source_reported_total": {
+     "calls": [
+      {
+       "fetched_row_count": 3,
+       "index": 0,
+       "pages": 1,
+       "status": "unknown",
+       "value": null
+      }
+     ],
+     "status": "unknown",
+     "value": null
+    }
+   }
+  ],
+  "quality_results": {
+   "t": []
+  },
+  "row_counts": {
+   "t": 3
+  },
+  "schema_drift": {},
+  "schema_summaries": {
+   "t": {
+    "fields": [
+     {
+      "name": "v",
+      "nullable": false,
+      "type": "Int64"
+     }
+    ],
+    "total_fields": 1
+   }
+  },
+  "status": "ok"
+ },
+ "silver": {
+  "t": {
+   "preview": {
+    "rows": [
+     {
+      "v": 1
+     },
+     {
+      "v": -1
+     },
+     {
+      "v": 2
+     }
+    ],
+    "total_rows": 3
+   },
+   "schema": {
+    "columns": [
+     {
+      "dtype": "Int64",
+      "logical_type": "int64",
+      "name": "v",
+      "nullable": false,
+      "unique_count": 3,
+      "wire_encoding": "number"
+     }
+    ]
+   },
+   "stats": {
+    "duplicate_rate": 0.0,
+    "null_counts": {
+     "v": 0
+    },
+    "row_count": 3
+   },
+   "table": {
+    "columns": [
+     "v"
+    ],
+    "dtypes": [
+     "Int64"
+    ],
+    "nullable": [
+     false
+    ],
+    "rows": [
+     [
+      1
+     ],
+     [
+      -1
+     ],
+     [
+      2
+     ]
+    ]
+   },
+   "validation": {
+    "ok": true,
+    "problems": []
+   }
+  }
+ },
+ "status_code": 200
+}
