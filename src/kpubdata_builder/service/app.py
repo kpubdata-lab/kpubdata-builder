@@ -262,11 +262,6 @@ _BuildListEntry = dict[str, str | None]
 # accepted per column: global null_tokens + that column's declaration; per-column
 # declaration does not override global.
 # 1.27.0 -> 1.28.0: Added admin-only GET /admin/runs and GET /admin/config
-# 1.28.0 -> 1.29.0: POST /build gains `materialized` when the deployment has a
-#   warehouse — committed table snapshots per source (#703, additive). Absent, not
-#   empty, when no warehouse is configured: an empty object would claim nothing was
-#   committed, which a caller cannot tell from never having asked.
-# (#679, additive — existing paths·behavior unchanged). Both return metadata only,
 # no artifact bytes or credentials.
 # 1.26.0 -> 1.27.0: Added param_grid to SourceRef (#613, additive — existing
 # fields/behavior immutable). One source calls multiple parameter combinations
@@ -317,6 +312,12 @@ _BuildListEntry = dict[str, str | None]
 #   not_testable, and GET /providers reports each provider's last_test (#842).
 # 1.50.0 -> 1.51.0: in a multi-user deployment another owner's run answers 404 on every run
 #   route, like a missing run (#796, behaviour only).
+# 1.51.0 -> 1.52.0: GET /admin/runs gives each run's failure reason (#679, additive).
+# 1.52.0 -> 1.53.0: POST /build gains `materialized` when the deployment has a
+#   warehouse — committed table snapshots per source (#703, additive). Absent, not
+#   empty, when no warehouse is configured: an empty object would claim nothing was
+#   committed, which a caller cannot tell from never having asked.
+# (#679, additive — existing paths·behavior unchanged). Both return metadata only,
 # 1.51.0 -> 1.52.0: preview/build/builds answer 403 url_source_forbidden for a url source in a
 #   multi-user deployment, and declare the existing provider_credential_required (#685).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
@@ -324,7 +325,7 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.52.0"
+API_CONTRACT_VERSION = "1.53.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

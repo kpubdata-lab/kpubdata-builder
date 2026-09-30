@@ -28,6 +28,7 @@ class _Entry:
     finished_at: str | None
     created_by: str | None
     owner_id: str | None
+    error: str | None = None
 
 
 class _FakeIndex:
@@ -52,6 +53,7 @@ class _Job:
     created_at: str
     updated_at: str
     owner_id: str | None
+    error: str | None = None
 
 
 class _FakeAsyncBuilds:
@@ -145,7 +147,14 @@ class TestMetadataOnly:
         response = _call(_service(), "/admin/runs", _ADMIN)
         assert not isinstance(response, FileResponse)
         for run in response.body["runs"]:
-            assert set(run) <= {"run_id", "status", "started_at", "finished_at", "owner_id"}
+            assert set(run) <= {
+                "run_id",
+                "status",
+                "started_at",
+                "finished_at",
+                "owner_id",
+                "error",
+            }
 
     @pytest.mark.parametrize("path", ["/admin/runs", "/admin/config"])
     def test_admin_routes_never_return_files(self, path: str) -> None:
@@ -159,6 +168,23 @@ class TestMetadataOnly:
         response = _call(_service(), "/admin/runs", _ADMIN)
         for run in response.body["runs"]:
             assert "created_by" not in run
+
+    def test_the_failure_reason_is_given_with_keys_masked(self) -> None:
+        """#679 (a): status, times, owner and why it failed — never a key."""
+        entry = _Entry(
+            "run-f",
+            "failed",
+            "2026-09-27T00:00:00Z",
+            "2026-09-27T00:01:00Z",
+            "oidc:aaa",
+            "hash-a",
+            error="upstream 500 for https://api.example/x?serviceKey=canary679&pageNo=1",
+        )
+
+        (run,) = _call(_service([entry]), "/admin/runs", _ADMIN).body["runs"]
+
+        assert "canary679" not in run["error"]
+        assert "upstream 500" in run["error"]
 
     def test_config_reports_state_not_values(self) -> None:
         response = _call(_service(), "/admin/config", _ADMIN)
