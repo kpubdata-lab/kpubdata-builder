@@ -92,8 +92,9 @@ def test_a_missing_spec_is_unknown() -> None:
     assert build_verdict(None).verdict == "unknown"
 
 
+@pytest.mark.real_catalog_terms
 def test_the_real_catalog_is_read() -> None:
-    """kpubdata 0.8 carries the field; today no dataset fills it."""
+    """kpubdata 0.8 carries the field; kpubdata#617 starts filling it."""
     assert kpubdata_terms("datago.air_quality") in (
         None,
         "allowed",
@@ -183,7 +184,7 @@ def test_readiness_reports_the_verdict(tmp_path: Path) -> None:
 def test_unknown_terms_block_a_public_publish_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Negative: the real catalog, where nothing is declared yet — public is refused,
+    """Negative: terms nobody declared (kpubdata 0.8's catalog) — public is refused,
     private goes through."""
     _with_credentials(monkeypatch, "huggingface")
     spy = _SpyPublisher("huggingface")

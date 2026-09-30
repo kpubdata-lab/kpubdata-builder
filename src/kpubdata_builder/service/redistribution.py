@@ -70,12 +70,19 @@ class BuildVerdict:
         }
 
 
-@functools.lru_cache(maxsize=4096)
 def kpubdata_terms(dataset_id: str) -> str | None:
     """The dataset's declared redistribution from the kpubdata catalog (no network).
 
-    Cached: the terms come with the installed kpubdata and do not change while it runs.
+    Every service binds this as its default lookup. It reads the catalog through
+    :func:`_catalog_terms` at call time, so the test suite can pin the terms in one
+    place whatever kpubdata is installed.
     """
+    return _catalog_terms(dataset_id)
+
+
+@functools.lru_cache(maxsize=4096)
+def _catalog_terms(dataset_id: str) -> str | None:
+    """Cached: the terms come with the installed kpubdata and do not change while it runs."""
     import kpubdata
 
     client = kpubdata.Client()

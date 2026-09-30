@@ -124,9 +124,10 @@ class _DeferredPublisher(_SpyPublisher):
 def _service(
     tmp_path: Path, *, terms: str | None = None, visibility: str = "absent"
 ) -> BuilderService:
-    """``terms``: the redistribution every dataset declares (#688); the real kpubdata
-    catalog when None, where no dataset declares any yet. ``visibility``: what the
-    remote says about the destination — by default it does not exist yet."""
+    """``terms``: the redistribution every dataset declares (#688); when None, the
+    catalog lookup, which the suite pins to "declares nothing" (tests/conftest.py).
+    ``visibility``: what the remote says about the destination — by default it does
+    not exist yet."""
     client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}, {"id": "2", "v": 20}]})
     return BuilderService(
         output_root=tmp_path,

@@ -140,6 +140,7 @@ addopts = "-ra -m 'not cubrid and not network'"
 testpaths = ["tests"]
 markers = [
   "cubrid: CUBRID 백엔드 계약/통합 테스트 (기본 제외; sqlalchemy 필요, ADR 0016).",
+  "real_catalog_terms: reads redistribution terms from the installed kpubdata catalog instead of the suite's pinned 'declares nothing' (#688).",
   "network: 외부 인터넷 호출이 필요한 테스트 (기본 제외). 제3자 서비스의 가용성에 결과가 달려 있어 CI 를 그 서비스의 상태에 묶는다. 실행: pytest -m network.",
 ]
 
