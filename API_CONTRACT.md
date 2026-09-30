@@ -365,8 +365,9 @@ Bronze→Silver→Gold pipeline을 공유합니다. `BuildSpec.sources[].kind`�
   build/preview를 요청한 principal과 소유자가 같아야 하며, 다르면 존재 여부를
   구분하지 않고 동일하게 not found로 처리합니다(fail-closed, #505의 ownership
   패턴과 동일). `sources[].format`/`encoding`은 업로드 시점에 검증된 값과
-  정확히 일치해야 합니다. 업로드 content는 로컬 파일시스템 경로가 아니라
-  SQLite에 저장되므로 path traversal 표면이 없고, `upload_id`는 서버가
+  정확히 일치해야 합니다. 업로드 content는 SQLite 에 저장되고, 8 MiB 이상이면
+  서버가 이름을 붙인 파일로 나갑니다(#622) — 어느 쪽이든 사용자가 준 filename/path
+  는 저장 경로에 쓰이지 않으므로 path traversal 표면이 없고, `upload_id`는 서버가
   발급하는 불투명한 식별자(`upl_<hex32>`)입니다 — 사용자가 filename/path를
   직접 참조할 수 없습니다.
 - **URL fetch(P0)**: `kind="url"` source는 GET, Auth=None인 안전한 HTTP(S)
@@ -378,6 +379,9 @@ Bronze→Silver→Gold pipeline을 공유합니다. `BuildSpec.sources[].kind`�
   방지하며, redirect마다 동일 검증을 반복합니다(최대 5회). 응답 크기와
   connect/read timeout에 상한을 둡니다. BuildSpec 계약에 header/POST/PUT/PATCH
   필드가 아예 없어 임의 header나 다른 HTTP method를 표현할 수 없습니다.
+  **다중 사용자 배포에서는 `url` source 를 쓸 수 없습니다(#685).** `POST /preview`,
+  `POST /build`, `POST /builds` 가 요청을 보내기 전에 `403 url_source_forbidden` 으로
+  거부합니다 — 자세한 것은 `BUILD_SPEC.md`.
 - **Provenance/manifest 비노출**: file source의 provenance는 로컬 파일시스템
   경로 대신 `upload_id`만 담습니다. url source의 provenance/manifest는 query
   string이 제거된 endpoint만 담아 우연히 섞인 secret이 남지 않게 합니다. 두

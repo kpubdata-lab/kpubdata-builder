@@ -104,23 +104,24 @@ Plugin 생태계와 고급 빌드 기능.
 
 ---
 
+## 진행 중 — 2026-09-30 결정
+
+작업 범위의 이름이고 릴리스 번호가 아니다. 다음 Builder·Studio 릴리스는 2026-10 창
+(10/26–11/01) 이다 — kpubdata 호환성 문서 §5.1.
+
+- 🔄 **DuckDB 로 tabular 엔진 전환** — [ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md),
+  #864–#877. 단계마다 `tests/parity/` 기준선과 같아야 한다. 끝나면 `src/` 의 엔진은
+  DuckDB 하나이고 레거시 publish 경로만 Polars 를 쓴다. 다중 테이블 SQL(#704)은 그 다음
+- 🔄 **배포 형태에 따른 자격 증명 수명** — [ADR 0020](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0020-credential-lifetime-by-deployment.md),
+  ADR 0012 개정. 다중 사용자 배포는 키를 저장하지 않고 소유권을 강제한다
+- 🔄 **레거시 publish 파이프라인 이관** — [ADR 0018](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0018-legacy-publish-pipeline.md)
+  선택지 C: config 를 하나씩 BuildSpec 으로 옮긴다
+- ✅ kpubdata 0.8 핀 (`>=0.8.0,<0.9`, #882), Builder 소유 wire 어휘(#831), kpubdata
+  private import 게이트(#830)
+
+---
+
 ## ADR 인덱스
 
-| ADR | 제목 | 상태 |
-| :--- | :--- | :--- |
-| 0001 | 오케스트레이터로서의 Builder | 승인됨 |
-| 0002 | Build 실행 모델 | 승인됨 |
-| 0003 | 영속 Build 저장소 (SQLite) | 승인됨 |
-| 0004 | Plugin Exporter API | 승인됨 |
-| 0005 | API 계약 단일 소스 | 승인됨 |
-| 0006 | 서비스 인증 & 배포 | 승인됨 |
-| 0007 | kpubdata 버전 호환성 | 승인됨 |
-| 0008 | 비동기 build job 모델 | 승인됨 |
-| 0009 | 사용자 인증 Google OIDC | 대체됨(0015) |
-| 0010 | ArtifactStore + 상태 백엔드 | 부분 이행(0016) |
-| 0011 | BuildSpec 어시스턴트 그라운딩 | 승인됨 |
-| 0012 | Provider credential 저장·주입 경계 | 승인됨 |
-| 0013 | API 계약 버전과 릴리스 경계 | 승인됨 |
-| 0014 | Public API·File·URL Source 통합 경계 | 승인됨 |
-| 0015 | Email/Password OIDC IdP(Keycloak) 전환 | 승인됨 |
-| 0016 | CUBRID 상태 백엔드 + manifest 정본 이전 | 수용됨 |
+ADR 목록과 상태는 [docs/adrs/README.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/README.md) 한 곳에서 관리한다 — 이 문서에
+사본을 두면 어긋난다(0017–0021 이 빠져 있었고, 0008·0011 의 상태가 달랐다).
