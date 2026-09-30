@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from kpubdata_builder.catalog_info import DatasetCatalogInfo
+from kpubdata_builder.pipeline import card_facts
 from kpubdata_builder.pipeline.card_facts import card_source, personal_information, processing_steps
 from kpubdata_builder.service import BuilderService, dispatch
 from kpubdata_builder.spec import BuildSpec, ExportTarget, JsonValue, SourceRef
@@ -154,8 +157,19 @@ def test_missing_sections() -> None:
     assert missing_sections(blank_institution) == ["provenance[s].institution"]
 
 
-def test_publishing_refuses_a_card_with_an_empty_section(tmp_path: Path) -> None:
-    """Negative: no attribution declared → no providing institution → no publish."""
+def test_publishing_refuses_a_card_with_an_empty_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative: no attribution declared → no providing institution → no publish.
+
+    Neither the BuildSpec nor the catalog names the institution here; the catalog is
+    pinned, since kpubdata declares attributions over time (kpubdata#617).
+    """
+    monkeypatch.setattr(
+        card_facts,
+        "catalog_info",
+        lambda _id: DatasetCatalogInfo(source_url="u", license_type="l", attribution=None),
+    )
     service = _service(tmp_path)
     no_attribution = LICENSED_SPEC_YAML.replace("attribution: 한국환경공단 에어코리아\n", "")
     service.build(no_attribution, run_id="r1")

@@ -32,10 +32,14 @@ def card_source(
     spec: BuildSpec,
     provenance: SourceProvenance | None,
     label: str,
-    lookup: CatalogLookup = catalog_info,
+    lookup: CatalogLookup | None = None,
 ) -> CardSource:
-    """Where one source's data comes from, as far as it is recorded."""
-    info = lookup(f"{source.provider}.{source.dataset}") if source.kind == "public_api" else None
+    """Where one source's data comes from, as far as it is recorded.
+
+    ``lookup`` defaults to the installed kpubdata's catalog, resolved at call time.
+    """
+    read = lookup if lookup is not None else catalog_info
+    info = read(f"{source.provider}.{source.dataset}") if source.kind == "public_api" else None
     institution = (spec.attribution or "").strip() or (info.attribution if info else "") or ""
     if source.kind == "url":
         url = sanitize_endpoint_identity(source.endpoint)
