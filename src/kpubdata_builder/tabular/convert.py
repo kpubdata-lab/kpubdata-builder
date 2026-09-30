@@ -206,6 +206,13 @@ def check_case_fold_collisions(columns: Sequence[str]) -> None:
         )
 
 
+def apply_read_as(
+    record: dict[str, JsonValue], declared: Mapping[str, str]
+) -> dict[str, JsonValue]:
+    """``record`` with ``read_as`` applied — declared columns' values as text."""
+    return _apply_read_as(record, dict(declared))
+
+
 def records_to_dataframe(
     records: Sequence[dict[str, JsonValue]],
     *,
@@ -258,6 +265,7 @@ def dataframe_to_records(df: pl.DataFrame) -> list[dict[str, JsonValue]]:
 
 __all__ = [
     "RecordTypeScan",
+    "apply_read_as",
     "check_case_fold_collisions",
     "dataframe_to_records",
     "records_to_dataframe",
