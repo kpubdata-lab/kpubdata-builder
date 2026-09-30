@@ -16,7 +16,7 @@ import polars as pl
 
 from ...errors import TabularError
 from ...spec import ColumnNullTokens, DerivedColumn, JsonValue
-from ...tabular.convert import records_to_dataframe
+from ...tabular.convert import check_case_fold_collisions, records_to_dataframe
 from ...tabular.polars_helpers import (
     YEAR_MONTH_COMPACT,
     YEAR_MONTH_DASHED,
@@ -88,6 +88,8 @@ def normalize_table(
         table = result.df
     for rule in derived:
         table = _apply_derived(table, rule)
+    # After every declared transform, so a rename or a coalesce can resolve it (#868).
+    check_case_fold_collisions(table.columns)
     return table
 
 

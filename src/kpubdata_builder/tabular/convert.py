@@ -127,6 +127,85 @@ def _apply_read_as(
     return converted
 
 
+class RecordTypeScan:
+    """The raw-JSON type checks of :func:`records_to_dataframe`, one record at a time.
+
+    An engine's own inference sees only the table it settled on; these checks see every
+    value first (#187, #198, #199), nested lists and maps included. Fed record by record,
+    they hold one shape per column rather than the records, so a Bronze file of any size
+    can be checked as it is read (#868) — with the same errors, in the same order.
+    """
+
+    def __init__(self, *, read_as: Mapping[str, str] | None = None) -> None:
+        self._declared = dict(read_as or {})
+        self._shapes: dict[str, object] = {}
+        self._conflicts: list[str] = []
+        self._numeric_kinds: dict[str, set[str]] = {}
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """Every column seen, in first-seen order."""
+        return tuple(self._shapes)
+
+    def add(self, record: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """Check one record; returns it with ``read_as`` applied."""
+        if self._declared:
+            record = _apply_read_as(record, self._declared)
+        for key, value in record.items():
+            _collect_numeric_kinds(value, key, self._numeric_kinds)
+            shape = _unify(self._shapes.get(key, _NULL), _shape(value))
+            self._shapes[key] = shape
+            if shape is _CONFLICT and key not in self._conflicts:
+                self._conflicts.append(key)
+        return record
+
+    def check(self) -> None:
+        """Raise for what the records seen so far would silently coerce.
+
+        Raises:
+            TabularError: A column mixes incompatible types, or floats with integers
+                beyond ±2^53.
+        """
+        if self._conflicts:
+            raise TabularError(
+                "heterogeneous column types detected (refusing to silently coerce): "
+                f"{sorted(self._conflicts)}"
+            )
+        precision_risk = sorted(
+            path
+            for path, kinds in self._numeric_kinds.items()
+            if "float" in kinds and "unsafe_int" in kinds
+        )
+        if precision_risk:
+            raise TabularError(
+                "integer precision loss risk: columns mix floats with integers beyond the "
+                f"IEEE-754 safe range (±2^53) and would round on f64 upcast: {precision_risk}. "
+                "Use an explicit cast to keep these columns as strings or integers."
+            )
+
+
+def check_case_fold_collisions(columns: Sequence[str]) -> None:
+    """Refuse columns whose names differ only in letter case (#868, R7).
+
+    SQL engines, DuckDB included, match column names case-insensitively, quoted or not:
+    ``Name`` and ``name`` would be one column, or one would be renamed to ``name_1``
+    behind the user's back. Neither is acceptable, so the table is refused and the user
+    renames or coalesces the columns in the source's schema.
+
+    Raises:
+        TabularError: Two or more columns fold to the same name.
+    """
+    groups: dict[str, list[str]] = {}
+    for column in columns:
+        groups.setdefault(column.casefold(), []).append(column)
+    clashes = sorted(sorted(names) for names in groups.values() if len(names) > 1)
+    if clashes:
+        raise TabularError(
+            "columns differ only in letter case, which SQL reads as one column: "
+            f"{clashes}. Rename or coalesce them in the source's schema."
+        )
+
+
 def records_to_dataframe(
     records: Sequence[dict[str, JsonValue]],
     *,
@@ -155,37 +234,9 @@ def records_to_dataframe(
     Raises:
         TabularError: If heterogeneous types mixed or integer precision loss possible.
     """
-    declared = dict(read_as or {})
-    if declared:
-        records = [_apply_read_as(record, declared) for record in records]
-
-    shapes: dict[str, object] = {}
-    conflicts: list[str] = []
-    numeric_kinds: dict[str, set[str]] = {}
-
-    for record in records:
-        for key, value in record.items():
-            _collect_numeric_kinds(value, key, numeric_kinds)
-            shape = _unify(shapes.get(key, _NULL), _shape(value))
-            shapes[key] = shape
-            if shape is _CONFLICT and key not in conflicts:
-                conflicts.append(key)
-
-    if conflicts:
-        raise TabularError(
-            "heterogeneous column types detected (refusing to silently coerce): "
-            f"{sorted(conflicts)}"
-        )
-
-    precision_risk = sorted(
-        path for path, kinds in numeric_kinds.items() if "float" in kinds and "unsafe_int" in kinds
-    )
-    if precision_risk:
-        raise TabularError(
-            "integer precision loss risk: columns mix floats with integers beyond the "
-            f"IEEE-754 safe range (±2^53) and would round on f64 upcast: {precision_risk}. "
-            "Use an explicit cast to keep these columns as strings or integers."
-        )
+    scan = RecordTypeScan(read_as=read_as)
+    records = [scan.add(record) for record in records]
+    scan.check()
 
     # infer_schema_length=None: scan all records to infer dtype. With default inference window
     # (first few rows) only, first float appearing outside window silently truncates to int in
@@ -206,6 +257,8 @@ def dataframe_to_records(df: pl.DataFrame) -> list[dict[str, JsonValue]]:
 
 
 __all__ = [
+    "RecordTypeScan",
+    "check_case_fold_collisions",
     "dataframe_to_records",
     "records_to_dataframe",
 ]
