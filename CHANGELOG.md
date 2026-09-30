@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The kpubdata private-import gate no longer fails the `kpubdata main ↔ Builder` early warning when kpubdata main makes an allowlisted name public before a release does (#830). kpubdata main exports `KPubDataConfig`, `find_spec` and `discover_specs` (kpubdata#674), while the released 0.8.0 that Builder pins still keeps them private, so the allowlist entries are still needed. `scripts/check_kpubdata_imports.py` now tells the two cases apart only when told to — `--unreleased-kpubdata` or `KPUBDATA_IMPORT_GATE_TARGET=unreleased`, which only `cross-repo-contract.yml` sets — and there prints such an entry as a notice. Against a released kpubdata (the default, and what `ci.yml` runs) an entry whose name is now public still fails, as does an entry nothing imports any more in either mode. The mode is not inferred from the installed version because kpubdata main reports the version of its last release. Builder switches to `from kpubdata import ...` once a kpubdata release exports these names and the pin is raised to include it.
+
 ### Added
 
 - kpubdata's code columns reach clients as identifiers (#702, API contract 1.61.0). A text column that the run's kpubdata dataset spec declares `semantic_kind: code` (kpubdata ADR 0006) — a legal-dong code, a PNU, a lot number — is reported as `logical_type: identifier` with `wire_encoding: string` on `/query`, `/warehouse/query`, `/warehouse/rows`, `/warehouse/aggregate`, warehouse export `output.columns`, the `/preview` schema and warehouse profiles; its values are sent as the stored text, leading zeros kept, and nothing casts them to a number. `from_field_descriptor` now maps `semantic_kind` to a `core_spec` semantic hint (unknown kinds carried verbatim), and those responses carry the spec's `semantic`/`display` hints (ADR 0019, amended). Builder does not guess: a column no spec declares a code, a file or url source, and a code stored as a number keep their storage logical type. The spreadsheet export treats `identifier` as text.

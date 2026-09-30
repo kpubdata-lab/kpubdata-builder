@@ -86,5 +86,9 @@ jobs:
       - name: Full suite against kpubdata main
         env:
           KPUBDATA_MODE: replay
+          # kpubdata main is not a release: an allowlisted private name it has made
+          # public is a notice here, not a failure, because the released kpubdata the
+          # pin allows still keeps it private (scripts/check_kpubdata_imports.py).
+          KPUBDATA_IMPORT_GATE_TARGET: unreleased
           KPUBDATA_REPLAY_DIR: ${{ github.workspace }}/.kpubdata-src/tests/fixtures
         run: uv run --no-sync pytest -q
