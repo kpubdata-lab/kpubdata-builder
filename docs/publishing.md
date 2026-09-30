@@ -130,6 +130,21 @@ uv run python scripts/publish_to_hf.py scripts/configs/seoul_apartment_trades.ya
 | `--dry-run` | 업로드를 건너뛰고 로컬 파일만 생성 (업로드 시뮬레이션 로그 출력) |
 | `--local-only` | 로컬 파일 생성까지만 실행 (업로드 로직 자체를 건너뜀) |
 | `--verbose`, `-v` | DEBUG 레벨 로깅 활성화 |
+| `--confirm-non-commercial` | 비상업 조건(KOGL 제2유형) 데이터셋을 비공개 Kaggle 로만 게시하겠다고 확인 (#688) |
+
+### 재배포 게이트 (#688)
+
+`--local-only` 가 아니면, 무엇이든 가져오기 **전에** config 의 `card.license`/`license_name` 으로
+재배포 가능 여부를 판정하고 막을 것은 종료 코드 2 로 막는다.
+
+| 판정 | 조건 | 게시 |
+| :--- | :--- | :--- |
+| `allowed` | `korea-public-data-unrestricted`, `kogl-type-1` | 허용 |
+| `non_commercial` | `kogl-type-2` | 비공개 Kaggle 에만, `--confirm-non-commercial` 과 함께. HF 업로드는 항상 공개라 거부 |
+| `forbidden` | `kogl-type-3`, `kogl-type-4` — 이 경로는 가공 데이터를 게시하므로 변경금지 조건과 충돌 | 거부 |
+| `unknown` | 그 밖 전부 — 조건을 적지 않았거나(`license` 없음), 확인하지 않은 `cc-by-4.0` 등 | **거부** (모름은 허락이 아니다) |
+
+이 게이트는 마지막 config 가 BuildSpec 으로 옮겨질 때 레거시 코드와 함께 사라진다(ADR 0018).
 
 ---
 
