@@ -2,11 +2,14 @@
 
 Which columns hold personal data is declared, never guessed: kpubdata's dataset spec
 lists them in ``license.pii_columns`` (kpubdata#525), and a BuildSpec may add its own
-in ``sources[].gold.pii_columns``. Every declared column that reaches Gold has each
-non-null value replaced by :data:`PII_MASK_TOKEN`, so the row shape and the null
-pattern are kept while no original value is published. Masking rather than dropping
-keeps the published schema the same whatever a spec declares, and a reader sees the
-column was withheld instead of wondering whether it existed.
+in ``sources[].gold.pii_columns``. Every declared column that reaches Gold is masked
+so that no original value is published, and its dtype is kept (#902): a text column
+has each non-null value replaced by :data:`PII_MASK_TOKEN`, keeping the null pattern;
+any other column (a number, a date, a list) becomes all null, because no token fits
+its dtype. The manifest names which of the two each column got (``masked_as``).
+Masking rather than dropping, in the column's own dtype, keeps the Gold schema equal
+to Silver's whatever a spec declares, and a reader sees the column was withheld
+instead of wondering whether it existed.
 
 Silver keeps every value (#611); quality is measured there. Gold is what exports,
 the dataset card, publishing, Gold ``/query`` and the warehouse read, so masking it
@@ -15,6 +18,20 @@ once covers all of them.
 Publishing a declared column unmasked takes an explicit ``sources[].gold.
 publish_unmasked`` entry, and every such column is recorded as a warning in the
 manifest.
+
+How this relates to the BuildSpec ``pii`` scan gate (#441, #902). The gate looks at
+Silver for values and names that look like PII, before Gold is built. A declared
+column Gold will mask is already handled, so the gate does not count it. A column in
+``publish_unmasked`` is published as is, so the gate still counts it: under ``mode:
+block`` it must also be listed in ``pii.allow_columns``. The two switches say
+different things and neither implies the other. ``allow_columns`` accepts a column's
+plain values as publishable where nothing declared it (the gate, warehouse profiles
+and exports read it that way); it never unmasks a declared column. ``publish_unmasked``
+opts a declared column out of masking; it never silences the gate.
+
+A kpubdata declaration naming a field this source does not carry is not an error,
+but it is recorded in the manifest (``declared_absent``) so a spelling that no longer
+matches the source cannot let the real column through unnoticed (#902).
 """
 
 from __future__ import annotations
@@ -39,31 +56,44 @@ class PiiDeclarationError(ValueError):
     """A BuildSpec PII declaration names a column Silver does not have."""
 
 
+#: How a masked column was masked (#902): text cells hold the token, other dtypes null.
+MASKED_AS_TOKEN = "token"
+MASKED_AS_NULL = "null"
+
+
 @dataclass(frozen=True)
 class PiiMaskResult:
     """Which declared columns Gold masked, and which it published unmasked, and why.
 
     Each column maps to the sources of its declaration (``kpubdata_spec``,
-    ``build_spec``). Never holds a value.
+    ``build_spec``). ``nulled`` names the masked columns that became null because
+    their dtype is not text (#902). ``declared_absent`` names the kpubdata-declared
+    fields this source does not carry (#902). Never holds a value.
     """
 
     masked: Mapping[str, tuple[str, ...]]
     unmasked: Mapping[str, tuple[str, ...]]
+    nulled: frozenset[str] = frozenset()
+    declared_absent: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
-        return not self.masked and not self.unmasked
+        return not self.masked and not self.unmasked and not self.declared_absent
 
     def body(self) -> dict[str, JsonValue]:
-        def entries(columns: Mapping[str, tuple[str, ...]]) -> list[JsonValue]:
-            return [
-                {"column": name, "declared_by": list(origins)}
-                for name, origins in sorted(columns.items())
-            ]
+        def entry(name: str, origins: tuple[str, ...]) -> dict[str, JsonValue]:
+            return {"column": name, "declared_by": list(origins)}
 
         return {
             "token": PII_MASK_TOKEN,
-            "masked": entries(self.masked),
-            "unmasked": entries(self.unmasked),
+            "masked": [
+                {
+                    **entry(name, origins),
+                    "masked_as": MASKED_AS_NULL if name in self.nulled else MASKED_AS_TOKEN,
+                }
+                for name, origins in sorted(self.masked.items())
+            ],
+            "unmasked": [entry(name, o) for name, o in sorted(self.unmasked.items())],
+            "declared_absent": list(self.declared_absent),
         }
 
 
@@ -108,8 +138,9 @@ def declared_pii_columns(
 ) -> dict[str, tuple[str, ...]]:
     """Silver columns declared PII, each with where its declaration came from.
 
-    A kpubdata declaration naming a field this source does not carry is skipped: the
-    spec describes the dataset, not one response. A BuildSpec declaration naming a
+    A kpubdata declaration naming a field this source does not carry is skipped here:
+    the spec describes the dataset, not one response. :func:`absent_core_pii_columns`
+    names those fields so the manifest records them (#902). A BuildSpec declaration naming a
     column Silver lacks fails, as ``gold.select`` does — a typo must not let the real
     column through unmasked.
     """
@@ -125,14 +156,56 @@ def declared_pii_columns(
     return {name: tuple(values) for name, values in origins.items()}
 
 
+def absent_core_pii_columns(
+    core: Iterable[str], *, silver_columns: Sequence[str], contract: SchemaContract | None
+) -> tuple[str, ...]:
+    """kpubdata-declared fields that name no Silver column, as kpubdata spells them (#902).
+
+    :func:`declared_pii_columns` skips them; the manifest records them instead.
+    """
+    present = set(silver_columns)
+    return tuple(
+        sorted({name for name in core if not builder_column_names((name,), contract) & present})
+    )
+
+
+def columns_masked_in_gold(
+    declared: Mapping[str, tuple[str, ...]], publish_unmasked: Sequence[str]
+) -> frozenset[str]:
+    """Declared columns Gold will not publish as is: masked, or dropped by ``select``.
+
+    The Silver PII scan gate treats these as handled (#902). A ``publish_unmasked``
+    column is published as is, so it is not among them.
+    """
+    return frozenset(declared) - frozenset(publish_unmasked)
+
+
+def _is_text(dtype: pl.DataType) -> bool:
+    return dtype == pl.String
+
+
+def nulled_columns(frame: pl.DataFrame, columns: Iterable[str]) -> frozenset[str]:
+    """The ``columns`` of ``frame`` that masking turns null because they are not text."""
+    return frozenset(c for c in columns if c in frame.columns and not _is_text(frame.schema[c]))
+
+
 def mask_columns(frame: pl.DataFrame, columns: Iterable[str]) -> pl.DataFrame:
-    """``frame`` with every non-null value of ``columns`` replaced by the mask token."""
+    """``frame`` with ``columns`` masked, each keeping its dtype (#902).
+
+    A text column has every non-null value replaced by the mask token; any other
+    column becomes all null, since the token is not a value of its dtype.
+    """
     present = [c for c in columns if c in frame.columns]
     if not present:
         return frame
+    schema = frame.schema
     return frame.with_columns(
         [
-            pl.when(pl.col(c).is_null()).then(None).otherwise(pl.lit(PII_MASK_TOKEN)).alias(c)
+            (
+                pl.when(pl.col(c).is_null()).then(None).otherwise(pl.lit(PII_MASK_TOKEN))
+                if _is_text(schema[c])
+                else pl.lit(None, dtype=schema[c])
+            ).alias(c)
             for c in present
         ]
     )
@@ -143,27 +216,40 @@ def apply_pii_masking(
     declared: Mapping[str, tuple[str, ...]],
     *,
     publish_unmasked: Sequence[str] = (),
+    declared_absent: Sequence[str] = (),
 ) -> tuple[pl.DataFrame, PiiMaskResult]:
     """Mask every declared column of ``frame`` except those explicitly published unmasked.
 
     Only columns still in ``frame`` (after ``gold.select``) are reported: a column the
-    selection dropped is not published at all.
+    selection dropped is not published at all. ``declared_absent`` is carried into the
+    result as is.
     """
     in_gold = {name: origins for name, origins in declared.items() if name in frame.columns}
     unmasked = {name: o for name, o in in_gold.items() if name in publish_unmasked}
     masked = {name: o for name, o in in_gold.items() if name not in unmasked}
-    return mask_columns(frame, masked), PiiMaskResult(masked=masked, unmasked=unmasked)
+    result = PiiMaskResult(
+        masked=masked,
+        unmasked=unmasked,
+        nulled=nulled_columns(frame, masked),
+        declared_absent=tuple(declared_absent),
+    )
+    return mask_columns(frame, masked), result
 
 
 __all__ = [
     "DECLARED_BY_BUILD_SPEC",
     "DECLARED_BY_KPUBDATA",
+    "MASKED_AS_NULL",
+    "MASKED_AS_TOKEN",
     "PII_MASK_TOKEN",
     "PiiDeclarationError",
     "PiiMaskResult",
+    "absent_core_pii_columns",
     "apply_pii_masking",
     "builder_column_names",
+    "columns_masked_in_gold",
     "core_pii_columns",
     "declared_pii_columns",
     "mask_columns",
+    "nulled_columns",
 ]

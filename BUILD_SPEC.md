@@ -263,6 +263,8 @@ sources:
 | `filters[].column` | 비교할 컬럼. `select` 가 버리는 컬럼도 쓸 수 있다(필터가 먼저) |
 | `filters[].op` | `eq` `ne` `gt` `ge` `lt` `le` `in`(리스트) `not_null`(값 없음) |
 | `filters[].value` | 비교할 값. 식(expression)이 아니라 값이다 — 평가하지 않는다 |
+| `pii_columns` | kpubdata spec 의 `license.pii_columns` 에 더해 이 BuildSpec 이 PII 로 선언하는 Silver 컬럼(#689). Silver 에 없는 이름이면 소스가 실패한다 |
+| `publish_unmasked` | 선언된 PII 컬럼 중 마스킹하지 않고 게시할 컬럼(#689). 각각 manifest 경고로 남는다 |
 
 - null 은 어떤 비교도 통과하지 않는다(`not_null` 과 null 이 아닌 값에 대한 `ne` 제외).
 - Silver 에 없는 컬럼이나 비교할 수 없는 타입이면 그 소스가 실패한다 — 스펙과 다른 표를
@@ -272,6 +274,12 @@ sources:
   스냅샷의 행 수와 데이터셋 카드(컬럼·표본 행)는 Gold 를 따른다.
 - `composition` 과 함께 쓸 수 없다 — 합성은 소스별 Gold 대신 하나의 합성 Gold 를 만든다.
 - canonical snapshot 에 실리므로 digest 에 반영된다. 선언하지 않은 spec 의 digest 는 그대로다.
+- 선언된 PII 컬럼은 Gold 에서 기본으로 마스킹된다(#689). 컬럼의 dtype 은 유지된다(#902):
+  텍스트 컬럼은 값이 있던 칸이 `[masked]` 가 되고(null 은 null), 텍스트가 아닌 컬럼(숫자,
+  날짜, 리스트)은 전부 null 이 된다. 그래서 Gold schema 는 Silver 와 같다. manifest
+  `pii_masking` 의 각 `masked` 항목이 어느 쪽인지(`masked_as`: `token`/`null`) 적는다.
+- kpubdata 가 선언했지만 이 소스에 없는 필드(표기가 달라진 경우 등)는 건너뛰되 manifest
+  `pii_masking.declared_absent` 에 kpubdata 표기 그대로 남는다(#902).
 
 ### 4.5 `exports` (배열)
 
@@ -374,6 +382,18 @@ pii:
 | :--- | :--- | :--- |
 | `mode` | string | `block`(기본), `warn`, `allow` 중 하나 |
 | `allow_columns` | array<string> | PII 스캔에서 제외할 컬럼 목록 |
+
+스캔은 Gold 를 만들기 전에 Silver 를 본다. `sources[].gold` 의 PII 선언과는 이렇게
+맞물린다(#902).
+
+- 선언되어 Gold 에서 마스킹되는(또는 `gold.select` 가 버리는) 컬럼은 이미 처리된 것으로
+  보고 스캔 결과에서 뺀다. 선언·마스킹된 전화번호 컬럼은 `allow_columns` 없이도
+  `mode: block` 을 통과한다.
+- `allow_columns` 는 "이 컬럼의 평문을 게시해도 된다"는 수용이다. 스캔 게이트뿐 아니라
+  웨어하우스 프로필과 export 도 그렇게 읽는다. 선언된 컬럼의 마스킹을 풀지는 **않는다**.
+- `gold.publish_unmasked` 는 선언된 컬럼을 평문으로 게시하겠다는 선택이다. 스캔 게이트를
+  면제하지 **않는다** — `mode: block` 이면 그 컬럼을 `allow_columns` 에도 적어야 한다.
+- 즉 어느 쪽도 다른 쪽을 함의하지 않는다. 선언된 컬럼을 평문으로 내보내려면 둘 다 필요하다.
 
 `publish: true`와 `pii.mode: allow`의 조합은 허용하지 않습니다.
 

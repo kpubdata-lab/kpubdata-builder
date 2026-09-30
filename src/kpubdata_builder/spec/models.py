@@ -160,7 +160,8 @@ class GoldSelection:
     Declared PII columns are masked in Gold by default (#689): those kpubdata's spec
     lists in ``license.pii_columns`` and those named in ``pii_columns`` here.
     ``publish_unmasked`` is the explicit opt-out for a declared column, and each one
-    is recorded as a manifest warning.
+    is recorded as a manifest warning. It does not exempt the column from the ``pii``
+    scan gate, which counts only the declared columns Gold masks as handled (#902).
     """
 
     select: tuple[str, ...] = ()
@@ -226,7 +227,12 @@ class SplitSpec:
 
 @dataclass(frozen=True)
 class PiiPolicy:
-    """PII detection policy (#441, QG-1)."""
+    """PII detection policy (#441, QG-1).
+
+    ``allow_columns`` accepts a column's plain values as publishable; it does not
+    unmask a declared PII column (#689). Declared columns Gold masks are not counted
+    by the scan, while ``gold.publish_unmasked`` columns still are (#902).
+    """
 
     mode: str = "block"
     allow_columns: tuple[str, ...] = ()
