@@ -190,9 +190,12 @@ jobs:
           echo "patch=${patch}" >> "$GITHUB_OUTPUT"
           echo "issue=${issue}" >> "$GITHUB_OUTPUT"
 
-      # Before the gates, the tag and everything else (kpubdata#685). On the merge path a
-      # refusal leaves the raised version on main untagged; release it in the next
-      # window with mode=release.
+      # Before the gates, the tag and anything else is written (kpubdata#685). Prepare
+      # refuses first, so this only stops a release pull request merged outside the rule.
+      # Then the raised version sits on main untagged, and nothing needs undoing:
+      # dispatch mode=release in the window, or now with critical_patch and
+      # critical_issue. Re-running this job does not help — it replays the same event,
+      # so a Critical-Patch line added to the body after the merge is not seen.
       - name: Release window
         uses: yeongseon/kpubdata/.github/actions/release-window@main
         with:
