@@ -100,13 +100,46 @@ class TestLocalPublisherFailurePolicy:
             LocalPublisher().publish((artifact,), destination=str(tmp_path / "registry"))
 
 
-def _install_fake_hf(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[dict[str, object]]]:
-    """Inject huggingface_hub.HfApi as fake and record upload calls."""
-    calls: dict[str, list[dict[str, object]]] = {"repos": [], "files": [], "folders": []}
+class RepositoryNotFoundError(Exception):
+    """Stand-in named like huggingface_hub's own; matched by class name."""
+
+
+class GatedRepoError(RepositoryNotFoundError):
+    """Stand-in: huggingface_hub's GatedRepoError subclasses RepositoryNotFoundError."""
+
+
+_MISSING = object()
+
+
+def _install_fake_hf(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    existing: object = _MISSING,
+) -> dict[str, list[dict[str, object]]]:
+    """Inject huggingface_hub.HfApi as fake and record upload calls.
+
+    ``existing`` is what ``repo_info`` reports: ``_MISSING`` (the default) raises
+    RepositoryNotFoundError, an exception instance is raised, and anything else is
+    the repo's ``private`` attribute.
+    """
+    calls: dict[str, list[dict[str, object]]] = {
+        "repos": [],
+        "files": [],
+        "folders": [],
+        "info": [],
+    }
 
     class FakeHfApi:
         def __init__(self, token: str | None = None) -> None:
             self._token = token
+
+        def repo_info(self, *, repo_id: str, repo_type: str) -> object:
+            calls["info"].append({"repo_id": repo_id, "repo_type": repo_type})
+            if existing is _MISSING:
+                raise RepositoryNotFoundError(repo_id)
+            if isinstance(existing, BaseException):
+                raise existing
+            return types.SimpleNamespace(private=existing)
 
         def create_repo(
             self,
@@ -278,18 +311,147 @@ class TestHuggingFacePublisher:
         assert result.artifact_count == 2
 
 
-class _FakeKaggleApi:
-    """Kaggle API double: record calls and simulate dataset existence."""
+class TestHuggingFacePrivateTarget:
+    """A private publish never lands in an existing public repo (#901)."""
 
-    def __init__(self, existing: tuple[str, ...] = (), raise_on_create: bool = False) -> None:
-        self._existing = existing
+    @staticmethod
+    def _artifact(tmp_path: Path) -> Path:
+        artifact = tmp_path / "data.parquet"
+        artifact.write_text("x", encoding="utf-8")
+        return artifact
+
+    @staticmethod
+    def _nothing_written(calls: dict[str, list[dict[str, object]]]) -> bool:
+        return calls["repos"] == [] and calls["files"] == [] and calls["folders"] == []
+
+    def test_existing_public_repo_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _install_fake_hf(monkeypatch, existing=False)
+
+        with pytest.raises(PublishError, match="already exists and is public"):
+            HuggingFacePublisher().publish(
+                (self._artifact(tmp_path),), destination="org/ds", private=True
+            )
+
+        assert calls["info"] == [{"repo_id": "org/ds", "repo_type": "dataset"}]
+        assert self._nothing_written(calls)
+
+    def test_default_publish_is_private_and_checked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _install_fake_hf(monkeypatch, existing=False)
+
+        with pytest.raises(PublishError, match="is public"):
+            HuggingFacePublisher().publish((self._artifact(tmp_path),), destination="org/ds")
+
+        assert self._nothing_written(calls)
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            ConnectionError("network down"),
+            PermissionError("401 unauthorized"),
+            GatedRepoError("gated"),
+        ],
+        ids=["network", "auth", "gated"],
+    )
+    def test_lookup_failure_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        calls = _install_fake_hf(monkeypatch, existing=failure)
+
+        with pytest.raises(PublishError, match="could not look up"):
+            HuggingFacePublisher().publish(
+                (self._artifact(tmp_path),), destination="org/ds", private=True
+            )
+
+        assert self._nothing_written(calls)
+
+    @pytest.mark.parametrize("reported", [None, "yes"], ids=["missing", "not-a-bool"])
+    def test_unreported_visibility_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reported: object
+    ) -> None:
+        calls = _install_fake_hf(monkeypatch, existing=reported)
+
+        with pytest.raises(PublishError, match="could not be determined"):
+            HuggingFacePublisher().publish(
+                (self._artifact(tmp_path),), destination="org/ds", private=True
+            )
+
+        assert self._nothing_written(calls)
+
+    def test_existing_private_repo_proceeds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _install_fake_hf(monkeypatch, existing=True)
+
+        result = HuggingFacePublisher().publish(
+            (self._artifact(tmp_path),), destination="org/ds", private=True
+        )
+
+        assert result.artifact_count == 1
+        assert [c["path_in_repo"] for c in calls["files"]] == ["data.parquet"]
+
+    def test_missing_repo_is_created_private(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = _install_fake_hf(monkeypatch)
+
+        HuggingFacePublisher().publish(
+            (self._artifact(tmp_path),), destination="org/ds", private=True
+        )
+
+        assert calls["info"] == [{"repo_id": "org/ds", "repo_type": "dataset"}]
+        assert calls["repos"][0]["private"] is True
+        assert len(calls["files"]) == 1
+
+    def test_public_publish_does_not_look_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A public publish exposes nothing by landing in a private repo.
+        calls = _install_fake_hf(monkeypatch, existing=ConnectionError("unused"))
+
+        HuggingFacePublisher().publish(
+            (self._artifact(tmp_path),), destination="org/ds", private=False
+        )
+
+        assert calls["info"] == []
+        assert len(calls["files"]) == 1
+
+
+class _KaggleDataset:
+    """Stand-in for a ``dataset_list`` entry: ``str()`` is the ref, as in the SDK."""
+
+    def __init__(self, ref: str, **visibility: object) -> None:
+        self.ref = ref
+        for attribute, value in visibility.items():
+            setattr(self, attribute, value)
+
+    def __str__(self) -> str:
+        return self.ref
+
+
+class _FakeKaggleApi:
+    """Kaggle API double: record calls and simulate dataset existence.
+
+    ``existing`` entries given as plain refs are reported private (kaggle 1.7's
+    ``is_private``); pass ``_KaggleDataset`` entries to control visibility.
+    """
+
+    def __init__(
+        self, existing: tuple[str | _KaggleDataset, ...] = (), raise_on_create: bool = False
+    ) -> None:
+        self._existing = tuple(
+            _KaggleDataset(d, is_private=True) if isinstance(d, str) else d for d in existing
+        )
         self._raise_on_create = raise_on_create
         self.calls: list[str] = []
 
     def authenticate(self) -> None:
         self.calls.append("authenticate")
 
-    def dataset_list(self, *, mine: bool, search: str) -> list[str]:
+    def dataset_list(self, *, mine: bool, search: str) -> list[_KaggleDataset]:
         del mine, search
         return list(self._existing)
 
@@ -441,7 +603,7 @@ class TestKagglePublisher:
         # dataset_list failure is swallowed and propagated without creating new (public) dataset
         # (#177).
         class _ListFailApi(_FakeKaggleApi):
-            def dataset_list(self, *, mine: bool, search: str) -> list[str]:
+            def dataset_list(self, *, mine: bool, search: str) -> list[_KaggleDataset]:
                 del mine, search
                 raise ConnectionError("network down")
 
@@ -485,3 +647,113 @@ class TestKagglePublisher:
 
         with pytest.raises(PublishError, match="Failed to publish Kaggle dataset"):
             KagglePublisher().publish((artifact_dir,), destination="kpub/new")
+
+
+class TestKagglePrivateTarget:
+    """A private publish never becomes a new version of a public dataset (#901)."""
+
+    @staticmethod
+    def _uploaded(api: _FakeKaggleApi) -> bool:
+        return "dataset_create_version" in api.calls or "dataset_create_new" in api.calls
+
+    @pytest.mark.parametrize(
+        "dataset",
+        [
+            _KaggleDataset("kpub/existing", is_private=False),
+            _KaggleDataset("kpub/existing", isPrivate=False),
+        ],
+        ids=["kaggle-1.7", "kaggle-1.6"],
+    )
+    def test_existing_public_dataset_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dataset: _KaggleDataset
+    ) -> None:
+        api = _FakeKaggleApi(existing=(dataset,))
+        _inject_fake_kaggle(monkeypatch, api)
+        artifact_dir = _make_kaggle_dir(tmp_path, "kpub/existing")
+
+        with pytest.raises(PublishError, match="already exists and is public"):
+            KagglePublisher().publish((artifact_dir,), destination="kpub/existing")
+
+        assert not self._uploaded(api)
+
+    @pytest.mark.parametrize(
+        "dataset",
+        [
+            _KaggleDataset("kpub/existing"),
+            _KaggleDataset("kpub/existing", is_private=None),
+            _KaggleDataset("kpub/existing", isPrivate="false"),
+        ],
+        ids=["absent", "none", "not-a-bool"],
+    )
+    def test_unknown_visibility_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dataset: _KaggleDataset
+    ) -> None:
+        api = _FakeKaggleApi(existing=(dataset,))
+        _inject_fake_kaggle(monkeypatch, api)
+        artifact_dir = _make_kaggle_dir(tmp_path, "kpub/existing")
+
+        with pytest.raises(PublishError, match="could not be determined"):
+            KagglePublisher().publish((artifact_dir,), destination="kpub/existing")
+
+        assert not self._uploaded(api)
+
+    def test_lookup_failure_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _ListFailApi(_FakeKaggleApi):
+            def dataset_list(self, *, mine: bool, search: str) -> list[_KaggleDataset]:
+                del mine, search
+                raise PermissionError("403 forbidden")
+
+        api = _ListFailApi()
+        _inject_fake_kaggle(monkeypatch, api)
+        artifact_dir = _make_kaggle_dir(tmp_path, "kpub/existing")
+
+        with pytest.raises(PublishError, match="Failed to query existing Kaggle"):
+            KagglePublisher().publish((artifact_dir,), destination="kpub/existing")
+
+        assert not self._uploaded(api)
+
+    @pytest.mark.parametrize("attribute", ["is_private", "isPrivate"])
+    def test_existing_private_dataset_proceeds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attribute: str
+    ) -> None:
+        dataset = _KaggleDataset("kpub/existing", **{attribute: True})
+        api = _FakeKaggleApi(existing=(dataset,))
+        _inject_fake_kaggle(monkeypatch, api)
+        artifact_dir = _make_kaggle_dir(tmp_path, "kpub/existing")
+
+        KagglePublisher().publish((artifact_dir,), destination="kpub/existing")
+
+        assert "dataset_create_version" in api.calls
+
+    def test_missing_dataset_is_created_private(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        public_args: list[object] = []
+
+        class _RecordingApi(_FakeKaggleApi):
+            def dataset_create_new(self, *args: object, **kwargs: object) -> None:
+                del args
+                public_args.append(kwargs.get("public"))
+                self.calls.append("dataset_create_new")
+
+        # A public dataset with another ref is not the target.
+        api = _RecordingApi(existing=(_KaggleDataset("kpub/other", is_private=False),))
+        _inject_fake_kaggle(monkeypatch, api)
+        artifact_dir = _make_kaggle_dir(tmp_path, "kpub/new")
+
+        KagglePublisher().publish((artifact_dir,), destination="kpub/new")
+
+        assert public_args == [False]
+
+    def test_public_publish_to_existing_public_dataset_is_not_checked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api = _FakeKaggleApi(existing=(_KaggleDataset("kpub/existing"),))
+        _inject_fake_kaggle(monkeypatch, api)
+        artifact_dir = _make_kaggle_dir(tmp_path, "kpub/existing")
+
+        KagglePublisher().publish((artifact_dir,), destination="kpub/existing", public=True)
+
+        assert "dataset_create_version" in api.calls

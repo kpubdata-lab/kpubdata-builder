@@ -115,6 +115,9 @@ class TestPublisherPrefersPassedCredentials:
             def __init__(self, token: str | None = None) -> None:
                 captured["token"] = token
 
+            def repo_info(self, **_kwargs: object) -> object:
+                return types.SimpleNamespace(private=True)
+
             def create_repo(self, **_kwargs: object) -> None: ...
             def upload_file(self, **_kwargs: object) -> None: ...
             def upload_folder(self, **_kwargs: object) -> None: ...
@@ -145,6 +148,9 @@ class TestPublisherPrefersPassedCredentials:
         class _Api:
             def __init__(self, token: str | None = None) -> None:
                 captured["token"] = token
+
+            def repo_info(self, **_kwargs: object) -> object:
+                return types.SimpleNamespace(private=True)
 
             def create_repo(self, **_kwargs: object) -> None: ...
             def upload_file(self, **_kwargs: object) -> None: ...
@@ -359,6 +365,9 @@ class TestTheSwitchActuallyBlocksPublishing:
         class _Api:
             def __init__(self, token: str | None = None) -> None:
                 captured["token"] = token
+
+            def repo_info(self, **_kwargs: object) -> object:
+                return types.SimpleNamespace(private=True)
 
             def create_repo(self, **_kwargs: object) -> None: ...
             def upload_file(self, **_kwargs: object) -> None: ...

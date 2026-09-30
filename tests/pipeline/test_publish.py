@@ -317,3 +317,97 @@ def test_upload_to_kaggle_refuses_a_card_without_a_licence(tmp_path: Path) -> No
 
 def test_an_other_licence_maps_to_kaggle_other() -> None:
     assert _map_kaggle_license("other") == "other"
+
+
+# ---------------------------------------------------------------------------
+# upload_to_kaggle — a private publish to an existing dataset (#901)
+# ---------------------------------------------------------------------------
+
+
+class _KaggleDataset:
+    """A ``dataset_list`` entry: ``str()`` is the ref, as in the SDK."""
+
+    def __init__(self, ref: str, **visibility: object) -> None:
+        self.ref = ref
+        for attribute, value in visibility.items():
+            setattr(self, attribute, value)
+
+    def __str__(self) -> str:
+        return self.ref
+
+
+def _kaggle_api_listing(*datasets: object) -> MagicMock:
+    api = MagicMock()
+    api.dataset_list.return_value = list(datasets)
+    _kaggle_api_extended_stub.KaggleApi.return_value = api
+    return api
+
+
+@pytest.mark.parametrize("attribute", ["is_private", "isPrivate"])
+def test_a_private_publish_to_a_public_kaggle_dataset_is_refused(
+    tmp_path: Path, attribute: str
+) -> None:
+    """A new version keeps the dataset's visibility, so it would go out public."""
+    staging = _staging_dir(tmp_path)
+    api = _kaggle_api_listing(_KaggleDataset("user/test-dataset", **{attribute: False}))
+
+    with pytest.raises(publish_mod.PrivatePublishRefused, match="is public"):
+        upload_to_kaggle(staging, _kaggle_config(), dry_run=False)
+
+    api.dataset_create_version.assert_not_called()
+    api.dataset_create_new.assert_not_called()
+    assert not (staging / ".kaggle_upload").exists()
+
+
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        _KaggleDataset("user/test-dataset"),
+        _KaggleDataset("user/test-dataset", is_private=None),
+        # A MagicMock answers every attribute; that is not a reported visibility.
+        MagicMock(__str__=lambda self: "user/test-dataset"),
+    ],
+    ids=["absent", "none", "mock"],
+)
+def test_a_private_publish_with_unknown_kaggle_visibility_is_refused(
+    tmp_path: Path, dataset: object
+) -> None:
+    staging = _staging_dir(tmp_path)
+    api = _kaggle_api_listing(dataset)
+
+    with pytest.raises(publish_mod.PrivatePublishRefused, match="unknown visibility"):
+        upload_to_kaggle(staging, _kaggle_config(), dry_run=False)
+
+    api.dataset_create_version.assert_not_called()
+    api.dataset_create_new.assert_not_called()
+
+
+def test_a_private_publish_to_a_private_kaggle_dataset_proceeds(tmp_path: Path) -> None:
+    staging = _staging_dir(tmp_path)
+    api = _kaggle_api_listing(_KaggleDataset("user/test-dataset", is_private=True))
+
+    upload_to_kaggle(staging, _kaggle_config(), dry_run=False)
+
+    api.dataset_create_version.assert_called_once()
+    api.dataset_create_new.assert_not_called()
+
+
+def test_a_private_publish_to_a_missing_kaggle_dataset_creates_it_private(
+    tmp_path: Path,
+) -> None:
+    staging = _staging_dir(tmp_path)
+    api = _kaggle_api_listing(_KaggleDataset("user/other-dataset", is_private=False))
+
+    upload_to_kaggle(staging, _kaggle_config(), dry_run=False)
+
+    api.dataset_create_version.assert_not_called()
+    assert api.dataset_create_new.call_args.kwargs["public"] is False
+
+
+def test_a_public_publish_to_an_existing_kaggle_dataset_is_not_checked(tmp_path: Path) -> None:
+    staging = _staging_dir(tmp_path)
+    api = _kaggle_api_listing(_KaggleDataset("user/test-dataset"))
+
+    upload_to_kaggle(staging, _kaggle_config(), dry_run=False, public=True)
+
+    api.dataset_create_version.assert_called_once()
