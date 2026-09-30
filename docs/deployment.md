@@ -193,6 +193,28 @@ kpubdata-builder serve
 kpubdata-builder serve --host 0.0.0.0 --port 8080
 ```
 
+#### replay 모드 — 클라이언트 E2E 용 (#837)
+
+공급자 API 대신 기록된 응답으로 서비스한다. 키 없이, 다른 저장소 checkout 없이 클라이언트
+(Studio 실연동 E2E)가 Public API 경로를 돌릴 수 있다.
+
+```bash
+# 패키지에 포함된 fixture 로 (datago.air_station gangnam_full_page)
+kpubdata-builder serve --replay
+
+# fixture 디렉터리를 지정 — 포함된 세트를 꺼내 쓰거나 늘릴 때
+kpubdata-builder fixtures export ./replay-fixtures
+kpubdata-builder serve --replay-dir ./replay-fixtures
+# 또는 KPUBDATA_BUILDER_REPLAY_DIR=./replay-fixtures kpubdata-builder serve
+```
+
+- kpubdata 의 `KPUBDATA_MODE`·`KPUBDATA_REPLAY_DIR` 는 Builder 가 내부에서 설정한다 —
+  클라이언트는 그 이름을 몰라도 된다.
+- fixture 가 있는 공급자에 키가 설정돼 있지 않으면 자리표시자 키를 넣는다(spec 실행기가
+  전송 전에 키를 요구한다). 기록이 없는 요청은 실 API 로 나가 인증에 실패한다.
+- `REQUIRE_OWN_PROVIDER_CREDENTIAL` 이 켜진 배포에서는 환경 키를 쓰지 않으므로 자리표시자도
+  쓰이지 않는다. 개발·CI 전용 모드다.
+
 ### 웨어하우스 운영 — 회수·보존·백업 (#705)
 
 `build --warehouse DIR` 가 커밋한 table snapshot 은 불변이고, 갱신은 새 snapshot 을

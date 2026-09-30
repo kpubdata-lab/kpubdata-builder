@@ -34,6 +34,8 @@ positional arguments:
     build            Execute a BuildSpec through the Medallion pipeline.
     publish          Publish build artifacts to a local or remote destination.
     serve            Run the Builder HTTP service.
+    fixtures         Export the replay fixtures bundled with this package
+                     (#837).
     rebuild-index    Rebuild the build index from filesystem scans.
     discover         Discover API metadata from a data.go.kr URL.
     monitor          Check pending dataset applications for approval.
