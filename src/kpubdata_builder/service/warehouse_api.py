@@ -45,6 +45,7 @@ from kpubdata_builder.query.rows import check_plan, parse_rows_plan
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.datasets import read_snapshot_dataset_id
 from kpubdata_builder.service.query_service_api import execute_query
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
@@ -131,10 +132,19 @@ class WarehouseApiService:
     """List and query the caller's committed tables."""
 
     def __init__(
-        self, *, table_catalog: Callable[[], TableCatalog | None], engine: QueryService
+        self,
+        *,
+        table_catalog: Callable[[], TableCatalog | None],
+        engine: QueryService,
+        output_root: Path | None = None,
     ) -> None:
+        """Args:
+        output_root: Run workspace root, where each run's BuildSpec snapshot says which
+            dataset a table belongs to (#841). Without it ``dataset_id`` is null.
+        """
         self._table_catalog = table_catalog
         self._engine = engine
+        self._output_root = output_root
 
     @staticmethod
     def _find(catalog: TableCatalog, name: str, principal: Principal) -> TableRow | None:
@@ -147,8 +157,38 @@ class WarehouseApiService:
             return _not_configured()
         workspace = ownership.warehouse_workspace(principal.owner_id)
         return ServiceResponse(
-            200, {"tables": [_table_body(t) for t in catalog.list_tables(workspace)]}
+            200,
+            {"tables": [self._summary(catalog, t) for t in catalog.list_tables(workspace)]},
         )
+
+    def _summary(self, catalog: TableCatalog, table: TableRow) -> dict[str, JsonValue]:
+        """A list entry with its current snapshot summarised, so a list needs no N+1 (#841).
+
+        ``current_snapshot`` is null before the first commit, and each of its values is
+        null when the catalog has none — never 0 or a guess. ``dataset_id`` comes from
+        the BuildSpec of the run that committed the current snapshot, not from splitting
+        ``logical_name``, since a dataset id may itself contain a dot.
+        """
+        body = _table_body(table)
+        current: JsonValue = None
+        dataset_id: str | None = None
+        if table.current_snapshot_id is not None:
+            try:
+                snapshot = catalog.get_snapshot(table.current_snapshot_id)
+            except SnapshotNotFound:
+                snapshot = None
+            if snapshot is not None:
+                current = {
+                    "snapshot_id": snapshot.id,
+                    "row_count": snapshot.row_count,
+                    "committed_at": snapshot.committed_at,
+                    "coverage": _coverage(snapshot.coverage),
+                }
+                if self._output_root is not None:
+                    dataset_id = read_snapshot_dataset_id(self._output_root, snapshot.run_id)
+        body["current_snapshot"] = current
+        body["dataset_id"] = dataset_id
+        return body
 
     def get_table(self, name: str, *, principal: Principal) -> ServiceResponse:
         catalog = self._table_catalog()
