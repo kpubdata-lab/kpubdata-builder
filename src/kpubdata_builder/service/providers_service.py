@@ -14,14 +14,17 @@ Two core rules:
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from typing import cast
 
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.provider_tests import ProviderTestLog
 from kpubdata_builder.service.providers import (
     CredentialResolver,
     ProviderDescriptor,
     ProviderTestOperation,
+    ProviderTestResult,
     provider_descriptors,
     run_provider_test,
     test_result_body,
@@ -53,12 +56,18 @@ class ProvidersService:
         close_client: CloseClient,
         provider_test_operation: ProviderTestOperation,
         provider_test_timeout: float,
+        test_log: Callable[[], ProviderTestLog | None] = lambda: None,
     ) -> None:
+        """Args:
+        test_log: Where each principal's last test per provider is kept (#842); None
+            keeps nothing and reports every ``last_test`` as null.
+        """
         self._credential_resolver = credential_resolver
         self._create_client = create_client
         self._close_client = close_client
         self._provider_test_operation = provider_test_operation
         self._provider_test_timeout = provider_test_timeout
+        self._test_log = test_log
 
     # --- Internal queries -------------------------------------------------
 
@@ -94,6 +103,8 @@ class ProvidersService:
             return descriptors
         if principal.owner_id is None:
             return ServiceResponse(403, {"error": "stable principal is required"})
+        log = self._test_log()
+        last_tests = log.last_tests(principal.owner_id) if log is not None else {}
         items: list[JsonValue] = []
         for descriptor in descriptors:
             resolved = self._credential_resolver.resolve(principal.owner_id, descriptor.name)
@@ -103,6 +114,7 @@ class ProvidersService:
                     "provider": descriptor.name,
                     "requires_credential": descriptor.requires_credential,
                     "configured": configured,
+                    "last_test": cast(JsonValue, last_tests.get(descriptor.name)),
                 }
             )
         return ServiceResponse(200, {"providers": items})
@@ -128,6 +140,7 @@ class ProvidersService:
                 client=client,
                 operation=self._provider_test_operation,
             )
+            self._remember(principal.owner_id, result)
             return ServiceResponse(200, cast(dict[str, JsonValue], test_result_body(result)))
         except Exception:
             # Even if Client creation fails, don't expose raw exceptions - limit to unknown.
@@ -137,10 +150,21 @@ class ProvidersService:
                 client=cast(SourceClient, object()),
                 operation=_raise_provider_test_error,
             )
+            self._remember(principal.owner_id, result)
             return ServiceResponse(200, cast(dict[str, JsonValue], test_result_body(result)))
         finally:
             if client is not None:
                 self._close_client(client)
+
+    def _remember(self, owner_id: str, result: ProviderTestResult) -> None:
+        """Keep the result as the last test; a store failure never fails the test."""
+        log = self._test_log()
+        if log is None:
+            return
+        try:
+            log.record(owner_id, result)
+        except sqlite3.Error:
+            _logger_exception("could not record the provider test result")
 
     def provider_credential(self, provider: str, *, principal: Principal) -> ServiceResponse:
         """Return current principal's stored credential metadata without raw value."""

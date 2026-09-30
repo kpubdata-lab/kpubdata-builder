@@ -61,6 +61,7 @@ from .exports_api import ExportsApiService
 from .jobs import AsyncBuildExecutor
 from .monitoring_api import MonitoringApiService
 from .profiles_api import ProfilesApiService
+from .provider_tests import ProviderTestLog
 from .providers import (
     CredentialResolver,
     ProviderDescriptor,
@@ -312,12 +313,14 @@ _BuildListEntry = dict[str, str | None]
 #   and GET /builds takes ?dataset_id= (#844, additive).
 # 1.48.0 -> 1.49.0: GET /quality/issues lists warn/fail checks and schema drift across the
 #   caller's tables with filters, a cursor and evaluation coverage (#843, additive).
+# 1.49.0 -> 1.50.0: provider tests call a dataset chosen by declared parameters or answer
+#   not_testable, and GET /providers reports each provider's last_test (#842).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.49.0"
+API_CONTRACT_VERSION = "1.50.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -402,6 +405,7 @@ class BuilderService:
             ),
             provider_test_operation=self._provider_test_operation,
             provider_test_timeout=self._provider_test_timeout,
+            test_log=lambda: self._provider_tests(),
         )
         # Upload repository initialized only when needed (#498) — pass lambda,
         # not property value directly (#498) — calling property on every request
@@ -425,6 +429,7 @@ class BuilderService:
             engine=self._query_service,
         )
         self._analysis_store: AnalysisStore | None = None
+        self._provider_test_log: ProviderTestLog | None = None
         self._analyses_api = AnalysesApiService(
             store=lambda: self._analyses(),
             warehouse=self._warehouse_api,
@@ -535,6 +540,14 @@ class BuilderService:
                     max_bytes=resolve_max_upload_bytes(),
                 )
             return self._upload_repository_lazy
+
+    def _provider_tests(self) -> ProviderTestLog:
+        """Last provider connection test per principal (#842), opened on first use."""
+        if self._provider_test_log is None:
+            self._provider_test_log = ProviderTestLog(
+                self._output_root / ".service" / "provider_tests.sqlite3"
+            )
+        return self._provider_test_log
 
     def _analyses(self) -> AnalysisStore:
         """Saved analysis store, opened on first use (#783)."""

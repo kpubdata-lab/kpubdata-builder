@@ -6,12 +6,12 @@ import logging
 import os
 import socket
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Protocol, cast
 
-from kpubdata import Client
+from kpubdata import Client, Operation
 from kpubdata.config import KPubDataConfig
 from kpubdata.core.models import DatasetRef
 from kpubdata.exceptions import (
@@ -67,7 +67,7 @@ def _require_own_provider_credential() -> bool:
 
 
 CredentialSource = Literal["user", "server", "none", "refused"]
-ProviderState = Literal["connected", "failed", "not_configured"]
+ProviderState = Literal["connected", "failed", "not_configured", "not_testable"]
 ProviderErrorCategory = Literal["auth", "network", "timeout", "provider", "unknown"]
 
 # kpubdata uses the same data.go.kr key slot as this Provider name. In Builder,
@@ -116,6 +116,11 @@ class ProviderTestResult:
     checked_at: str
     error_category: ProviderErrorCategory | None = None
     response_code: int | None = None
+    dataset: str | None = None
+
+
+class ProviderNotTestable(Exception):
+    """No dataset of the provider can be called without guessing a parameter (#842)."""
 
 
 class ProviderCredentialConflictError(ValueError):
@@ -125,7 +130,9 @@ class ProviderCredentialConflictError(ValueError):
 class ProviderTestOperation(Protocol):
     """Injected lightweight connection test operation."""
 
-    def __call__(self, client: SourceClient, provider: str) -> None: ...
+    def __call__(self, client: SourceClient, provider: str) -> str | None:
+        """Run the test; return the dataset id it called, when there is one."""
+        ...
 
 
 class CredentialResolver:
@@ -250,14 +257,54 @@ def provider_descriptors(client: SourceClient) -> tuple[ProviderDescriptor, ...]
     return tuple(item.descriptor for item in runtime_provider_catalog(client))
 
 
-def default_provider_test(client: SourceClient, provider: str) -> None:
-    """Lightweight test: fetch first row of the provider's first LIST dataset."""
+def select_test_target(
+    refs: Iterable[DatasetRef], provider: str
+) -> tuple[str, dict[str, object]] | None:
+    """A dataset and parameters a connection test can call without guessing (#842).
+
+    The first LIST dataset of the provider, by id, whose declared request parameters
+    give an example for every required one, none of them a date (an example date goes
+    stale and the call then fails for a reason that is not the key), and that does not
+    declare a per-dataset application. A dataset that declares no parameters at all
+    is unknown, not parameter-free, so it is not chosen. None when nothing qualifies:
+    calling the first dataset anyway made a valid key look broken whenever that
+    dataset needed a parameter or an application.
+    """
+    candidates: list[tuple[str, dict[str, object]]] = []
+    for ref in refs:
+        if ref.provider != provider or Operation.LIST not in ref.operations:
+            continue
+        application = ref.raw_metadata.get("application")
+        if isinstance(application, Mapping) and application.get("required") is not False:
+            continue
+        declared = ref.raw_metadata.get("request_parameters")
+        if not isinstance(declared, Sequence) or isinstance(declared, str) or not declared:
+            continue
+        params: dict[str, object] = {}
+        for item in declared:
+            if not isinstance(item, Mapping) or not item.get("required"):
+                continue
+            example = item.get("example")
+            if example in (None, "") or "date" in str(item.get("type") or ""):
+                break
+            params[str(item["name"])] = example
+        else:
+            candidates.append((ref.id, params))
+    return min(candidates, default=None, key=lambda c: c[0])
+
+
+def default_provider_test(client: SourceClient, provider: str) -> str | None:
+    """Fetch one row of a dataset chosen by ``select_test_target``; return its id."""
     typed_client = cast(Client, client)
     refs = [ref for ref in typed_client.datasets.list() if ref.provider == provider]
     if not refs:
         raise ValueError("unknown provider")
-    dataset_ref = refs[0]
-    _ = typed_client.dataset(dataset_ref.id).list(page=1, page_size=1)
+    target = select_test_target(refs, provider)
+    if target is None:
+        raise ProviderNotTestable(provider)
+    dataset_id, params = target
+    _ = typed_client.dataset(dataset_id).list(page=1, page_size=1, **params)
+    return dataset_id
 
 
 def run_provider_test(
@@ -273,7 +320,9 @@ def run_provider_test(
     if not configured or client is None:
         return ProviderTestResult(provider, "not_configured", False, 0, checked_at)
     try:
-        operation(client, provider)
+        dataset = operation(client, provider)
+    except ProviderNotTestable:
+        return ProviderTestResult(provider, "not_testable", True, 0, checked_at)
     except Exception as exc:
         latency_ms = max(0, round((time.perf_counter() - started) * 1000))
         category = categorize_provider_error(exc)
@@ -288,7 +337,9 @@ def run_provider_test(
             response_code=response_code,
         )
     latency_ms = max(0, round((time.perf_counter() - started) * 1000))
-    return ProviderTestResult(provider, "connected", True, latency_ms, checked_at)
+    return ProviderTestResult(
+        provider, "connected", True, latency_ms, checked_at, dataset=dataset or None
+    )
 
 
 def categorize_provider_error(exc: Exception) -> ProviderErrorCategory:
@@ -325,6 +376,8 @@ def test_result_body(result: ProviderTestResult) -> dict[str, object]:
         body["error_category"] = result.error_category
     if result.response_code is not None:
         body["response_code"] = result.response_code
+    if result.dataset is not None:
+        body["dataset"] = result.dataset
     return body
 
 
@@ -333,6 +386,7 @@ __all__ = [
     "ProviderCredentialConflictError",
     "ProviderCredentialRequired",
     "ProviderDescriptor",
+    "ProviderNotTestable",
     "RuntimeProviderCatalog",
     "ProviderTestOperation",
     "ProviderTestResult",
@@ -340,6 +394,7 @@ __all__ = [
     "default_provider_test",
     "provider_descriptors",
     "require_own_provider_credential",
+    "select_test_target",
     "runtime_provider_catalog",
     "reliable_response_code",
     "run_provider_test",
