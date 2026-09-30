@@ -39,6 +39,16 @@ on:
           - patch
           - minor
         default: patch
+      critical_patch:
+        description: "Release outside the monthly window as a critical patch (security or release-blocking fix)"
+        required: false
+        type: boolean
+        default: false
+      critical_issue:
+        description: "The issue the critical patch fixes, e.g. #123 (required with critical_patch)"
+        required: false
+        type: string
+        default: ""
 
   pull_request:
     types: [closed]
@@ -59,6 +69,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # First, before a version is worked out or a branch exists (kpubdata#685).
+      # Builder and Studio release once a month, in the week holding the month's last
+      # Thursday (KST); outside it only a critical patch that names its issue.
+      - name: Release window
+        uses: yeongseon/kpubdata/.github/actions/release-window@main
+        with:
+          policy: monthly
+          critical_patch: ${{ inputs.critical_patch }}
+          critical_issue: ${{ inputs.critical_issue }}
 
       - uses: actions/setup-python@v7
         with:
@@ -102,6 +122,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.bump.outputs.tag }}
+          CRITICAL_ISSUE: ${{ inputs.critical_patch && inputs.critical_issue || '' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -115,6 +136,11 @@ jobs:
             "병합되면 게이트가 돌고, **통과한 뒤에** 태그·릴리스·GHCR 이미지가 이어진다." \
             "실패하면 남는 것이 없다. 다시 눌러도 된다." \
             > /tmp/release-body.md
+          # The merge path has no inputs, so a critical patch travels in the body: the
+          # release job reads this line back (kpubdata#685).
+          if [ -n "${CRITICAL_ISSUE}" ]; then
+            printf '\nCritical-Patch: %s\n' "${CRITICAL_ISSUE}" >> /tmp/release-body.md
+          fi
           gh pr create --base main --head "release/${TAG}" \
             --title "chore: release ${TAG}" --body-file /tmp/release-body.md
 
@@ -140,6 +166,39 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha || github.ref }}
           fetch-depth: 0
+
+      # The merge path cannot take workflow inputs, so a critical patch is declared by a
+      # `Critical-Patch: #N` line in the release pull request's body — the prepare job
+      # writes it, and a person can add it. The body reaches the shell through the
+      # environment, never by expansion.
+      - name: Read a critical-patch declaration
+        id: critical
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          INPUT_PATCH: ${{ inputs.critical_patch }}
+          INPUT_ISSUE: ${{ inputs.critical_issue }}
+        run: |
+          if [ "${EVENT}" = "pull_request" ]; then
+            issue=$(printf '%s\n' "${PR_BODY}" | tr -d '\r' \
+              | sed -n -E 's/^Critical-Patch:[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/p' | head -n 1)
+            patch=$([ -n "${issue}" ] && echo true || echo false)
+          else
+            issue="${INPUT_ISSUE}"
+            patch="${INPUT_PATCH:-false}"
+          fi
+          echo "patch=${patch}" >> "$GITHUB_OUTPUT"
+          echo "issue=${issue}" >> "$GITHUB_OUTPUT"
+
+      # Before the gates, the tag and everything else (kpubdata#685). On the merge path a
+      # refusal leaves the raised version on main untagged; release it in the next
+      # window with mode=release.
+      - name: Release window
+        uses: yeongseon/kpubdata/.github/actions/release-window@main
+        with:
+          policy: monthly
+          critical_patch: ${{ steps.critical.outputs.patch }}
+          critical_issue: ${{ steps.critical.outputs.issue }}
 
       - name: Pin the commit being released
         id: commit
