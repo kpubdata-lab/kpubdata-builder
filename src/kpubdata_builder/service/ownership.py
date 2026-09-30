@@ -32,8 +32,15 @@ _OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
 
 
 def enforce_ownership() -> bool:
-    """Check if ownership enforcement is enabled (#389). Default off — backward compatible."""
-    return os.environ.get(_OWNERSHIP_ENV, "").lower() in ("true", "1")
+    """Whether runs are private to their owner (#389, #635).
+
+    On when ``ENFORCE_OWNERSHIP`` says so, and **always** when OIDC sign-in is
+    configured, whatever the variable says: an OIDC deployment serves more than one
+    user, and ADR 0012's 2026-09-30 amendment forces ownership on in multi-user mode.
+    The default is not flipped — a single-user deployment (no OIDC, variable unset)
+    keeps sharing its runs as before, so no transition period is needed.
+    """
+    return os.environ.get(_OWNERSHIP_ENV, "").lower() in ("true", "1") or oidc_enabled()
 
 
 def multi_user_mode() -> bool:

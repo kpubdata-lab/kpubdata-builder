@@ -283,13 +283,17 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 
 클라우드 배포에서 Studio는 public SPA로 Keycloak의 Authorization Code + PKCE(S256)를 사용한다.
 Builder는 `OIDC_ISSUER`와 `OIDC_AUDIENCE`가 모두 설정된 정상 OIDC 토큰만 수락하며,
-issuer·audience·JWKS 서명·만료 검증은 항상 fail-closed로 유지한다. `OIDC_ALLOWED_HD`,
-`OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`는 필수가 아니라 제한 배포에서만 쓰는
-선택적 2차 인가 규칙이다. 하나라도 설정하면 일치하지 않는 principal은 403이다.
+issuer·audience·JWKS 서명·만료 검증은 항상 fail-closed로 유지한다.
 
-제한 배포에서 허용 목록 누락을 **기동 실패로** 잡고 싶으면
-`OIDC_LEGACY_REQUIRE_ALLOWLIST=true`를 설정한다 — `OIDC_ISSUER`가 있는데 허용 목록이
-하나도 없으면 `serve`가 거부한다. 미설정(기본)이면 공개 가입 정책이 적용된다.
+**OIDC 배포는 다중 사용자 배포다**(ADR 0012 2026-09-30 개정, #635). 그래서 두 가지가 강제된다.
+
+- 허용 목록(`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`) 중 하나 이상이
+  **필수**다. 없으면 `serve`가 기동을 거부하고, 다른 방식으로 뜬 프로세스도 모든 토큰을 403으로
+  거부한다 — 공개 가입은 지원하지 않는다. 설정된 목록 중 하나라도 일치해야 통과한다.
+  (예전의 `OIDC_LEGACY_REQUIRE_ALLOWLIST` 스위치와 공개 가입 경고는 이것으로 대체됐다.)
+- `ENFORCE_OWNERSHIP`는 환경변수 값과 무관하게 **켜진다**. 남의 run은 없는 run과 같은 404다(#796).
+
+OIDC 없이 `ENFORCE_OWNERSHIP`도 설정하지 않은 단일 사용자 배포는 바뀌지 않는다.
 
 `KPUBDATA_BUILDER_DEV_MODE`는 **인증을 통째로 우회**하므로 로컬 개발 전용이다. 켜진 채로
 기동하면 경고 로그를 남기고, `OIDC_ISSUER`가 함께 설정돼 있으면 (사용자 인증을 구성해두고

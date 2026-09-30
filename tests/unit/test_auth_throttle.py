@@ -277,43 +277,10 @@ class TestApiKeyComparisonAcceptsNonAscii:
         assert isinstance(authenticate(api_key="clé-secrète", bearer_token=None), Principal)
 
 
-class TestOpenSignupWithoutOwnershipWarns:
-    """If two defaults overlap, access is effectively unlimited — log at startup."""
+class TestMultiUserModeIsStrict:
+    """ADR 0012's 2026-09-30 amendment (#635) replaces the #644 open-signup warning."""
 
-    def test_the_combination_warns(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        from kpubdata_builder.service.auth import validate_oidc_config
-
-        monkeypatch.setenv("OIDC_ISSUER", "https://accounts.google.com")
-        monkeypatch.setenv("OIDC_AUDIENCE", "client-id")
-        for name in ("OIDC_ALLOWED_HD", "OIDC_ALLOWED_SUBJECTS", "OIDC_ALLOWED_EMAILS"):
-            monkeypatch.delenv(name, raising=False)
-        monkeypatch.delenv("ENFORCE_OWNERSHIP", raising=False)
-
-        with caplog.at_level("WARNING"):
-            validate_oidc_config()
-
-        assert any("signup is open" in r.message for r in caplog.records)
-
-    def test_an_allowlist_silences_the_warning(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        from kpubdata_builder.service.auth import validate_oidc_config
-
-        monkeypatch.setenv("OIDC_ISSUER", "https://accounts.google.com")
-        monkeypatch.setenv("OIDC_AUDIENCE", "client-id")
-        monkeypatch.setenv("OIDC_ALLOWED_HD", "example.com")
-        monkeypatch.delenv("ENFORCE_OWNERSHIP", raising=False)
-
-        with caplog.at_level("WARNING"):
-            validate_oidc_config()
-
-        assert not any("signup is open" in r.message for r in caplog.records)
-
-    def test_enforced_ownership_silences_the_warning(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_open_signup_is_refused_at_startup(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from kpubdata_builder.service.auth import validate_oidc_config
 
         monkeypatch.setenv("OIDC_ISSUER", "https://accounts.google.com")
@@ -322,7 +289,26 @@ class TestOpenSignupWithoutOwnershipWarns:
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv("ENFORCE_OWNERSHIP", "true")
 
-        with caplog.at_level("WARNING"):
+        with pytest.raises(RuntimeError, match="no allowlist"):
             validate_oidc_config()
 
-        assert not any("signup is open" in r.message for r in caplog.records)
+    def test_oidc_forces_ownership_whatever_the_variable_says(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kpubdata_builder.service.ownership import enforce_ownership
+
+        monkeypatch.setenv("OIDC_ISSUER", "https://accounts.google.com")
+        for value in ("", "false", "0"):
+            monkeypatch.setenv("ENFORCE_OWNERSHIP", value)
+            assert enforce_ownership() is True
+
+    def test_a_single_user_deployment_is_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: no OIDC and the variable unset still shares runs."""
+        from kpubdata_builder.service.ownership import enforce_ownership, multi_user_mode
+
+        monkeypatch.delenv("OIDC_ISSUER", raising=False)
+        monkeypatch.delenv("ENFORCE_OWNERSHIP", raising=False)
+
+        assert (enforce_ownership(), multi_user_mode()) == (False, False)
+        monkeypatch.setenv("ENFORCE_OWNERSHIP", "true")
+        assert enforce_ownership() is True

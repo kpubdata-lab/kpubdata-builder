@@ -94,6 +94,8 @@ def oidc_env(monkeypatch: pytest.MonkeyPatch, rsa_keypair: tuple[bytes, object])
     monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
     monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
     monkeypatch.setenv("OIDC_JWKS_URL", "http://localhost:0/jwks.json")
+    # An allowlist is mandatory with OIDC (#635); these are the test tokens' emails.
+    monkeypatch.setenv("OIDC_ALLOWED_EMAILS", "user@example.com,victim@example.com")
     import kpubdata_builder.service.auth as auth_module
 
     monkeypatch.setattr(auth_module, "_get_jwks_client", lambda: _FakeJWKSClient(public_key))
@@ -343,30 +345,25 @@ class TestValidateOidcConfig:
         with pytest.raises(RuntimeError, match="OIDC_AUDIENCE"):
             validate_oidc_config()
 
-    def test_accepts_no_allowlist_for_valid_oidc_configuration(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Public signup is default policy — starts even without allowlist.
+    def test_rejects_oidc_without_an_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Negative (#635): open sign-up is refused at startup, not warned about."""
         monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
-        validate_oidc_config()
-
-    def test_require_allowlist_switch_rejects_empty_allowlist(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Restricted deploy uses this switch to catch missing allowlist as startup failure.
-        monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
-        monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
-        monkeypatch.setenv("OIDC_LEGACY_REQUIRE_ALLOWLIST", "true")
-        with pytest.raises(RuntimeError, match="OIDC_LEGACY_REQUIRE_ALLOWLIST"):
+        for name in ("OIDC_ALLOWED_HD", "OIDC_ALLOWED_SUBJECTS", "OIDC_ALLOWED_EMAILS"):
+            monkeypatch.delenv(name, raising=False)
+        with pytest.raises(RuntimeError, match="no allowlist"):
             validate_oidc_config()
 
-    def test_require_allowlist_switch_accepts_configured_allowlist(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_the_old_opt_in_switch_no_longer_matters(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
-        monkeypatch.setenv("OIDC_LEGACY_REQUIRE_ALLOWLIST", "true")
+        monkeypatch.setenv("OIDC_LEGACY_REQUIRE_ALLOWLIST", "false")
+        with pytest.raises(RuntimeError, match="no allowlist"):
+            validate_oidc_config()
+
+    def test_accepts_a_configured_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OIDC_ISSUER", _ISSUER)
+        monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
         monkeypatch.setenv("OIDC_ALLOWED_EMAILS", "person@example.com")
         validate_oidc_config()
 
@@ -411,7 +408,19 @@ class TestValidateDevMode:
 
 
 class TestAllowlistGate:
-    """Allowlist gate (#386) — optional second authorization applied only in configured deploy."""
+    """Allowlist gate (#386) — mandatory with OIDC since #635."""
+
+    @pytest.fixture(autouse=True)
+    def _only_the_lists_each_test_sets(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OIDC_ALLOWED_EMAILS", raising=False)
+
+    def test_no_allowlist_admits_nobody(self, oidc_env: bytes) -> None:
+        """Negative (#635): a process started without the startup check stays closed."""
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
+        assert isinstance(result, AuthError)
+        assert result.status_code == 403
 
     def test_hd_allowlist_match(self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OIDC_ALLOWED_HD", "example.com")
@@ -607,6 +616,7 @@ class TestStableOwnerId:
         monkeypatch.setenv("OIDC_ISSUER", f"{_ISSUER},{other_issuer}")
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
         monkeypatch.setenv("OIDC_JWKS_URL", "http://localhost:0/jwks.json")
+        monkeypatch.setenv("OIDC_ALLOWED_EMAILS", "user@example.com")
         import kpubdata_builder.service.auth as auth_module
 
         monkeypatch.setattr(auth_module, "_get_jwks_client", lambda: _FakeJWKSClient(public_key))
@@ -640,6 +650,7 @@ class TestStableOwnerId:
         monkeypatch.setenv("OIDC_ISSUER", "ab,a")
         monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
         monkeypatch.setenv("OIDC_JWKS_URL", "http://localhost:0/jwks.json")
+        monkeypatch.setenv("OIDC_ALLOWED_EMAILS", "user@example.com")
         import kpubdata_builder.service.auth as auth_module
 
         monkeypatch.setattr(auth_module, "_get_jwks_client", lambda: _FakeJWKSClient(public_key))

@@ -5,6 +5,7 @@
 ### Security
 
 - In a multi-user deployment, another owner's run looks like no run at all (#796, ADR 0012 amendment of 2026-09-30, API contract 1.51.0). Every run route — status, manifest, spec, stages, quality, events, publish readiness, `GET /datasets/{id}/runs/{run_id}` — answers the 404 a missing run gets instead of 403, and `POST /query` the same 400 `invalid_context`, so a run id cannot be probed for existence. A single-user deployment is unchanged. A build that names a run id another owner already holds is still refused with 403: any refusal says the id is taken.
+- An OIDC deployment is a multi-user deployment, and it is now strict (#635, ADR 0012 amendment of 2026-09-30). `ENFORCE_OWNERSHIP` is on whenever `OIDC_ISSUER` is set, whatever the variable says; an allowlist (`OIDC_ALLOWED_HD`/`SUBJECTS`/`EMAILS`) is mandatory — `serve` refuses to start without one, and a process started otherwise rejects every token with 403. This replaces the #644 open-signup warning and the opt-in `OIDC_LEGACY_REQUIRE_ALLOWLIST` switch. A single-user deployment (no OIDC, `ENFORCE_OWNERSHIP` unset) is unchanged. **Upgrading an OIDC deployment without an allowlist: set one before restarting.**
 
 ### Changed
 
