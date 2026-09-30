@@ -417,10 +417,12 @@ class TestAllowlistGate:
         monkeypatch.delenv("OIDC_ALLOWED_EMAILS", raising=False)
 
     def test_no_allowlist_admits_nobody(self, oidc_env: bytes) -> None:
-        """Negative (#635): a process started without the startup check stays closed."""
+        """Negative (#635, #785): with no list nobody is admitted by sign-in alone."""
         result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
-        assert isinstance(result, AuthError)
-        assert result.status_code == 403
+        # Not refused at sign-in any more (#785): not admitted, so the sign-up ledger
+        # decides — pending until an administrator approves.
+        assert isinstance(result, Principal)
+        assert result.admitted is False
 
     def test_hd_allowlist_match(self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OIDC_ALLOWED_HD", "example.com")
@@ -433,8 +435,10 @@ class TestAllowlistGate:
         monkeypatch.setenv("OIDC_ALLOWED_HD", "other.com")
         token = _make_token(oidc_env, hd="example.com")
         result = authenticate(bearer_token=f"Bearer {token}")
-        assert isinstance(result, AuthError)
-        assert result.status_code == 403
+        # Not refused at sign-in any more (#785): not admitted, so the sign-up ledger
+        # decides — pending until an administrator approves.
+        assert isinstance(result, Principal)
+        assert result.admitted is False
 
     def test_subject_allowlist_match(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
@@ -456,8 +460,10 @@ class TestAllowlistGate:
         monkeypatch.setenv("OIDC_ALLOWED_HD", "example.com")
         token = _make_token(oidc_env)
         result = authenticate(bearer_token=f"Bearer {token}")
-        assert isinstance(result, AuthError)
-        assert result.status_code == 403
+        # Not refused at sign-in any more (#785): not admitted, so the sign-up ledger
+        # decides — pending until an administrator approves.
+        assert isinstance(result, Principal)
+        assert result.admitted is False
 
     def test_multiple_lists_match_any(
         self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch

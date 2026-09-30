@@ -92,6 +92,14 @@ class Principal:
     #: to become admin was to not log in via OIDC**. By carrying the role as a value,
     #: OIDC-authenticated users can also be admins.
     is_admin: bool = False
+    #: Whether sign-in alone admits this principal (#785): true for every non-OIDC
+    #: principal, and for an OIDC one on an ``OIDC_ALLOWED_*`` list or an admin. An OIDC
+    #: principal it is false for is admitted only once the Builder sign-up ledger says
+    #: ``approved``.
+    admitted: bool = True
+    #: What an administrator sees to recognise a sign-up (#785): the verified email,
+    #: else the subject prefix. Never used for ownership — that is ``owner_id``.
+    display_name: str | None = None
 
     @property
     def label(self) -> str:
@@ -314,9 +322,13 @@ def validate_oidc_config() -> None:
     - OIDC_ISSUER not set → no-op (Bearer disabled, no impact on existing deployments).
     - OIDC_ISSUER set + OIDC_AUDIENCE not set → reject.
     - pyjwt not installed → reject (``auth`` extra required).
-    - OIDC set + no allowlist (OIDC_ALLOWED_HD/SUBJECTS/EMAILS) → reject (#635). An OIDC
-      deployment is multi-user, and ADR 0012's 2026-09-30 amendment makes an
-      allowlist mandatory there: open sign-up is no longer a supported configuration.
+    - OIDC set + neither an allowlist (OIDC_ALLOWED_HD/SUBJECTS/EMAILS) nor an
+      administrator (KPUBDATA_BUILDER_ADMIN_SUBJECTS) → reject (#635, #785). An OIDC
+      deployment is multi-user, and ADR 0012's 2026-09-30 amendment makes an allowlist
+      mandatory there. The Builder sign-up ledger is that allowlist at run time: a user
+      on no list signs up as ``pending`` and waits for an administrator — so with an
+      administrator and no list, nobody gets in unapproved. With neither, nobody could
+      ever get in, which is a configuration mistake.
     """
     if not _oidc_issuers():
         return
@@ -335,12 +347,13 @@ def validate_oidc_config() -> None:
     # warning about open sign-up, and the opt-in OIDC_LEGACY_REQUIRE_ALLOWLIST switch
     # that made it mandatory: both assumed open sign-up could be a valid choice.
     hd, subs, emails = _oidc_allowlists()
-    if not (hd or subs or emails):
+    if not (hd or subs or emails or _admin_identities()):
         raise RuntimeError(
             "OIDC_ISSUER is set but no allowlist is configured "
-            "(OIDC_ALLOWED_HD/SUBJECTS/EMAILS); an OIDC deployment serves more than "
-            "one user and open sign-up is refused — refusing to start (fail-closed, "
-            "ADR 0012 amendment of 2026-09-30, #635)."
+            "(OIDC_ALLOWED_HD/SUBJECTS/EMAILS) and no administrator "
+            "(KPUBDATA_BUILDER_ADMIN_SUBJECTS) could approve sign-ups; an OIDC deployment "
+            "serves more than one user and open sign-up is refused — refusing to start "
+            "(fail-closed, ADR 0012 amendment of 2026-09-30, #635, #785)."
         )
 
 
@@ -449,17 +462,16 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     if not payload.get("email_verified", False):
         return AuthError(reason="email not verified")
 
-    # Allowlist check (#386). If any configured list matches, pass. With no list at all
-    # nobody passes (#635): the startup check refuses that configuration, and a process
-    # started some other way must not fall back to open sign-up.
+    # Allowlist check (#386). A principal on a configured list is admitted by sign-in
+    # alone. One on no list is not refused here any more (#785): the service asks the
+    # Builder sign-up ledger, which records it as pending until an administrator
+    # decides. With no list at all nobody is admitted by sign-in alone (#635).
     hd_set, sub_set, email_set = _oidc_allowlists()
-    matched = (
+    allowlisted = (
         (bool(hd_set) and str(payload.get("hd", "")) in hd_set)
         or (bool(sub_set) and str(payload.get("sub", "")) in sub_set)
         or (bool(email_set) and str(payload.get("email", "")) in email_set)
     )
-    if not matched:
-        return AuthError(reason="principal not in allowlist", status_code=403)
 
     sub = str(payload.get("sub", ""))
     if not sub:
@@ -480,11 +492,15 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     # would let different accounts with matching prefix become admin, and omitting
     # issuer would let the same sub from a different issuer become admin — same reason
     # owner_id binds both.
+    is_admin = (issuer, sub) in _admin_identities()
+    email = payload.get("email")
     return Principal(
         kind="oidc",
         identifier=sub[:8],
         owner_id=owner_id,
-        is_admin=(issuer, sub) in _admin_identities(),
+        is_admin=is_admin,
+        admitted=allowlisted or is_admin,
+        display_name=email if isinstance(email, str) and email else sub[:8],
     )
 
 

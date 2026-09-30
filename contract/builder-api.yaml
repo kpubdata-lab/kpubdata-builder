@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.53.0"
+  version: "1.54.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.54.0 adds the Builder sign-up ledger (#785, option B of ADR 0012's 2026-09-30 amendment): an OIDC user on no `OIDC_ALLOWED_*` list signs up as `pending` and every authenticated request answers 403 `signup_pending` until an administrator approves them with `POST /admin/users/{user_id}/approve`; `POST /admin/users/{user_id}/reject` answers 403 `signup_rejected` from then on, even to a user a list admits. `GET /admin/users` lists the ledger. Administrators are never refused. A deployment without OIDC is unaffected.
     v1.53.0 gives `GET /admin/runs` each run's failure reason, `error` (#679, additive): administrators see a run's status, times, owner and why it failed, never its bytes (ADR 0012 amendment of 2026-09-30, option a).
     v1.52.0 refuses `url` sources in a multi-user deployment (#685, ADR 0012 amendment of 2026-09-30): `POST /preview`, `POST /build` and `POST /builds` answer 403 `url_source_forbidden`, naming each source, before any request is made. It also declares the 403 `provider_credential_required` these operations already gave (#786).
     v1.51.0 hides another owner's run in a multi-user deployment (#796, ADR 0012 amendment of 2026-09-30): every run route answers 404 `run not found` for it, exactly as for a run that does not exist, and `POST /query` answers the same 400 `invalid_context` it gives a missing run. The 403 `forbidden: not run owner` remains only outside multi-user mode, and for a build that names a run id another owner already holds.
@@ -3600,6 +3601,107 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /admin/users:
+    get:
+      operationId: adminListUsers
+      summary: The Builder sign-up ledger (#785)
+      description: >-
+        Every OIDC user who has signed in: an irreversible id, a display name (their
+        verified email), the sign-up status and when it was decided. No credential or
+        token is stored, so none is returned. Administrators only.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {type: string, enum: [pending, approved, rejected]}
+      responses:
+        "200":
+          description: Ledger entries, newest sign-up first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUsersResponse"
+        "400":
+          description: An unknown status filter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not an administrator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/users/{user_id}/approve:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: The ledger's `user_id` — an irreversible owner hash.
+        schema: {type: string}
+    post:
+      operationId: adminApproveUser
+      summary: Mark a sign-up approved (#785)
+      description: Administrators only; recorded in the admin audit log. Takes effect on the user's next request, with no restart.
+      responses:
+        "200":
+          description: The user's ledger entry after the decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not an administrator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No user with this id has signed in (`user_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/users/{user_id}/reject:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: The ledger's `user_id` — an irreversible owner hash.
+        schema: {type: string}
+    post:
+      operationId: adminRejectUser
+      summary: Mark a sign-up rejected (#785)
+      description: Administrators only; recorded in the admin audit log. Takes effect on the user's next request, with no restart.
+      responses:
+        "200":
+          description: The user's ledger entry after the decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not an administrator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No user with this id has signed in (`user_not_found`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /admin/config:
     get:
       operationId: adminGetConfig
@@ -3702,6 +3804,42 @@ components:
         pattern: "^upl_[a-f0-9]{32}$"
 
   schemas:
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [user_id, display_name, status, first_seen_at, last_seen_at, decided_at, decided_by]
+      properties:
+        user_id:
+          type: string
+          description: The user's owner id — an irreversible hash of issuer and subject.
+        display_name:
+          type: [string, "null"]
+          description: The verified email, else the subject's first eight characters.
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+          description: >-
+            `approved` by an administrator, or by an `OIDC_ALLOWED_*` list
+            (`decided_by: allowlist`). `rejected` shuts the user out even when a list
+            admits them.
+        first_seen_at: {type: string}
+        last_seen_at: {type: string}
+        decided_at: {type: [string, "null"]}
+        decided_by:
+          type: [string, "null"]
+          description: "`allowlist`, or the deciding administrator's owner id."
+
+    AdminUsersResponse:
+      type: object
+      additionalProperties: false
+      required: [users, count]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
+        count: {type: integer, minimum: 0}
+
     AdminRunsResponse:
       type: object
       additionalProperties: false

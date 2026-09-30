@@ -29,6 +29,7 @@ from .. import publish_credentials
 from ..admin_audit import record_admin_action
 from ..auth import Principal
 from ..responses import ServiceResponse
+from ..user_ledger import SignupStatus
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -47,6 +48,46 @@ def _forbidden(principal: Principal, action: str) -> ServiceResponse:
     the admin path is as important as who was allowed in."""
     record_admin_action(principal, action, outcome="denied")
     return ServiceResponse(403, {"error": "forbidden: administrator role required"})
+
+
+_USERS = "/admin/users"
+_DECISIONS: dict[str, SignupStatus] = {"approve": "approved", "reject": "rejected"}
+
+
+def _admin_users(service: BuilderService, principal: Principal, query: str) -> ServiceResponse:
+    """The sign-up ledger (#785): hashed id, display name, status and when — nothing else.
+
+    ``?status=pending|approved|rejected`` narrows it. No credential or token is kept in
+    the ledger, so none can be returned.
+    """
+    raw = parse_qs(query).get("status", [None])[-1]
+    if raw is not None and raw not in ("pending", "approved", "rejected"):
+        return ServiceResponse(400, {"error": "status must be pending, approved or rejected"})
+    entries = service._user_ledger().list(status=cast("SignupStatus | None", raw))
+    record_admin_action(principal, "admin.users.list", target=f"status={raw or 'all'}")
+    return ServiceResponse(
+        200, {"users": [cast(JsonValue, e.body()) for e in entries], "count": len(entries)}
+    )
+
+
+def _decide_user(
+    service: BuilderService, principal: Principal, path: str
+) -> ServiceResponse | None:
+    """``POST /admin/users/{user_id}/approve|reject`` (#785), recorded in the audit log."""
+    user_id, _, action = path[len(_USERS) + 1 :].partition("/")
+    if not user_id or action not in _DECISIONS:
+        return None
+    audit_action = f"admin.users.{action}"
+    if not principal.is_admin:
+        return _forbidden(principal, audit_action)
+    entry = service._user_ledger().decide(
+        user_id, _DECISIONS[action], by=principal.owner_id or principal.label
+    )
+    if entry is None:
+        record_admin_action(principal, audit_action, target=user_id, outcome="not_found")
+        return ServiceResponse(404, {"error": f"no such user: {user_id}", "code": "user_not_found"})
+    record_admin_action(principal, audit_action, target=user_id)
+    return ServiceResponse(200, entry.body())
 
 
 def _parse_limit(query: str) -> int:
@@ -166,8 +207,15 @@ def route(
     del body
     if not path.startswith("/admin/"):
         return None
+    if method == "POST" and path.startswith(_USERS + "/"):
+        return _decide_user(service, principal, path)
     if method != "GET":
         return None
+
+    if path == _USERS:
+        if not principal.is_admin:
+            return _forbidden(principal, "admin.users.list")
+        return _admin_users(service, principal, query)
 
     if path == "/admin/runs":
         if not principal.is_admin:

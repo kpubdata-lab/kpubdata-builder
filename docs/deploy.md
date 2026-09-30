@@ -287,9 +287,14 @@ issuer·audience·JWKS 서명·만료 검증은 항상 fail-closed로 유지한�
 
 **OIDC 배포는 다중 사용자 배포다**(ADR 0012 2026-09-30 개정, #635). 그래서 두 가지가 강제된다.
 
-- 허용 목록(`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`) 중 하나 이상이
-  **필수**다. 없으면 `serve`가 기동을 거부하고, 다른 방식으로 뜬 프로세스도 모든 토큰을 403으로
-  거부한다 — 공개 가입은 지원하지 않는다. 설정된 목록 중 하나라도 일치해야 통과한다.
+- 가입은 허용 목록 또는 **Builder 가입 승인 원장**(#785)으로만 열린다. 환경변수 허용 목록
+  (`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`)에 있는 사용자는 로그인만으로
+  들어온다. 목록에 없는 사용자는 첫 로그인 때 원장에 `pending` 으로 기록되고, 관리자
+  (`KPUBDATA_BUILDER_ADMIN_SUBJECTS`)가 `POST /admin/users/{user_id}/approve` 로 승인하기 전까지
+  모든 요청이 `403 signup_pending` 이다. `.../reject` 는 목록에 있는 사용자도 재시작 없이 막는다
+  (`403 signup_rejected`). 관리자는 막히지 않는다. 허용 목록도 관리자도 없으면 아무도 들어올 수
+  없으므로 `serve` 가 기동을 거부한다 — 공개 가입은 지원하지 않는다. 원장은
+  `<output_root>/.service/users.sqlite3` 에 되돌릴 수 없는 해시 id·표시 이름(이메일)·상태만 둔다.
   (예전의 `OIDC_LEGACY_REQUIRE_ALLOWLIST` 스위치와 공개 가입 경고는 이것으로 대체됐다.)
 - `ENFORCE_OWNERSHIP`는 환경변수 값과 무관하게 **켜진다**. 남의 run은 없는 run과 같은 404다(#796).
 

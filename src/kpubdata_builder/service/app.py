@@ -82,6 +82,7 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import UploadsService
+from .user_ledger import UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,8 @@ _BuildListEntry = dict[str, str | None]
 #   empty, when no warehouse is configured: an empty object would claim nothing was
 #   committed, which a caller cannot tell from never having asked.
 # (#679, additive — existing paths·behavior unchanged). Both return metadata only,
+# 1.53.0 -> 1.54.0: the Builder sign-up ledger — /admin/users and approve/reject, and 403
+#   signup_pending/signup_rejected for OIDC users not admitted (#785, additive).
 # 1.51.0 -> 1.52.0: preview/build/builds answer 403 url_source_forbidden for a url source in a
 #   multi-user deployment, and declare the existing provider_credential_required (#685).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
@@ -325,7 +328,7 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.53.0"
+API_CONTRACT_VERSION = "1.54.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -434,6 +437,7 @@ class BuilderService:
             engine=self._query_service,
         )
         self._analysis_store: AnalysisStore | None = None
+        self._user_ledger_store: UserLedger | None = None
         self._provider_test_log: ProviderTestLog | None = None
         self._analyses_api = AnalysesApiService(
             store=lambda: self._analyses(),
@@ -553,6 +557,12 @@ class BuilderService:
                 self._output_root / ".service" / "provider_tests.sqlite3"
             )
         return self._provider_test_log
+
+    def _user_ledger(self) -> UserLedger:
+        """The Builder sign-up ledger (#785), opened on first OIDC sign-in."""
+        if self._user_ledger_store is None:
+            self._user_ledger_store = UserLedger(self._output_root / ".service" / "users.sqlite3")
+        return self._user_ledger_store
 
     def _analyses(self) -> AnalysisStore:
         """Saved analysis store, opened on first use (#783)."""
@@ -1252,6 +1262,14 @@ def _dispatch_impl(
     # a few 401s due to token expiry doesn't get throttled during subsequent normal
     # use.
     service._auth_throttle.record_success(client_id)
+
+    # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
+    # administrator; a rejected one is shut out even when a list admits them.
+    if principal.kind == "oidc" and principal.owner_id is not None:
+        entry = service._user_ledger().observe(principal)
+        refusal = admission_refusal(entry, principal)
+        if refusal is not None:
+            return ServiceResponse(403, refusal)
 
     # /uploads (#498) is the only endpoint needing binary body (raw_body), so it's
     # called directly here rather than added to standard RouteAdapter list (JSON
