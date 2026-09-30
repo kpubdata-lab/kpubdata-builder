@@ -17,6 +17,15 @@ first, bounded step of that:
   pattern, or whose name suggests one, gets its type and nothing else, unless the
   BuildSpec's ``pii`` policy accepts it (``mode: allow``, or the column in
   ``allow_columns``). No policy is not acceptance.
+- **Which values are pattern-checked (#897).** ``String``, ``Categorical`` and
+  ``Enum`` columns (the last two read as their text), and ``List``/``Array`` columns of
+  those, where a row matches when any element does. Columns that cannot hold text —
+  numeric, boolean, temporal, decimal, duration, null — have no values to check.
+  Every other type that can hold text — ``Struct``, ``Object``, ``Binary``, lists of
+  lists or of structs, ``Unknown`` — is not pattern-checked, so it is treated as
+  suspected with the kind ``unchecked_values`` rather than reported ``not_detected``:
+  a value the profile did not look at is not evidence of absence. The BuildSpec's
+  ``pii`` policy accepts such a column like any other.
 - **Same limits as a query.** The worker runs through ``QueryEngine`` — child process,
   timeout, memory cap — and takes a slot from the same concurrency limit.
 
@@ -35,15 +44,18 @@ from multiprocessing.connection import Connection
 from typing import cast
 
 import polars as pl
+from polars.datatypes import DataTypeClass
 
 from ..spec import JsonValue
 from ..tabular.wire import JS_SAFE_INTEGER, encode_value, logical_type
 
 #: Raised whenever what is computed, or how, changes; cached profiles of another
 #: version are recomputed.
-PROFILE_ALGORITHM_VERSION = 1
+PROFILE_ALGORITHM_VERSION = 2
 #: Fewer finite values than this and a column's min/max is withheld.
 MIN_RANGE_VALUES = 10
+#: The sensitivity kind of a column that can hold text the value patterns did not read.
+UNCHECKED_VALUES_KIND = "unchecked_values"
 
 
 @dataclass(frozen=True)
@@ -62,6 +74,43 @@ class ProfilePlan:
     def from_json(cls, raw: str) -> ProfilePlan:
         data = json.loads(raw)
         return cls(bool(data["allow_all_pii"]), tuple(str(c) for c in data["allow_columns"]))
+
+
+#: A dtype as a schema gives it, or as a nested type's ``inner`` or field may.
+_DType = pl.DataType | DataTypeClass
+
+
+def _is_text(dtype: _DType) -> bool:
+    """A scalar type whose values the patterns read as text."""
+    return dtype == pl.String or isinstance(dtype, (pl.Categorical, pl.Enum))
+
+
+def _text_element(dtype: _DType) -> bool:
+    """A ``List`` or ``Array`` whose elements are scalar text."""
+    return isinstance(dtype, (pl.List, pl.Array)) and _is_text(dtype.inner)
+
+
+def _can_hold_text(dtype: _DType) -> bool:
+    """Whether some value of ``dtype`` could be, or contain, text."""
+    if _is_text(dtype):
+        return True
+    if isinstance(dtype, (pl.List, pl.Array)):
+        return _can_hold_text(dtype.inner)
+    if isinstance(dtype, pl.Struct):
+        return any(_can_hold_text(field.dtype) for field in dtype.fields)
+    return not (
+        dtype.is_numeric() or dtype.is_temporal() or dtype == pl.Boolean or dtype == pl.Null
+    )
+
+
+def _pattern_hits(col: pl.Expr, dtype: pl.DataType, pattern: str) -> pl.Expr | None:
+    """Rows of ``col`` whose text matches ``pattern``; None when ``dtype`` is not checked."""
+    if _is_text(dtype):
+        return col.cast(pl.String).str.contains(pattern).sum()
+    if _text_element(dtype):
+        as_list = col.cast(pl.List(pl.String))
+        return as_list.list.eval(pl.element().str.contains(pattern)).list.any().sum()
+    return None
 
 
 def _has_range(dtype: pl.DataType) -> bool:
@@ -105,20 +154,20 @@ def profile_table(table_path: str, plan: ProfilePlan) -> dict[str, JsonValue]:
             exprs.append(finite.min().alias(f"min{index}"))
             exprs.append(finite.max().alias(f"max{index}"))
             exprs.append(finite.count().alias(f"cnt{index}"))
-        if dtype == pl.String:
-            for kind, pattern in VALUE_PATTERNS.items():
-                exprs.append(col.str.contains(pattern.pattern).sum().alias(f"pii{index}_{kind}"))
+        for kind, pattern in VALUE_PATTERNS.items():
+            hits = _pattern_hits(col, dtype, pattern.pattern)
+            if hits is not None:
+                exprs.append(hits.alias(f"pii{index}_{kind}"))
     stats = frame.select(exprs).collect().row(0, named=True)
 
     row_count = int(stats["__rows"])
     allowed = set(plan.allow_columns)
     columns: list[JsonValue] = []
     for index, (name, dtype) in enumerate(schema.items()):
-        kinds = [
-            kind
-            for kind in VALUE_PATTERNS
-            if dtype == pl.String and int(stats.get(f"pii{index}_{kind}") or 0) > 0
-        ]
+        kinds = [kind for kind in VALUE_PATTERNS if int(stats.get(f"pii{index}_{kind}") or 0) > 0]
+        checked = _is_text(dtype) or _text_element(dtype)
+        if not checked and _can_hold_text(dtype):
+            kinds.append(UNCHECKED_VALUES_KIND)
         name_kind = suspect_column_kind(name)
         if name_kind is not None and name_kind not in kinds:
             kinds.append(name_kind)
@@ -231,6 +280,7 @@ def profile_worker(
 __all__ = [
     "MIN_RANGE_VALUES",
     "PROFILE_ALGORITHM_VERSION",
+    "UNCHECKED_VALUES_KIND",
     "ProfilePlan",
     "profile_table",
     "profile_worker",

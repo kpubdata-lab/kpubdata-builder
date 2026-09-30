@@ -9,6 +9,13 @@ The profile never touches the snapshot. It is a separate file under the table's
 content digest and the algorithm version before it is reused; garbage collection
 removes it with the snapshot. The sensitivity decision reads the BuildSpec of the run
 that produced the snapshot, so it is fixed for a snapshot as its bytes are.
+
+A timeout is remembered too (#896). Profiling runs under ``PROFILE_TIMEOUT_SECONDS``
+and takes a shared query slot; when it times out, the same snapshot answers 504
+without profiling again for ``PROFILE_TIMEOUT_RETRY_SECONDS``, so refreshing a
+profile screen does not hold a slot for the whole timeout each time. The record is
+kept in memory, keyed by snapshot id, content digest and algorithm version, and
+forgotten after that window or on restart; another failure is not remembered.
 """
 
 from __future__ import annotations
@@ -16,6 +23,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +50,41 @@ from kpubdata_builder.warehouse import (
     TableNotFound,
 )
 
+#: How long a profiling timeout is remembered for a snapshot before it is tried again.
+PROFILE_TIMEOUT_RETRY_SECONDS = 300.0
+#: Most timeouts remembered at once; the oldest is forgotten first.
+_MAX_TIMEOUT_RECORDS = 1024
+
+
+class _TimeoutRecord:
+    """Snapshots whose profiling timed out recently, each with when to try again."""
+
+    def __init__(self, retry_seconds: float, clock: Callable[[], float]) -> None:
+        self._retry_seconds = retry_seconds
+        self._clock = clock
+        self._until: dict[tuple[str, str, int], float] = {}
+        self._lock = threading.Lock()
+
+    def active(self, key: tuple[str, str, int]) -> bool:
+        with self._lock:
+            until = self._until.get(key)
+            if until is None:
+                return False
+            if self._clock() >= until:
+                del self._until[key]
+                return False
+            return True
+
+    def record(self, key: tuple[str, str, int]) -> None:
+        with self._lock:
+            now = self._clock()
+            for stale in [k for k, until in self._until.items() if until <= now]:
+                del self._until[stale]
+            self._until.pop(key, None)
+            while len(self._until) >= _MAX_TIMEOUT_RECORDS:
+                del self._until[next(iter(self._until))]
+            self._until[key] = now + self._retry_seconds
+
 
 def _error(status: int, code: str, message: str) -> ServiceResponse:
     return ServiceResponse(status, {"error": message, "code": code})
@@ -55,10 +99,13 @@ class ProfilesApiService:
         output_root: Path,
         table_catalog: Callable[[], TableCatalog | None],
         engine: QueryService,
+        timeout_retry_seconds: float = PROFILE_TIMEOUT_RETRY_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._output_root = output_root
         self._table_catalog = table_catalog
         self._engine = engine
+        self._timeouts = _TimeoutRecord(timeout_retry_seconds, clock)
 
     def get(self, name: str, snapshot: str, *, principal: Principal) -> ServiceResponse:
         catalog = self._table_catalog()
@@ -87,6 +134,11 @@ class ProfilesApiService:
                     return _error(
                         404, "artifact_unavailable", "the snapshot holds no queryable table"
                     )
+                attempt = (pin.snapshot_id, row.artifact_digest, PROFILE_ALGORITHM_VERSION)
+                if self._timeouts.active(attempt):
+                    return _error(
+                        504, "query_timeout", "profiling this snapshot timed out recently"
+                    )
                 policy = spec.pii if spec is not None else None
                 plan = ProfilePlan(
                     allow_all_pii=policy is not None and policy.mode == "allow",
@@ -97,6 +149,7 @@ class ProfilesApiService:
                 except QueryBusyError:
                     return _error(429, "query_busy", "query is busy")
                 except QueryTimeoutError:
+                    self._timeouts.record(attempt)
                     return _error(504, "query_timeout", "profiling timed out")
                 except QueryExecutionError:
                     return _error(400, "query_execution_failed", "profiling failed")
@@ -172,4 +225,4 @@ def _store(path: Path, profile: dict[str, JsonValue]) -> None:
         return
 
 
-__all__ = ["ProfilesApiService"]
+__all__ = ["PROFILE_TIMEOUT_RETRY_SECONDS", "ProfilesApiService"]

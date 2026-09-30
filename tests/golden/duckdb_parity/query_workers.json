@@ -357,7 +357,7 @@
   "body": {
    "profile": {
     "accuracy": "exact",
-    "algorithm_version": 1,
+    "algorithm_version": 2,
     "columns": [
      {
       "infinite_count": null,
