@@ -22,8 +22,20 @@ importing it. Remaining private uses live in ``ALLOWLIST`` below, each with the 
 and the kpubdata issue that tracks a public replacement. An entry nothing uses any more
 also fails, so the list only shrinks.
 
+An entry whose import is still in the code but whose name kpubdata now exports is also
+"no longer needed", and against a *released* kpubdata that fails too: switch to
+``from kpubdata import X``. Against an unreleased kpubdata (the cross-repo early warning
+installs kpubdata ``main``) the switch cannot happen yet — the released kpubdata Builder
+pins still keeps the name private, so switching would break the supported range. There
+such an entry is printed as a notice instead. The mode is chosen explicitly, by
+``--unreleased-kpubdata`` or ``KPUBDATA_IMPORT_GATE_TARGET=unreleased`` (set only by
+cross-repo-contract.yml), never inferred from the installed version: kpubdata ``main``
+carries the version of its last release (0.8.0 while 0.8.0 is out), so a version check
+cannot tell the two apart. An entry nothing imports any more fails in both modes.
+
 Usage:
     python scripts/check_kpubdata_imports.py
+    python scripts/check_kpubdata_imports.py --unreleased-kpubdata
     python scripts/check_kpubdata_imports.py --kpubdata-init path/to/__init__.py FILE...
 """
 
@@ -32,6 +44,7 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.util
+import os
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -39,6 +52,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 ROOTS = ("src", "scripts")
+
+#: Set by cross-repo-contract.yml, which installs kpubdata main instead of a release.
+TARGET_ENV = "KPUBDATA_IMPORT_GATE_TARGET"
+_TARGETS = ("released", "unreleased")
 
 _VERIFY_REASON = (
     "verify/ re-implements kpubdata's `make verify` against its spec model, executor "
@@ -206,45 +223,110 @@ def _tracked_files() -> list[Path]:
     return [Path(line) for line in out.splitlines() if line]
 
 
+class Result(NamedTuple):
+    violations: list[Use]
+    """Private uses no allowlist entry covers."""
+    unused: list[tuple[str, str, str]]
+    """Allowlist entries whose import is gone from the code."""
+    now_public: list[tuple[str, str, str]]
+    """Allowlist entries whose import is still there but now names a public symbol."""
+
+
+def scan(
+    files: list[Path],
+    public: frozenset[str],
+    allowlist: dict[tuple[str, str, str], str],
+) -> Result:
+    violations: list[Use] = []
+    private_seen: set[tuple[str, str, str]] = set()
+    public_seen: set[tuple[str, str, str]] = set()
+    for path in files:
+        display = path.as_posix()
+        for use in uses(path, display):
+            if not is_private(use, public):
+                public_seen.add(use.key)
+                continue
+            if use.key in allowlist:
+                private_seen.add(use.key)
+            else:
+                violations.append(use)
+    not_needed = set(allowlist) - private_seen
+    now_public = sorted(not_needed & public_seen)
+    unused = sorted(not_needed - public_seen)
+    return Result(violations, unused, now_public)
+
+
 def check(
     files: list[Path],
     public: frozenset[str],
     allowlist: dict[tuple[str, str, str], str],
 ) -> tuple[list[Use], list[tuple[str, str, str]]]:
-    """Return (private uses not allowlisted, allowlist entries nothing uses)."""
-    violations: list[Use] = []
-    seen: set[tuple[str, str, str]] = set()
-    for path in files:
-        display = path.as_posix()
-        for use in uses(path, display):
-            if not is_private(use, public):
-                continue
-            if use.key in allowlist:
-                seen.add(use.key)
-            else:
-                violations.append(use)
-    stale = sorted(set(allowlist) - seen)
-    return violations, stale
+    """Return (private uses not allowlisted, allowlist entries no longer needed).
+
+    This is the released-kpubdata rule: a now-public entry counts as not needed.
+    """
+    result = scan(files, public, allowlist)
+    return result.violations, sorted(result.unused + result.now_public)
+
+
+def _installed_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("kpubdata")
+    except PackageNotFoundError:
+        return "(unknown version)"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("files", nargs="*", type=Path, help="default: git ls-files src scripts")
     parser.add_argument("--kpubdata-init", type=Path, help="kpubdata/__init__.py to read")
+    parser.add_argument(
+        "--unreleased-kpubdata",
+        action="store_true",
+        help=f"kpubdata under test is not a release (also {TARGET_ENV}=unreleased): "
+        "report allowlist entries whose name is now public as notices, not failures",
+    )
     args = parser.parse_args(argv)
+
+    target = os.environ.get(TARGET_ENV, "released")
+    if target not in _TARGETS:
+        parser.error(f"{TARGET_ENV}={target!r}; expected one of {', '.join(_TARGETS)}")
+    unreleased = args.unreleased_kpubdata or target == "unreleased"
 
     public = public_names(args.kpubdata_init or _installed_init())
     files = args.files or _tracked_files()
-    violations, stale = check(files, public, ALLOWLIST)
+    result = scan(files, public, ALLOWLIST)
+    unused, now_public = result.unused, result.now_public
     # An explicit file list checks only those files, so unused entries are expected.
     if args.files:
-        stale = []
+        unused = []
+    notices: list[tuple[str, str, str]] = []
+    if unreleased:
+        notices, now_public = now_public, []
 
-    for use in violations:
+    for use in result.violations:
         print(f"{use}  <- kpubdata private surface (not in kpubdata.__all__ or a _module)")
-    for path, module, name in stale:
+    for path, module, name in unused:
         print(f"{path}: allowlist entry ({module}, {name or '<module>'}) is no longer used")
-    if violations or stale:
+    for path, module, name in now_public:
+        print(
+            f"{path}: allowlist entry ({module}, {name}) is public in kpubdata; "
+            f"import it with `from kpubdata import {name}` and remove the entry"
+        )
+    if notices:
+        # With --kpubdata-init the installed distribution may be a different kpubdata.
+        installed = (
+            f"read from {args.kpubdata_init}" if args.kpubdata_init else _installed_version()
+        )
+        for path, module, name in notices:
+            print(
+                f"notice: {path}: allowlist entry ({module}, {name}) is public in kpubdata "
+                f"{installed} (unreleased); switch to `from kpubdata import {name}` when "
+                "the pin includes it"
+            )
+    if result.violations or unused or now_public:
         print(
             "\nUse `from kpubdata import ...` for public names. If there is no public "
             "equivalent, add an ALLOWLIST entry in scripts/check_kpubdata_imports.py that "
