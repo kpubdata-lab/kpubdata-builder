@@ -155,6 +155,24 @@ flowchart LR
 | `provenance` | 소스별 fetch 시각/파라미터/레코드 수/체크섬 |
 | `build_environment` | Python/kpubdata/builder 버전 (`capture_build_environment()`) |
 | `inputs_fingerprint` | 입력 전체 재현성 지문 `sha256:...` (입력 없으면 None) |
+| `inputs_fingerprint_algorithm` | 지문 알고리즘 (#867). 없으면 `sources-sha256-v1` |
+| `artifacts` | Gold 디렉터리별 `artifact_digest`(파일 바이트 digest)와 `artifact_writer`(쓴 엔진·버전) (#867) |
+
+#### 체크섬 버전 (#867, ADR 0021 D5)
+
+`provenance[].data_checksum`은 **논리 데이터**(레코드 multiset)의 체크섬이고, `artifacts[].artifact_digest`는 **파일 바이트**의 digest다. 같은 레코드를 다른 엔진·설정으로 쓰면 digest는 바뀌고 체크섬은 그대로다.
+
+| 알고리즘 | 계산 | 비고 |
+| :--- | :--- | :--- |
+| `canonical-json-sort-v1` | 레코드별 sorted-key JSON → 줄 정렬 → JSON 배열 → SHA-256 | legacy. 정렬 때문에 전체 줄이 필요(외부 정렬로 스트리밍 가능) |
+| `canonical-multiset-v2` | 같은 줄을 소수 `2**3072 - 1103717` 법의 원소로 해시해 곱하고, (개수, 곱)을 SHA-256 | 1.60.0부터 기본. 순서 무관, 한 번 읽기, 상수 메모리 |
+
+**migration 규칙**
+
+- `data_checksum_algorithm`이 없는 provenance 항목은 `canonical-json-sort-v1`로 읽는다 (`manifest.checksums.algorithm_of`).
+- `inputs_fingerprint_algorithm`이 없는 manifest는 `sources-sha256-v1`로 읽는다. v2 지문은 각 소스 체크섬의 알고리즘을 함께 해시하고, 알고리즘이 섞이면 만들지 않는다.
+- **다른 알고리즘의 체크섬끼리는 비교하지 않는다.** 문자열이 같아도 같은 데이터가 아니고, 달라도 데이터가 바뀐 것이 아니다 (`manifest.checksums.same_data`는 이때 None). 1.60.0 이전 run과 이후 run을 체크섬으로 비교하려면 한쪽을 같은 알고리즘으로 다시 계산한다(`build_source_provenance(..., checksum_algorithm=...)`).
+- 기존 manifest·snapshot 파일은 그대로 읽힌다. 새 필드는 모두 additive다.
 
 > 설계 원칙: **모든 빌드는 반드시 manifest를 생성한다.** manifest는 artifact 생성 직후·publish 이전에 기록해 감사 가능성을 보장합니다([BUILD_STATE.md §7](./BUILD_STATE.md#7-manifest)).
 

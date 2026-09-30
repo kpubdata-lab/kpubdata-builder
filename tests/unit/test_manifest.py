@@ -22,6 +22,7 @@ from kpubdata_builder.manifest import (
     manifest_writer,
     write_manifest,
 )
+from kpubdata_builder.manifest.checksums import multiset_checksum
 
 
 def test_build_manifest_instantiation() -> None:
@@ -158,7 +159,10 @@ def test_build_source_provenance_fills_checksum_count_and_utc_time() -> None:
     assert prov.dataset == "apt_trade"
     assert prov.fetched_at == "2026-05-26T01:00:00+00:00"
     assert prov.record_count == 2
-    assert prov.data_checksum == compute_data_checksum(records)
+    # New manifests use the streaming multiset checksum and say so (#867).
+    assert prov.data_checksum == multiset_checksum(records)
+    assert prov.data_checksum_algorithm == "canonical-multiset-v2"
+    assert prov.data_checksum != compute_data_checksum(records)
     assert prov.api_version == "unknown"
     assert prov.params == {"page": 1}
 
@@ -194,6 +198,7 @@ def test_manifest_writer_serializes_provenance(tmp_path: Path) -> None:
             # #816: the fetched count is always known; a reported total and coverage
             # are left out, not null, when the caller had no call totals to give.
             "fetched_row_count": 1,
+            "data_checksum_algorithm": "canonical-multiset-v2",
         }
     ]
 

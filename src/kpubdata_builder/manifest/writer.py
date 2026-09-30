@@ -25,7 +25,13 @@ from .provenance import SourceProvenance
 #: Provenance fields added by #816. Left out, not null, when a fetch did not record
 #: them — a manifest written before them has no such keys, and a reader tells the two
 #: cases apart the same way.
-_OPTIONAL_PROVENANCE_FIELDS = ("fetched_row_count", "source_reported_total", "coverage")
+_OPTIONAL_PROVENANCE_FIELDS = (
+    "fetched_row_count",
+    "source_reported_total",
+    "coverage",
+    # #867: absent in manifests written before it — read as canonical-json-sort-v1.
+    "data_checksum_algorithm",
+)
 
 
 def _provenance_entry(entry: SourceProvenance) -> dict[str, Any]:
@@ -104,6 +110,14 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         payload["gold_selection"] = {
             key: dict(value) for key, value in manifest.gold_selection.items()
         }
+    # additive (#867): which algorithm made inputs_fingerprint; absent before it, which
+    # reads as sources-sha256-v1.
+    if manifest.inputs_fingerprint_algorithm is not None:
+        payload["inputs_fingerprint_algorithm"] = manifest.inputs_fingerprint_algorithm
+    # additive (#867): each Gold directory's byte digest and the engine that wrote it,
+    # apart from the logical data_checksum.
+    if manifest.artifacts:
+        payload["artifacts"] = {key: dict(value) for key, value in manifest.artifacts.items()}
     # additive (#648): only when a source resumed from a checkpoint.
     if manifest.reproducibility is not None:
         payload["reproducibility"] = dict(manifest.reproducibility)

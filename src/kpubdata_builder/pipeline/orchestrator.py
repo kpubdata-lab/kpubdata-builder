@@ -30,6 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -51,6 +52,7 @@ from ..manifest import (
     manifest_writer,
     snapshot_coverage,
 )
+from ..manifest.checksums import FINGERPRINT_ALGORITHM
 from ..manifest.reproducibility import not_reproducible
 from ..quality import (
     DriftEvaluation,
@@ -95,7 +97,7 @@ from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
 from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
-from ..tabular.polars_engine import infer_schema
+from ..tabular.polars_engine import artifact_writer, infer_schema
 from ..tabular.wire import encode_rows
 from ..uploads import UploadRepository
 from ..warehouse import (
@@ -106,6 +108,7 @@ from ..warehouse import (
     materialize,
 )
 from ..warehouse import gc as warehouse_gc
+from ..warehouse.layout import content_digest
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .context import BuildContext
 from .export import export_gold_package
@@ -314,6 +317,23 @@ def _volume_comparability(source: SourceRef) -> Callable[[Path], str | None]:
         return None
 
     return check
+
+
+def _artifact_digests(
+    context: BuildContext, keys: Sequence[str]
+) -> dict[str, dict[str, JsonValue]]:
+    """Each written Gold directory's byte digest and writer (#867).
+
+    The digest is ``warehouse.layout.content_digest`` — the same function, and so the
+    same meaning, as a warehouse snapshot's ``artifact_digest``.
+    """
+    writer = cast(JsonValue, artifact_writer())
+    digests: dict[str, dict[str, JsonValue]] = {}
+    for key in keys:
+        gold_dir = context.output_root / context.run_id / "gold" / key
+        if gold_dir.is_dir():
+            digests[key] = {"artifact_digest": content_digest(gold_dir), "artifact_writer": writer}
+    return digests
 
 
 def _retag_bronze_artifact(artifact: BronzeArtifact, *, output_key: str) -> BronzeArtifact:
@@ -1406,6 +1426,7 @@ def run_build(
         provenance=tuple(provenance),
         build_environment=capture_build_environment(),
         inputs_fingerprint=compute_inputs_fingerprint(provenance),
+        inputs_fingerprint_algorithm=FINGERPRINT_ALGORITHM if provenance else None,
         created_by=created_by,
         owner_id=effective_manifest_owner_id,
         quality_results=quality_results,
@@ -1415,6 +1436,15 @@ def run_build(
         warehouse_failures=warehouse_failures,
         gold_selection={key: value.body() for key, value in gold_selection.items()},
         reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,
+        artifacts=_artifact_digests(
+            context,
+            [o.source_key for o in outcomes if o.status == "ok"]
+            + (
+                [composition_outcome.name]
+                if composition_outcome is not None and composition_outcome.status == "ok"
+                else []
+            ),
+        ),
     )
     manifest_path = context.output_root / context.run_id / "manifest.json"
     manifest_writer(manifest, manifest_path)

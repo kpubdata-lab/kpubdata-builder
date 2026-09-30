@@ -3067,7 +3067,8 @@
      ],
      "status": "unknown"
     },
-    "data_checksum": "sha256:32ea5343773aa3a31c979a0cced851cca70f0fb8f1819dcc670e8f9e023ebb37",
+    "data_checksum": "sha256:d72651fae440c5362bee9e254a76a9946de1f8e02caf1490d3e1edea69080580",
+    "data_checksum_algorithm": "canonical-multiset-v2",
     "dataset": "apt_trade",
     "fetched_row_count": 20,
     "params": {

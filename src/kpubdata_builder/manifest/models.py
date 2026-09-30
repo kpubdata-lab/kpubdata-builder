@@ -115,6 +115,12 @@ class BuildManifest:
     #: Present only when a source resumed from a checkpoint (#648): the run is not
     #: reproducible, and the R1 comparison leaves it out.
     reproducibility: dict[str, JsonValue] | None = None
+    #: What made ``inputs_fingerprint`` (#867); None when there is no fingerprint.
+    inputs_fingerprint_algorithm: str | None = None
+    #: Per Gold directory (source key or composition name): ``artifact_digest`` — the
+    #: digest of its files' bytes — and ``artifact_writer``, the engine that wrote them
+    #: (#867). Logical identity is ``provenance[].data_checksum``; bytes are this.
+    artifacts: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
 
 
 __all__ = ["MANIFEST_SCHEMA_VERSION", "BuildManifest"]

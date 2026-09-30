@@ -230,7 +230,9 @@ def content_digest(directory: Path) -> str:
     for path in files:
         digest.update(path.relative_to(directory).as_posix().encode("utf-8"))
         digest.update(b"\x00")
-        digest.update(path.read_bytes())
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
     return f"sha256:{digest.hexdigest()}"
 
 
