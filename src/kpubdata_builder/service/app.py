@@ -306,12 +306,14 @@ _BuildListEntry = dict[str, str | None]
 # 1.45.0 -> 1.46.0: GET /warehouse/tables/{name}/profile describes a snapshot's columns —
 #   nulls, NaN/infinite counts, value ranges — withholding suspected PII columns and
 #   small groups (#817, additive).
+# 1.46.0 -> 1.47.0: WarehouseTable in GET /warehouse/tables gains current_snapshot and
+#   dataset_id (#841, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.46.0"
+API_CONTRACT_VERSION = "1.47.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -404,7 +406,9 @@ class BuilderService:
         self._uploads_service = UploadsService(repository=lambda: self._upload_repository)
         self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
         self._warehouse_api = WarehouseApiService(
-            table_catalog=lambda: self._table_catalog(), engine=self._query_service
+            table_catalog=lambda: self._table_catalog(),
+            engine=self._query_service,
+            output_root=self._output_root,
         )
         self._exports_api = ExportsApiService(
             output_root=self._output_root,
