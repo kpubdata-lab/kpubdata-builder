@@ -42,6 +42,7 @@ from .providers import (
 from .redaction import redact_secret_text
 from .responses import ServiceResponse
 from .routes.core import MAX_PREVIEW_LIMIT
+from .source_policy import url_source_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,9 @@ class SpecApiService:
         spec_or_error = self.load_validated(spec_yaml)
         if isinstance(spec_or_error, ServiceResponse):
             return spec_or_error
+        refusal = url_source_refusal(spec_or_error)
+        if refusal is not None:
+            return refusal
 
         # Provider credential meaningful only for kind="public_api" sources (#498) —
         # file/url sources' provider always empty string; mixing confuses credential

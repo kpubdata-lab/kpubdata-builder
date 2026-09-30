@@ -173,6 +173,12 @@ reserved 등 비공인(non-global) 주소로의 fetch 거부(하나라도 비공
 거부), 실제 TCP 연결은 검증된 IP에 직접 연결(DNS rebinding 방지), redirect마다
 동일 검증 반복(최대 5회), connect/read timeout과 응답 크기 상한 적용. 임의
 header나 POST/PUT/PATCH는 계약에 필드 자체가 없어 표현할 수 없습니다.
+
+**다중 사용자 배포에서는 쓸 수 없습니다(#685).** `OIDC_ISSUER` 나 `ENFORCE_OWNERSHIP` 이
+설정된 배포(ADR 0012 2026-09-30 개정)에서는 `url` 소스가 있는 spec 을 `POST /preview`,
+`POST /build`, `POST /builds` 가 요청을 하나도 보내기 전에 `403 url_source_forbidden` 으로
+거부하고, 응답의 `sources` 가 문제 소스를 `index`·`alias`·`path` 로 짚습니다. 단일 사용자
+배포에서는 위 규칙 그대로 동작합니다.
 provenance/manifest에는 query string이 제거된 endpoint만 남습니다.
 
 `schema`는 다음 선택 필드를 지원합니다.

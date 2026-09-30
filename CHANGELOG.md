@@ -4,6 +4,7 @@
 
 ### Security
 
+- A multi-user deployment refuses `url` sources (#685, ADR 0012 amendment of 2026-09-30, API contract 1.52.0). With `OIDC_ISSUER` or `ENFORCE_OWNERSHIP` set, `POST /preview`, `POST /build` and `POST /builds` answer 403 `url_source_forbidden` — naming each offending source by index, alias and path — before any client is opened or request made, and nothing is queued. A bare `url` source carries no key, but it let any user make the server fetch any public host. A single-user deployment is unchanged. The contract now also declares the 403 `provider_credential_required` these operations already gave (#786).
 - In a multi-user deployment, another owner's run looks like no run at all (#796, ADR 0012 amendment of 2026-09-30, API contract 1.51.0). Every run route — status, manifest, spec, stages, quality, events, publish readiness, `GET /datasets/{id}/runs/{run_id}` — answers the 404 a missing run gets instead of 403, and `POST /query` the same 400 `invalid_context`, so a run id cannot be probed for existence. A single-user deployment is unchanged. A build that names a run id another owner already holds is still refused with 403: any refusal says the id is taken.
 
 ### Changed
