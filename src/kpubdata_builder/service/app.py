@@ -308,12 +308,14 @@ _BuildListEntry = dict[str, str | None]
 #   small groups (#817, additive).
 # 1.46.0 -> 1.47.0: WarehouseTable in GET /warehouse/tables gains current_snapshot and
 #   dataset_id (#841, additive).
+# 1.47.0 -> 1.48.0: BuildSummary gains dataset_id, dataset_title, snapshot_id and snapshots,
+#   and GET /builds takes ?dataset_id= (#844, additive).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.47.0"
+API_CONTRACT_VERSION = "1.48.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -440,6 +442,7 @@ class BuilderService:
             build_index=self._build_index,
             # Lazy creation maintains constraint — pass accessor not value (#496).
             event_store=lambda: self._event_store,
+            table_catalog=lambda: self._table_catalog(),
         )
         self._quality_api = QualityApiService(
             output_root=self._output_root, store=self._store, datasets=self._datasets_api
@@ -942,10 +945,14 @@ class BuilderService:
         return self._builds_api.serve_artifact_file(run_id, file_path)
 
     def list_builds(
-        self, *, limit: int = 50, principal: Principal | None = None
+        self,
+        *,
+        limit: int = 50,
+        principal: Principal | None = None,
+        dataset_id: str | None = None,
     ) -> ServiceResponse:
-        """Query accessible run list (#433)."""
-        return self._builds_api.list_builds(limit=limit, principal=principal)
+        """Query accessible run list (#433), optionally one dataset's (#844)."""
+        return self._builds_api.list_builds(limit=limit, principal=principal, dataset_id=dataset_id)
 
     def get_build_events(self, run_id: str, *, limit: int, tail: bool) -> ServiceResponse:
         """Query run's append-only structured event timeline (#496)."""

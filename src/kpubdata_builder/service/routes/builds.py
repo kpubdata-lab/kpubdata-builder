@@ -102,7 +102,11 @@ def route(
             if not isinstance(limit_value, int) or isinstance(limit_value, bool) or limit_value < 1:
                 return ServiceResponse(400, {"error": "'limit' must be a positive integer"})
             limit = limit_value
-        return service.list_builds(limit=limit, principal=principal)
+        dataset_values = parse_qs(query, keep_blank_values=True).get("dataset_id")
+        dataset_id = dataset_values[-1] if dataset_values else None
+        if dataset_values is not None and not dataset_id:
+            return ServiceResponse(400, {"error": "'dataset_id' must not be empty"})
+        return service.list_builds(limit=limit, principal=principal, dataset_id=dataset_id)
     return None
 
 

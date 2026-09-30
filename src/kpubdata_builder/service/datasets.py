@@ -134,6 +134,18 @@ def read_snapshot_dataset_id(output_root: Path, run_id: str) -> str | None:
     return dataset_id if isinstance(dataset_id, str) and dataset_id else None
 
 
+def read_snapshot_identity(output_root: Path, run_id: str) -> tuple[str | None, str | None]:
+    """The run's ``(dataset_id, title)`` from its BuildSpec snapshot; None for each unknown."""
+    doc = _read_snapshot_yaml(output_root, run_id)
+    if doc is None:
+        return None, None
+    dataset_id, title = doc.get("dataset_id"), doc.get("title")
+    return (
+        dataset_id if isinstance(dataset_id, str) and dataset_id else None,
+        title if isinstance(title, str) and title else None,
+    )
+
+
 def read_snapshot_spec(output_root: Path, run_id: str) -> BuildSpec | None:
     """Parse the entire run's canonical BuildSpec snapshot. Return None if missing or fails."""
     doc = _read_snapshot_yaml(output_root, run_id)
@@ -544,6 +556,7 @@ __all__ = [
     "pick_latest",
     "read_manifest",
     "read_snapshot_dataset_id",
+    "read_snapshot_identity",
     "read_snapshot_spec",
     "merge_run_records",
     "retain_canonical_run_records",

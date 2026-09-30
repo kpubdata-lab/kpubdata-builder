@@ -617,6 +617,28 @@ class TableCatalog:
             raise SnapshotNotFound(f"no such snapshot: {snapshot_id!r}")
         return SnapshotRow(*row)
 
+    def committed_by_run(self, run_ids: list[str]) -> dict[str, list[tuple[SnapshotRow, str]]]:
+        """Committed snapshots each run produced, with their table's logical name (#844).
+
+        A run that committed nothing, or whose snapshots were all reclaimed, is absent.
+        """
+        found: dict[str, list[tuple[SnapshotRow, str]]] = {}
+        if not run_ids:
+            return found
+        columns = ", ".join(f"s.{c.strip()}" for c in _SNAPSHOT_COLUMNS.split(","))
+        marks = ", ".join("?" for _ in run_ids)
+        rows = self._conn.execute(
+            f"SELECT {columns}, t.logical_name FROM table_snapshots s"
+            " JOIN tables t ON t.id = s.table_id"
+            f" WHERE s.run_id IN ({marks}) AND s.state IN ('committed', 'quarantined')"
+            " ORDER BY t.logical_name",
+            tuple(run_ids),
+        ).fetchall()
+        for row in rows:
+            snapshot = SnapshotRow(*row[:-1])
+            found.setdefault(snapshot.run_id, []).append((snapshot, str(row[-1])))
+        return found
+
     def list_snapshots(self, table_id: str) -> list[SnapshotRow]:
         """List a table's snapshots, newest first."""
         rows = self._conn.execute(

@@ -26,12 +26,14 @@ from kpubdata_builder.manifest import status_from_manifest
 from kpubdata_builder.service import events as events_service
 from kpubdata_builder.service import ownership as ownership_module
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.datasets import read_snapshot_identity
 from kpubdata_builder.service.responses import FileResponse, ServiceResponse
 from kpubdata_builder.spec import JsonValue, compute_spec_digest
 from kpubdata_builder.spec.serializer import BUILDSPEC_SNAPSHOT_FILENAME
 from kpubdata_builder.stages._path_safety import ensure_within, validate_path_segment
 from kpubdata_builder.store.artifacts import ArtifactStore
 from kpubdata_builder.store.build_index import BuildIndex
+from kpubdata_builder.warehouse import TableCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +87,14 @@ class BuildArtifactsApiService:
         store: ArtifactStore,
         build_index: BuildIndex,
         event_store: Callable[[], BuildEventStore],
+        table_catalog: Callable[[], TableCatalog | None] = lambda: None,
     ) -> None:
+        """Args:
+        table_catalog: The warehouse catalog, for the snapshots each run committed
+            (#844). None — no warehouse — leaves every run's snapshot null.
+        """
         self._output_root = output_root
+        self._table_catalog = table_catalog
         self._store = store
         self._build_index = build_index
         # Event store is lazily created (#496) — avoid sqlite file in preview-only
@@ -237,7 +245,56 @@ class BuildArtifactsApiService:
         return FileResponse(status_code=200, file_path=requested_file, filename=filename)
 
     def list_builds(
-        self, *, limit: int = 50, principal: Principal | None = None
+        self,
+        *,
+        limit: int = 50,
+        principal: Principal | None = None,
+        dataset_id: str | None = None,
+    ) -> ServiceResponse:
+        """Runs, newest first, each naming its table and committed snapshot (#844).
+
+        ``dataset_id`` keeps only that dataset's runs; it is applied before ``limit``, so
+        a filtered page is full whenever that many runs exist.
+        """
+        response = self._list_builds(limit=limit, principal=principal, dataset_id=dataset_id)
+        builds = response.body.get("builds")
+        if response.status_code != 200 or not isinstance(builds, list):
+            return response
+        return ServiceResponse(200, {"builds": self._with_tables(builds)})
+
+    def _with_tables(self, builds: list[JsonValue]) -> list[JsonValue]:
+        run_ids = [cast(str, b["run_id"]) for b in builds if isinstance(b, dict) and "run_id" in b]
+        catalog = self._table_catalog()
+        committed = catalog.committed_by_run(run_ids) if catalog is not None else {}
+        enriched: list[JsonValue] = []
+        for build in builds:
+            if not isinstance(build, dict):
+                enriched.append(build)
+                continue
+            run_id = cast(str, build["run_id"])
+            dataset_id, title = read_snapshot_identity(self._output_root, run_id)
+            snapshots = committed.get(run_id, [])
+            enriched.append(
+                {
+                    **build,
+                    "dataset_id": dataset_id,
+                    "dataset_title": title,
+                    # One table, one snapshot: the common case gets a plain field. A run
+                    # that committed several tables lists them all in ``snapshots``.
+                    "snapshot_id": snapshots[0][0].id if len(snapshots) == 1 else None,
+                    "snapshots": [
+                        {"logical_name": name, "snapshot_id": row.id} for row, name in snapshots
+                    ],
+                }
+            )
+        return enriched
+
+    def _list_builds(
+        self,
+        *,
+        limit: int = 50,
+        principal: Principal | None = None,
+        dataset_id: str | None = None,
     ) -> ServiceResponse:
         """Return execution history list sorted descending by latest completion time.
 
@@ -247,7 +304,11 @@ class BuildArtifactsApiService:
         """
         # Query index first
         try:
-            entries = self._build_index.list_builds(limit=limit)
+            entries = (
+                self._build_index.list_by_dataset(dataset_id, limit=limit)
+                if dataset_id is not None
+                else self._build_index.list_builds(limit=limit)
+            )
             if entries:
                 index_builds: list[_BuildListEntry] = [
                     {
@@ -278,11 +339,14 @@ class BuildArtifactsApiService:
         if not self._output_root.exists():
             return ServiceResponse(200, {"builds": []})
 
-        candidates = heapq.nlargest(
-            limit,
-            (d for d in self._output_root.iterdir() if d.is_dir()),
-            key=lambda p: p.stat().st_mtime,
-        )
+        run_dirs = (d for d in self._output_root.iterdir() if d.is_dir())
+        if dataset_id is not None:
+            run_dirs = (
+                d
+                for d in run_dirs
+                if read_snapshot_identity(self._output_root, d.name)[0] == dataset_id
+            )
+        candidates = heapq.nlargest(limit, run_dirs, key=lambda p: p.stat().st_mtime)
         fs_builds: list[_BuildListEntry] = []
         for run_dir in candidates:
             manifest_path = run_dir / "manifest.json"
