@@ -61,9 +61,7 @@ def schema_of(connection: duckdb.DuckDBPyConnection, table: LoadedTable) -> Sche
         else:
             parts.append("NULL")
             parts.append("NULL")
-    row = connection.execute(
-        f"SELECT {', '.join(parts)} FROM {quote_identifier(table.table)}"
-    ).fetchone()
+    row = connection.execute(f"SELECT {', '.join(parts)} FROM {table.relation.sql}").fetchone()
     assert row is not None
     columns = []
     for index, (name, dtype) in enumerate(zip(table.names, table.dtypes, strict=True)):
@@ -83,7 +81,7 @@ def schema_of(connection: duckdb.DuckDBPyConnection, table: LoadedTable) -> Sche
 
 def statistics_of(connection: duckdb.DuckDBPyConnection, table: LoadedTable) -> TableStatistics:
     """Row count, nulls per column and the duplicate row rate."""
-    source = quote_identifier(table.table)
+    source = table.relation.sql
     if not table.physical:
         return TableStatistics(row_count=table.row_count, null_counts={}, duplicate_rate=0.0)
     nulls = ", ".join(f"count(*) - count({quote_identifier(p)})" for p in table.physical)

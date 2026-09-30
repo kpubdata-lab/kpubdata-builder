@@ -43,6 +43,7 @@ import duckdb
 from ..errors import TabularError
 from ..spec import JsonValue
 from .convert import RecordTypeScan, apply_read_as
+from .duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation, reserve_row_seq
 from .sql import quote_identifier
 
 #: A type as inferred: ``("int",)``, ``("decimal", 2)``, ``("list", node)``,
@@ -51,6 +52,10 @@ Node = tuple[Any, ...]
 
 _NULL: Node = ("null",)
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+
+
+class _TypeConflict(TabularError):
+    """Two values of one column have types that do not unify."""
 
 
 def _infer(value: object) -> Node:
@@ -112,7 +117,7 @@ def _unify(a: Node, b: Node) -> Node:
         raise TabularError(
             f"a column mixes datetimes in different time zones: {a[1]!r} and {b[1]!r}"
         )
-    raise TabularError(
+    raise _TypeConflict(
         f"heterogeneous column types detected (refusing to silently coerce): {a} {b}"
     )
 
@@ -252,9 +257,15 @@ def _decode(node: Node, value: object) -> object:
 
 @dataclass(frozen=True)
 class LoadedTable:
-    """A table of records in DuckDB: physical columns ``c0…`` and what each one is."""
+    """A table of records in DuckDB: physical columns ``c0…`` and what each one is.
 
-    table: str
+    Every loaded table also carries the row ordinal ``ROW_SEQ_COLUMN`` (ADR 0021 D8):
+    source order, numbered at load. It is not one of the columns — not in ``names``,
+    ``physical`` or ``dtypes``, and not in any schema, statistic or distinct count — and
+    every read whose order matters sorts by it (:data:`order_by`).
+    """
+
+    relation: TabularRelation
     names: tuple[str, ...]
     physical: tuple[str, ...]
     dtypes: tuple[str, ...]
@@ -264,6 +275,11 @@ class LoadedTable:
     def column(self, name: str) -> str:
         """The physical (quoted) column holding ``name``."""
         return quote_identifier(self.physical[self.names.index(name)])
+
+    @property
+    def order_by(self) -> str:
+        """``ORDER BY`` clause restoring source order."""
+        return f"ORDER BY {quote_identifier(ROW_SEQ_COLUMN)}"
 
 
 def load_records(
@@ -277,9 +293,14 @@ def load_records(
     """Load ``records`` — a callable giving a fresh iterator each time; it is read twice —
     into ``table``.
 
+    ``connection`` is expected to come from ``duckdb_runtime`` (``build_connection``:
+    memory limit, threads, UTC, the run's temp directory), and ``workdir`` to be under the
+    run's own directory; the load file lives there only while loading.
+
     Raises:
         TabularError: The records mix types, or risk integer precision, exactly as
             ``records_to_dataframe`` would refuse them; or hold a type DuckDB cannot store.
+        ReservedColumnError: A source column is named ``_kpubdata_row_seq`` (any case).
     """
     scan = RecordTypeScan(read_as=read_as)
     nodes: dict[str, Node] = {}
@@ -292,7 +313,7 @@ def load_records(
                 continue
             try:
                 nodes[key] = _unify(nodes.get(key, _NULL), _infer(value))
-            except TabularError:
+            except _TypeConflict:
                 # The scan words this refusal as Silver always has; let it raise it.
                 conflicted.add(key)
                 nodes.setdefault(key, _NULL)
@@ -303,27 +324,29 @@ def load_records(
             "heterogeneous column types detected (refusing to silently coerce): "
             f"{sorted(conflicted)}"
         )
+    reserve_row_seq(nodes)
     names = tuple(nodes)
     physical = tuple(f"c{i}" for i in range(len(names)))
     node_list = tuple(nodes[n] for n in names)
+    relation = TabularRelation(table)
     load_path = workdir / f".{table}.load.jsonl"
     workdir.mkdir(parents=True, exist_ok=True)
     try:
         with load_path.open("w", encoding="utf-8") as handle:
-            for record in records():
+            for ordinal, record in enumerate(records()):
                 checked = apply_read_as(record, read_as) if read_as else record
-                row = {
-                    physical[i]: _encode(node_list[i], checked.get(name))
-                    for i, name in enumerate(names)
-                    if checked.get(name) is not None
-                }
+                row: dict[str, object] = {ROW_SEQ_COLUMN: ordinal}
+                for index, name in enumerate(names):
+                    value = checked.get(name)
+                    if value is not None:
+                        row[physical[index]] = _encode(node_list[index], value)
                 handle.write(json.dumps(row, ensure_ascii=False))
                 handle.write("\n")
-        _create_table(connection, table, load_path, physical, node_list)
+        _create_table(connection, relation, load_path, physical, node_list)
     finally:
         load_path.unlink(missing_ok=True)
     return LoadedTable(
-        table=table,
+        relation=relation,
         names=names,
         physical=physical,
         dtypes=tuple(canonical(n) for n in node_list),
@@ -334,34 +357,28 @@ def load_records(
 
 def _create_table(
     connection: duckdb.DuckDBPyConnection,
-    table: str,
+    relation: TabularRelation,
     load_path: Path,
     physical: Sequence[str],
     nodes: Sequence[Node],
 ) -> None:
-    target = quote_identifier(table)
-    if not physical:
-        # No columns at all: a table of rows with nothing in them.
-        # DuckDB needs one column; nothing reads it (``LoadedTable.physical`` is empty).
-        with load_path.open(encoding="utf-8") as handle:
-            rows = sum(1 for _ in handle)
-        connection.execute(
-            f"CREATE OR REPLACE TABLE {target} AS SELECT NULL::INTEGER AS _ FROM range(?)", [rows]
-        )
-        return
-    declared = {name: _load_type(node) for name, node in zip(physical, nodes, strict=True)}
+    # The column types are a bound parameter, not SQL text: struct field names are
+    # source data (#869 review), and ``sql.py``'s rule is values as parameters.
+    declared: dict[str, str] = {ROW_SEQ_COLUMN: "BIGINT"}
+    declared.update((name, _load_type(node)) for name, node in zip(physical, nodes, strict=True))
     select = ", ".join(
-        f"unhex({quote_identifier(name)}) AS {quote_identifier(name)}"
-        if node[0] == "binary"
-        else quote_identifier(name)
-        for name, node in zip(physical, nodes, strict=True)
+        [quote_identifier(ROW_SEQ_COLUMN)]
+        + [
+            f"unhex({quote_identifier(name)}) AS {quote_identifier(name)}"
+            if node[0] == "binary"
+            else quote_identifier(name)
+            for name, node in zip(physical, nodes, strict=True)
+        ]
     )
-    columns = "{" + ", ".join(f"'{name}': '{kind}'" for name, kind in declared.items()) + "}"
     connection.execute(
-        f"CREATE OR REPLACE TABLE {target} AS SELECT {select} FROM read_json(?, "
-        f"format = 'newline_delimited', records = 'true', columns = {columns}, "
-        "maximum_object_size = 1073741824)",
-        [str(load_path)],
+        f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT {select} FROM read_json(?, "
+        "format = 'newline_delimited', records = 'true', columns = ?)",
+        [str(load_path), declared],
     )
 
 
@@ -369,20 +386,18 @@ def fetch_rows(
     connection: duckdb.DuckDBPyConnection,
     loaded: LoadedTable,
     *,
-    limit: int | None = None,
+    limit: int,
+    offset: int = 0,
 ) -> tuple[dict[str, object], ...]:
-    """The table's rows in order, as Polars' ``to_dicts`` would give them."""
+    """Up to ``limit`` rows from ``offset``, in source order, as Polars' ``to_dicts``
+    would give them. The limit is required: rows come into Python memory."""
     if not loaded.physical:
-        return tuple(
-            {} for _ in range(loaded.row_count if limit is None else min(limit, loaded.row_count))
-        )
+        return tuple({} for _ in range(max(0, min(limit, loaded.row_count - offset))))
     columns = ", ".join(quote_identifier(p) for p in loaded.physical)
-    sql = f"SELECT {columns} FROM {quote_identifier(loaded.table)}"
-    params: list[object] = []
-    if limit is not None:
-        sql += " LIMIT ?"
-        params.append(limit)
-    rows = connection.execute(sql, params).fetchall()
+    rows = connection.execute(
+        f"SELECT {columns} FROM {loaded.relation.sql} {loaded.order_by} LIMIT ? OFFSET ?",
+        [limit, offset],
+    ).fetchall()
     return tuple(
         {
             name: _decode(node, value)

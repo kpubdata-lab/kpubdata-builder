@@ -42,6 +42,9 @@ CASES: dict[str, list[dict[str, Any]]] = {
     "struct": [{"v": {"b": 1, "a": "x"}}, {"v": {"c": 2.5}}, {"v": None}],
     "struct with null field": [{"v": {"x": None}}, {"v": {"x": 1}}],
     "struct quoted field": [{"v": {"a b": 1, 'q"t': "x", "Name": 2}}],
+    "struct hostile fields": [
+        {"v": {"it's": 1, "a', 'c1': 'VARCHAR": "x", "x'); DROP TABLE raw; --": 2.5}}
+    ],
     "list of structs": [{"v": [{"x": 1}, {"y": "a"}]}, {"v": []}],
     "empty struct": [{"v": {}}, {"v": None}],
     "date": [{"v": dt.date(2024, 1, 1)}, {"v": dt.date(1, 1, 1)}],
@@ -67,7 +70,7 @@ def _load(tmp_path: Path, records: list[dict[str, Any]], **kwargs: Any) -> tuple
     loaded = load_records(
         connection, lambda: iter(records), table="raw", workdir=tmp_path, **kwargs
     )
-    return loaded, fetch_rows(connection, loaded)
+    return loaded, fetch_rows(connection, loaded, limit=len(records) + 1)
 
 
 def _same(a: object, b: object) -> bool:
@@ -209,3 +212,100 @@ def test_loading_holds_one_record_at_a_time_in_python(tmp_path: Path) -> None:
 
     assert loaded.row_count == 50_000
     assert peak < 2_000_000, peak  # the records are ~12 MB
+
+
+# ------------------------------------------------------------------ review of #888
+
+
+def test_a_source_column_named_like_the_row_ordinal_is_refused(tmp_path: Path) -> None:
+    from kpubdata_builder.tabular.duckdb_runtime import ReservedColumnError
+
+    for name in ("_kpubdata_row_seq", "_KPUBDATA_ROW_SEQ"):
+        with pytest.raises(ReservedColumnError):
+            _load(tmp_path, [{name: 1, "v": 2}])
+
+
+def test_the_row_ordinal_is_not_a_column(tmp_path: Path) -> None:
+    from kpubdata_builder.tabular.duckdb_summary import schema_of, statistics_of
+
+    connection = duckdb.connect()
+    records = [{"v": 1}, {"v": 1}]
+    loaded = load_records(connection, lambda: iter(records), table="raw", workdir=tmp_path)
+
+    assert loaded.names == ("v",)
+    assert [c.name for c in schema_of(connection, loaded).columns] == ["v"]
+    # Two equal rows are duplicates: the ordinal does not make them distinct.
+    assert statistics_of(connection, loaded).duplicate_rate == 0.5
+
+
+def test_source_order_holds_on_a_parallel_connection(tmp_path: Path) -> None:
+    """D8: order comes from the ordinal, not from DuckDB's scan order."""
+    from kpubdata_builder.tabular.duckdb_runtime import BuildProfile, build_connection
+
+    count = 200_000
+    with build_connection(
+        tmp_path, "order", profile=BuildProfile(threads=4, memory_limit="512MB")
+    ) as connection:
+        connection.execute("SET preserve_insertion_order = false")
+        loaded = load_records(
+            connection,
+            lambda: ({"n": n, "pad": f"row-{n}"} for n in range(count)),
+            table="raw",
+            workdir=tmp_path / "work",
+        )
+        head = fetch_rows(connection, loaded, limit=5)
+        tail = fetch_rows(connection, loaded, limit=5, offset=count - 5)
+        middle = fetch_rows(connection, loaded, limit=3, offset=123_456)
+
+    assert [r["n"] for r in head] == [0, 1, 2, 3, 4]
+    assert [r["n"] for r in tail] == list(range(count - 5, count))
+    assert [r["n"] for r in middle] == [123_456, 123_457, 123_458]
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_cases_hold_on_a_runtime_connection(tmp_path: Path, name: str) -> None:
+    """The same parity on a connection made the way builds make it (limits, UTC, temp)."""
+    from kpubdata_builder.tabular.duckdb_runtime import build_connection
+
+    records = CASES[name]
+    frame = records_to_dataframe([dict(r) for r in records])
+    with build_connection(tmp_path, "cases") as connection:
+        loaded = load_records(
+            connection, lambda: iter(records), table="raw", workdir=tmp_path / "work"
+        )
+        rows = fetch_rows(connection, loaded, limit=len(records) + 1)
+
+    assert list(loaded.dtypes) == [str(t) for t in frame.dtypes]
+    expected = frame.to_dicts() if frame.width else [{} for _ in records]
+    assert _same(list(rows), expected)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "records"),
+    [
+        ("r01_number_and_string", [{"v": 1}, {"v": "a"}, {"v": 2}]),
+        (
+            "r02_unsafe_int_and_float",
+            [{"v": 9007199254740993}, {"v": 1.5}, {"v": -9007199254740993}],
+        ),
+        ("r03_float_after_inference_window", [{"v": i} for i in range(200)] + [{"v": 1.5}]),
+    ],
+)
+def test_the_loader_agrees_with_the_committed_baseline(
+    tmp_path: Path, scenario: str, records: list[dict[str, Any]]
+) -> None:
+    """Ties the loader to tests/golden/duckdb_parity (#865), not only to live Polars."""
+    golden = json.loads(
+        (Path(__file__).parents[1] / "golden" / "duckdb_parity" / f"{scenario}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if golden["status_code"] != 200:
+        with pytest.raises(TabularError):
+            _load(tmp_path, records)
+        return
+    loaded, rows = _load(tmp_path, records)
+    silver = golden["silver"]["t"]["table"]
+    assert list(loaded.names) == silver["columns"]
+    assert list(loaded.dtypes) == silver["dtypes"]
+    assert [[r[c] for c in loaded.names] for r in rows] == silver["rows"]
