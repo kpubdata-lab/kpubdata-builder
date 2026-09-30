@@ -32,13 +32,13 @@ def _core_fields(dataset_id: str) -> tuple[object, ...]:
     so each dataset is read once.
     """
     try:
-        from kpubdata.core.executor import build_spec_dataset_ref, spec_schema
-        from kpubdata.core.spec import find_spec
+        from kpubdata import Client
 
-        spec = find_spec(dataset_id)
-        if spec is None:
-            return ()
-        schema = spec_schema(spec, build_spec_dataset_ref(spec))
+        client = Client()
+        try:
+            schema = client.dataset(dataset_id).schema()
+        finally:
+            client.close()
     except Exception:
         # Metadata only: a spec that cannot be read never fails the response it describes.
         return ()
