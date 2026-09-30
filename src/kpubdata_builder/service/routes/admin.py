@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 from urllib.parse import parse_qs
 
+from ... import logging_redaction
 from ...spec import JsonValue
 from .. import ownership as ownership_module
 from .. import publish_credentials
@@ -57,8 +58,22 @@ def _parse_limit(query: str) -> int:
     return max(1, min(limit, _MAX_LIMIT))
 
 
+def _reason(error: str | None) -> str | None:
+    """A run's failure reason for an administrator, with anything key-shaped masked.
+
+    The stored summary was already redacted when the run ended; masking again costs
+    nothing and keeps a key out of the admin view if it ever was not.
+    """
+    return logging_redaction.redact(error) if error else None
+
+
 def _admin_runs(service: BuilderService, principal: Principal, query: str) -> ServiceResponse:
-    """Return status only for all owners' runs.
+    """Return metadata only for all owners' runs: status, times, failure reason, owner.
+
+    ADR 0012's 2026-09-30 amendment (#679, option a): an administrator sees what a run
+    is and how it ended, never its bytes. Every route that serves bytes — artifacts,
+    stage samples, manifests, queries, warehouse tables — answers an administrator
+    like any other user who does not own the run.
 
     Reads ``BuildIndex`` directly. ``service.list_builds`` strips ``owner_id``
     before response (#505), but for admins, **which user's run it is, is the
@@ -97,6 +112,7 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
                 "started_at": None,
                 "finished_at": finished,
                 "owner_id": job.owner_id,
+                "error": _reason(job.error),
             },
         )
     for entry in entries:
@@ -108,6 +124,7 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
                 "started_at": entry.started_at,
                 "finished_at": entry.finished_at,
                 "owner_id": entry.owner_id,
+                "error": _reason(entry.error),
             },
         )
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.52.0"
+  version: "1.53.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.53.0 gives `GET /admin/runs` each run's failure reason, `error` (#679, additive): administrators see a run's status, times, owner and why it failed, never its bytes (ADR 0012 amendment of 2026-09-30, option a).
     v1.52.0 refuses `url` sources in a multi-user deployment (#685, ADR 0012 amendment of 2026-09-30): `POST /preview`, `POST /build` and `POST /builds` answer 403 `url_source_forbidden`, naming each source, before any request is made. It also declares the 403 `provider_credential_required` these operations already gave (#786).
     v1.51.0 hides another owner's run in a multi-user deployment (#796, ADR 0012 amendment of 2026-09-30): every run route answers 404 `run not found` for it, exactly as for a run that does not exist, and `POST /query` answers the same 400 `invalid_context` it gives a missing run. The 403 `forbidden: not run owner` remains only outside multi-user mode, and for a build that names a run id another owner already holds.
     v1.50.0 makes provider connection tests reliable and remembered (#842): the test calls a dataset whose declared parameters give an example for every required one (dates excluded) and that needs no per-dataset application, and answers `not_testable` when there is none; `connected` names the dataset. `GET /providers` reports each provider's `last_test` for the caller, or null.
@@ -3726,6 +3727,12 @@ components:
               owner_id:
                 type: [string, "null"]
                 description: 되돌릴 수 없는 소유자 해시. 사용자 신원을 담지 않는다.
+              error:
+                type: [string, "null"]
+                description: >-
+                  The run's failure reason, key-shaped values masked (#679); null when it
+                  did not fail or gave none. Administrators see a run's metadata, never its
+                  bytes — every byte-serving route treats them like any non-owner.
     AdminConfigResponse:
       type: object
       additionalProperties: false
