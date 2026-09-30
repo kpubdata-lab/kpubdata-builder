@@ -4,6 +4,10 @@
 
 ### Security
 
+- In a multi-user deployment a provider key lives only as long as its request or job (#683, ADR 0012 amendment of 2026-09-30; API contract 1.56.0). It arrives in the `X-Provider-Key` header (`<provider>=<key>`), never a URL, and is held in a per-request context; an async job's key is bound to its run id in memory at submission and dropped when the job succeeds, fails or is cancelled, or after `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` (default 3600). Stored and environment credentials are not used there — `REQUIRE_OWN_PROVIDER_CREDENTIAL` is forced on, `PUT /providers/{p}/credential` answers 403 `credential_storage_disabled` — and at startup runs a restart interrupted are failed as `credentials_required`, since their keys are gone. The job registry snapshot, events, manifests and files never hold a key. A single-user deployment is unchanged.
+
+### Security
+
 - An administrator sees a run's metadata, never its bytes (#679, ADR 0012 amendment of 2026-09-30, option a; API contract 1.53.0). `GET /admin/runs` now also gives each run's failure reason, `error`, with key-shaped values masked. Tests pin that on every byte-serving route — artifacts and their files, manifests, specs, stage samples, `/query`, warehouse tables, rows and queries — an administrator is answered like any user who does not own the run.
 
 ### Security

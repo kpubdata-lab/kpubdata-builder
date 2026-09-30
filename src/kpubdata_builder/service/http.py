@@ -30,6 +30,7 @@ from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
 from .app import BuilderService, FileResponse, dispatch
 from .auth import validate_dev_mode, validate_oidc_config
+from .request_credentials import PROVIDER_KEY_HEADER
 
 # Limit body size to prevent single request from exhausting memory or stopping
 # single-thread server. Conservative upper bound sufficient for spec YAML requests
@@ -86,7 +87,7 @@ _OVERLOADED_RESPONSE = _overloaded_response()
 _ALLOWED_ORIGINS_ENV = "KPUBDATA_BUILDER_ALLOWED_ORIGINS"
 
 # Preflight request headers to allow. Include Authorization for Bearer auth (ADR 0009) (#382).
-_CORS_ALLOWED_HEADERS = "Content-Type, X-API-Key, Authorization"
+_CORS_ALLOWED_HEADERS = f"Content-Type, X-API-Key, Authorization, {PROVIDER_KEY_HEADER}"
 
 # Default MIME type (#323). Used when mimetypes.guess_type returns None.
 _DEFAULT_MIME_TYPE = "application/octet-stream"
@@ -261,6 +262,9 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                     api_key=self.headers.get("X-API-Key"),
                     bearer_token=self.headers.get("Authorization"),
                     raw_body=raw_body,
+                    # Provider keys for this request only (#683) — a header, never a
+                    # URL query that proxies and access logs would keep.
+                    provider_key_headers=self.headers.get_all(PROVIDER_KEY_HEADER) or [],
                     # Client ID for auth failure throttling. Use TCP peer address only;
                     # don't read X-Forwarded-For — headers can be forged.
                     client_id=self.client_address[0] if self.client_address else None,
@@ -507,6 +511,14 @@ def serve(
     # Validate storage backend config on startup (fail-closed, ADR 0016). No-op for
     # sqlite default; cubrid checks URL and driver early.
     validate_storage_config()
+    # A multi-user deployment keeps job keys in memory only (#683): runs a previous
+    # process left unfinished can never resume, so they are failed now, as
+    # credentials_required, rather than left looking in progress.
+    interrupted = service.mark_interrupted_runs()
+    if interrupted:
+        _logger.warning(
+            "marked %d interrupted run(s) failed as credentials_required", len(interrupted)
+        )
     server = BoundedThreadingHTTPServer(
         (host, port), make_handler(service), max_workers=max_workers
     )

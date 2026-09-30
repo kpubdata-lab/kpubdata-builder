@@ -43,10 +43,12 @@ from ..store.build_index import BuildIndex
 from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
 from . import ownership as ownership_module
+from . import request_credentials
 from .auth import Principal
 from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
 from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
 from .redaction import redact_json_secrets, redact_secret_text
+from .request_credentials import JobCredentials
 from .responses import ServiceResponse
 from .source_policy import url_source_refusal
 
@@ -340,8 +342,13 @@ class BuildRunsApiService:
         run_id: str | None = None,
         created_by: str | None = None,
         owner_id: str | None = None,
+        job_credentials: JobCredentials | None = None,
     ) -> ServiceResponse:
         """Queue async build job and return initial state (#482).
+
+        ``job_credentials`` (#683, multi-user mode): the request's provider keys are bound
+        to the run id in memory as the job is accepted — before it can start — and
+        dropped if it is never queued.
 
         ``runner`` is what the worker calls — ``BuilderService._run_build_job``, passed
         at submit time so a subclass override is the one that runs.
@@ -387,8 +394,12 @@ class BuildRunsApiService:
                     message="build accepted for async execution",
                 )
             )
+            if job_credentials is not None:
+                job_credentials.bind(resolved_run_id, owner_id, request_credentials.current_keys())
 
         def _record_enqueue_failure() -> None:
+            if job_credentials is not None:
+                job_credentials.discard(resolved_run_id)
             # Called after registry.mark_failed(), before exception re-raise (#496
             # lifecycle contract: timeline itself must express this failure too) —
             # run_submitted already recorded, so don't erase (append-only), record
@@ -544,6 +555,34 @@ class BuildRunsApiService:
             # recorded same as running path, only at terminal transition, once only.
             self.record_run_cancelled(run_id)
         return ServiceResponse(200, snapshot.to_body())
+
+    def mark_interrupted_runs(self) -> tuple[str, ...]:
+        """Fail every run a restart interrupted, as ``credentials_required`` (#683).
+
+        In a multi-user deployment a job's provider keys live only in memory, so after a
+        restart no interrupted job can go on: it is recorded as failed with that reason
+        instead of being left looking in progress, and the user submits it again with
+        their key. A run whose manifest exists had finished writing and is left alone.
+        Returns the run ids it marked.
+        """
+        marked: list[str] = []
+        store = self._event_store()
+        for run_id in store.unfinished_runs():
+            if self._store.get_manifest(run_id) is not None:
+                continue
+            store.append(
+                BuildEvent(
+                    seq=0,
+                    timestamp=datetime.now(tz=timezone.utc),
+                    run_id=run_id,
+                    event="run_failed",
+                    status="fail",
+                    message="credentials_required: the server restarted and the job's "
+                    "provider keys, held only in memory, are gone; submit it again",
+                )
+            )
+            marked.append(run_id)
+        return tuple(marked)
 
     def record_run_cancelled(self, run_id: str) -> None:
         """Record cancelled terminal event (#481). Failure not re-raised.

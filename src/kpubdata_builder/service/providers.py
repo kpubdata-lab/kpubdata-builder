@@ -25,6 +25,7 @@ from kpubdata.exceptions import (
 
 from ..credentials import CredentialMetadata, CredentialRepository
 from ..stages.bronze.build import SourceClient
+from . import request_credentials
 
 logger = logging.getLogger("kpubdata_builder.service.providers")
 
@@ -55,9 +56,15 @@ def require_own_provider_credential() -> bool:
 def _require_own_provider_credential() -> bool:
     """Whether the operator credential fallback is switched off.
 
+    Always in a multi-user deployment (#683, ADR 0012 amendment of 2026-09-30): no
+    global or environment credential serves anyone there. Otherwise the switch decides.
     Read at call time rather than cached: the value is a policy, and an operator who
     changes it should not have to restart to find out whether it took.
     """
+    from .ownership import multi_user_mode
+
+    if multi_user_mode():
+        return True
     return os.environ.get(_REQUIRE_OWN_PROVIDER_CREDENTIAL_ENV, "").strip().lower() in (
         "1",
         "true",
@@ -66,7 +73,7 @@ def _require_own_provider_credential() -> bool:
     )
 
 
-CredentialSource = Literal["user", "server", "none", "refused"]
+CredentialSource = Literal["user", "server", "none", "refused", "request"]
 ProviderState = Literal["connected", "failed", "not_configured", "not_testable"]
 ProviderErrorCategory = Literal["auth", "network", "timeout", "provider", "unknown"]
 
@@ -161,7 +168,22 @@ class CredentialResolver:
         is not refused by the switch. There is no owner to look a credential up for, so
         refusing would break dev mode without protecting anyone; ``ENFORCE_OWNERSHIP``
         is the switch that closes that door.
+
+        In a multi-user deployment (#683) the only credential is the one the current
+        request or job carries: nothing stored, nothing from the environment. Without
+        one the answer is ``none`` — the client is built keyless and kept from the
+        environment (``require_own_provider_credential``), so a provider that needs a
+        key fails when called, and one that needs none still works.
         """
+        from .ownership import multi_user_mode
+
+        if multi_user_mode():
+            value = request_credentials.current_key(provider) or request_credentials.current_key(
+                self.client_key_slot(provider)
+            )
+            if value is not None:
+                return ResolvedCredential("request", value)
+            return ResolvedCredential("none", None)
         if self._repository is not None and owner_id is not None:
             user_value = self._repository.get_secret(owner_id, provider)
             if user_value is not None:

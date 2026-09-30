@@ -154,6 +154,16 @@ class BuildEventStore:
             raise RuntimeError("build event insert did not return a row id")
         return replace(event, seq=seq)
 
+    def unfinished_runs(self) -> tuple[str, ...]:
+        """Runs with a submission or start event and no terminal event (#683)."""
+        rows = self._conn.execute(
+            "SELECT run_id FROM build_events GROUP BY run_id HAVING"
+            " SUM(event IN ('run_submitted', 'run_started')) > 0 AND"
+            " SUM(event IN ('run_finished', 'run_failed', 'run_cancelled')) = 0"
+            " ORDER BY run_id"
+        ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
     def list_for_run(self, run_id: str, *, limit: int, tail: bool) -> tuple[BuildEvent, ...]:
         """Return up to ``limit`` events from single run in chronological ascending order.
 
