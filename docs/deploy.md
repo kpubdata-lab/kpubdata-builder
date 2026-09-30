@@ -152,12 +152,16 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | build 하나 안의 source fetch thread | **build 당** 최대 4 (`_MAX_PARALLEL_SOURCES`) | 코드 상수 |
 | query child process | 기본 2 | `KPUBDATA_QUERY_MAX_CONCURRENCY` |
 | query child 하나의 메모리 | **기본 무제한**. 설정하면 child 의 address space 를 제한해 초과한 질의만 실패(`400 query_failed`)하고 서버와 다른 요청은 계속된다 | `KPUBDATA_QUERY_MAX_MEMORY_MB` |
+| 동시에 도는 query child 들의 메모리 합 | **기본 없음**(개수 상한만). 설정하면 질의마다 자기 child 메모리 상한만큼 예산에서 예약하고, 예산이 모자라면 기다리지 않고 `429 query_busy` 로 거부한다. 성공·실패·timeout·취소 어느 경로로 끝나도 예약을 돌려준다. SQL·행 읽기·집계·내보내기·프로파일 모두 같은 예산을 쓴다 | `KPUBDATA_QUERY_MEMORY_BUDGET_MB` |
 | Polars 내부 thread | 프로세스마다 기본 CPU 코어 수 — build worker 와 query child 모두 | `POLARS_MAX_THREADS` |
 
 `KPUBDATA_QUERY_MAX_MEMORY_MB` 는 address space 상한(`RLIMIT_AS`)이라 RSS 보다 크게 잡아야
 한다 — Polars 가 import 시점에 가상 메모리를 넉넉히 예약하므로 너무 작으면 모든 질의가
-실패한다. 예산 기준 admission control(개수가 아니라 메모리·CPU 합으로 받는 것)은 무엇으로
-잴지부터 정해야 하는 결정으로 남아 있다(#701).
+실패한다. admission 기준은 **메모리**다(#701, 소유자 결정 D3): `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
+를 두면 질의 하나가 `KPUBDATA_QUERY_MAX_MEMORY_MB` 만큼 예약한다. 질의별 상한 없이 예산만
+두면 질의 하나가 예산 전체를 예약하므로 한 번에 하나씩 돈다 — 둘을 함께 설정하는 것이 맞다.
+CPU·임시 디스크·프로세스·스레드 수는 위 표의 문서화 항목이고 admission 기준이 아니다. 동시
+실행 개수 상한(`KPUBDATA_QUERY_MAX_CONCURRENCY`)은 보조 상한으로 그대로 남는다.
 
 query timing은 다음 경계를 사용한다.
 
