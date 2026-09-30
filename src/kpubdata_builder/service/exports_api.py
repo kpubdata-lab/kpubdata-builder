@@ -55,6 +55,11 @@ from kpubdata_builder.query.security import UnsafeQueryError, validate_read_only
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.column_semantics import (
+    describe_json_columns,
+    spec_semantics,
+    table_key,
+)
 from kpubdata_builder.service.datasets import read_manifest, read_snapshot_spec
 from kpubdata_builder.service.responses import FileResponse, ServiceResponse
 from kpubdata_builder.service.warehouse_api import _coverage, _pin, _readable_table
@@ -561,7 +566,12 @@ class ExportsApiService:
                     "bom": profile == "spreadsheet",
                     "row_count": meta.get("row_count"),
                     "completeness": "full",
-                    "columns": meta.get("column_meta"),
+                    # Described like the query's columns (#702): a text code column is
+                    # an identifier. The file's cells were written as the strings they are.
+                    "columns": describe_json_columns(
+                        meta.get("column_meta"),
+                        spec_semantics(spec, table_key(spec, table.logical_name)),
+                    ),
                     "values_altered": [
                         {"column": column, "count": count, "reason": "formula_prefix"}
                         for column, count in sorted(altered.items())

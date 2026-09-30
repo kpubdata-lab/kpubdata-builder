@@ -39,7 +39,9 @@ ORIGIN_PRIORITY: tuple[Origin, ...] = (
 )
 """Highest first. A hint from an earlier origin wins over one from a later origin."""
 
-KNOWN_SEMANTIC_KINDS: frozenset[str] = frozenset({"code", "measure", "date", "period"})
+KNOWN_SEMANTIC_KINDS: frozenset[str] = frozenset(
+    {"code", "measure", "date", "period", "text", "flag"}
+)
 """Kinds this Builder emits. The contract keeps the field an open string: a client that
 meets a kind outside its own list shows the raw value instead of failing."""
 
@@ -128,10 +130,13 @@ def from_field_descriptor(descriptor: object) -> ColumnSemantics:
     """Map a Core `FieldDescriptor` onto column semantics (origin `core_spec`).
 
     `title` becomes the display label, `description` the display description and
-    `constraints.format` the display format. The format also names the kind when it is a
-    date or a period format; any other format says nothing about the kind. Core has no
-    unit field, so no unit comes from here. `type` and `nullable` are ignored: they
-    describe the source, and the storage type is decided by the data Builder holds.
+    `constraints.format` the display format. The kind is Core's `semantic_kind` when it
+    declares one (kpubdata ADR 0006: `code`, `measure`, `date`, `period`, `text`, `flag`),
+    carried verbatim even when this Builder does not know it — the vocabulary is open.
+    Without a declared kind, a date or a period format names the kind; any other format
+    says nothing about it. Core has no unit field, so no unit comes from here. `type`
+    and `nullable` are ignored: they describe the source, and the storage type is
+    decided by the data Builder holds.
 
     Read by attribute so that this module does not depend on one kpubdata release.
     """
@@ -146,7 +151,10 @@ def from_field_descriptor(descriptor: object) -> ColumnSemantics:
         else None
     )
     semantic: SemanticHint | None = None
-    if fmt is not None:
+    declared = _text(getattr(descriptor, "semantic_kind", None))
+    if declared is not None:
+        semantic = SemanticHint(kind=declared.strip().lower(), origin="core_spec")
+    elif fmt is not None:
         key = fmt.strip().lower()
         if key in _DATE_FORMATS:
             semantic = SemanticHint(kind="date", origin="core_spec")

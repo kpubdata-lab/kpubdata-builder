@@ -73,6 +73,25 @@ user_annotation > core_spec > catalog > engine_inferred
 - 모르는 `wire_encoding` 은 숫자로 추측하지 않는다. 원문 텍스트로 보여 준다.
 - 응답에는 선택 필드가 추가될 수 있다(#814). 이 세 필드가 그 예다.
 
+## 개정 (2026-09-30, #702, 계약 1.61.0)
+
+소유자 결정에 따라 식별자 판정을 연결한다. kpubdata 0.8 의 `FieldDescriptor.semantic_kind`
+(kpubdata ADR 0006)를 `semantic.kind`(`origin: core_spec`)로 옮기고 — 모르는 종류도 원문 그대로
+— `semantic.kind` 가 `code` 이고 Builder 가 **텍스트로 저장한** 컬럼은 `logical_type: identifier`
+로 보고한다(`wire.mark_identifiers`).
+
+- 4 절의 예외는 이것 하나다. 저장 타입(`dtype`, 프로파일의 `storage_type`)·`wire_encoding`
+  (`string`)·값은 그대로다. 텍스트가 아닌 컬럼(사용자가 정수로 캐스팅한 코드 등)은 저장 타입의
+  `logical_type` 을 유지한다.
+- 기각한 대안(`logical_type: "code"`)의 문제 — 저장 타입을 알 수 없게 됨 — 는 생기지 않는다.
+  `identifier` 는 언제나 텍스트 저장이기 때문이다.
+- 선언은 run 의 BuildSpec 스냅숏이 가리키는 kpubdata 명세에서 읽는다(`service/column_semantics.py`).
+  `schema.rename` 은 따라가고, `coalesce` 로 합쳐진 후보와 두 소스가 다르게 설명한 컬럼은
+  설명하지 않는다. 값으로 추정하지 않는다. 사용자 주석 저장소는 아직 없으므로 이 층은 `core_spec`
+  하나다.
+- 이 개정으로 `/query`·`/warehouse/*`·`/preview` 의 컬럼 메타에 `semantic`·`display` 가 실리기
+  시작한다. Silver stage 상세(`SilverColumnInfo`)에는 아직 싣지 않는다.
+
 ## 이번 범위와 남은 일
 
 이번 변경(계약 1.41.0)은 계약·매핑·우선순위·보존 테스트까지다. **현재 Builder 는 이 힌트를

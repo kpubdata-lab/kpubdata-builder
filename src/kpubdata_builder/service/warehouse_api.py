@@ -45,11 +45,17 @@ from kpubdata_builder.query.rows import check_plan, parse_rows_plan
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
 from kpubdata_builder.service.auth import Principal
-from kpubdata_builder.service.datasets import read_snapshot_dataset_id
+from kpubdata_builder.service.column_semantics import (
+    describe_columns,
+    spec_semantics,
+    table_key,
+)
+from kpubdata_builder.service.datasets import read_snapshot_dataset_id, read_snapshot_spec
 from kpubdata_builder.service.query_service_api import execute_query
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages._path_safety import ensure_within
+from kpubdata_builder.tabular.semantics import ColumnSemantics
 from kpubdata_builder.warehouse import (
     PinnedSnapshot,
     SnapshotLayout,
@@ -145,6 +151,23 @@ class WarehouseApiService:
         self._table_catalog = table_catalog
         self._engine = engine
         self._output_root = output_root
+
+    def _semantics(
+        self, catalog: TableCatalog, table: TableRow, snapshot_id: str
+    ) -> dict[str, ColumnSemantics]:
+        """What the snapshot's run declares about the table's columns (#702), or nothing.
+
+        Read from the BuildSpec of the run that committed the snapshot, so a refresh
+        under a changed spec describes its own columns.
+        """
+        if self._output_root is None:
+            return {}
+        try:
+            run_id = catalog.get_snapshot(snapshot_id).run_id
+        except SnapshotNotFound:
+            return {}
+        spec = read_snapshot_spec(self._output_root, run_id)
+        return spec_semantics(spec, table_key(spec, table.logical_name))
 
     @staticmethod
     def _find(catalog: TableCatalog, name: str, principal: Principal) -> TableRow | None:
@@ -268,6 +291,7 @@ class WarehouseApiService:
                     400, {"error": "read failed", "code": "query_execution_failed"}
                 )
             row_count = catalog.get_snapshot(pin.snapshot_id).row_count
+            semantics = self._semantics(catalog, table, pin.snapshot_id)
         finally:
             catalog.release(pin.lease_id)
 
@@ -285,7 +309,7 @@ class WarehouseApiService:
                 "revision": pin.revision,
             },
             "columns": list(result.columns),
-            "column_meta": list(result.column_meta),
+            "column_meta": cast(list[JsonValue], describe_columns(result.column_meta, semantics)),
             "rows": list(result.rows),
             # The requested keys. Ties are always broken by the row's position in the
             # snapshot, which is not a column and is not sent.
@@ -372,6 +396,7 @@ class WarehouseApiService:
                 return ServiceResponse(
                     400, {"error": "aggregate failed", "code": "query_execution_failed"}
                 )
+            semantics = self._semantics(catalog, table, pin.snapshot_id)
         finally:
             catalog.release(pin.lease_id)
 
@@ -397,7 +422,9 @@ class WarehouseApiService:
             {
                 "snapshot": snapshot_body,
                 "columns": list(result.columns),
-                "column_meta": list(result.column_meta),
+                "column_meta": cast(
+                    list[JsonValue], describe_columns(result.column_meta, semantics)
+                ),
                 "rows": list(result.rows),
                 "group_by": list(plan.group_by),
                 "measures": [_measure_body(m, plan) for m in plan.measures],
@@ -455,7 +482,13 @@ class WarehouseApiService:
             table_path = _readable_table(catalog, table, pin.snapshot_id)
             if table_path is None:
                 return _no_table_file()
-            response = execute_query(self._engine, table_path, sql, limit=limit)
+            response = execute_query(
+                self._engine,
+                table_path,
+                sql,
+                limit=limit,
+                semantics=self._semantics(catalog, table, pin.snapshot_id),
+            )
             if response.status_code != 200:
                 return response
             if while_pinned is not None:

@@ -37,6 +37,10 @@ KPubData Builder(패키지 `kpubdata-builder`) HTTP wire 계약의 단일 소스
 - **필수 필드의 이름과 타입은 다음 major 전까지 바뀌지 않습니다.** 필수 필드가 없거나 타입이
   다르면 클라이언트는 여전히 거부합니다. 관대함은 모르는 필드에만 적용됩니다.
 - 모르는 enum 값(예: 새 `wire_encoding`)은 원문으로 다루고, 숫자로 추측하지 않습니다.
+- `logical_type: identifier`(1.61.0, #702)는 kpubdata 명세가 `semantic_kind: code` 로 선언한
+  텍스트 컬럼입니다(법정동코드, PNU, 우편번호). `wire_encoding` 은 항상 `string` 이고, 클라이언트는
+  이 값을 자동으로 `Number()` 로 바꾸지 않습니다 — 앞자리 0 이 사라지고 JOIN 이 어긋납니다.
+  어떤 컬럼이 identifier 인지는 kpubdata 선언에서 오며, Builder 는 값을 보고 추정하지 않습니다.
 
 이 규칙은 기계가 검사할 수 있게 fixture 로 내놓습니다. `contract/fixtures/responses.json` 은
 계약의 모든 2xx named response example 마다 세 가지 본문을 담습니다.
