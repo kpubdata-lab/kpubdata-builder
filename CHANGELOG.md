@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Builder requires kpubdata 0.8** (`kpubdata>=0.8.0,<0.9`, was `>=0.7.0,<0.8`). kpubdata 0.8.0 keeps leading zeros in code columns and returns them as `str` (kpubdata#613, breaking), and adds the licence terms and column-metadata fields #702, #688 and #689 wait on. The release-matrix CI job now tests 0.8.0.
+
 ### Tests
 
 - A parity baseline pins what the current Polars engine produces, so each step of the DuckDB migration (ADR 0021) can be checked against it (#865). Twenty scenarios run the real build and warehouse paths on fixed inputs with no network or key: three `specs/` BuildSpecs on recorded provider rows (one with a seeded split, one through a file upload), a two-source composition, the bundled replay fixture, the risk cases R1–R15, and the five query workers. Each result is reduced to an engine-neutral form — names, dtypes, nullability, typed values, never Parquet bytes, ids, times or paths — and committed under `tests/golden/duckdb_parity/`. `scripts/generate_duckdb_parity_baseline.py` is the only writer and refuses a scenario whose two runs differ; `tests/parity/` only compares. No production code changes and nothing needs DuckDB.

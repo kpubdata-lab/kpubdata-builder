@@ -3,7 +3,7 @@
 
 `docs/compatibility.md` in kpubdata pairs each application version with a kpubdata
 version (ADR 0004, section 1). That column has to be a fact, not an intention:
-`pyproject.toml` says `kpubdata>=0.7.0,<0.8`, a range, while the release gates ran
+`pyproject.toml` says `kpubdata>=0.8.0,<0.9`, a range, while the release gates ran
 against the one version `uv.lock` pinned. This prints that version and the Builder API
 contract version, so the release notes carry both and the table is copied from them.
 

@@ -27,12 +27,12 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  # Builder depends on the kpubdata Client API (Client.dataset(...).list, etc.).
-  # kpubdata 0.7.0 dropped hospital_info/apt_trade/village_fcst from the datago
-  # catalogue (breaking); they now resolve through the spec executor, and the full
-  # suite passed against kpubdata main with that change (2352 passed, 2026-09-28,
-  # #746). Pin to the 0.7 line; compat policy: #213.
-  "kpubdata>=0.7.0,<0.8",
+  # Builder depends on the kpubdata public API only (ADR 0007 in kpubdata,
+  # scripts/check_kpubdata_imports.py). 0.8.0 is breaking: code columns keep their
+  # leading zeros and come back as str (kpubdata#613), and it adds the licence and
+  # column-metadata fields #702, #688 and #689 wait on. Pin to the 0.8 line; compat
+  # policy: #213.
+  "kpubdata>=0.8.0,<0.9",
   "cryptography>=50,<51",
   "polars>=1.0,<2",
   "pyyaml>=6.0,<7",
