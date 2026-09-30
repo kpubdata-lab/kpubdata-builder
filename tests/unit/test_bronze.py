@@ -75,9 +75,9 @@ def test_bronze_models_preserve_record_count_and_timezone() -> None:
         fetch_params={"page": 1},
         fetched_at=fetched_at,
     )
-    artifact = BronzeArtifact(
+    artifact = BronzeArtifact.from_records(
         source_key="datago.apt_trade",
-        raw_records=({"id": "1"}, {"id": "2"}),
+        records=({"id": "1"}, {"id": "2"}),
         fetch_params={"page": 1},
         fetched_at=fetched_at,
         provenance=provenance,
@@ -96,7 +96,7 @@ def test_bronze_models_reject_naive_fetched_at() -> None:
         ProvenanceEvent(source_key="datago.apt_trade", fetched_at=naive)
 
     with pytest.raises(ValueError, match="timezone-aware"):
-        BronzeArtifact(source_key="datago.apt_trade", raw_records=(), fetched_at=naive)
+        BronzeArtifact.from_records(source_key="datago.apt_trade", records=(), fetched_at=naive)
 
 
 def test_build_bronze_artifact_fetches_raw_records_without_transforming() -> None:
@@ -121,8 +121,8 @@ def test_build_bronze_artifact_fetches_raw_records_without_transforming() -> Non
     assert artifact.source_key == "datago.apt_trade"
     assert artifact.fetch_params == {"lawd_cd": "11680", "deal_ymd": "202501"}
     assert artifact.fetched_at == fetched_at
-    assert artifact.raw_records == tuple(records)
-    assert artifact.raw_records[0] is records[0]
+    assert tuple(artifact.iter_records()) == tuple(records)
+    assert list(artifact.iter_records())[0]["nested"] == {"b": 2, "a": 1}
     assert artifact.record_count == 2
     assert artifact.provenance == ProvenanceEvent(
         source_key="datago.apt_trade",
@@ -145,16 +145,16 @@ def test_build_bronze_artifact_uses_list_all_when_available() -> None:
 
     assert dataset.list_calls == 0
     assert dataset.list_all_params == {"page_size": 1}
-    assert artifact.raw_records == ({"id": "1"}, {"id": "2"})
+    assert tuple(artifact.iter_records()) == ({"id": "1"}, {"id": "2"})
     assert artifact.record_count == 2
 
 
 def test_persist_bronze_artifact_writes_jsonl_and_metadata(tmp_path: Path) -> None:
     # Verify persist writes JSONL body and metadata summary to same directory.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
-    artifact = BronzeArtifact(
+    artifact = BronzeArtifact.from_records(
         source_key="datago.apt_trade",
-        raw_records=(
+        records=(
             {"id": "1", "name": "강남구", "nested": {"b": 2, "a": 1}},
             {"id": "2", "name": "서초구", "amount": None},
         ),
@@ -180,7 +180,7 @@ def test_persist_bronze_artifact_writes_jsonl_and_metadata(tmp_path: Path) -> No
     ]
     metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
 
-    assert jsonl_records == list(artifact.raw_records)
+    assert jsonl_records == list(tuple(artifact.iter_records()))
     assert metadata["source_key"] == "datago.apt_trade"
     assert metadata["fetch_params"] == {"lawd_cd": "11680"}
     assert metadata["fetched_at"] == "2026-05-08T12:00:00+00:00"
@@ -200,15 +200,15 @@ def test_persist_bronze_artifact_writes_jsonl_and_metadata(tmp_path: Path) -> No
 def test_persist_bronze_artifact_separates_different_params(tmp_path: Path) -> None:
     # Check different fetch_params use different artifact path even with same source_key.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
-    artifact_a = BronzeArtifact(
+    artifact_a = BronzeArtifact.from_records(
         source_key="datago.apt_trade",
-        raw_records=({"id": "1"},),
+        records=({"id": "1"},),
         fetch_params={"lawd_cd": "11680"},
         fetched_at=fetched_at,
     )
-    artifact_b = BronzeArtifact(
+    artifact_b = BronzeArtifact.from_records(
         source_key="datago.apt_trade",
-        raw_records=({"id": "2"},),
+        records=({"id": "2"},),
         fetch_params={"lawd_cd": "11650"},
         fetched_at=fetched_at,
     )
@@ -224,9 +224,9 @@ def test_persist_bronze_artifact_separates_different_params(tmp_path: Path) -> N
 def test_persist_bronze_artifact_rejects_unsafe_run_id(tmp_path: Path) -> None:
     # Verify run_id with path escape risk is blocked in advance.
     fetched_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
-    artifact = BronzeArtifact(
+    artifact = BronzeArtifact.from_records(
         source_key="datago.apt_trade",
-        raw_records=(),
+        records=(),
         fetched_at=fetched_at,
     )
 

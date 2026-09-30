@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import shutil
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
 from ...spec import JsonValue
+from .writer import BronzeWriter, new_staging_dir, read_records
 
 
 def utc_now() -> datetime:
@@ -70,10 +74,19 @@ class CallTotal:
 
 @dataclass(frozen=True)
 class BronzeArtifact:
-    """raw source records collected by Bronze stage."""
+    """A source's raw records, on disk, and where they came from (#622).
+
+    The records are not held in memory. ``records_path`` is the working copy
+    (``writer.WORKING_NAME``: records as the source gave them, keys in source order,
+    types kept), which Silver reads and from which persisting writes the sorted-key
+    Bronze file. It lives in ``staging_dir`` until the source is done with it;
+    :meth:`discard` removes it.
+    """
 
     source_key: str
-    raw_records: tuple[dict[str, JsonValue], ...]
+    records_path: Path
+    record_count: int
+    staging_dir: Path
     fetch_params: dict[str, JsonValue] = field(default_factory=dict)
     fetched_at: datetime = field(default_factory=utc_now)
     provenance: ProvenanceEvent | None = None
@@ -89,11 +102,53 @@ class BronzeArtifact:
         """enforces fetched_at timezone validity immediately after creation."""
         require_timezone_aware(self.fetched_at, field_name="fetched_at")
 
-    @property
-    def record_count(self) -> int:
-        """returns count of preserved raw records.
+    @classmethod
+    def from_records(
+        cls,
+        source_key: str,
+        records: Iterable[Mapping[str, JsonValue]],
+        *,
+        staging_dir: Path | None = None,
+        fetch_params: dict[str, JsonValue] | None = None,
+        fetched_at: datetime | None = None,
+        provenance: ProvenanceEvent | None = None,
+        call_totals: tuple[CallTotal, ...] = (),
+        resumed_combinations: int = 0,
+    ) -> BronzeArtifact:
+        """Stage ``records`` and return the artifact for them — for records already in
+        hand (tests, library callers). A fetch writes through ``BronzeWriter`` instead."""
+        with BronzeWriter(staging_dir or new_staging_dir()) as writer:
+            writer.write_batch(records)
+            records_path, record_count = writer.commit()
+        return cls(
+            source_key=source_key,
+            records_path=records_path,
+            record_count=record_count,
+            staging_dir=writer.staging_dir,
+            fetch_params=dict(fetch_params or {}),
+            fetched_at=fetched_at or utc_now(),
+            provenance=provenance,
+            call_totals=call_totals,
+            resumed_combinations=resumed_combinations,
+        )
 
-        Returns:
-            int: length of raw_records.
-        """
-        return len(self.raw_records)
+    def iter_records(self) -> Iterator[dict[str, JsonValue]]:
+        """The records in order, one at a time, keys as the source gave them."""
+        return read_records(self.records_path)
+
+    def records_at(self, indices: Sequence[int]) -> tuple[dict[str, JsonValue], ...]:
+        """The records at ``indices``, in the order asked for, read in one pass."""
+        wanted = set(indices)
+        found: dict[int, dict[str, JsonValue]] = {}
+        if wanted:
+            last = max(wanted)
+            for index, record in enumerate(self.iter_records()):
+                if index in wanted:
+                    found[index] = record
+                if index >= last:
+                    break
+        return tuple(found[i] for i in indices if i in found)
+
+    def discard(self) -> None:
+        """Remove the staging directory — once persisting and every reader are done."""
+        shutil.rmtree(self.staging_dir, ignore_errors=True)

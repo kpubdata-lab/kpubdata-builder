@@ -22,9 +22,9 @@ from kpubdata_builder.stages.silver import SilverDataset, build_silver_dataset
 
 
 def _silver(records: tuple[Mapping[str, JsonValue], ...]) -> SilverDataset:
-    bronze = BronzeArtifact(
+    bronze = BronzeArtifact.from_records(
         source_key="datago.apt_trade",
-        raw_records=tuple(dict(record) for record in records),
+        records=tuple(dict(record) for record in records),
         fetched_at=utc_now(),
     )
     return build_silver_dataset(bronze)

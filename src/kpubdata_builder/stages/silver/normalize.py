@@ -49,7 +49,9 @@ def normalize_table(
     # rejects heterogeneous type columns(#187), if public API gives missing as "", same column has
     # number 84.5 and string "" mixed, build stops before declaration takes effect — declared
     # notation must first be collected as null for that declaration to take effect (#613).
-    records = _apply_null_tokens(bronze.raw_records, null_tokens, column_null_tokens or {})
+    # Silver still builds one Polars table, so it reads every Bronze record here; the
+    # DuckDB Silver (#869) reads the file instead. Bronze itself no longer holds them (#622).
+    records = _apply_null_tokens(list(bronze.iter_records()), null_tokens, column_null_tokens or {})
     table = records_to_dataframe(records, read_as=read_as)
     if coalesce:
         for target, candidates in _coalesce_order(coalesce):
