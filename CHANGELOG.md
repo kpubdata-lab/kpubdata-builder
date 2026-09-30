@@ -4,6 +4,10 @@
 
 ### Documentation
 
+- ADR 0021 records the owner's 2026-09-30 plan to make DuckDB the single tabular engine (#864): big-bang cutover, staged implementation, with decisions D1–D9 (legacy publish keeps Polars temporarily, DuckDB as a core dependency with a verified minimum version, a Builder-owned dtype vocabulary, a replayable exporter data source, versioned checksums, saved-analysis dialects, `hash-sort-v2` splits, an explicit row ordinal, layered resource limits), the rejected alternatives, and its relation to ADR 0018, #622, #701 and #704 — replacing their "engine choice must follow a measured limit" sentences, with #622's 1,444 MiB failure as the measurement.
+
+### Documentation
+
 - ADR 0020 records the owner's 2026-09-30 decision D1 on credential lifetime by deployment and answers the nine items of #682: single-user deployments keep ADR 0012's stored and environment credentials; multi-user deployments keep keys only for a request or job, with no storage, no environment or operator fallback, no shared credentials, scheduled builds single-user only, restarts failing interrupted jobs as `credentials_required`, and a path for deleting keys stored before the switch. ADR 0012 is not superseded. Items derived from D1 rather than stated in it are marked for the owner to confirm; the publish-token half is noted as not yet implemented.
 
 ### Security
