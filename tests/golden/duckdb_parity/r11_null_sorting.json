@@ -1,0 +1,158 @@
+{
+ "SELECT v FROM dataset ORDER BY v": {
+  "body": {
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "int64",
+      "name": "v",
+      "wire_encoding": "number"
+     }
+    ],
+    "columns": [
+     "v"
+    ],
+    "rows": [
+     {
+      "v": 1
+     },
+     {
+      "v": 2
+     },
+     {
+      "v": null
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ },
+ "SELECT v FROM dataset ORDER BY v DESC": {
+  "body": {
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "int64",
+      "name": "v",
+      "wire_encoding": "number"
+     }
+    ],
+    "columns": [
+     "v"
+    ],
+    "rows": [
+     {
+      "v": null
+     },
+     {
+      "v": 2
+     },
+     {
+      "v": 1
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ },
+ "rows:asc": {
+  "body": {
+   "column_meta": [
+    {
+     "logical_type": "int64",
+     "name": "v",
+     "wire_encoding": "number"
+    }
+   ],
+   "columns": [
+    "v"
+   ],
+   "count": {
+    "status": "exact",
+    "value": 3
+   },
+   "order": [
+    {
+     "column": "v",
+     "direction": "asc"
+    }
+   ],
+   "page": {
+    "has_more": false,
+    "next_offset": null,
+    "offset": 0,
+    "page_size": 100,
+    "returned": 3
+   },
+   "rows": [
+    {
+     "v": 1
+    },
+    {
+     "v": 2
+    },
+    {
+     "v": null
+    }
+   ],
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ },
+ "rows:desc": {
+  "body": {
+   "column_meta": [
+    {
+     "logical_type": "int64",
+     "name": "v",
+     "wire_encoding": "number"
+    }
+   ],
+   "columns": [
+    "v"
+   ],
+   "count": {
+    "status": "exact",
+    "value": 3
+   },
+   "order": [
+    {
+     "column": "v",
+     "direction": "desc"
+    }
+   ],
+   "page": {
+    "has_more": false,
+    "next_offset": null,
+    "offset": 0,
+    "page_size": 100,
+    "returned": 3
+   },
+   "rows": [
+    {
+     "v": 2
+    },
+    {
+     "v": 1
+    },
+    {
+     "v": null
+    }
+   ],
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ }
+}

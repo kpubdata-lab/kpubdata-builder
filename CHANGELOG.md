@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Tests
+
+- A parity baseline pins what the current Polars engine produces, so each step of the DuckDB migration (ADR 0021) can be checked against it (#865). Twenty scenarios run the real build and warehouse paths on fixed inputs with no network or key: three `specs/` BuildSpecs on recorded provider rows (one with a seeded split, one through a file upload), a two-source composition, the bundled replay fixture, the risk cases R1–R15, and the five query workers. Each result is reduced to an engine-neutral form — names, dtypes, nullability, typed values, never Parquet bytes, ids, times or paths — and committed under `tests/golden/duckdb_parity/`. `scripts/generate_duckdb_parity_baseline.py` is the only writer and refuses a scenario whose two runs differ; `tests/parity/` only compares. No production code changes and nothing needs DuckDB.
+
 ### Documentation
 
 - ADR 0020 records the owner's 2026-09-30 decision D1 on credential lifetime by deployment and answers the nine items of #682: single-user deployments keep ADR 0012's stored and environment credentials; multi-user deployments keep keys only for a request or job, with no storage, no environment or operator fallback, no shared credentials, scheduled builds single-user only, restarts failing interrupted jobs as `credentials_required`, and a path for deleting keys stored before the switch. ADR 0012 is not superseded. Items derived from D1 rather than stated in it are marked for the owner to confirm; the publish-token half is noted as not yet implemented.

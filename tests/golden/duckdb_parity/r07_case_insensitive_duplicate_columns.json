@@ -1,0 +1,272 @@
+{
+ "bronze": {
+  "t": {
+   "metadata": {
+    "artifact_paths": {
+     "metadata": "metadata.json",
+     "records": "raw_records.jsonl"
+    },
+    "fetch_params": {},
+    "provenance": {
+     "fetch_params": {},
+     "operation": "fetch",
+     "source_key": "datago.air_quality"
+    },
+    "record_count": 1,
+    "source_key": "t"
+   },
+   "record_count": 1,
+   "records": [
+    {
+     "NAME": "c",
+     "Name": "a",
+     "name": "b"
+    }
+   ]
+  }
+ },
+ "gold": {
+  "t": {
+   "export_csv": [
+    [
+     "Name",
+     "name",
+     "NAME"
+    ],
+    [
+     "a",
+     "b",
+     "c"
+    ]
+   ],
+   "export_huggingface": {
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## 출처\n\n- t\n",
+    "data/train-00000-of-00001.jsonl": [
+     {
+      "NAME": "c",
+      "Name": "a",
+      "name": "b"
+     }
+    ],
+    "dataset_infos.json": {
+     "features": {
+      "NAME": "String",
+      "Name": "String",
+      "name": "String"
+     },
+     "metadata": {
+      "dataset_id": "parity.tiny",
+      "description": "d",
+      "title": "Parity"
+     },
+     "num_examples": 1,
+     "provenance": [
+      "t"
+     ]
+    }
+   },
+   "export_jsonl": [
+    {
+     "NAME": "c",
+     "Name": "a",
+     "name": "b"
+    }
+   ],
+   "export_markdown": "# Parity\n\nd\n\n- Records: 1\n\n## Schema\n\n| field | type |\n| --- | --- |\n| Name | String |\n| name | String |\n| NAME | String |\n\n## Sample Rows\n\n| Name | name | NAME |\n| --- | --- | --- |\n| a | b | c |\n\n## Provenance\n\n- t\n\n",
+   "export_parquet": {
+    "columns": [
+     "Name",
+     "name",
+     "NAME"
+    ],
+    "dtypes": [
+     "String",
+     "String",
+     "String"
+    ],
+    "nullable": [
+     false,
+     false,
+     false
+    ],
+    "rows": [
+     [
+      "a",
+      "b",
+      "c"
+     ]
+    ]
+   },
+   "table": {
+    "columns": [
+     "Name",
+     "name",
+     "NAME"
+    ],
+    "dtypes": [
+     "String",
+     "String",
+     "String"
+    ],
+    "nullable": [
+     false,
+     false,
+     false
+    ],
+    "rows": [
+     [
+      "a",
+      "b",
+      "c"
+     ]
+    ]
+   }
+  }
+ },
+ "manifest": {
+  "composition": null,
+  "errors": [],
+  "gold_selection": null,
+  "partial": false,
+  "provenance": [
+   {
+    "api_version": "unknown",
+    "coverage": {
+     "reasons": [
+      "call 0: the provider reported no total"
+     ],
+     "status": "unknown"
+    },
+    "data_checksum": "sha256:c2d0a9a97ce1e84d38b16a4714cc18e0aacfa52f5b8f45b519be17dcb6cb2194",
+    "dataset": "air_quality",
+    "fetched_row_count": 1,
+    "params": {},
+    "provider": "datago",
+    "record_count": 1,
+    "source_reported_total": {
+     "calls": [
+      {
+       "fetched_row_count": 1,
+       "index": 0,
+       "pages": 1,
+       "status": "unknown",
+       "value": null
+      }
+     ],
+     "status": "unknown",
+     "value": null
+    }
+   }
+  ],
+  "quality_results": {
+   "t": []
+  },
+  "row_counts": {
+   "t": 1
+  },
+  "schema_drift": {},
+  "schema_summaries": {
+   "t": {
+    "fields": [
+     {
+      "name": "Name",
+      "nullable": false,
+      "type": "String"
+     },
+     {
+      "name": "name",
+      "nullable": false,
+      "type": "String"
+     },
+     {
+      "name": "NAME",
+      "nullable": false,
+      "type": "String"
+     }
+    ],
+    "total_fields": 3
+   }
+  },
+  "status": "ok"
+ },
+ "silver": {
+  "t": {
+   "preview": {
+    "rows": [
+     {
+      "NAME": "c",
+      "Name": "a",
+      "name": "b"
+     }
+    ],
+    "total_rows": 1
+   },
+   "schema": {
+    "columns": [
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "Name",
+      "nullable": false,
+      "unique_count": 1,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "name",
+      "nullable": false,
+      "unique_count": 1,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "NAME",
+      "nullable": false,
+      "unique_count": 1,
+      "wire_encoding": "string"
+     }
+    ]
+   },
+   "stats": {
+    "duplicate_rate": 0.0,
+    "null_counts": {
+     "NAME": 0,
+     "Name": 0,
+     "name": 0
+    },
+    "row_count": 1
+   },
+   "table": {
+    "columns": [
+     "Name",
+     "name",
+     "NAME"
+    ],
+    "dtypes": [
+     "String",
+     "String",
+     "String"
+    ],
+    "nullable": [
+     false,
+     false,
+     false
+    ],
+    "rows": [
+     [
+      "a",
+      "b",
+      "c"
+     ]
+    ]
+   },
+   "validation": {
+    "ok": true,
+    "problems": []
+   }
+  }
+ },
+ "status_code": 200
+}

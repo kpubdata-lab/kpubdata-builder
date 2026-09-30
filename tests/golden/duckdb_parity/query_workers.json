@@ -1,0 +1,1411 @@
+{
+ "aggregate": {
+  "body": {
+   "column_meta": [
+    {
+     "logical_type": "string",
+     "name": "aptNm",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "int64",
+     "name": "n",
+     "wire_encoding": "number"
+    }
+   ],
+   "columns": [
+    "aptNm",
+    "n"
+   ],
+   "group_by": [
+    "aptNm"
+   ],
+   "input": {
+    "row_count": 12,
+    "sampled": false
+   },
+   "measures": [
+    {
+     "additive": null,
+     "as": "n",
+     "column": null,
+     "fn": "count_rows",
+     "unit_column": null
+    }
+   ],
+   "order": [
+    {
+     "direction": "asc",
+     "key": "aptNm"
+    }
+   ],
+   "result": {
+    "completeness": "full",
+    "group_count": 9,
+    "limit": 100,
+    "returned": 9
+   },
+   "rows": [
+    {
+     "aptNm": "경희궁자이(2단지)",
+     "n": 3
+    },
+    {
+     "aptNm": "경희궁자이(3단지)",
+     "n": 1
+    },
+    {
+     "aptNm": "롯데캐슬로잔",
+     "n": 1
+    },
+    {
+     "aptNm": "무악다온채",
+     "n": 1
+    },
+    {
+     "aptNm": "송림아마레스아파트",
+     "n": 1
+    },
+    {
+     "aptNm": "인왕산아이파크",
+     "n": 1
+    },
+    {
+     "aptNm": "일성빌라트",
+     "n": 1
+    },
+    {
+     "aptNm": "종로청계힐스테이트",
+     "n": 2
+    },
+    {
+     "aptNm": "현대뜨레비앙",
+     "n": 1
+    }
+   ],
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   },
+   "unit": {
+    "check": "not_checked",
+    "column": null,
+    "policy": "reject"
+   }
+  },
+  "status_code": 200
+ },
+ "export": {
+  "file": {
+   "NOTICE.md": "# KPubData Builder export\n\n- Table: `parity.tiny.t`, snapshot `snap_<id>` (revision 1, build run `r1`)\n- Rows: 12 — the complete query result\n- This file is the result of a user's query over the source data: a derived work, not the source itself. 이 파일은 사용자 질의의 결과로, 원천 자료 자체가 아닌 파생물이다.\n\n## Terms of the source / 원천 이용 조건\n\n- No licence was declared for this source. Check the provider's terms before reusing it. 이용 조건이 선언되지 않았다 — 재사용 전에 제공기관의 조건을 확인하라.\n\n## Format\n\n- Machine profile: UTF-8 without a BOM. Every value is written exactly as Builder sends it: codes keep leading zeros, decimals and large integers are exact text, dates are ISO 8601. No value was altered.\n\n`manifest.json` has the provenance, coverage and column types.\n",
+   "data.csv": [
+    [
+     "aptNm",
+     "dealAmount"
+    ],
+    [
+     "경희궁자이(2단지)",
+     "200,000"
+    ],
+    [
+     "경희궁자이(2단지)",
+     "195,000"
+    ],
+    [
+     "경희궁자이(2단지)",
+     "156,000"
+    ],
+    [
+     "경희궁자이(3단지)",
+     "200,000"
+    ],
+    [
+     "롯데캐슬로잔",
+     "135,000"
+    ],
+    [
+     "무악다온채",
+     "39,000"
+    ],
+    [
+     "송림아마레스아파트",
+     "57,400"
+    ],
+    [
+     "인왕산아이파크",
+     "101,000"
+    ],
+    [
+     "일성빌라트",
+     "70,500"
+    ],
+    [
+     "종로청계힐스테이트",
+     "101,300"
+    ],
+    [
+     "종로청계힐스테이트",
+     "80,000"
+    ],
+    [
+     "현대뜨레비앙",
+     "42,000"
+    ]
+   ],
+   "manifest.json": {
+    "manifest_version": 1,
+    "output": {
+     "bom": false,
+     "columns": [
+      {
+       "logical_type": "string",
+       "name": "aptNm",
+       "wire_encoding": "string"
+      },
+      {
+       "logical_type": "string",
+       "name": "dealAmount",
+       "wire_encoding": "string"
+      }
+     ],
+     "completeness": "full",
+     "encoding": "utf-8",
+     "file": {
+      "name": "data.csv"
+     },
+     "format": "csv",
+     "profile": "machine",
+     "row_count": 12,
+     "values_altered": []
+    },
+    "pii": {
+     "allowed_findings": [],
+     "policy": null
+    },
+    "query": {
+     "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm",
+     "user_derived": true
+    },
+    "snapshot": {
+     "coverage": {
+      "fetched_row_count": 12,
+      "reasons": [
+       "call 0: the provider reported no total"
+      ],
+      "source_reported_total": {
+       "status": "unknown",
+       "value": null
+      },
+      "status": "unknown"
+     },
+     "logical_name": "parity.tiny.t",
+     "row_count": 12
+    },
+    "source": {
+     "dataset_id": "parity.tiny",
+     "provenance": [
+      {
+       "api_version": "unknown",
+       "coverage": {
+        "reasons": [
+         "call 0: the provider reported no total"
+        ],
+        "status": "unknown"
+       },
+       "dataset": "air_quality",
+       "fetched_row_count": 12,
+       "params": {},
+       "provider": "datago",
+       "source_reported_total": {
+        "calls": [
+         {
+          "fetched_row_count": 12,
+          "index": 0,
+          "pages": 1,
+          "status": "unknown",
+          "value": null
+         }
+        ],
+        "status": "unknown",
+        "value": null
+       }
+      }
+     ],
+     "terms": {
+      "attribution": null,
+      "license": null,
+      "license_link": null,
+      "license_name": null,
+      "status": "undeclared"
+     }
+    }
+   }
+  },
+  "response": {
+   "body": {
+    "bundle": {
+     "filename": "export.zip",
+     "files": [
+      "data.csv",
+      "manifest.json",
+      "NOTICE.md"
+     ],
+     "media_type": "application/zip"
+    },
+    "download_path": "/warehouse/exports/exp_<id>/download",
+    "manifest": {
+     "manifest_version": 1,
+     "output": {
+      "bom": false,
+      "columns": [
+       {
+        "logical_type": "string",
+        "name": "aptNm",
+        "wire_encoding": "string"
+       },
+       {
+        "logical_type": "string",
+        "name": "dealAmount",
+        "wire_encoding": "string"
+       }
+      ],
+      "completeness": "full",
+      "encoding": "utf-8",
+      "file": {
+       "name": "data.csv"
+      },
+      "format": "csv",
+      "profile": "machine",
+      "row_count": 12,
+      "values_altered": []
+     },
+     "pii": {
+      "allowed_findings": [],
+      "policy": null
+     },
+     "query": {
+      "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm",
+      "user_derived": true
+     },
+     "snapshot": {
+      "coverage": {
+       "fetched_row_count": 12,
+       "reasons": [
+        "call 0: the provider reported no total"
+       ],
+       "source_reported_total": {
+        "status": "unknown",
+        "value": null
+       },
+       "status": "unknown"
+      },
+      "logical_name": "parity.tiny.t",
+      "row_count": 12
+     },
+     "source": {
+      "dataset_id": "parity.tiny",
+      "provenance": [
+       {
+        "api_version": "unknown",
+        "coverage": {
+         "reasons": [
+          "call 0: the provider reported no total"
+         ],
+         "status": "unknown"
+        },
+        "dataset": "air_quality",
+        "fetched_row_count": 12,
+        "params": {},
+        "provider": "datago",
+        "source_reported_total": {
+         "calls": [
+          {
+           "fetched_row_count": 12,
+           "index": 0,
+           "pages": 1,
+           "status": "unknown",
+           "value": null
+          }
+         ],
+         "status": "unknown",
+         "value": null
+        }
+       }
+      ],
+      "terms": {
+       "attribution": null,
+       "license": null,
+       "license_link": null,
+       "license_name": null,
+       "status": "undeclared"
+      }
+     }
+    },
+    "request": {
+     "format": "csv",
+     "max_rows": 100000,
+     "profile": "machine",
+     "snapshot": "current",
+     "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm",
+     "table": "parity.tiny.t"
+    },
+    "status": "completed"
+   },
+   "status_code": 200
+  }
+ },
+ "profile": {
+  "body": {
+   "profile": {
+    "accuracy": "exact",
+    "algorithm_version": 1,
+    "columns": [
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "aptDong",
+      "nan_count": null,
+      "null_count": 2,
+      "null_ratio": 0.16666666666666666,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "aptNm",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "aptSeq",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "bonbun",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "bubun",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "buildYear",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "buyerGbn",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "null",
+      "name": "cdealDay",
+      "nan_count": null,
+      "null_count": 12,
+      "null_ratio": 1.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "Null",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "null",
+      "name": "cdealType",
+      "nan_count": null,
+      "null_count": 12,
+      "null_ratio": 1.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "Null",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "dealAmount",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "dealDay",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "dealMonth",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "dealYear",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "dealingGbn",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "estateAgentSggNm",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "excluUseAr",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "floor",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "jibun",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "landCd",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "landLeaseholdGbn",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "rgstDate",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNm",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNmBonbun",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNmBubun",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNmCd",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNmSeq",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNmSggCd",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "roadNmbCd",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "sggCd",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "slerGbn",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "umdCd",
+      "nan_count": null,
+      "null_count": 0,
+      "null_ratio": 0.0,
+      "range": {
+       "status": "not_applicable"
+      },
+      "sensitivity": {
+       "kinds": [],
+       "status": "not_detected"
+      },
+      "status": "profiled",
+      "storage_type": "String",
+      "time_zone": null
+     },
+     {
+      "infinite_count": null,
+      "logical_type": "string",
+      "name": "umdNm",
+      "nan_count": null,
+      "null_count": null,
+      "null_ratio": null,
+      "range": null,
+      "sensitivity": {
+       "kinds": [
+        "name"
+       ],
+       "status": "suspected"
+      },
+      "status": "withheld",
+      "storage_type": "String",
+      "time_zone": null
+     }
+    ],
+    "min_range_values": 10,
+    "row_count": 12,
+    "scope": {
+     "mode": "full",
+     "sample_size": null,
+     "sampled": false
+    }
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ },
+ "rows": {
+  "body": {
+   "column_meta": [
+    {
+     "logical_type": "string",
+     "name": "aptDong",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "aptNm",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "aptSeq",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "bonbun",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "bubun",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "buildYear",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "buyerGbn",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "null",
+     "name": "cdealDay",
+     "wire_encoding": "json"
+    },
+    {
+     "logical_type": "null",
+     "name": "cdealType",
+     "wire_encoding": "json"
+    },
+    {
+     "logical_type": "string",
+     "name": "dealAmount",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "dealDay",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "dealMonth",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "dealYear",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "dealingGbn",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "estateAgentSggNm",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "excluUseAr",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "floor",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "jibun",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "landCd",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "landLeaseholdGbn",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "rgstDate",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNm",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNmBonbun",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNmBubun",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNmCd",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNmSeq",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNmSggCd",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "roadNmbCd",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "sggCd",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "slerGbn",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "umdCd",
+     "wire_encoding": "string"
+    },
+    {
+     "logical_type": "string",
+     "name": "umdNm",
+     "wire_encoding": "string"
+    }
+   ],
+   "columns": [
+    "aptDong",
+    "aptNm",
+    "aptSeq",
+    "bonbun",
+    "bubun",
+    "buildYear",
+    "buyerGbn",
+    "cdealDay",
+    "cdealType",
+    "dealAmount",
+    "dealDay",
+    "dealMonth",
+    "dealYear",
+    "dealingGbn",
+    "estateAgentSggNm",
+    "excluUseAr",
+    "floor",
+    "jibun",
+    "landCd",
+    "landLeaseholdGbn",
+    "rgstDate",
+    "roadNm",
+    "roadNmBonbun",
+    "roadNmBubun",
+    "roadNmCd",
+    "roadNmSeq",
+    "roadNmSggCd",
+    "roadNmbCd",
+    "sggCd",
+    "slerGbn",
+    "umdCd",
+    "umdNm"
+   ],
+   "count": {
+    "status": "exact",
+    "value": 12
+   },
+   "order": [
+    {
+     "column": "aptNm",
+     "direction": "asc"
+    }
+   ],
+   "page": {
+    "has_more": true,
+    "next_offset": 5,
+    "offset": 0,
+    "page_size": 5,
+    "returned": 5
+   },
+   "rows": [
+    {
+     "aptDong": "209",
+     "aptNm": "경희궁자이(2단지)",
+     "aptSeq": "11110-2445",
+     "bonbun": "0199",
+     "bubun": "0000",
+     "buildYear": "2017",
+     "buyerGbn": "개인",
+     "cdealDay": null,
+     "cdealType": null,
+     "dealAmount": "200,000",
+     "dealDay": "22",
+     "dealMonth": "1",
+     "dealYear": "2024",
+     "dealingGbn": "중개거래",
+     "estateAgentSggNm": "서울 종로구",
+     "excluUseAr": "84.614",
+     "floor": "4",
+     "jibun": "199",
+     "landCd": "1",
+     "landLeaseholdGbn": "N",
+     "rgstDate": "24.04.19",
+     "roadNm": "송월길",
+     "roadNmBonbun": "00099",
+     "roadNmBubun": "00000",
+     "roadNmCd": "4100192",
+     "roadNmSeq": "01",
+     "roadNmSggCd": "11110",
+     "roadNmbCd": null,
+     "sggCd": "11110",
+     "slerGbn": "개인",
+     "umdCd": "17900",
+     "umdNm": "홍파동"
+    },
+    {
+     "aptDong": "209",
+     "aptNm": "경희궁자이(2단지)",
+     "aptSeq": "11110-2445",
+     "bonbun": "0199",
+     "bubun": "0000",
+     "buildYear": "2017",
+     "buyerGbn": "개인",
+     "cdealDay": null,
+     "cdealType": null,
+     "dealAmount": "195,000",
+     "dealDay": "18",
+     "dealMonth": "1",
+     "dealYear": "2024",
+     "dealingGbn": "중개거래",
+     "estateAgentSggNm": "서울 종로구",
+     "excluUseAr": "84.8359",
+     "floor": "12",
+     "jibun": "199",
+     "landCd": "1",
+     "landLeaseholdGbn": "N",
+     "rgstDate": "24.04.08",
+     "roadNm": "송월길",
+     "roadNmBonbun": "00099",
+     "roadNmBubun": "00000",
+     "roadNmCd": "4100192",
+     "roadNmSeq": "01",
+     "roadNmSggCd": "11110",
+     "roadNmbCd": null,
+     "sggCd": "11110",
+     "slerGbn": "개인",
+     "umdCd": "17900",
+     "umdNm": "홍파동"
+    },
+    {
+     "aptDong": "204",
+     "aptNm": "경희궁자이(2단지)",
+     "aptSeq": "11110-2445",
+     "bonbun": "0199",
+     "bubun": "0000",
+     "buildYear": "2017",
+     "buyerGbn": "개인",
+     "cdealDay": null,
+     "cdealType": null,
+     "dealAmount": "156,000",
+     "dealDay": "24",
+     "dealMonth": "1",
+     "dealYear": "2024",
+     "dealingGbn": "중개거래",
+     "estateAgentSggNm": "서울 종로구",
+     "excluUseAr": "59.8547",
+     "floor": "9",
+     "jibun": "199",
+     "landCd": "1",
+     "landLeaseholdGbn": "N",
+     "rgstDate": "24.03.28",
+     "roadNm": "송월길",
+     "roadNmBonbun": "00099",
+     "roadNmBubun": "00000",
+     "roadNmCd": "4100192",
+     "roadNmSeq": "01",
+     "roadNmSggCd": "11110",
+     "roadNmbCd": null,
+     "sggCd": "11110",
+     "slerGbn": "개인",
+     "umdCd": "17900",
+     "umdNm": "홍파동"
+    },
+    {
+     "aptDong": "305",
+     "aptNm": "경희궁자이(3단지)",
+     "aptSeq": "11110-2446",
+     "bonbun": "0233",
+     "bubun": "0000",
+     "buildYear": "2017",
+     "buyerGbn": "개인",
+     "cdealDay": null,
+     "cdealType": null,
+     "dealAmount": "200,000",
+     "dealDay": "27",
+     "dealMonth": "1",
+     "dealYear": "2024",
+     "dealingGbn": "중개거래",
+     "estateAgentSggNm": "서울 종로구",
+     "excluUseAr": "84.8359",
+     "floor": "14",
+     "jibun": "233",
+     "landCd": "1",
+     "landLeaseholdGbn": "N",
+     "rgstDate": "24.05.14",
+     "roadNm": "경교장길",
+     "roadNmBonbun": "00035",
+     "roadNmBubun": "00000",
+     "roadNmCd": "4100002",
+     "roadNmSeq": "01",
+     "roadNmSggCd": "11110",
+     "roadNmbCd": null,
+     "sggCd": "11110",
+     "slerGbn": "개인",
+     "umdCd": "17700",
+     "umdNm": "평동"
+    },
+    {
+     "aptDong": "102",
+     "aptNm": "롯데캐슬로잔",
+     "aptSeq": "11110-2246",
+     "bonbun": "0108",
+     "bubun": "0000",
+     "buildYear": "2009",
+     "buyerGbn": "개인",
+     "cdealDay": null,
+     "cdealType": null,
+     "dealAmount": "135,000",
+     "dealDay": "22",
+     "dealMonth": "1",
+     "dealYear": "2024",
+     "dealingGbn": "직거래",
+     "estateAgentSggNm": null,
+     "excluUseAr": "191.725",
+     "floor": "1",
+     "jibun": "108",
+     "landCd": "1",
+     "landLeaseholdGbn": "N",
+     "rgstDate": "24.02.08",
+     "roadNm": "평창문화로",
+     "roadNmBonbun": "00156",
+     "roadNmBubun": "00000",
+     "roadNmCd": "3100023",
+     "roadNmSeq": "01",
+     "roadNmSggCd": "11110",
+     "roadNmbCd": "0",
+     "sggCd": "11110",
+     "slerGbn": "개인",
+     "umdCd": "18300",
+     "umdNm": "평창동"
+    }
+   ],
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ },
+ "sql": {
+  "body": {
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "string",
+      "name": "aptNm",
+      "wire_encoding": "string"
+     },
+     {
+      "logical_type": "uint32",
+      "name": "n",
+      "wire_encoding": "number"
+     }
+    ],
+    "columns": [
+     "aptNm",
+     "n"
+    ],
+    "rows": [
+     {
+      "aptNm": "경희궁자이(2단지)",
+      "n": 3
+     },
+     {
+      "aptNm": "경희궁자이(3단지)",
+      "n": 1
+     },
+     {
+      "aptNm": "롯데캐슬로잔",
+      "n": 1
+     },
+     {
+      "aptNm": "무악다온채",
+      "n": 1
+     },
+     {
+      "aptNm": "송림아마레스아파트",
+      "n": 1
+     },
+     {
+      "aptNm": "인왕산아이파크",
+      "n": 1
+     },
+     {
+      "aptNm": "일성빌라트",
+      "n": 1
+     },
+     {
+      "aptNm": "종로청계힐스테이트",
+      "n": 2
+     },
+     {
+      "aptNm": "현대뜨레비앙",
+      "n": 1
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
+  },
+  "status_code": 200
+ }
+}

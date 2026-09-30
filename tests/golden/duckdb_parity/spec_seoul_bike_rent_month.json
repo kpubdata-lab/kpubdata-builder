@@ -1,0 +1,996 @@
+{
+ "bronze": {
+  "bike": {
+   "metadata": {
+    "artifact_paths": {
+     "metadata": "metadata.json",
+     "records": "raw_records.jsonl"
+    },
+    "fetch_params": {
+     "encoding": "utf-8",
+     "format": "jsonl",
+     "upload_id": "upl_<id>"
+    },
+    "provenance": {
+     "fetch_params": {
+      "encoding": "utf-8",
+      "format": "jsonl",
+      "upload_id": "upl_<id>"
+     },
+     "operation": "fetch",
+     "source_key": "file.upl_<id>"
+    },
+    "record_count": 5,
+    "source_key": "bike"
+   },
+   "record_count": 5,
+   "records": [
+    {
+     "대여구분코드": "정기권",
+     "대여소명": "망원역 1번출구",
+     "대여소번호": "3",
+     "대여일자": "2020-01",
+     "성별": "M",
+     "연령대코드": "20대",
+     "운동량": "301.5",
+     "이동거리": "9051.2",
+     "이용건수": "12",
+     "이용시간": "41",
+     "탄소량": "2.1"
+    },
+    {
+     "대여구분코드": "일일권",
+     "대여소명": "망원역 1번출구",
+     "대여소번호": "00003",
+     "대여일자": "2020-01",
+     "성별": "",
+     "연령대코드": "30대",
+     "운동량": "\\N",
+     "이동거리": "1200",
+     "이용건수": "4",
+     "이용시간": "12",
+     "탄소량": "\\N"
+    },
+    {
+     "대여구분코드": "정기권",
+     "대여년월": "202106",
+     "대여소명": "신촌역",
+     "대여소번호": "102",
+     "성별": "F",
+     "연령대코드": "~10대",
+     "운동량": "88.25",
+     "이동거리(M)": "2500.5",
+     "이용건수": "7",
+     "이용시간(분)": "20",
+     "탄소량": "0.6"
+    },
+    {
+     "대여구분코드": "단체권",
+     "대여년월": "202106",
+     "대여소명": "신촌역",
+     "대여소번호": "102",
+     "성별": "\\N",
+     "연령대코드": "기타",
+     "운동량": "0",
+     "이동거리(M)": "0",
+     "이용건수": "1",
+     "이용시간(분)": "1",
+     "탄소량": "0"
+    },
+    {
+     "대여구분코드": "정기권",
+     "대여소명": "여의도",
+     "대여소번호": "1001",
+     "대여일자": "2023-12",
+     "성별": "f",
+     "연령대코드": "40대",
+     "운동량": "1004.75",
+     "이용거리(M)": "33000",
+     "이용건수": "25",
+     "이용시간(본)": "180",
+     "탄소량": "7.9"
+    }
+   ]
+  }
+ },
+ "gold": {
+  "bike": {
+   "export_csv": [
+    [
+     "station_code",
+     "station_name",
+     "pass_type",
+     "gender",
+     "age_band",
+     "use_count",
+     "exercise_kcal",
+     "carbon_kg",
+     "distance_m",
+     "duration_min",
+     "ym_raw"
+    ],
+    [
+     "00003",
+     "망원역 1번출구",
+     "정기권",
+     "M",
+     "20대",
+     "12",
+     "301.5",
+     "2.1",
+     "9051.2",
+     "41.0",
+     "2020-01"
+    ],
+    [
+     "00003",
+     "망원역 1번출구",
+     "일일권",
+     "",
+     "30대",
+     "4",
+     "",
+     "",
+     "1200.0",
+     "12.0",
+     "2020-01"
+    ],
+    [
+     "00102",
+     "신촌역",
+     "정기권",
+     "F",
+     "~10대",
+     "7",
+     "88.25",
+     "0.6",
+     "2500.5",
+     "20.0",
+     "2021-06"
+    ],
+    [
+     "00102",
+     "신촌역",
+     "단체권",
+     "",
+     "기타",
+     "1",
+     "0.0",
+     "0.0",
+     "0.0",
+     "1.0",
+     "2021-06"
+    ],
+    [
+     "01001",
+     "여의도",
+     "정기권",
+     "f",
+     "40대",
+     "25",
+     "1004.75",
+     "7.9",
+     "33000.0",
+     "180.0",
+     "2023-12"
+    ]
+   ],
+   "export_huggingface": {
+    "README.md": "---\nlanguage:\n- ko\nlicense: other\nlicense_link: https://www.kogl.or.kr/info/licenseType1.do\nlicense_name: kogl-type-1\npretty_name: 서울 공공자전거 월별 이용정보\n---\n\n# 서울 공공자전거 월별 이용정보\n\n서울 열린데이터광장 공공자전거 월별 이용정보. G1+G2+I1+G3 통합 스냅샷, 2020-01~2023-12.\n\n## 출처\n\n- bike\n",
+    "data/train-00000-of-00001.jsonl": [
+     {
+      "age_band": "20대",
+      "carbon_kg": 2.1,
+      "distance_m": 9051.2,
+      "duration_min": 41.0,
+      "exercise_kcal": 301.5,
+      "gender": "M",
+      "pass_type": "정기권",
+      "station_code": "00003",
+      "station_name": "망원역 1번출구",
+      "use_count": 12,
+      "ym_raw": "2020-01"
+     },
+     {
+      "age_band": "30대",
+      "carbon_kg": null,
+      "distance_m": 1200.0,
+      "duration_min": 12.0,
+      "exercise_kcal": null,
+      "gender": null,
+      "pass_type": "일일권",
+      "station_code": "00003",
+      "station_name": "망원역 1번출구",
+      "use_count": 4,
+      "ym_raw": "2020-01"
+     },
+     {
+      "age_band": "~10대",
+      "carbon_kg": 0.6,
+      "distance_m": 2500.5,
+      "duration_min": 20.0,
+      "exercise_kcal": 88.25,
+      "gender": "F",
+      "pass_type": "정기권",
+      "station_code": "00102",
+      "station_name": "신촌역",
+      "use_count": 7,
+      "ym_raw": "2021-06"
+     },
+     {
+      "age_band": "기타",
+      "carbon_kg": 0.0,
+      "distance_m": 0.0,
+      "duration_min": 1.0,
+      "exercise_kcal": 0.0,
+      "gender": null,
+      "pass_type": "단체권",
+      "station_code": "00102",
+      "station_name": "신촌역",
+      "use_count": 1,
+      "ym_raw": "2021-06"
+     },
+     {
+      "age_band": "40대",
+      "carbon_kg": 7.9,
+      "distance_m": 33000.0,
+      "duration_min": 180.0,
+      "exercise_kcal": 1004.75,
+      "gender": "f",
+      "pass_type": "정기권",
+      "station_code": "01001",
+      "station_name": "여의도",
+      "use_count": 25,
+      "ym_raw": "2023-12"
+     }
+    ],
+    "dataset_infos.json": {
+     "features": {
+      "age_band": "String",
+      "carbon_kg": "Float64",
+      "distance_m": "Float64",
+      "duration_min": "Float64",
+      "exercise_kcal": "Float64",
+      "gender": "String",
+      "pass_type": "String",
+      "station_code": "String",
+      "station_name": "String",
+      "use_count": "Int64",
+      "ym_raw": "String"
+     },
+     "metadata": {
+      "dataset_id": "kpubdata/seoul-bike-rent-month",
+      "description": "서울 열린데이터광장 공공자전거 월별 이용정보. G1+G2+I1+G3 통합 스냅샷, 2020-01~2023-12.",
+      "license": "other",
+      "license_link": "https://www.kogl.or.kr/info/licenseType1.do",
+      "license_name": "kogl-type-1",
+      "title": "서울 공공자전거 월별 이용정보"
+     },
+     "num_examples": 5,
+     "provenance": [
+      "bike"
+     ]
+    }
+   },
+   "export_jsonl": [
+    {
+     "age_band": "20대",
+     "carbon_kg": 2.1,
+     "distance_m": 9051.2,
+     "duration_min": 41.0,
+     "exercise_kcal": 301.5,
+     "gender": "M",
+     "pass_type": "정기권",
+     "station_code": "00003",
+     "station_name": "망원역 1번출구",
+     "use_count": 12,
+     "ym_raw": "2020-01"
+    },
+    {
+     "age_band": "30대",
+     "carbon_kg": null,
+     "distance_m": 1200.0,
+     "duration_min": 12.0,
+     "exercise_kcal": null,
+     "gender": null,
+     "pass_type": "일일권",
+     "station_code": "00003",
+     "station_name": "망원역 1번출구",
+     "use_count": 4,
+     "ym_raw": "2020-01"
+    },
+    {
+     "age_band": "~10대",
+     "carbon_kg": 0.6,
+     "distance_m": 2500.5,
+     "duration_min": 20.0,
+     "exercise_kcal": 88.25,
+     "gender": "F",
+     "pass_type": "정기권",
+     "station_code": "00102",
+     "station_name": "신촌역",
+     "use_count": 7,
+     "ym_raw": "2021-06"
+    },
+    {
+     "age_band": "기타",
+     "carbon_kg": 0.0,
+     "distance_m": 0.0,
+     "duration_min": 1.0,
+     "exercise_kcal": 0.0,
+     "gender": null,
+     "pass_type": "단체권",
+     "station_code": "00102",
+     "station_name": "신촌역",
+     "use_count": 1,
+     "ym_raw": "2021-06"
+    },
+    {
+     "age_band": "40대",
+     "carbon_kg": 7.9,
+     "distance_m": 33000.0,
+     "duration_min": 180.0,
+     "exercise_kcal": 1004.75,
+     "gender": "f",
+     "pass_type": "정기권",
+     "station_code": "01001",
+     "station_name": "여의도",
+     "use_count": 25,
+     "ym_raw": "2023-12"
+    }
+   ],
+   "export_markdown": "# 서울 공공자전거 월별 이용정보\n\n서울 열린데이터광장 공공자전거 월별 이용정보. G1+G2+I1+G3 통합 스냅샷, 2020-01~2023-12.\n\n- Records: 5\n\n## Schema\n\n| field | type |\n| --- | --- |\n| station_code | String |\n| station_name | String |\n| pass_type | String |\n| gender | String |\n| age_band | String |\n| use_count | Int64 |\n| exercise_kcal | Float64 |\n| carbon_kg | Float64 |\n| distance_m | Float64 |\n| duration_min | Float64 |\n| ym_raw | String |\n\n## Sample Rows\n\n| station_code | station_name | pass_type | gender | age_band | use_count | exercise_kcal | carbon_kg | distance_m | duration_min | ym_raw |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 00003 | 망원역 1번출구 | 정기권 | M | 20대 | 12 | 301.5 | 2.1 | 9051.2 | 41.0 | 2020-01 |\n| 00003 | 망원역 1번출구 | 일일권 |  | 30대 | 4 |  |  | 1200.0 | 12.0 | 2020-01 |\n| 00102 | 신촌역 | 정기권 | F | ~10대 | 7 | 88.25 | 0.6 | 2500.5 | 20.0 | 2021-06 |\n| 00102 | 신촌역 | 단체권 |  | 기타 | 1 | 0.0 | 0.0 | 0.0 | 1.0 | 2021-06 |\n| 01001 | 여의도 | 정기권 | f | 40대 | 25 | 1004.75 | 7.9 | 33000.0 | 180.0 | 2023-12 |\n\n## Provenance\n\n- bike\n\n",
+   "export_parquet": {
+    "columns": [
+     "station_code",
+     "station_name",
+     "pass_type",
+     "gender",
+     "age_band",
+     "use_count",
+     "exercise_kcal",
+     "carbon_kg",
+     "distance_m",
+     "duration_min",
+     "ym_raw"
+    ],
+    "dtypes": [
+     "String",
+     "String",
+     "String",
+     "String",
+     "String",
+     "Int64",
+     "Float64",
+     "Float64",
+     "Float64",
+     "Float64",
+     "String"
+    ],
+    "nullable": [
+     false,
+     false,
+     false,
+     true,
+     false,
+     false,
+     true,
+     true,
+     false,
+     false,
+     false
+    ],
+    "rows": [
+     [
+      "00003",
+      "망원역 1번출구",
+      "정기권",
+      "M",
+      "20대",
+      12,
+      301.5,
+      2.1,
+      9051.2,
+      41.0,
+      "2020-01"
+     ],
+     [
+      "00003",
+      "망원역 1번출구",
+      "일일권",
+      null,
+      "30대",
+      4,
+      null,
+      null,
+      1200.0,
+      12.0,
+      "2020-01"
+     ],
+     [
+      "00102",
+      "신촌역",
+      "정기권",
+      "F",
+      "~10대",
+      7,
+      88.25,
+      0.6,
+      2500.5,
+      20.0,
+      "2021-06"
+     ],
+     [
+      "00102",
+      "신촌역",
+      "단체권",
+      null,
+      "기타",
+      1,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      "2021-06"
+     ],
+     [
+      "01001",
+      "여의도",
+      "정기권",
+      "f",
+      "40대",
+      25,
+      1004.75,
+      7.9,
+      33000.0,
+      180.0,
+      "2023-12"
+     ]
+    ]
+   },
+   "table": {
+    "columns": [
+     "station_code",
+     "station_name",
+     "pass_type",
+     "gender",
+     "age_band",
+     "use_count",
+     "exercise_kcal",
+     "carbon_kg",
+     "distance_m",
+     "duration_min",
+     "ym_raw"
+    ],
+    "dtypes": [
+     "String",
+     "String",
+     "String",
+     "String",
+     "String",
+     "Int64",
+     "Float64",
+     "Float64",
+     "Float64",
+     "Float64",
+     "String"
+    ],
+    "nullable": [
+     false,
+     false,
+     false,
+     true,
+     false,
+     false,
+     true,
+     true,
+     false,
+     false,
+     false
+    ],
+    "rows": [
+     [
+      "00003",
+      "망원역 1번출구",
+      "정기권",
+      "M",
+      "20대",
+      12,
+      301.5,
+      2.1,
+      9051.2,
+      41.0,
+      "2020-01"
+     ],
+     [
+      "00003",
+      "망원역 1번출구",
+      "일일권",
+      null,
+      "30대",
+      4,
+      null,
+      null,
+      1200.0,
+      12.0,
+      "2020-01"
+     ],
+     [
+      "00102",
+      "신촌역",
+      "정기권",
+      "F",
+      "~10대",
+      7,
+      88.25,
+      0.6,
+      2500.5,
+      20.0,
+      "2021-06"
+     ],
+     [
+      "00102",
+      "신촌역",
+      "단체권",
+      null,
+      "기타",
+      1,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      "2021-06"
+     ],
+     [
+      "01001",
+      "여의도",
+      "정기권",
+      "f",
+      "40대",
+      25,
+      1004.75,
+      7.9,
+      33000.0,
+      180.0,
+      "2023-12"
+     ]
+    ]
+   }
+  }
+ },
+ "manifest": {
+  "composition": null,
+  "errors": [],
+  "gold_selection": null,
+  "partial": false,
+  "provenance": [
+   {
+    "api_version": "unknown",
+    "coverage": {
+     "reasons": [
+      "the source reports no total"
+     ],
+     "status": "unknown"
+    },
+    "data_checksum": "sha256:4498ed5308ca7ddd5976ba79a0666781f4026acf8f65fecf340baf6666b239c1",
+    "dataset": "upl_<id>",
+    "fetched_row_count": 5,
+    "params": {
+     "encoding": "utf-8",
+     "format": "jsonl",
+     "upload_id": "upl_<id>"
+    },
+    "provider": "file",
+    "record_count": 5,
+    "source_reported_total": {
+     "calls": [],
+     "status": "not_reported",
+     "value": null
+    }
+   }
+  ],
+  "quality_results": {
+   "bike": [
+    {
+     "actual": true,
+     "affected_rows": null,
+     "category": "schema",
+     "column": "station_code",
+     "detail": null,
+     "evaluated_rows": null,
+     "rule": "required_column",
+     "source_key": "bike",
+     "status": "pass",
+     "threshold": true
+    },
+    {
+     "actual": true,
+     "affected_rows": null,
+     "category": "schema",
+     "column": "ym_raw",
+     "detail": null,
+     "evaluated_rows": null,
+     "rule": "required_column",
+     "source_key": "bike",
+     "status": "pass",
+     "threshold": true
+    },
+    {
+     "actual": true,
+     "affected_rows": null,
+     "category": "schema",
+     "column": "use_count",
+     "detail": null,
+     "evaluated_rows": null,
+     "rule": "required_column",
+     "source_key": "bike",
+     "status": "pass",
+     "threshold": true
+    }
+   ]
+  },
+  "row_counts": {
+   "bike": 5
+  },
+  "schema_drift": {},
+  "schema_summaries": {
+   "bike": {
+    "fields": [
+     {
+      "name": "station_code",
+      "nullable": false,
+      "type": "String"
+     },
+     {
+      "name": "station_name",
+      "nullable": false,
+      "type": "String"
+     },
+     {
+      "name": "pass_type",
+      "nullable": false,
+      "type": "String"
+     },
+     {
+      "name": "gender",
+      "nullable": true,
+      "type": "String"
+     },
+     {
+      "name": "age_band",
+      "nullable": false,
+      "type": "String"
+     },
+     {
+      "name": "use_count",
+      "nullable": false,
+      "type": "Int64"
+     },
+     {
+      "name": "exercise_kcal",
+      "nullable": true,
+      "type": "Float64"
+     },
+     {
+      "name": "carbon_kg",
+      "nullable": true,
+      "type": "Float64"
+     },
+     {
+      "name": "distance_m",
+      "nullable": false,
+      "type": "Float64"
+     },
+     {
+      "name": "duration_min",
+      "nullable": false,
+      "type": "Float64"
+     },
+     {
+      "name": "ym_raw",
+      "nullable": false,
+      "type": "String"
+     }
+    ],
+    "total_fields": 11
+   }
+  },
+  "status": "ok"
+ },
+ "silver": {
+  "bike": {
+   "preview": {
+    "rows": [
+     {
+      "age_band": "20대",
+      "carbon_kg": 2.1,
+      "distance_m": 9051.2,
+      "duration_min": 41.0,
+      "exercise_kcal": 301.5,
+      "gender": "M",
+      "pass_type": "정기권",
+      "station_code": "00003",
+      "station_name": "망원역 1번출구",
+      "use_count": 12,
+      "ym_raw": "2020-01"
+     },
+     {
+      "age_band": "30대",
+      "carbon_kg": null,
+      "distance_m": 1200.0,
+      "duration_min": 12.0,
+      "exercise_kcal": null,
+      "gender": null,
+      "pass_type": "일일권",
+      "station_code": "00003",
+      "station_name": "망원역 1번출구",
+      "use_count": 4,
+      "ym_raw": "2020-01"
+     },
+     {
+      "age_band": "~10대",
+      "carbon_kg": 0.6,
+      "distance_m": 2500.5,
+      "duration_min": 20.0,
+      "exercise_kcal": 88.25,
+      "gender": "F",
+      "pass_type": "정기권",
+      "station_code": "00102",
+      "station_name": "신촌역",
+      "use_count": 7,
+      "ym_raw": "2021-06"
+     },
+     {
+      "age_band": "기타",
+      "carbon_kg": 0.0,
+      "distance_m": 0.0,
+      "duration_min": 1.0,
+      "exercise_kcal": 0.0,
+      "gender": null,
+      "pass_type": "단체권",
+      "station_code": "00102",
+      "station_name": "신촌역",
+      "use_count": 1,
+      "ym_raw": "2021-06"
+     },
+     {
+      "age_band": "40대",
+      "carbon_kg": 7.9,
+      "distance_m": 33000.0,
+      "duration_min": 180.0,
+      "exercise_kcal": 1004.75,
+      "gender": "f",
+      "pass_type": "정기권",
+      "station_code": "01001",
+      "station_name": "여의도",
+      "use_count": 25,
+      "ym_raw": "2023-12"
+     }
+    ],
+    "total_rows": 5
+   },
+   "schema": {
+    "columns": [
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "station_code",
+      "nullable": false,
+      "unique_count": 3,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "station_name",
+      "nullable": false,
+      "unique_count": 3,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "pass_type",
+      "nullable": false,
+      "unique_count": 3,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "gender",
+      "nullable": true,
+      "unique_count": 4,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "age_band",
+      "nullable": false,
+      "unique_count": 5,
+      "wire_encoding": "string"
+     },
+     {
+      "dtype": "Int64",
+      "logical_type": "int64",
+      "name": "use_count",
+      "nullable": false,
+      "unique_count": 5,
+      "wire_encoding": "number"
+     },
+     {
+      "dtype": "Float64",
+      "logical_type": "float64",
+      "name": "exercise_kcal",
+      "nullable": true,
+      "unique_count": 5,
+      "wire_encoding": "number"
+     },
+     {
+      "dtype": "Float64",
+      "logical_type": "float64",
+      "name": "carbon_kg",
+      "nullable": true,
+      "unique_count": 5,
+      "wire_encoding": "number"
+     },
+     {
+      "dtype": "Float64",
+      "logical_type": "float64",
+      "name": "distance_m",
+      "nullable": false,
+      "unique_count": 5,
+      "wire_encoding": "number"
+     },
+     {
+      "dtype": "Float64",
+      "logical_type": "float64",
+      "name": "duration_min",
+      "nullable": false,
+      "unique_count": 5,
+      "wire_encoding": "number"
+     },
+     {
+      "dtype": "String",
+      "logical_type": "string",
+      "name": "ym_raw",
+      "nullable": false,
+      "unique_count": 3,
+      "wire_encoding": "string"
+     }
+    ]
+   },
+   "stats": {
+    "duplicate_rate": 0.0,
+    "null_counts": {
+     "age_band": 0,
+     "carbon_kg": 1,
+     "distance_m": 0,
+     "duration_min": 0,
+     "exercise_kcal": 1,
+     "gender": 2,
+     "pass_type": 0,
+     "station_code": 0,
+     "station_name": 0,
+     "use_count": 0,
+     "ym_raw": 0
+    },
+    "row_count": 5
+   },
+   "table": {
+    "columns": [
+     "station_code",
+     "station_name",
+     "pass_type",
+     "gender",
+     "age_band",
+     "use_count",
+     "exercise_kcal",
+     "carbon_kg",
+     "distance_m",
+     "duration_min",
+     "ym_raw"
+    ],
+    "dtypes": [
+     "String",
+     "String",
+     "String",
+     "String",
+     "String",
+     "Int64",
+     "Float64",
+     "Float64",
+     "Float64",
+     "Float64",
+     "String"
+    ],
+    "nullable": [
+     false,
+     false,
+     false,
+     true,
+     false,
+     false,
+     true,
+     true,
+     false,
+     false,
+     false
+    ],
+    "rows": [
+     [
+      "00003",
+      "망원역 1번출구",
+      "정기권",
+      "M",
+      "20대",
+      12,
+      301.5,
+      2.1,
+      9051.2,
+      41.0,
+      "2020-01"
+     ],
+     [
+      "00003",
+      "망원역 1번출구",
+      "일일권",
+      null,
+      "30대",
+      4,
+      null,
+      null,
+      1200.0,
+      12.0,
+      "2020-01"
+     ],
+     [
+      "00102",
+      "신촌역",
+      "정기권",
+      "F",
+      "~10대",
+      7,
+      88.25,
+      0.6,
+      2500.5,
+      20.0,
+      "2021-06"
+     ],
+     [
+      "00102",
+      "신촌역",
+      "단체권",
+      null,
+      "기타",
+      1,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      "2021-06"
+     ],
+     [
+      "01001",
+      "여의도",
+      "정기권",
+      "f",
+      "40대",
+      25,
+      1004.75,
+      7.9,
+      33000.0,
+      180.0,
+      "2023-12"
+     ]
+    ]
+   },
+   "validation": {
+    "ok": true,
+    "problems": []
+   }
+  }
+ },
+ "status_code": 200
+}

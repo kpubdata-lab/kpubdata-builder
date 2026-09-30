@@ -1,0 +1,29 @@
+{
+ "SELECT \"Name\" FROM dataset": {
+  "canonical_sql": "SELECT \"Name\" FROM dataset"
+ },
+ "SELECT * FROM dataset LIMIT 1 OFFSET 1": {
+  "canonical_sql": "SELECT * FROM dataset LIMIT 1 OFFSET 1"
+ },
+ "SELECT * FROM dataset QUALIFY ROW_NUMBER() OVER () = 1": {
+  "canonical_sql": "SELECT * FROM dataset QUALIFY ROW_NUMBER() OVER () = 1"
+ },
+ "SELECT * FROM dataset WHERE v ILIKE 'a%'": {
+  "canonical_sql": "SELECT * FROM dataset WHERE v ILIKE 'a%'"
+ },
+ "SELECT CAST(v AS INT) FROM dataset": {
+  "canonical_sql": "SELECT CAST(v AS INT) FROM dataset"
+ },
+ "SELECT DATE '2024-01-01' FROM dataset": {
+  "canonical_sql": "SELECT CAST('2024-01-01' AS DATE) FROM dataset"
+ },
+ "SELECT a || b FROM dataset": {
+  "canonical_sql": "SELECT a || b FROM dataset"
+ },
+ "SELECT v FROM dataset WHERE v IS DISTINCT FROM 1": {
+  "canonical_sql": "SELECT v FROM dataset WHERE v IS DISTINCT FROM 1"
+ },
+ "SELECT v::INT FROM dataset": {
+  "canonical_sql": "SELECT CAST(v AS INT) FROM dataset"
+ }
+}

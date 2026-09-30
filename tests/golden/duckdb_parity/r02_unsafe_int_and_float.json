@@ -1,0 +1,76 @@
+{
+ "bronze": {
+  "t": {
+   "metadata": {
+    "artifact_paths": {
+     "metadata": "metadata.json",
+     "records": "raw_records.jsonl"
+    },
+    "fetch_params": {},
+    "provenance": {
+     "fetch_params": {},
+     "operation": "fetch",
+     "source_key": "datago.air_quality"
+    },
+    "record_count": 3,
+    "source_key": "t"
+   },
+   "record_count": 3,
+   "records": [
+    {
+     "v": 9007199254740993
+    },
+    {
+     "v": 1.5
+    },
+    {
+     "v": -9007199254740993
+    }
+   ]
+  }
+ },
+ "manifest": {
+  "composition": null,
+  "errors": [
+   "t: pipeline failed for source 't'"
+  ],
+  "gold_selection": null,
+  "partial": false,
+  "provenance": [
+   {
+    "api_version": "unknown",
+    "coverage": {
+     "reasons": [
+      "call 0: the provider reported no total"
+     ],
+     "status": "unknown"
+    },
+    "data_checksum": "sha256:2829268ce9a36e2331d6556f7fa5245b6b2b838de1ce99ebbdbcf3581258749f",
+    "dataset": "air_quality",
+    "fetched_row_count": 3,
+    "params": {},
+    "provider": "datago",
+    "record_count": 3,
+    "source_reported_total": {
+     "calls": [
+      {
+       "fetched_row_count": 3,
+       "index": 0,
+       "pages": 1,
+       "status": "unknown",
+       "value": null
+      }
+     ],
+     "status": "unknown",
+     "value": null
+    }
+   }
+  ],
+  "quality_results": {},
+  "row_counts": {},
+  "schema_drift": {},
+  "schema_summaries": {},
+  "status": "failed"
+ },
+ "status_code": 502
+}
