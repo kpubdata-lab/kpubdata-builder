@@ -25,14 +25,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIGS = REPO_ROOT / "scripts" / "configs"
 
 #: Configs allowed to keep a licence that has not been checked, and why.
-UNCONFIRMED: dict[str, str] = {
-    "korea_base_rate.yaml": (
-        "ECOS loads its terms with JavaScript and they have not been read (#677); "
-        "kept as it was until they are"
-    ),
-}
+UNCONFIRMED: dict[str, str] = {}
 
-ALLOWED_NAMES = frozenset({"korea-public-data-unrestricted", "kogl-type-1", "kogl-type-3"})
+ALLOWED_NAMES = frozenset(
+    {"korea-public-data-unrestricted", "kogl-type-1", "kogl-type-3", "bok-ecos-attribution"}
+)
 
 
 def problems_for(path: Path) -> list[str]:

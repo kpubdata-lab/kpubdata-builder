@@ -273,6 +273,25 @@ def test_the_licence_check_refuses_cc_by(tmp_path: Path) -> None:
     assert licence_check.main([str(config)]) == 1
 
 
-def test_the_only_unconfirmed_licence_is_recorded_with_a_reason() -> None:
-    assert set(licence_check.UNCONFIRMED) == {"korea_base_rate.yaml"}
-    assert all(reason.strip() for reason in licence_check.UNCONFIRMED.values())
+def test_no_config_publishes_under_unconfirmed_terms() -> None:
+    """#677: the last exception, korea_base_rate, now records the Bank of Korea's terms."""
+    assert licence_check.UNCONFIRMED == {}
+
+
+def test_every_published_config_states_its_attribution() -> None:
+    """#677: KOGL and the Bank of Korea both oblige attribution; a licence id alone is not it."""
+    import yaml
+
+    configs = sorted(p for p in _CONFIGS.rglob("*.yaml") if "templates" not in p.parts)
+    missing = [
+        p.name
+        for p in configs
+        if ((yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("card") or {}).get("license")
+        and not str(
+            ((yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("card") or {}).get(
+                "attribution"
+            )
+            or ""
+        ).strip()
+    ]
+    assert missing == []
