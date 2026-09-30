@@ -27,6 +27,10 @@ Verdict = Literal["allowed", "non_commercial", "forbidden", "unknown"]
 _TERMS: dict[str, tuple[Verdict, str]] = {
     "korea-public-data-unrestricted": ("allowed", "public data without restrictions"),
     "kogl-type-1": ("allowed", "KOGL type 1: attribution"),
+    "bok-ecos-attribution": (
+        "allowed",
+        "Bank of Korea statistics: attribution, and changes stated (#677)",
+    ),
     "kogl-type-2": ("non_commercial", "KOGL type 2: attribution, no commercial use"),
     "kogl-type-3": (
         "forbidden",

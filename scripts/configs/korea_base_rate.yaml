@@ -40,7 +40,20 @@ card:
 
     Monthly time series suitable for economic analysis and
     forecasting tasks.
-  license: "cc-by-4.0"
+  # Bank of Korea terms (#677): its copyright policy requires naming the Bank of Korea as
+  # the source and saying so when the data is modified; ECOS's statistics guideline lets
+  # statistics the Bank compiles be used, processed and redistributed, commercially
+  # included, as long as the source is stated. Not a KOGL licence.
+  license: other
+  license_name: bok-ecos-attribution
+  license_link: "https://www.bok.or.kr/portal/main/contents.do?menuNo=200228"
+  attribution: |
+    데이터 출처: 한국은행 경제통계시스템(ECOS), 한국은행 기준금리
+    (Bank of Korea — Economic Statistics System)
+    원문: https://ecos.bok.or.kr/
+    이용 조건: 한국은행 저작권보호방침 — 출처(한국은행) 표시, 수정·가공 시 그 사실을 밝힘
+    가공: kpubdata-builder 가 컬럼 이름을 바꾸고(TIME→year_month, DATA_VALUE→base_rate_pct)
+    기준금리를 실수형으로 변환했다. 값 자체는 바꾸지 않았다.
   language:
     - ko
   tags:

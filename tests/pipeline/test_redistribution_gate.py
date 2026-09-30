@@ -114,7 +114,7 @@ def test_every_legacy_config_gets_a_verdict_it_can_be_held_to() -> None:
         verdicts[str(path.relative_to(_CONFIGS))] = redistribution_verdict(config).verdict
 
     assert verdicts["air_quality.yaml"] == "forbidden"  # KOGL type 3, stopped (D6)
-    assert verdicts["korea_base_rate.yaml"] == "unknown"  # ECOS terms unread (#677)
+    assert verdicts["korea_base_rate.yaml"] == "allowed"  # BOK terms read (#677)
     assert set(verdicts.values()) <= {"allowed", "forbidden", "unknown"}
 
 
