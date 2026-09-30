@@ -40,6 +40,14 @@ from ..stages._path_safety import ensure_within
 from ..stages._stage_reader import gold_source_dir
 from . import stages as stages_service
 from .publish_credentials import PublishCredentialResolution
+from .redistribution import (
+    BuildVerdict,
+    TermsLookup,
+    build_verdict,
+    is_public,
+    kpubdata_terms,
+    publish_issues,
+)
 
 # HTTP-safe publish targets. PUBLISHER_REGISTRY also has "local", but LocalPublisher
 # uses caller-provided destination directly as a local filesystem Path (publishers/local.py)
@@ -63,9 +71,11 @@ _DESTINATION_PATTERN = re.compile(
 # only 'private' for new repo visibility, Kaggle allows only 'public' for new dataset
 # public status, and rejects other options. Local has no exposed options.
 _ALLOWED_OPTIONS: dict[str, dict[str, type]] = {
-    "huggingface": {"private": bool},
-    "kaggle": {"public": bool},
-    "local": {},
+    # confirm_non_commercial (#688): the publisher's statement that a dataset whose
+    # terms allow non-commercial use only is published for that use.
+    "huggingface": {"private": bool, "confirm_non_commercial": bool},
+    "kaggle": {"public": bool, "confirm_non_commercial": bool},
+    "local": {"confirm_non_commercial": bool},
 }
 
 _DEFAULT_OPTIONS: dict[str, dict[str, object]] = {
@@ -534,6 +544,8 @@ class ReadinessResult:
     blockers: tuple[PublishIssue, ...]
     warnings: tuple[PublishIssue, ...]
     artifacts: ResolvedArtifacts | None = None
+    #: The source terms' verdict on redistribution (#688); None before a spec exists.
+    redistribution: BuildVerdict | None = None
 
 
 def resolve_target(value: object) -> tuple[str | None, str | None]:
@@ -885,6 +897,8 @@ def build_readiness(
     spec: BuildSpec | None,
     output_root: Path,
     credentials: PublishCredentialResolution | None = None,
+    options: dict[str, object] | None = None,
+    terms_lookup: TermsLookup = kpubdata_terms,
 ) -> ReadinessResult:
     """Single deterministic decision shared by readiness/POST.
 
@@ -893,6 +907,7 @@ def build_readiness(
     #491 guideline 3/4).
     """
     blockers: list[PublishIssue] = []
+    redistribution: BuildVerdict | None = None
 
     status_issue = run_status_blocker(status)
     if status_issue is not None:
@@ -951,6 +966,20 @@ def build_readiness(
         if license_issue is not None:
             blockers.append(license_issue)
 
+        # The source terms (#688): forbidden never publishes, unknown never publishes
+        # publicly, non-commercial needs confirming (and a marker when public).
+        redistribution = build_verdict(spec, terms_lookup)
+        effective = options if options is not None else dict(_DEFAULT_OPTIONS.get(target, {}))
+        blockers.extend(
+            PublishIssue(issue.code, issue.message)
+            for issue in publish_issues(
+                redistribution,
+                public=is_public(target, effective),
+                confirmed_non_commercial=effective.get("confirm_non_commercial") is True,
+                spec=spec,
+            )
+        )
+
     credential_issue = credential_blocker(target, credentials)
     if credential_issue is not None:
         blockers.append(credential_issue)
@@ -961,6 +990,7 @@ def build_readiness(
         blockers=tuple(blockers),
         warnings=(),
         artifacts=artifacts,
+        redistribution=redistribution,
     )
 
 

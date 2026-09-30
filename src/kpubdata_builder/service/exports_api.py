@@ -61,6 +61,12 @@ from kpubdata_builder.service.column_semantics import (
     table_key,
 )
 from kpubdata_builder.service.datasets import read_manifest, read_snapshot_spec
+from kpubdata_builder.service.redistribution import (
+    TermsLookup,
+    build_verdict,
+    forbidden_response,
+    kpubdata_terms,
+)
 from kpubdata_builder.service.responses import FileResponse, ServiceResponse
 from kpubdata_builder.service.warehouse_api import _coverage, _pin, _readable_table
 from kpubdata_builder.spec import BuildSpec, JsonValue
@@ -308,8 +314,10 @@ class ExportsApiService:
         table_catalog: Callable[[], TableCatalog | None],
         engine: QueryService,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        terms_lookup: TermsLookup = kpubdata_terms,
     ) -> None:
         self._output_root = output_root
+        self._terms_lookup = terms_lookup
         self._store = ExportStore(output_root / ".service" / "exports")
         self._table_catalog = table_catalog
         self._engine = engine
@@ -457,6 +465,11 @@ class ExportsApiService:
     ) -> ServiceResponse:
         snapshot = catalog.get_snapshot(snapshot_id)
         spec = read_snapshot_spec(self._output_root, snapshot.run_id)
+        terms_refusal = forbidden_response(
+            build_verdict(spec, self._terms_lookup), what="an export"
+        )
+        if terms_refusal is not None:
+            return terms_refusal
         terms = source_terms(spec)
         if terms.forbids_derivatives:
             return ServiceResponse(
@@ -645,6 +658,10 @@ class ExportsApiService:
             return ServiceResponse(
                 410, {"error": "the export has expired", "code": "export_expired"}
             )
+        # Checked now, not when the export was made (#688): terms can be declared later.
+        terms_refusal = self._terms_refusal(record)
+        if terms_refusal is not None:
+            return terms_refusal
         bundle = directory / _BUNDLE
         expected = cast(dict[str, JsonValue], record["bundle"])
         if (
@@ -660,6 +677,13 @@ class ExportsApiService:
                 },
             )
         return FileResponse(200, bundle, f"{export_id}.zip")
+
+    def _terms_refusal(self, record: Mapping[str, JsonValue]) -> ServiceResponse | None:
+        manifest = record.get("manifest")
+        snapshot = manifest.get("snapshot") if isinstance(manifest, dict) else None
+        run_id = snapshot.get("run_id") if isinstance(snapshot, dict) else None
+        spec = read_snapshot_spec(self._output_root, run_id) if isinstance(run_id, str) else None
+        return forbidden_response(build_verdict(spec, self._terms_lookup), what="an export")
 
     def delete(self, export_id: str, *, principal: Principal) -> ServiceResponse:
         if self._owned(export_id, principal) is None:

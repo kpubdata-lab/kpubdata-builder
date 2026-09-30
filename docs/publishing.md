@@ -146,6 +146,24 @@ uv run python scripts/publish_to_hf.py scripts/configs/seoul_apartment_trades.ya
 
 이 게이트는 마지막 config 가 BuildSpec 으로 옮겨질 때 레거시 코드와 함께 사라진다(ADR 0018).
 
+### BuildSpec 경로의 재배포 게이트 (#688)
+
+BuildSpec 으로 만든 run 은 **kpubdata 가 데이터셋마다 선언한 조건**
+(`DatasetRef.license.redistribution`, kpubdata 0.8)으로 판정한다. 아무것도 선언하지 않은 데이터셋,
+카탈로그에 없는 데이터셋, file·url 소스는 모두 `unknown` 이다. 한 run 의 판정은 가장 제한적인 소스의
+판정이다 (`forbidden` > `unknown` > `non_commercial` > `allowed`).
+
+| 판정 | 게시 | 질의·미리보기·다운로드 |
+| :--- | :--- | :--- |
+| `allowed` | 허용 (BuildSpec `license` 선언은 여전히 필요, #443) | 허용 |
+| `non_commercial` | `confirm_non_commercial: true` 필요. 공개 게시에는 데이터셋 licence 에 비영리 표시(`cc-by-nc-4.0` 등)도 필요 | 허용 |
+| `unknown` | **비공개만** — 공개 게시는 `redistribution_unknown` 으로 거부 | 허용 |
+| `forbidden` | 전부 거부 (`redistribution_forbidden`) | **거부** — `/query`, `/preview`, warehouse 질의·rows·집계·export·export 다운로드, artifact 다운로드가 403, stage 상세는 sample 을 빼고 준다 |
+
+- HTTP: `GET /builds/{run_id}/publish/readiness` 가 `redistribution`(판정과 소스별 이유)을 돌려주고, 막힌 `POST .../publish` 도 같은 값을 준다. 판정은 target 의 기본 옵션(비공개)으로 계산하고, POST 가 실제 옵션으로 다시 확인한다.
+- CLI: `kpubdata-builder publish` 에도 같은 게이트가 있다. 막히면 종료 코드 2, 비영리 확인은 `--confirm-non-commercial`.
+- 2026-09-30 현재 kpubdata 카탈로그의 어떤 데이터셋도 `redistribution` 을 선언하지 않았으므로, BuildSpec 경로의 **공개 게시는 모두 막힌다**. 조건을 정하는 일은 kpubdata#524 다.
+
 ---
 
 ## Config YAML 스키마

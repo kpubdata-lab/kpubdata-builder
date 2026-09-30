@@ -35,6 +35,7 @@ from kpubdata_builder.service import publish as publish_service
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.jobs import AsyncBuildExecutor
 from kpubdata_builder.service.publish_credentials import resolve_publish_credentials
+from kpubdata_builder.service.redistribution import TermsLookup, kpubdata_terms
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import BuildSpec, JsonValue
 
@@ -90,11 +91,13 @@ class PublishApiService:
         publish_receipts: publish_service.PublishReceiptStore,
         async_builds: AsyncBuildExecutor,
         credential_repository: CredentialRepository | None = None,
+        terms_lookup: TermsLookup = kpubdata_terms,
     ) -> None:
         self._output_root = output_root
         self._publish_receipts = publish_receipts
         self._async_builds = async_builds
         self._credential_repository = credential_repository
+        self._terms_lookup = terms_lookup
 
     def _publish_context(
         self, run_id: str
@@ -164,6 +167,7 @@ class PublishApiService:
             credentials=resolve_publish_credentials(
                 self._credential_repository, owner_id, resolved_target
             ),
+            terms_lookup=self._terms_lookup,
         )
         return ServiceResponse(
             200,
@@ -173,6 +177,12 @@ class PublishApiService:
                 "ready": result.ready,
                 "blockers": cast(JsonValue, [b.to_body() for b in result.blockers]),
                 "warnings": cast(JsonValue, [w.to_body() for w in result.warnings]),
+                # Why the source terms allow or refuse publishing (#688), evaluated for
+                # the target's default options (private); the publish request's options
+                # are checked again on POST.
+                "redistribution": (
+                    result.redistribution.body() if result.redistribution is not None else None
+                ),
             },
         )
 
@@ -266,6 +276,8 @@ class PublishApiService:
             spec=spec,
             output_root=self._output_root,
             credentials=credentials,
+            options=options,
+            terms_lookup=self._terms_lookup,
         )
         if not readiness.ready or readiness.artifacts is None:
             return ServiceResponse(
@@ -273,6 +285,11 @@ class PublishApiService:
                 {
                     "error": f"run is not ready to publish to {resolved_target!r}",
                     "blockers": cast(JsonValue, [b.to_body() for b in readiness.blockers]),
+                    "redistribution": (
+                        readiness.redistribution.body()
+                        if readiness.redistribution is not None
+                        else None
+                    ),
                 },
             )
 

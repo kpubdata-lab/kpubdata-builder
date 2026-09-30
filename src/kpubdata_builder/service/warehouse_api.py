@@ -52,6 +52,12 @@ from kpubdata_builder.service.column_semantics import (
 )
 from kpubdata_builder.service.datasets import read_snapshot_dataset_id, read_snapshot_spec
 from kpubdata_builder.service.query_service_api import execute_query
+from kpubdata_builder.service.redistribution import (
+    TermsLookup,
+    build_verdict,
+    forbidden_response,
+    kpubdata_terms,
+)
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages._path_safety import ensure_within
@@ -143,14 +149,31 @@ class WarehouseApiService:
         table_catalog: Callable[[], TableCatalog | None],
         engine: QueryService,
         output_root: Path | None = None,
+        terms_lookup: TermsLookup = kpubdata_terms,
     ) -> None:
         """Args:
         output_root: Run workspace root, where each run's BuildSpec snapshot says which
             dataset a table belongs to (#841). Without it ``dataset_id`` is null.
+        terms_lookup: each dataset's redistribution terms (#688).
         """
         self._table_catalog = table_catalog
         self._engine = engine
         self._output_root = output_root
+        self._terms_lookup = terms_lookup
+
+    def _terms_refusal(
+        self, catalog: TableCatalog, snapshot_id: str, *, what: str
+    ) -> ServiceResponse | None:
+        """403 when the snapshot's source terms forbid redistribution (#688).
+
+        Checked after the caller's own table and snapshot are found, so a refusal says
+        nothing about anyone else's data.
+        """
+        if self._output_root is None:
+            return None
+        run_id = catalog.get_snapshot(snapshot_id).run_id
+        spec = read_snapshot_spec(self._output_root, run_id)
+        return forbidden_response(build_verdict(spec, self._terms_lookup), what=what)
 
     def _semantics(
         self, catalog: TableCatalog, table: TableRow, snapshot_id: str
@@ -271,6 +294,9 @@ class WarehouseApiService:
         except SnapshotStateError as exc:
             return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
         try:
+            terms_refusal = self._terms_refusal(catalog, pin.snapshot_id, what="rows")
+            if terms_refusal is not None:
+                return terms_refusal
             table_path = _readable_table(catalog, table, pin.snapshot_id)
             if table_path is None:
                 return _no_table_file()
@@ -373,6 +399,9 @@ class WarehouseApiService:
         except SnapshotStateError as exc:
             return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
         try:
+            terms_refusal = self._terms_refusal(catalog, pin.snapshot_id, what="an aggregate")
+            if terms_refusal is not None:
+                return terms_refusal
             table_path = _readable_table(catalog, table, pin.snapshot_id)
             if table_path is None:
                 return _no_table_file()
@@ -479,6 +508,9 @@ class WarehouseApiService:
             return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
         pinned: JsonValue = None
         try:
+            terms_refusal = self._terms_refusal(catalog, pin.snapshot_id, what="query results")
+            if terms_refusal is not None:
+                return terms_refusal
             table_path = _readable_table(catalog, table, pin.snapshot_id)
             if table_path is None:
                 return _no_table_file()
