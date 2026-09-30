@@ -21,19 +21,12 @@ def _hub_error_names(exc: BaseException) -> set[str]:
     return {cls.__name__ for cls in type(exc).__mro__}
 
 
-def _require_private_target(api: Any, destination: str) -> None:
-    """Refuse a private publish unless the target repo is private or does not exist.
+def _repo_visibility(api: Any, destination: str) -> str:
+    """The dataset repo's visibility: ``"public"``, ``"private"`` or ``"absent"``.
 
-    ``create_repo(exist_ok=True)`` never changes an existing repo's visibility, so the
-    ``private`` option alone does not say where the data lands: an existing public
-    repo would receive it (#901). The actual visibility is looked up here, before
-    anything is created or uploaded:
-
-    - not found: nothing to leak into; the caller creates it private.
-    - found and ``private is True``: proceed.
-    - found and public, or visibility not reported: refuse.
-    - lookup failed for any other reason (network, auth, gated): refuse. What is
-      unknown is not permission (#688).
+    Raises ``PublishError`` when it cannot be known: a lookup that failed for any
+    reason other than not found (network, auth, gated), or a repo that does not
+    report it. What is unknown is not permission (#688).
     """
     try:
         info = api.repo_info(repo_id=destination, repo_type="dataset")
@@ -42,23 +35,36 @@ def _require_private_target(api: Any, destination: str) -> None:
         # GatedRepoError subclasses RepositoryNotFoundError, but a gated repo exists,
         # so it is not "absent".
         if "RepositoryNotFoundError" in names and "GatedRepoError" not in names:
-            return
+            return "absent"
         raise PublishError(
             f"refusing private publish to {destination}: could not look up the "
             f"repository's visibility ({type(exc).__name__})"
         ) from exc
     visibility = getattr(info, "private", None)
     if visibility is True:
-        return
+        return "private"
     if visibility is False:
-        raise PublishError(
-            f"refusing private publish: Hugging Face dataset {destination} already "
-            "exists and is public. Make it private first, or publish to another repository."
-        )
+        return "public"
     raise PublishError(
         f"refusing private publish to {destination}: the repository's visibility "
         "could not be determined"
     )
+
+
+def _require_private_target(api: Any, destination: str) -> None:
+    """Refuse a private publish unless the target repo is private or does not exist.
+
+    ``create_repo(exist_ok=True)`` never changes an existing repo's visibility, so the
+    ``private`` option alone does not say where the data lands: an existing public
+    repo would receive it (#901). The actual visibility is looked up here, before
+    anything is created or uploaded (:func:`_repo_visibility`); not found means the
+    caller creates it private.
+    """
+    if _repo_visibility(api, destination) == "public":
+        raise PublishError(
+            f"refusing private publish: Hugging Face dataset {destination} already "
+            "exists and is public. Make it private first, or publish to another repository."
+        )
 
 
 def _repo_path_for(path: Path, common_root: Path | None) -> str:
@@ -81,6 +87,19 @@ class HuggingFacePublisher(BasePublisher):
     @property
     def name(self) -> str:
         return "huggingface"
+
+    def destination_visibility(
+        self, destination: str, *, credentials: Mapping[str, str] | None = None
+    ) -> str:
+        """The dataset repo's visibility, read with the credentials the publish would use.
+
+        The same lookup :meth:`publish` makes before a private publish (#901), so the
+        service can refuse with a reason before anything is claimed (#688).
+        """
+        from huggingface_hub import HfApi
+
+        token = os.environ.get("HF_TOKEN") if credentials is None else credentials.get("HF_TOKEN")
+        return _repo_visibility(HfApi(token=token), destination)
 
     def publish(
         self,
@@ -107,7 +126,7 @@ class HuggingFacePublisher(BasePublisher):
             PublishError: A private publish targets a public or unconfirmable repo.
         """
         try:
-            from huggingface_hub import HfApi  # type: ignore[import-not-found]
+            from huggingface_hub import HfApi
         except ImportError as exc:
             raise RuntimeError(
                 "huggingface_hub is required for HuggingFace publishing. "

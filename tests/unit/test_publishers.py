@@ -757,3 +757,84 @@ class TestKagglePrivateTarget:
         KagglePublisher().publish((artifact_dir,), destination="kpub/existing", public=True)
 
         assert "dataset_create_version" in api.calls
+
+
+# ------------------------------------------------------------------ destination visibility (#688)
+
+
+class _HubRepo:
+    def __init__(self, private: bool) -> None:
+        self.private = private
+
+
+def _inject_fake_hub(monkeypatch: pytest.MonkeyPatch, repos: dict[str, bool]) -> list[object]:
+    tokens: list[object] = []
+
+    class RepositoryNotFoundError(Exception):
+        pass
+
+    class HfApi:
+        def __init__(self, token: object = None) -> None:
+            tokens.append(token)
+
+        def repo_info(self, repo_id: str, *, repo_type: str) -> _HubRepo:
+            assert repo_type == "dataset"
+            if repo_id not in repos:
+                raise RepositoryNotFoundError(repo_id)
+            return _HubRepo(repos[repo_id])
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.HfApi = HfApi  # type: ignore[attr-defined]
+    utils = types.ModuleType("huggingface_hub.utils")
+    utils.RepositoryNotFoundError = RepositoryNotFoundError  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.utils", utils)
+    return tokens
+
+
+@pytest.mark.parametrize(
+    ("destination", "visibility"),
+    [("kpub/open", "public"), ("kpub/closed", "private"), ("kpub/new", "absent")],
+)
+def test_huggingface_reads_the_repo_visibility(
+    monkeypatch: pytest.MonkeyPatch, destination: str, visibility: str
+) -> None:
+    tokens = _inject_fake_hub(monkeypatch, {"kpub/open": False, "kpub/closed": True})
+
+    result = HuggingFacePublisher().destination_visibility(
+        destination, credentials={"HF_TOKEN": "hf_caller"}
+    )
+
+    assert result == visibility
+    # Read as the caller whose publish it is, not the server account.
+    assert tokens == ["hf_caller"]
+
+
+@pytest.mark.parametrize(
+    ("destination", "visibility"),
+    [("kpub/open", "public"), ("kpub/closed", "private"), ("kpub/new", "absent")],
+)
+def test_kaggle_reads_the_dataset_visibility(
+    monkeypatch: pytest.MonkeyPatch, destination: str, visibility: str
+) -> None:
+    api = _FakeKaggleApi(
+        existing=(
+            _KaggleDataset("kpub/open", isPrivate=False),
+            _KaggleDataset("kpub/closed", is_private=True),
+        )
+    )
+    _inject_fake_kaggle(monkeypatch, api)
+
+    assert KagglePublisher().destination_visibility(destination, credentials={}) == visibility
+
+
+def test_kaggle_that_does_not_say_is_not_private(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Negative: a dataset listed without its visibility raises — never guessed private."""
+    _inject_fake_kaggle(monkeypatch, _FakeKaggleApi(existing=(_KaggleDataset("kpub/x"),)))
+
+    with pytest.raises(PublishError):
+        KagglePublisher().destination_visibility("kpub/x", credentials={})
+
+
+def test_a_local_destination_is_private() -> None:
+    assert LocalPublisher().destination_visibility("anything") == "private"

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.64.0"
+  version: "1.65.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.65.0 enforces each source's redistribution terms (#688, additive): kpubdata 0.8 declares per dataset whether its data may be redistributed — `allowed`, `non_commercial`, `forbidden` or `unknown` (a dataset that declares nothing is `unknown`, as is a file or URL source); a build takes its most restricted source's verdict. Publish readiness and a refused publish report it as `redistribution`, and it blocks: `forbidden` any publish, `unknown` a public one (`redistribution_unknown`), `non_commercial` one without the new option `confirm_non_commercial: true` (`non_commercial_unconfirmed`) or a public one without a non-commercial licence marker (`non_commercial_marker_missing`). Data whose terms are `forbidden` does not leave Builder: `POST /query`, `POST /preview`, the warehouse profile, query, rows, aggregate and export endpoints, analyses (create and run), export downloads and artifact file downloads (`GET /artifacts/{run_id}/{file_path}`, now declared) answer 403 `redistribution_forbidden` (declared as the `RedistributionForbidden` response; `Error` documents `code` and `redistribution`), and a Silver stage detail withholds its sample (`sample_withheld: redistribution_forbidden`). A publish the terms allow only privately (`unknown`, or `non_commercial`) first reads the destination's visibility: an existing public destination blocks it (`destination_public`), and so does one whose visibility cannot be read (`destination_visibility_unknown`). A refused publish's 409 carries `redistribution`; a successful one records it (`PublishRedistributionRecord`: the verdict, the kpubdata release and `confirm_non_commercial`) in the response and the receipt.
     v1.64.0 reconciles declared-PII masking with the `pii` scan gate (#902, additive): the Silver scan counts a declared column Gold will mask as handled, so `pii.mode: block` passes without `allow_columns`; a `gold.publish_unmasked` column is still scanned and needs `allow_columns` under `block`. `allow_columns` never unmasks a declared column and `publish_unmasked` never silences the gate. A masked column keeps its dtype: text holds `[masked]`, any other dtype becomes null; each `pii_masking.masked` entry says which (`masked_as`). kpubdata-declared fields the source does not carry are listed in `pii_masking.declared_absent` instead of being skipped silently.
     v1.63.0 tightens warehouse column profiles (#896, #897): profiling has its own 60-second timeout instead of the query timeout, and after a timeout the same snapshot answers 504 `query_timeout` for 5 minutes without profiling again. `ColumnProfile.nan_count` and `infinite_count` gain `minimum: 0`. The value-pattern PII check now reads `Categorical` and `Enum` columns as text and `List`/`Array` columns of text element by element (a row matches when any element does); a column of any other type that can hold text (`Struct`, `Object`, `Binary`, nested lists) is not pattern-checked and is `suspected` with the kind `unchecked_values`. The profile `algorithm_version` becomes 2, so cached profiles are recomputed.
     v1.62.0 masks declared PII in the published Gold by default (#689, additive): every column kpubdata's dataset spec declares in `license.pii_columns`, or the BuildSpec declares in `SourceRef.gold.pii_columns`, has each non-null value replaced by `[masked]` in Gold — the table exports, the dataset card, publishing, Gold `/query` and the warehouse read. Silver keeps the values. Nothing is detected from values. `SourceRef.gold.publish_unmasked` is the explicit opt-out for a declared column and adds a manifest warning. The manifest gains `pii_masking`, per Gold directory the masked and unmasked columns and who declared each. A composed Gold masks every declared column of both sides and has no opt-out.
@@ -772,6 +773,8 @@ paths:
             (`providers` lists them). `url_source_forbidden` (#685): a multi-user
             deployment does not allow `url` sources (`sources` lists each by index and
             path).
+            `redistribution_forbidden` (#688), after the fetch: the sources' terms forbid
+            redistribution; the body carries `redistribution` (RedistributionVerdict).
           content:
             application/json:
               schema:
@@ -930,13 +933,56 @@ paths:
                   value:
                     error: "run not found: missing-run"
 
+  /artifacts/{run_id}/{file_path}:
+    get:
+      operationId: getBuildArtifactFile
+      summary: 실행 워크스페이스의 산출물 파일 하나를 내려받기
+      description: >-
+        `file_path` is one entry of `GET /artifacts/{run_id}`'s `files`: a POSIX path
+        relative to the run directory, sent with its `/` separators as they are (each
+        segment may be percent-encoded). Declared since v1.63.0; the route itself is
+        older (#323).
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: file_path
+          in: path
+          required: true
+          description: Run-relative POSIX path; may span several segments.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The file's bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: 경로 안전하지 않은 run_id·file_path, 또는 파일이 아닌 경로
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
+        "404":
+          description: run 또는 파일을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /builds/{run_id}:
     get:
       operationId: getBuildJob
       summary: 비동기 build job 상태 polling (#482, #480)
       description: >-
         active(queued/running) 또는 terminal(succeeded/failed) async build job의
-        상태를 반환한다. 성공한 잡은 `response`에 최종 build 응답 본문을 포함한다.
+        상태를 반환한다. 성공한 잡은 `response`에 최종 build 응답 본문을 포함하고,
+        실패한 잡의 `response`는 오류 본문이거나 null이다(#921) — 사유는 `error`.
         active 구간(run directory/manifest가 아직 없는)도 async job registry로
         인지하며, ownership 판정은 `/builds/{run_id}/events`와 동일한
         canonical 규칙(manifest 우선, active는 registry snapshot의 stable
@@ -972,6 +1018,17 @@ paths:
                     response:
                       run_id: run-0123456789abcdef
                       status: ok
+                Failed:
+                  summary: 빌드 본문이 생기기 전에 실패한 job (#921)
+                  value:
+                    run_id: run-0123456789abcdef
+                    status: failed
+                    created_at: "2026-08-16T09:00:00+00:00"
+                    updated_at: "2026-08-16T09:00:02+00:00"
+                    created_by: oidc:user-a
+                    response:
+                      error: provider client unavailable
+                    error: provider client unavailable
         "400":
           description: 안전하지 않은 run_id
           content:
@@ -2410,7 +2467,9 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          description: query context 소유권 위반
+          description: >-
+            query context 소유권 위반(`forbidden`), 또는 build의 source 약관이 재배포를
+            금지함(`redistribution_forbidden`, #688 — body에 `redistribution`).
           content:
             application/json:
               schema:
@@ -2521,6 +2580,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: >-
             No warehouse, no such table or snapshot in the caller's workspace, or a
@@ -2645,6 +2706,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: >-
             No warehouse (`warehouse_not_configured`), no such table in the caller's
@@ -2752,6 +2815,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: >-
             No warehouse (`warehouse_not_configured`), no such table in the caller's
@@ -2870,6 +2935,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: >-
             No warehouse (`warehouse_not_configured`), no such table in the caller's
@@ -3045,6 +3112,8 @@ paths:
             (`export_forbidden_by_license`, with `terms`), or the result holds PII values
             its policy does not let out (`export_blocked_pii`, with `findings` — column,
             kind and count, never a value).
+            `redistribution_forbidden` (#688): the build's source terms forbid
+            redistribution; the body carries `redistribution` (RedistributionVerdict).
           content:
             application/json:
               schema:
@@ -3330,6 +3399,8 @@ paths:
                 format: binary
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: No such export in the caller's workspace (`export_not_found`).
           content:
@@ -3391,6 +3462,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: >-
             No warehouse, no such table or snapshot in the caller's workspace, or a
@@ -3488,6 +3561,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/RedistributionForbidden"
         "404":
           description: >-
             No such analysis (`analysis_not_found`), or its table or snapshot is gone.
@@ -3932,6 +4007,27 @@ components:
               value:
                 error: unauthorized
 
+    RedistributionForbidden:
+      description: >-
+        The build's source terms forbid redistribution (#688), so its data does not
+        leave Builder.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RedistributionForbiddenError"
+          examples:
+            RedistributionForbidden:
+              summary: 재배포 금지 약관의 데이터
+              value:
+                error: the source terms forbid redistribution, so query results cannot leave Builder
+                code: redistribution_forbidden
+                redistribution:
+                  verdict: forbidden
+                  sources:
+                    - source: example.dataset
+                      verdict: forbidden
+                      reason: "the dataset declares redistribution: forbidden"
+
   parameters:
     RunId:
       name: run_id
@@ -4065,7 +4161,15 @@ components:
           description: 사람이 읽는 오류 요약 메시지
         code:
           type: string
-          description: 클라이언트 분기용 안정적인 오류 코드(새 endpoint에서 사용)
+          description: >-
+            클라이언트 분기용 안정적인 오류 코드(새 endpoint에서 사용). 예:
+            `redistribution_forbidden`(#688) — build의 source 약관이 재배포를 금지해
+            데이터가 Builder 밖으로 나갈 수 없음. 이때 body에 `redistribution`이 함께 온다.
+        redistribution:
+          description: >-
+            `code: redistribution_forbidden`일 때만 온다(#688): 판정과 source별 이유.
+          allOf:
+            - $ref: "#/components/schemas/RedistributionVerdict"
 
     QueryRequest:
       type: object
@@ -7057,8 +7161,11 @@ components:
       description: >-
         비동기 build job 스냅샷 (#482, #480). 프로세스 메모리 상주 registry
         기반이라 서버 재시작 후 active/terminal 잡은 더 이상 조회되지 않는다.
-        `response`는 성공한 잡의 최종 build 응답 본문이고, `error`는 실패한
-        잡의 사유다. internal `owner_id` 필드는 wire로 노출되지 않는다.
+        `response`는 잡이 만든 응답 본문이다 — 성공한 잡은 최종 build 응답,
+        실패한 잡은 오류 본문일 수 있다(빌드 본문이 생기기 전에 실패하면
+        `{"error": ...}` 뿐이다, #921). 형태는 `object | null` 만 보장하며, 실패
+        판정과 사유는 `status`와 `error`가 기준이다. internal `owner_id` 필드는
+        wire로 노출되지 않는다.
       properties:
         run_id:
           type: string
@@ -7082,7 +7189,10 @@ components:
           description: 제출 principal의 display/legacy label (선택)
         response:
           type: [object, "null"]
-          description: 성공한 잡의 최종 build 응답 본문 (성공 시에만)
+          description: >-
+            잡이 만든 응답 본문. 성공 시 최종 build 응답, 실패 시 오류 본문이거나
+            null (#921). `object | null` 외의 형태는 보장하지 않는다 — 실패
+            사유는 `error`를 읽는다.
         error:
           type: [string, "null"]
           description: 실패 사유 (실패 시에만)
@@ -7258,6 +7368,56 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublishIssue"
+        redistribution:
+          description: >-
+            The source terms' verdict on redistribution (#688), evaluated for the
+            target's default options; the publish request's options are checked again
+            on POST. Null when the run has no manifest yet.
+          oneOf:
+            - $ref: "#/components/schemas/RedistributionVerdict"
+            - type: "null"
+
+    RedistributionVerdict:
+      type: object
+      description: >-
+        Whether a build's data may leave Builder (#688), from each source's declared
+        terms. The build's verdict is its most restricted source's: forbidden, then
+        unknown, then non_commercial, then allowed.
+      required: [verdict, sources]
+      additionalProperties: false
+      properties:
+        verdict:
+          type: string
+          enum: [allowed, non_commercial, unknown, forbidden]
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/RedistributionSourceVerdict"
+
+    RedistributionSourceVerdict:
+      type: object
+      required: [source, verdict, reason]
+      additionalProperties: false
+      properties:
+        source: {type: string}
+        verdict:
+          type: string
+          enum: [allowed, non_commercial, unknown, forbidden]
+        reason: {type: string}
+
+    RedistributionForbiddenError:
+      type: object
+      description: >-
+        403 when the build's source terms forbid redistribution (#688): the data
+        does not leave Builder.
+      required: [error, code, redistribution]
+      properties:
+        error: {type: string}
+        code:
+          type: string
+          enum: [redistribution_forbidden]
+        redistribution:
+          $ref: "#/components/schemas/RedistributionVerdict"
 
     PublishRequest:
       type: object
@@ -7287,6 +7447,12 @@ components:
         private:
           type: boolean
           default: true
+        confirm_non_commercial:
+          type: boolean
+          description: >-
+            The publisher's statement that data whose terms allow non-commercial use
+            only is published for that use (#688). Required for such data; also
+            accepted by the kaggle and local targets.
 
     PublishResponse:
       type: object
@@ -7320,6 +7486,35 @@ components:
           minimum: 0
         status:
           type: string
+        redistribution:
+          description: >-
+            The terms this publish went out under (#688); null when the run has no
+            readable spec.
+          oneOf:
+            - $ref: "#/components/schemas/PublishRedistributionRecord"
+            - type: "null"
+
+    PublishRedistributionRecord:
+      type: object
+      description: >-
+        The redistribution verdict this publish was allowed under (#688), recorded
+        with the kpubdata release whose catalog it came from and whether the caller
+        confirmed non-commercial use. The same record goes into the publish receipt.
+      required: [verdict, sources, kpubdata_version, confirm_non_commercial]
+      additionalProperties: false
+      properties:
+        verdict:
+          type: string
+          enum: [allowed, non_commercial, unknown, forbidden]
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/RedistributionSourceVerdict"
+        kpubdata_version:
+          type: [string, "null"]
+          description: The installed kpubdata release; null when it cannot be read.
+        confirm_non_commercial:
+          type: boolean
 
     PublishBlockedResponse:
       type: object
@@ -7333,6 +7528,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublishIssue"
+        redistribution:
+          description: >-
+            The source terms' verdict for this request (#688). Blockers from it use
+            the codes redistribution_forbidden, redistribution_unknown,
+            non_commercial_unconfirmed, non_commercial_marker_missing,
+            destination_public (a private-only publish to an existing public
+            destination) and destination_visibility_unknown (the destination's
+            visibility could not be read). Null when the run has no spec.
+          oneOf:
+            - $ref: "#/components/schemas/RedistributionVerdict"
+            - type: "null"
 
     DatasetStageMap:
       type: object
@@ -7724,6 +7930,12 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SilverValidationResult"
             - type: "null"
+        sample_withheld:
+          type: string
+          enum: [redistribution_forbidden]
+          description: >-
+            Present when the sample was withheld because the source terms forbid
+            redistribution (#688); ``sample`` is then empty.
         sample:
           type: array
           items:

@@ -33,6 +33,12 @@ from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.column_semantics import describe_columns, spec_semantics
 from kpubdata_builder.service.datasets import read_snapshot_spec
 from kpubdata_builder.service.ownership import hides_foreign_runs
+from kpubdata_builder.service.redistribution import (
+    TermsLookup,
+    build_verdict,
+    forbidden_response,
+    kpubdata_terms,
+)
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.tabular.semantics import ColumnSemantics
@@ -81,9 +87,16 @@ def query_request_from_body(body: Mapping[str, JsonValue] | None) -> QueryReques
 class QueryApiService:
     """Read-only SQL execution against server-resolved stage tables."""
 
-    def __init__(self, *, output_root: Path, engine: QueryService) -> None:
+    def __init__(
+        self,
+        *,
+        output_root: Path,
+        engine: QueryService,
+        terms_lookup: TermsLookup = kpubdata_terms,
+    ) -> None:
         self._output_root = output_root
         self._engine = engine
+        self._terms_lookup = terms_lookup
 
     def query(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
@@ -105,11 +118,14 @@ class QueryApiService:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_context"})
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
+        spec = read_snapshot_spec(self._output_root, context.run_id)
+        # After the run is resolved as the caller's (#796), before anything runs (#688).
+        refusal = forbidden_response(build_verdict(spec, self._terms_lookup), what="query results")
+        if refusal is not None:
+            return refusal
         # What the run's kpubdata sources declare about the columns (#702): a code column
         # is reported as an identifier. Metadata only; the rows are sent as they are.
-        semantics = spec_semantics(
-            read_snapshot_spec(self._output_root, context.run_id), context.source
-        )
+        semantics = spec_semantics(spec, context.source)
         return execute_query(
             self._engine, context.table_path, request.sql, limit=request.limit, semantics=semantics
         )

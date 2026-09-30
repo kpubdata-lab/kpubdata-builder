@@ -25,6 +25,15 @@ from .errors import PublishError, SpecLoadError, ValidationError
 from .pipeline import preview_build, run_build
 from .publishers import PUBLISHER_REGISTRY
 from .replay import BUNDLED_FIXTURES, REPLAY_DIR_ENV, enable_replay, export_fixtures
+from .service.redistribution import (
+    TermsLookup,
+    build_verdict,
+    is_public,
+    kpubdata_terms,
+    needs_private_destination,
+    publish_issues,
+    visibility_issue,
+)
 from .spec import load_spec
 from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
@@ -151,6 +160,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--public",
         action="store_true",
         help="Create new datasets as public (kaggle only; default: private).",
+    )
+    publish_cmd.add_argument(
+        "--confirm-non-commercial",
+        action="store_true",
+        help=(
+            "Confirm that data whose terms allow non-commercial use only is published "
+            "for that use (#688)."
+        ),
     )
 
     serve_cmd = subparsers.add_parser(
@@ -652,6 +669,8 @@ def _run_publish(
     destination: str,
     artifacts_dir: str,
     public: bool = False,
+    confirm_non_commercial: bool = False,
+    terms_lookup: TermsLookup = kpubdata_terms,
 ) -> int:
     """Load and validate BuildSpec, then publish artifacts to specified target.
 
@@ -661,9 +680,12 @@ def _run_publish(
         destination: Local directory path or remote repo id.
         artifacts_dir: Directory containing files to publish.
         public: Whether to make new Kaggle dataset public (ignored for other targets).
+        confirm_non_commercial: The publisher's confirmation for non-commercial terms.
+        terms_lookup: Each dataset's redistribution terms (#688).
 
     Returns:
-        int: 0 on success, 1 on load/validation/publish failure.
+        int: 0 on success, 1 on load/validation/publish failure, 2 when the source
+        terms do not allow this publish.
     """
     try:
         spec = load_spec(Path(spec_path))
@@ -679,6 +701,33 @@ def _run_publish(
         for problem in exc.problems:
             print(f"  - {problem}", file=sys.stderr)
         return 1
+
+    # The same terms gate as the HTTP publish (#688): the CLI is no side door.
+    options: dict[str, object] = {"public": public} if target == "kaggle" else {}
+    verdict = build_verdict(spec, terms_lookup)
+    issues = publish_issues(
+        verdict,
+        public=is_public(target, options),
+        confirmed_non_commercial=confirm_non_commercial,
+        spec=spec,
+    )
+    if not issues and needs_private_destination(
+        verdict, public=is_public(target, options), spec=spec
+    ):
+        # A private-only publish to a destination that is already public would be
+        # public: publishing never changes an existing destination's visibility.
+        try:
+            visibility: str | None = PUBLISHER_REGISTRY[target].destination_visibility(destination)
+        except Exception:
+            visibility = None
+        issue = visibility_issue(visibility)
+        if issue is not None:
+            issues.append(issue)
+    if issues:
+        print("error: the source terms do not allow this publish:", file=sys.stderr)
+        for issue in issues:
+            print(f"  - {issue.code}: {issue.message}", file=sys.stderr)
+        return 2
 
     artifacts_path = Path(artifacts_dir)
     if not artifacts_path.is_dir():
@@ -1294,6 +1343,7 @@ def dispatch(args: argparse.Namespace) -> int:
             destination=args.destination,
             artifacts_dir=args.artifacts_dir,
             public=args.public,
+            confirm_non_commercial=args.confirm_non_commercial,
         )
     if command == "serve":
         return _run_serve(
