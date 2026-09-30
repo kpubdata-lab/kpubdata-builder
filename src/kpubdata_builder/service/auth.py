@@ -51,11 +51,6 @@ _TOKEN_LEEWAY_SECONDS = 60
 _OIDC_ALLOWED_HD_ENV = "OIDC_ALLOWED_HD"
 _OIDC_ALLOWED_SUBJECTS_ENV = "OIDC_ALLOWED_SUBJECTS"
 _OIDC_ALLOWED_EMAILS_ENV = "OIDC_ALLOWED_EMAILS"
-#: Name read by ownership.enforce_ownership(). Import here would cause circularity,
-#: so we store only the name — test_env_var_contract catches divergence.
-_ENFORCE_OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
-# Switch to make allowlist "required", undoing defaults to open registration (no restrictions).
-_OIDC_REQUIRE_ALLOWLIST_ENV = "OIDC_LEGACY_REQUIRE_ALLOWLIST"
 
 #: List of admin subjects as ``<issuer>|<sub>`` (#679). Comma-separated.
 #:
@@ -319,9 +314,9 @@ def validate_oidc_config() -> None:
     - OIDC_ISSUER not set → no-op (Bearer disabled, no impact on existing deployments).
     - OIDC_ISSUER set + OIDC_AUDIENCE not set → reject.
     - pyjwt not installed → reject (``auth`` extra required).
-    - Allowlists (OIDC_ALLOWED_*) are **optional** — open registration is the default policy.
-      Restricted deployments wanting to fail on missing allowlist should set
-      ``OIDC_LEGACY_REQUIRE_ALLOWLIST=true``.
+    - OIDC set + no allowlist (OIDC_ALLOWED_HD/SUBJECTS/EMAILS) → reject (#635). An OIDC
+      deployment is multi-user, and ADR 0012's 2026-09-30 amendment makes an
+      allowlist mandatory there: open sign-up is no longer a supported configuration.
     """
     if not _oidc_issuers():
         return
@@ -336,28 +331,16 @@ def validate_oidc_config() -> None:
         raise RuntimeError(
             "OIDC is enabled but pyjwt is not installed; install with: uv sync --extra auth"
         ) from e
-    # Allowlists are optional (open registration by default). Only restricted
-    # deployments make them mandatory via this switch.
+    # An allowlist is mandatory with OIDC (#635). This replaces the #644 startup
+    # warning about open sign-up, and the opt-in OIDC_LEGACY_REQUIRE_ALLOWLIST switch
+    # that made it mandatory: both assumed open sign-up could be a valid choice.
     hd, subs, emails = _oidc_allowlists()
-    open_signup = not (hd or subs or emails)
-    if open_signup and os.environ.get(_OIDC_REQUIRE_ALLOWLIST_ENV) == "true":
+    if not (hd or subs or emails):
         raise RuntimeError(
             "OIDC_ISSUER is set but no allowlist is configured "
-            "(OIDC_ALLOWED_HD/SUBJECTS/EMAILS) while "
-            f"{_OIDC_REQUIRE_ALLOWLIST_ENV}=true; refusing to start "
-            "(fail-closed, ADR 0009, #386)."
-        )
-    # These defaults are each intentional individually, but together they mean
-    # "any Google account can log in and access all runs and queries." No one has
-    # knowingly chosen this combination, and it left no trace in startup logs until
-    # now. We don't reject it — single-user deployments operate this way normally.
-    if open_signup and os.environ.get(_ENFORCE_OWNERSHIP_ENV, "").lower() not in ("true", "1"):
-        _logger.warning(
-            "OIDC signup is open (no OIDC_ALLOWED_HD/SUBJECTS/EMAILS) and %s is off: "
-            "any account that can obtain a token from this issuer will be able to read "
-            "and overwrite every run. Set an allowlist, or %s=true, or both.",
-            _ENFORCE_OWNERSHIP_ENV,
-            _ENFORCE_OWNERSHIP_ENV,
+            "(OIDC_ALLOWED_HD/SUBJECTS/EMAILS); an OIDC deployment serves more than "
+            "one user and open sign-up is refused — refusing to start (fail-closed, "
+            "ADR 0012 amendment of 2026-09-30, #635)."
         )
 
 
@@ -466,16 +449,17 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     if not payload.get("email_verified", False):
         return AuthError(reason="email not verified")
 
-    # Allowlist check (Google public IdP, #386). If any configured list matches, pass.
+    # Allowlist check (#386). If any configured list matches, pass. With no list at all
+    # nobody passes (#635): the startup check refuses that configuration, and a process
+    # started some other way must not fall back to open sign-up.
     hd_set, sub_set, email_set = _oidc_allowlists()
-    if hd_set or sub_set or email_set:
-        matched = (
-            (bool(hd_set) and str(payload.get("hd", "")) in hd_set)
-            or (bool(sub_set) and str(payload.get("sub", "")) in sub_set)
-            or (bool(email_set) and str(payload.get("email", "")) in email_set)
-        )
-        if not matched:
-            return AuthError(reason="principal not in allowlist", status_code=403)
+    matched = (
+        (bool(hd_set) and str(payload.get("hd", "")) in hd_set)
+        or (bool(sub_set) and str(payload.get("sub", "")) in sub_set)
+        or (bool(email_set) and str(payload.get("email", "")) in email_set)
+    )
+    if not matched:
+        return AuthError(reason="principal not in allowlist", status_code=403)
 
     sub = str(payload.get("sub", ""))
     if not sub:

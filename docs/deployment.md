@@ -10,7 +10,6 @@
 | :--- | :--- | :--- | :--- |
 | `KPUBDATA_BUILDER_API_KEY` | API 인증 키 (`X-API-Key` 헤더). 미설정 시 모든 요청 401 (fail-closed) | 없음 | **필수** (프로덕션) |
 | `KPUBDATA_BUILDER_DEV_MODE` | `true`/`1`이면 인증 생략 (**로컬 개발 전용**, ADR 0006). 기동 시 경고 로그를 남기고, `OIDC_ISSUER`와 함께 설정되면 기동 거부 | 미설정 | 선택 |
-| `OIDC_LEGACY_REQUIRE_ALLOWLIST` | `true`이면 `OIDC_ISSUER` 설정 시 `OIDC_ALLOWED_*` 허용 목록을 필수로 강제(미설정이면 공개 가입이 기본) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_ALLOWED_ORIGINS` | CORS 허용 오리진 (콤마 구분, default-deny). 응답에는 항상 `Vary: Origin`이 붙는다 | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT` | 윈도당 허용할 인증 실패 횟수(클라이언트 IP별). 초과분은 `429 auth_throttled`. `0` 이하면 비활성 | `60` | 선택 |
 | `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS` | 인증 실패 카운트 윈도(초) | `60` | 선택 |
@@ -87,11 +86,10 @@ ADR 0006). 설정은 환경변수로 주입합니다 — `docker-entrypoint.sh`�
 | `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT` | HTTP `local` publish target의 루트 디렉터리(절대 경로). destination은 이 안의 상대 `owner/name`로 한정된다(#550). 미설정이면 local target blocker | 미설정 | local publish 사용 시 필수 |
 | `OIDC_ISSUER` | OIDC 발급자 (설정 시 Bearer 활성, ADR 0015 — Keycloak realm) | 미설정 | 선택 |
 | `OIDC_AUDIENCE` | OIDC audience (OIDC_ISSUER 설정 시 필수) | 미설정 | OIDC 시 필수 |
-| `OIDC_ALLOWED_HD` | 허용 Workspace 도메인 — 제한 배포용 선택적 2차 인가 (기본은 공개 가입) | 미설정 | 선택 |
-| `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분) — 선택 | 미설정 | 선택 |
-| `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분) — 선택 | 미설정 | 선택 |
-| `OIDC_LEGACY_REQUIRE_ALLOWLIST` | `true`이면 위 허용 목록 중 하나도 없을 때 기동 거부 | 미설정 | 선택 |
-| `ENFORCE_OWNERSHIP` | `true`/`1`이면 run 소유권 강제 (C2, #389) | 미설정 | 선택 |
+| `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635) | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `ENFORCE_OWNERSHIP` | `true`/`1`이면 run 소유권 강제 (C2, #389). `OIDC_ISSUER`가 있으면 값과 무관하게 켜진다(#635) | 미설정 | 선택 |
 
 > **fail-closed (ADR 0006)**: 컨테이너는 `KPUBDATA_BUILDER_API_KEY`가 없으면 기동을
 > 거부합니다. `service/app.py`의 "키 미설정 = 인증 생략" 동작은 로컬 개발 편의 전용이며
