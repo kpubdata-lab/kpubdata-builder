@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.47.0"
+  version: "1.48.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.48.0 names each run's table and snapshot in `GET /builds` (#844, additive): `BuildSummary` gains `dataset_id`, `dataset_title`, `snapshot_id` and `snapshots`, and `GET /builds?dataset_id=` keeps one dataset's runs.
     v1.47.0 summarises each table's current snapshot in `GET /warehouse/tables` (#841, additive): `current_snapshot` gives its id, row count, commit time and coverage, and `dataset_id` the dataset it was built for, so a table list needs no call per table.
     v1.46.0 adds column profiles (#817, additive): `GET /warehouse/tables/{name}/profile` describes each column of one pinned snapshot — row count, null count and ratio, NaN and infinite counts, and min/max for numeric and temporal columns — exactly, over every row, under the same limits as a query. NaN and infinity are counted and excluded from ranges; a range over fewer than 10 values is withheld; a column whose values or name suggest personal data is not profiled unless the BuildSpec's `pii` policy accepts it. The profile is a separate artifact tied to the snapshot id, its content digest and the algorithm version.
     v1.45.0 adds query exports (#819, additive): `POST /warehouse/exports` keeps a pinned query's **complete** result as a zip of the data file (csv or jsonl; `machine` or `spreadsheet` profile), `manifest.json` and `NOTICE.md`, after checking the source's licence (no-derivatives licences refused) and PII policy. Over `max_rows` or the byte limit nothing is kept (422). The manifest names the snapshot, revision and digest, copies the licence terms verbatim, and carries provenance, coverage, `user_derived` and every value the spreadsheet profile altered. `GET /warehouse/exports`, `GET`/`DELETE /warehouse/exports/{export_id}` and `GET /warehouse/exports/{export_id}/download` check ownership and expiry at the time of the call.
@@ -1269,6 +1270,15 @@ paths:
             type: integer
             minimum: 1
             default: 50
+        - name: dataset_id
+          in: query
+          required: false
+          description: >-
+            Only this dataset's runs (#844). Applied before `limit`. An empty value is
+            400.
+          schema:
+            type: string
+            minLength: 1
       responses:
         "200":
           description: 빌드 이력 목록
@@ -6287,6 +6297,30 @@ components:
         finished_at:
           type: [string, "null"]
           description: 빌드 완료 시각 (ISO 8601 또는 null)
+        dataset_id:
+          type: [string, "null"]
+          description: >-
+            The dataset the run built, from its BuildSpec snapshot (#844); null when that
+            cannot be read.
+        dataset_title:
+          type: [string, "null"]
+          description: The BuildSpec's title; null when it cannot be read.
+        snapshot_id:
+          type: [string, "null"]
+          description: >-
+            The warehouse snapshot the run committed, when it committed exactly one;
+            null when it committed none (no warehouse, a failed commit, or reclaimed
+            since) or several — see `snapshots`.
+        snapshots:
+          type: array
+          description: Every snapshot the run committed that still exists, by table.
+          items:
+            type: object
+            additionalProperties: false
+            required: [logical_name, snapshot_id]
+            properties:
+              logical_name: {type: string}
+              snapshot_id: {type: string}
 
     BuildJob:
       type: object
