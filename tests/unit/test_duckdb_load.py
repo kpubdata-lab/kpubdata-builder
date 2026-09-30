@@ -281,27 +281,29 @@ def test_cases_hold_on_a_runtime_connection(tmp_path: Path, name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("scenario", "records"),
+    ("scenario", "refusal"),
     [
-        ("r01_number_and_string", [{"v": 1}, {"v": "a"}, {"v": 2}]),
-        (
-            "r02_unsafe_int_and_float",
-            [{"v": 9007199254740993}, {"v": 1.5}, {"v": -9007199254740993}],
-        ),
-        ("r03_float_after_inference_window", [{"v": i} for i in range(200)] + [{"v": 1.5}]),
+        ("r01_number_and_string", "heterogeneous"),
+        ("r02_unsafe_int_and_float", "precision"),
+        ("r03_float_after_inference_window", None),
     ],
 )
 def test_the_loader_agrees_with_the_committed_baseline(
-    tmp_path: Path, scenario: str, records: list[dict[str, Any]]
+    tmp_path: Path, scenario: str, refusal: str | None
 ) -> None:
-    """Ties the loader to tests/golden/duckdb_parity (#865), not only to live Polars."""
+    """Ties the loader to tests/golden/duckdb_parity (#865), not only to live Polars.
+
+    The input is the scenario's own Bronze, read from its golden file, so the two cannot
+    drift apart."""
     golden = json.loads(
         (Path(__file__).parents[1] / "golden" / "duckdb_parity" / f"{scenario}.json").read_text(
             encoding="utf-8"
         )
     )
-    if golden["status_code"] != 200:
-        with pytest.raises(TabularError):
+    records = golden["bronze"]["t"]["records"]
+    if refusal is not None:
+        assert golden["status_code"] != 200
+        with pytest.raises(TabularError, match=refusal):
             _load(tmp_path, records)
         return
     loaded, rows = _load(tmp_path, records)
