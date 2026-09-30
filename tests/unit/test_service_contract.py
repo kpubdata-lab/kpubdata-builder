@@ -42,6 +42,9 @@ _CONTRACT_PATH = Path(__file__).parents[2] / "contract" / "builder-api.yaml"
 _DISPATCH_ROUTES: dict[tuple[str, str], str] = {
     ("/admin/runs", "GET"): "adminListRuns",
     ("/admin/config", "GET"): "adminGetConfig",
+    ("/admin/users", "GET"): "adminListUsers",
+    ("/admin/users/{user_id}/approve", "POST"): "adminApproveUser",
+    ("/admin/users/{user_id}/reject", "POST"): "adminRejectUser",
     ("/healthz", "GET"): "healthz",
     ("/version", "GET"): "getVersion",
     ("/catalog", "GET"): "getCatalog",
@@ -417,6 +420,9 @@ def test_preview_request_schema_declares_bounded_limit_and_sample_mode() -> None
 _IMPLEMENTED_OPERATIONS = {
     "adminListRuns",
     "adminGetConfig",
+    "adminListUsers",
+    "adminApproveUser",
+    "adminRejectUser",
     "healthz",
     "getVersion",
     "getCatalog",
@@ -660,6 +666,9 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     # No 400 either — limit is clamped, not rejected.
     "adminListRuns": {200, 403, 503},
     "adminGetConfig": {200, 403},
+    "adminListUsers": {200, 400, 403},
+    "adminApproveUser": {200, 403, 404},
+    "adminRejectUser": {200, 403, 404},
     "healthz": {200},
     "getVersion": {200},
     "getCatalog": {200, 502},
