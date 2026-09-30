@@ -54,6 +54,8 @@
 
 ### Security
 
+- pyjwt is locked at 2.15.0 for CVE-2026-101918 (was 2.14.0); only `uv.lock` moves, inside the declared `>=2.9,<3` (#914).
+
 - The legacy publish path refuses what a source's terms forbid (#688, owner decision D2; the BuildSpec-path gate follows the kpubdata 0.8.0 pin). Before fetching anything, `scripts/publish_to_hf.py` judges the config's `card.license`/`license_name`: `korea-public-data-unrestricted` and `kogl-type-1` publish; `kogl-type-2` only to a private Kaggle dataset with `--confirm-non-commercial` (the Hugging Face upload is always public); `kogl-type-3`/`-4`, which forbid derivative works this path produces, and anything unrecognised — no terms, or an unchecked `cc-by-4.0` — are refused with exit code 2, since unknown is not permission. `--local-only` publishes nothing and is not gated. Of today's configs, `air_quality` (KOGL type 3, already stopped) and `korea_base_rate` (ECOS terms unread, #677) are refused.
 
 ### Security
