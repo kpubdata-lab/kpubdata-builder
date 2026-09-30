@@ -936,7 +936,8 @@ paths:
       summary: 비동기 build job 상태 polling (#482, #480)
       description: >-
         active(queued/running) 또는 terminal(succeeded/failed) async build job의
-        상태를 반환한다. 성공한 잡은 `response`에 최종 build 응답 본문을 포함한다.
+        상태를 반환한다. 성공한 잡은 `response`에 최종 build 응답 본문을 포함하고,
+        실패한 잡의 `response`는 오류 본문이거나 null이다(#921) — 사유는 `error`.
         active 구간(run directory/manifest가 아직 없는)도 async job registry로
         인지하며, ownership 판정은 `/builds/{run_id}/events`와 동일한
         canonical 규칙(manifest 우선, active는 registry snapshot의 stable
@@ -972,6 +973,17 @@ paths:
                     response:
                       run_id: run-0123456789abcdef
                       status: ok
+                Failed:
+                  summary: 빌드 본문이 생기기 전에 실패한 job (#921)
+                  value:
+                    run_id: run-0123456789abcdef
+                    status: failed
+                    created_at: "2026-08-16T09:00:00+00:00"
+                    updated_at: "2026-08-16T09:00:02+00:00"
+                    created_by: oidc:user-a
+                    response:
+                      error: provider client unavailable
+                    error: provider client unavailable
         "400":
           description: 안전하지 않은 run_id
           content:
@@ -7057,8 +7069,11 @@ components:
       description: >-
         비동기 build job 스냅샷 (#482, #480). 프로세스 메모리 상주 registry
         기반이라 서버 재시작 후 active/terminal 잡은 더 이상 조회되지 않는다.
-        `response`는 성공한 잡의 최종 build 응답 본문이고, `error`는 실패한
-        잡의 사유다. internal `owner_id` 필드는 wire로 노출되지 않는다.
+        `response`는 잡이 만든 응답 본문이다 — 성공한 잡은 최종 build 응답,
+        실패한 잡은 오류 본문일 수 있다(빌드 본문이 생기기 전에 실패하면
+        `{"error": ...}` 뿐이다, #921). 형태는 `object | null` 만 보장하며, 실패
+        판정과 사유는 `status`와 `error`가 기준이다. internal `owner_id` 필드는
+        wire로 노출되지 않는다.
       properties:
         run_id:
           type: string
@@ -7082,7 +7097,10 @@ components:
           description: 제출 principal의 display/legacy label (선택)
         response:
           type: [object, "null"]
-          description: 성공한 잡의 최종 build 응답 본문 (성공 시에만)
+          description: >-
+            잡이 만든 응답 본문. 성공 시 최종 build 응답, 실패 시 오류 본문이거나
+            null (#921). `object | null` 외의 형태는 보장하지 않는다 — 실패
+            사유는 `error`를 읽는다.
         error:
           type: [string, "null"]
           description: 실패 사유 (실패 시에만)

@@ -1028,6 +1028,51 @@
       "broken_path": "$.run_id"
     },
     {
+      "operation_id": "getBuildJob",
+      "method": "GET",
+      "path": "/builds/{run_id}",
+      "status": 200,
+      "example": "Failed",
+      "current": {
+        "run_id": "run-0123456789abcdef",
+        "status": "failed",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:02+00:00",
+        "created_by": "oidc:user-a",
+        "response": {
+          "error": "provider client unavailable"
+        },
+        "error": "provider client unavailable"
+      },
+      "with_additive_fields": {
+        "run_id": "run-0123456789abcdef",
+        "status": "failed",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:02+00:00",
+        "created_by": "oidc:user-a",
+        "response": {
+          "error": "provider client unavailable"
+        },
+        "error": "provider client unavailable",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "status": "failed",
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "updated_at": "2026-08-16T09:00:02+00:00",
+        "created_by": "oidc:user-a",
+        "response": {
+          "error": "provider client unavailable"
+        },
+        "error": "provider client unavailable"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
       "operation_id": "cancelBuildJob",
       "method": "POST",
       "path": "/builds/{run_id}/cancel",
