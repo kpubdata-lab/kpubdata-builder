@@ -75,6 +75,8 @@ from .publish_api import PublishApiService
 from .quality_api import ISSUE_STATUSES, QualityApiService
 from .query_service_api import QueryApiService
 from .responses import FileResponse, ServiceResponse
+from .revisions import RevisionStore
+from .revisions_api import RevisionsApiService
 from .routes import ROUTE_ADAPTERS
 from .routes import uploads as uploads_route
 
@@ -330,6 +332,8 @@ _BuildListEntry = dict[str, str | None]
 #   additive).
 # 1.56.0 -> 1.57.0: BuildSpec refresh_cadence and status_axes.health healthy/stale from it (#781,
 # 1.57.0 -> 1.58.0: param_grid checkpoint resume and the manifest reproducibility mark (#648,
+# 1.58.0 -> 1.59.0: /revisions — immutable document revisions with concurrency checks, revert
+#   and an audit trail (#820, additive).
 # 1.51.0 -> 1.52.0: preview/build/builds answer 403 url_source_forbidden for a url source in a
 #   multi-user deployment, and declare the existing provider_credential_required (#685).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
@@ -337,7 +341,7 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.58.0"
+API_CONTRACT_VERSION = "1.59.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -447,6 +451,8 @@ class BuilderService:
         )
         self._analysis_store: AnalysisStore | None = None
         self._user_ledger_store: UserLedger | None = None
+        self._revision_store: RevisionStore | None = None
+        self._revisions_api = RevisionsApiService(store=lambda: self._revisions())
         # Provider keys of submitted async jobs, in memory only (#683).
         self._job_credentials = request_credentials.JobCredentials()
         self._provider_test_log: ProviderTestLog | None = None
@@ -568,6 +574,14 @@ class BuilderService:
                 self._output_root / ".service" / "provider_tests.sqlite3"
             )
         return self._provider_test_log
+
+    def _revisions(self) -> RevisionStore:
+        """Document revisions (#820), opened on first use."""
+        if self._revision_store is None:
+            self._revision_store = RevisionStore(
+                self._output_root / ".service" / "revisions.sqlite3"
+            )
+        return self._revision_store
 
     def _user_ledger(self) -> UserLedger:
         """The Builder sign-up ledger (#785), opened on first OIDC sign-in."""

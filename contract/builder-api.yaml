@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.58.0"
+  version: "1.59.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.59.0 adds document revisions (#820, additive): `PUT /revisions/{kind}/{doc_id}` saves a BuildSpec or an annotation as a new immutable revision based on `expected_revision` (409 on a concurrent save), idempotent by `idempotency_key`, with server-decided author and time and an audit entry; `POST .../revert` makes a new revision from an old one; `GET` reads the latest or one, and `.../history` lists them with the audit trail. Content carrying a credential is refused.
     v1.58.0 lets a `param_grid` fetch resume from a checkpoint (#648, owner decision D4, additive): each finished combination is appended to a checkpoint under the run, and rebuilding the same run fetches only the rest. Such a run's manifest gains `reproducibility` (`reproducible: false`, `reason: resumed_from_checkpoint`, per-source counts) so an R1 comparison leaves it out; a run fetched in one go has none.
     v1.57.0 decides `status_axes.health` (#781, owner decision D7): a BuildSpec may declare `refresh_cadence` (an ISO 8601 duration of weeks, days or hours), and a table whose last successful refresh is older than one cadence is `stale`, otherwise `healthy`; without a cadence or a successful refresh it stays `unknown`.
     v1.56.0 makes provider keys live only as long as their request or job in a multi-user deployment (#683, ADR 0012 amendment of 2026-09-30). A key is sent in the `X-Provider-Key` request header (`<provider>=<key>`, repeated or comma-separated) — never a URL query — and a malformed header answers 400 `invalid_provider_key` on any route. Nothing stored and nothing from the environment is used; `PUT /providers/{provider}/credential` answers 403 `credential_storage_disabled` and `GET` reports not configured. An async job's key is held in memory until the job ends, is cancelled or its TTL passes; runs a restart interrupted are failed as `credentials_required`. A single-user deployment is unchanged.
@@ -3502,6 +3503,166 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /revisions/{kind}/{doc_id}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: {type: string, enum: [spec, annotation]}
+      - name: doc_id
+        in: path
+        required: true
+        schema: {type: string, maxLength: 200}
+    put:
+      operationId: saveRevision
+      summary: Save a document as a new immutable revision (#820)
+      description: >-
+        `expected_revision` is the revision the edit was based on (0 for a new
+        document); if another save came first the answer is 409 with the current
+        revision — nothing is merged or overwritten. Repeating a save with the same
+        `idempotency_key` returns the revision the first attempt made. Author and time
+        are the server's. Content carrying a credential is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRevisionRequest"
+      responses:
+        "200":
+          description: The saved revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevision"
+        "400":
+          description: >-
+            Invalid request, or `credential_in_content` — a credential-named field or a
+            key-shaped value, named by path, never echoed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: The document moved on (`revision_conflict`, with `current_revision`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: getRevision
+      summary: The latest revision of a document, or `?revision=` one (#820)
+      parameters:
+        - name: revision
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: The revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevision"
+        "400":
+          description: Invalid kind, doc_id or revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such document or revision in the caller's workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /revisions/{kind}/{doc_id}/history:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: {type: string, enum: [spec, annotation]}
+      - name: doc_id
+        in: path
+        required: true
+        schema: {type: string, maxLength: 200}
+    get:
+      operationId: getRevisionHistory
+      summary: Every revision of a document and its audit trail (#820)
+      responses:
+        "200":
+          description: Revisions, oldest first, without content; and the audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevisionHistoryResponse"
+        "400":
+          description: Invalid kind or doc_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such document in the caller's workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /revisions/{kind}/{doc_id}/revert:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: {type: string, enum: [spec, annotation]}
+      - name: doc_id
+        in: path
+        required: true
+        schema: {type: string, maxLength: 200}
+    post:
+      operationId: revertRevision
+      summary: Revert to an earlier revision, as a new revision (#820)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevertRevisionRequest"
+      responses:
+        "200":
+          description: The new revision, whose `reverted_from` names the old one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentRevision"
+        "400":
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such document or revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The document moved on (`revision_conflict`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /monitoring/summary:
     get:
       operationId: getMonitoringSummary
@@ -3989,6 +4150,64 @@ components:
       properties:
         analysis_id: {type: string}
         deleted: {type: boolean, const: true}
+
+    SaveRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [content, expected_revision]
+      properties:
+        content:
+          $ref: "#/components/schemas/JsonValue"
+          description: 'A spec is `{"yaml": "<BuildSpec YAML>"}`; an annotation any JSON.'
+        expected_revision: {type: integer, minimum: 0}
+        note: {type: string}
+        idempotency_key: {type: string, minLength: 1, maxLength: 200}
+
+    RevertRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [to_revision, expected_revision]
+      properties:
+        to_revision: {type: integer, minimum: 1}
+        expected_revision: {type: integer, minimum: 0}
+
+    DocumentRevision:
+      type: object
+      additionalProperties: false
+      required: [kind, doc_id, revision, note, author, created_at, reverted_from]
+      properties:
+        kind: {type: string, enum: [spec, annotation]}
+        doc_id: {type: string}
+        revision: {type: integer, minimum: 1}
+        content:
+          $ref: "#/components/schemas/JsonValue"
+        note: {type: [string, "null"]}
+        author:
+          type: string
+          description: The saving principal's owner id — decided by the server.
+        created_at: {type: string}
+        reverted_from: {type: [integer, "null"]}
+
+    RevisionHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [revisions, audit]
+      properties:
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentRevision"
+        audit:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [revision, action, author, at]
+            properties:
+              revision: {type: integer}
+              action: {type: string, enum: [save, revert]}
+              author: {type: string}
+              at: {type: string}
 
     WarehouseTable:
       type: object

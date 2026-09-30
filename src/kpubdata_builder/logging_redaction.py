@@ -141,6 +141,7 @@ def install() -> None:
 
 __all__ = [
     "REDACTED",
+    "SENSITIVE_PARAM_KEYS",
     "active_count",
     "install",
     "redact",
