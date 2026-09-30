@@ -212,15 +212,16 @@ uv run pytest
 ## 5. Medallion 작업 규칙
 
 - `stages/`를 수정하는 기여자는 **Bronze → Silver → Gold** 책임 경계를 먼저 확인해야 합니다.
-- Bronze는 raw fetch/snapshot/provenance에 집중하고, Silver는 **Polars 기반 tabularize·validation·statistics·preview**에 집중하며, Gold는 split-ready/export-ready package 조립에 집중해야 합니다.
+- Bronze는 raw fetch/snapshot/provenance에 집중하고, Silver는 **tabularize·validation·statistics·preview**에 집중하며, Gold는 split-ready/export-ready package 조립에 집중해야 합니다.
 - stage 간 승격 규칙은 Builder가 소유하므로, Studio나 exporter 관점에서 임의 의미를 다시 정의하면 안 됩니다.
 - run workspace는 `build/{run_id}/bronze/`, `silver/`, `gold/` 규칙을 기준으로 생각해야 합니다.
+- tabular 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중입니다([ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 새 tabular 코드는 `tabular/duckdb_runtime.py`·`sql.py`·`dtypes.py` 위에 쓰고, 기존 Polars 코드는 그것을 대체하는 단계 전까지 최소한만 고칩니다. 각 단계는 `tests/parity/` 기준선과 같아야 합니다.
 
 ## 6. 테스트 가이드
 
 - stage 관련 변경은 가능하면 **stage-aware 테스트**와 함께 제출하세요.
 - Bronze 변경은 fixture 기반 source snapshot/provenance 검증을 우선합니다.
-- Silver 변경은 Polars schema validation, statistics, preview slice 검증을 우선합니다.
+- Silver 변경은 schema validation, statistics, preview slice 검증과 `tests/parity/` 기준선 비교를 우선합니다.
 - Gold 변경은 package layout, split readiness, exporter 입력 계약을 검증해야 합니다.
 - exporter 변경은 기존 golden test와 함께 Gold package 입력이 깨지지 않는지도 확인하세요.
 

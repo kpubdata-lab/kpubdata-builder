@@ -76,7 +76,7 @@ kpubdata-builder serve --host 0.0.0.0 --port 8000
 Builder의 파이프라인은 세 단계를 거칩니다:
 
 - **Bronze**: `kpubdata`를 통해 원시 데이터를 가져오고 source snapshot 보존
-- **Silver**: Bronze를 Polars로 정제·검증·통계 계산
+- **Silver**: Bronze를 정제·검증·통계 계산 (tabular 엔진은 지금 Polars이고 DuckDB로 전환 중 — [ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))
 - **Gold**: Silver 결과를 split-ready/export-ready 패키지로 조립
 
 실행 결과는 다음 구조로 정리됩니다:

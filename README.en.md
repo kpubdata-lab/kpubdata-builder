@@ -76,7 +76,7 @@ kpubdata-builder serve --host 0.0.0.0 --port 8000
 The pipeline runs through three stages:
 
 - **Bronze**: fetch raw data via kpubdata; preserve source snapshots byte-for-byte
-- **Silver**: normalize and validate using Polars; compute statistics
+- **Silver**: normalize and validate; compute statistics (the tabular engine is Polars today and moving to DuckDB — [ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))
 - **Gold**: compose Silver output into split-ready, export-ready packages
 
 Execution artifacts are organized as:

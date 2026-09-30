@@ -80,3 +80,8 @@ credential, `ENFORCE_OWNERSHIP` 기본값 모두 지금 그대로다.
 
 구현은 #683(작업 수명 credential), #635, #679, #785, #796, #685 가 나누어 맡는다.
 이 개정은 결정을 기록할 뿐이고, 구현이 들어오기 전까지 위 본문이 구현 상태다.
+
+**구현 상태 (2026-09-30 기준):** 위 여섯 이슈가 모두 닫혔다. 다중 사용자 모드에서
+`PUT /providers/{provider}/credential` 은 403 으로 거절하고(`service/providers_service.py`),
+데이터 조회는 운영자 키로 내려가지 않는다(`service/providers.py`). 이 날부터 다중 사용자
+배포의 구현 상태는 위 표다.

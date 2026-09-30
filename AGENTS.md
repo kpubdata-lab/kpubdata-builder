@@ -172,7 +172,7 @@ agent.
 1. The spec model
 2. Medallion pipeline orchestration
 3. Source execution through `kpubdata`
-4. The Polars tabular engine and Silver validation
+4. The tabular engine (Polars today, moving to DuckDB — ADR 0021) and Silver validation
 5. The artifact model and Gold packaging
 6. The Markdown exporter
 7. The HuggingFace layout exporter
@@ -200,11 +200,11 @@ every build leaves a manifest describing what came out.
 | :--- | :--- |
 | **BuildSpec** | Declares what to collect, how to shape it and where it goes |
 | **Bronze** | First stage: raw collection results and the source snapshot |
-| **Silver** | Middle stage: Polars tabular conversion, validation, statistics, preview |
+| **Silver** | Middle stage: tabular conversion, validation, statistics, preview |
 | **Gold** | Final internal stage: partitioning and an export-ready package |
 | **Artifact** | Something a build produced (a file, usually) |
 | **Manifest** | The specification of what a build produced — version, timestamps, digests |
-| **Polars** | The one tabular engine, used for Silver conversion and validation |
+| **Tabular engine** | The one canonical tabular engine. Polars today; the migration to DuckDB is in progress (ADR 0021, #864–#877) and ends with DuckDB as the only engine in `src/`. The legacy publish path (`scripts/pipeline/`) keeps Polars until it is retired (ADR 0018, ADR 0021 D1) |
 | **Exporter** | Converts data into a format (Markdown, JSONL, Parquet, HuggingFace) |
 | **Publisher** | Uploads a finished artifact somewhere (GitHub, HF Hub) |
 | **Golden Test** | Compares current output against a stored known-good file |
@@ -229,8 +229,11 @@ graph LR
     end
 ```
 
+During the DuckDB migration (ADR 0021) Silver runs on Polars until the Silver step
+(#869) lands; the diagram shows the stage, not the engine.
+
 ```text
-[BuildSpec] -> [Bronze: raw collection] -> [Silver: Polars conversion and validation]
+[BuildSpec] -> [Bronze: raw collection] -> [Silver: tabular conversion and validation]
             -> [Gold: packaging] -> [Export: formatting] -> [Manifest: metadata]
 ```
 
@@ -247,6 +250,15 @@ graph LR
   what came back.
 - **Unclear output paths.** Where a file is written is always explicit.
 - **A build without a manifest.** Every build output includes `manifest.json`.
+- **New Polars code under `src/`.** ADR 0021 moves the canonical tabular engine to
+  DuckDB. New tabular code goes through `tabular/duckdb_runtime.py` (connections,
+  resource limits, temp directories), `tabular/sql.py` (identifier quoting and
+  parameter binding — never interpolate user data into SQL) and `tabular/dtypes.py`
+  (Builder-owned dtype names). Changes to existing Polars code stay minimal until
+  the step that replaces it; `tests/parity/` holds the baseline every step must match.
+- **Leaking kpubdata's vocabulary into the contract.** Builder owns the wire
+  vocabulary (`service/vocabulary.py`, #831); map kpubdata values explicitly and
+  use only kpubdata's public API (`scripts/check_kpubdata_imports.py`).
 
 ### Before handing work back
 
@@ -273,7 +285,7 @@ graph TD
     ST --> BR[bronze/]
     ST --> SI[silver/]
     ST --> GO[gold/]
-    TB --> PO[polars_*]
+    TB --> PO[duckdb_* · polars_*]
     E --> ME[markdown.py]
     E --> JE[jsonl.py]
     E --> PE[parquet.py]
@@ -285,7 +297,7 @@ graph TD
 src/kpubdata_builder/
 ├── pipeline/        # medallion stage flow control
 ├── stages/          # bronze, silver, gold implementations
-├── tabular/         # Polars-based tabular processing
+├── tabular/         # tabular processing — Polars today, DuckDB runtime alongside (ADR 0021)
 ├── exporters/       # format conversion (Markdown, JSONL, Parquet)
 ├── publishers/      # artifact upload (HF, GitHub)
 ├── service/         # HTTP service mode (app.py, http.py, auth.py)

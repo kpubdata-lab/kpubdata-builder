@@ -13,7 +13,7 @@
 
 ```console
 $ kpubdata-builder --version
-kpubdata-builder 0.4.0.dev0
+kpubdata-builder 0.4.0
 ```
 
 ---
