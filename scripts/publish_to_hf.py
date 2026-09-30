@@ -23,6 +23,7 @@ import yaml
 from pipeline.fetch import fetch_records
 from pipeline.package import generate_dataset_card, write_parquet
 from pipeline.publish import upload_to_hf, upload_to_kaggle
+from pipeline.redistribution import publish_refusal
 from pipeline.transform import build_variant_dataframes, transform_records, validate_schema
 
 logger = logging.getLogger("publish_to_hf")
@@ -62,6 +63,14 @@ def main(argv: list[str] | None = None) -> None:
             "`kpubdata-builder publish`; publishing openly is an explicit choice."
         ),
     )
+    parser.add_argument(
+        "--confirm-non-commercial",
+        action="store_true",
+        help=(
+            "Confirm publishing a dataset whose source allows only non-commercial use "
+            "(KOGL type 2). Only as a private Kaggle dataset (#688)."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Skip upload, generate locally")
     parser.add_argument("--local-only", action="store_true", help="Only generate local files")
     parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
@@ -74,6 +83,19 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     config = load_config(args.config)
+    # Redistribution gate (#688): decided from the config's stated terms before anything
+    # is fetched. A local-only run publishes nothing and is not gated.
+    if not args.local_only:
+        targets = ("hf", "kaggle") if args.target == "all" else (args.target,)
+        refusal = publish_refusal(
+            config,
+            targets=targets,
+            kaggle_public=args.public,
+            confirm_non_commercial=args.confirm_non_commercial,
+        )
+        if refusal is not None:
+            logger.error("Refusing to publish %s: %s", args.config, refusal)
+            sys.exit(2)
     output_cfg = config["output"]
     staging_dir = Path(output_cfg["staging_dir"])
 

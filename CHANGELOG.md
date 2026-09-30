@@ -8,6 +8,10 @@
 
 ### Security
 
+- The legacy publish path refuses what a source's terms forbid (#688, owner decision D2; the BuildSpec-path gate follows the kpubdata 0.8.0 pin). Before fetching anything, `scripts/publish_to_hf.py` judges the config's `card.license`/`license_name`: `korea-public-data-unrestricted` and `kogl-type-1` publish; `kogl-type-2` only to a private Kaggle dataset with `--confirm-non-commercial` (the Hugging Face upload is always public); `kogl-type-3`/`-4`, which forbid derivative works this path produces, and anything unrecognised — no terms, or an unchecked `cc-by-4.0` — are refused with exit code 2, since unknown is not permission. `--local-only` publishes nothing and is not gated. Of today's configs, `air_quality` (KOGL type 3, already stopped) and `korea_base_rate` (ECOS terms unread, #677) are refused.
+
+### Security
+
 - In a multi-user deployment a provider key lives only as long as its request or job (#683, ADR 0012 amendment of 2026-09-30; API contract 1.56.0). It arrives in the `X-Provider-Key` header (`<provider>=<key>`), never a URL, and is held in a per-request context; an async job's key is bound to its run id in memory at submission and dropped when the job succeeds, fails or is cancelled, or after `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` (default 3600). Stored and environment credentials are not used there — `REQUIRE_OWN_PROVIDER_CREDENTIAL` is forced on, `PUT /providers/{p}/credential` answers 403 `credential_storage_disabled` — and at startup runs a restart interrupted are failed as `credentials_required`, since their keys are gone. The job registry snapshot, events, manifests and files never hold a key. A single-user deployment is unchanged.
 
 ### Security
