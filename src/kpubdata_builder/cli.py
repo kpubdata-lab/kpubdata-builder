@@ -30,7 +30,9 @@ from .service.redistribution import (
     build_verdict,
     is_public,
     kpubdata_terms,
+    needs_private_destination,
     publish_issues,
+    visibility_issue,
 )
 from .spec import load_spec
 from .spec.validator import validate_spec
@@ -702,12 +704,25 @@ def _run_publish(
 
     # The same terms gate as the HTTP publish (#688): the CLI is no side door.
     options: dict[str, object] = {"public": public} if target == "kaggle" else {}
+    verdict = build_verdict(spec, terms_lookup)
     issues = publish_issues(
-        build_verdict(spec, terms_lookup),
+        verdict,
         public=is_public(target, options),
         confirmed_non_commercial=confirm_non_commercial,
         spec=spec,
     )
+    if not issues and needs_private_destination(
+        verdict, public=is_public(target, options), spec=spec
+    ):
+        # A private-only publish to a destination that is already public would be
+        # public: publishing never changes an existing destination's visibility.
+        try:
+            visibility: str | None = PUBLISHER_REGISTRY[target].destination_visibility(destination)
+        except Exception:
+            visibility = None
+        issue = visibility_issue(visibility)
+        if issue is not None:
+            issues.append(issue)
     if issues:
         print("error: the source terms do not allow this publish:", file=sys.stderr)
         for issue in issues:

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import cast
@@ -32,10 +32,18 @@ from kpubdata_builder.manifest import status_from_manifest
 from kpubdata_builder.publishers import PUBLISHER_REGISTRY
 from kpubdata_builder.service import datasets as datasets_service
 from kpubdata_builder.service import publish as publish_service
+from kpubdata_builder.service import publish_credentials
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.jobs import AsyncBuildExecutor
 from kpubdata_builder.service.publish_credentials import resolve_publish_credentials
-from kpubdata_builder.service.redistribution import TermsLookup, kpubdata_terms
+from kpubdata_builder.service.redistribution import (
+    TermsLookup,
+    is_public,
+    kpubdata_terms,
+    kpubdata_version,
+    needs_private_destination,
+    visibility_issue,
+)
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import BuildSpec, JsonValue
 
@@ -81,6 +89,19 @@ def _publish_receipt_response(
     return ServiceResponse(409, {"error": message, "code": code})
 
 
+#: ``(target, destination, credentials) -> "public" | "private" | "absent"``.
+VisibilityProbe = Callable[[str, str, "publish_credentials.PublishCredentialResolution"], str]
+
+
+def _publisher_visibility(
+    target: str, destination: str, credentials: publish_credentials.PublishCredentialResolution
+) -> str:
+    """Ask the target's publisher, with the credentials the publish would use."""
+    publisher = PUBLISHER_REGISTRY[target]
+    values = None if credentials.not_required else dict(credentials.values)
+    return publisher.destination_visibility(destination, credentials=values)
+
+
 class PublishApiService:
     """Publish readiness/execution/receipt/reconcile/audit (#491, #551, #563)."""
 
@@ -92,12 +113,14 @@ class PublishApiService:
         async_builds: AsyncBuildExecutor,
         credential_repository: CredentialRepository | None = None,
         terms_lookup: TermsLookup = kpubdata_terms,
+        visibility_probe: VisibilityProbe | None = None,
     ) -> None:
         self._output_root = output_root
         self._publish_receipts = publish_receipts
         self._async_builds = async_builds
         self._credential_repository = credential_repository
         self._terms_lookup = terms_lookup
+        self._visibility_probe = visibility_probe or _publisher_visibility
 
     def _publish_context(
         self, run_id: str
@@ -293,6 +316,35 @@ class PublishApiService:
                 },
             )
 
+        # Terms that allow only a private publish need a destination that is not already
+        # public: publishing to an existing repo or dataset never changes its visibility
+        # (#688 review). Checked before anything is claimed or uploaded.
+        redistribution = readiness.redistribution
+        if redistribution is not None and needs_private_destination(
+            redistribution, public=is_public(resolved_target, options), spec=spec
+        ):
+            try:
+                visibility: str | None = self._visibility_probe(
+                    resolved_target, destination, credentials
+                )
+            except Exception as exc:
+                logger.warning(
+                    "destination visibility unavailable: target=%s error_type=%s",
+                    resolved_target,
+                    type(exc).__name__,
+                )
+                visibility = None
+            issue = visibility_issue(visibility)
+            if issue is not None:
+                return ServiceResponse(
+                    409,
+                    {
+                        "error": f"run is not ready to publish to {resolved_target!r}",
+                        "blockers": [{"code": issue.code, "message": issue.message}],
+                        "redistribution": redistribution.body(),
+                    },
+                )
+
         try:
             claim_status, receipt = self._publish_receipts.claim(
                 owner_key=owner_key,
@@ -336,7 +388,11 @@ class PublishApiService:
                     },
                 )
             effective_destination = str(resolved_local[1])
-        publish_kwargs: dict[str, object] = {"destination": effective_destination, **options}
+        # The confirmation is Builder's record, not a publisher option (#688).
+        publish_kwargs: dict[str, object] = {
+            "destination": effective_destination,
+            **{k: v for k, v in options.items() if k != "confirm_non_commercial"},
+        }
         # Always pass even if empty. Publisher interprets ``credentials=None`` as
         # "caller did not set it" (CLI path) and reads environment variables —
         # service path always sets it. Omitting it here breaks that distinction.
@@ -383,6 +439,17 @@ class PublishApiService:
             "reference": result.reference,
             "artifact_count": result.artifact_count,
             "status": result.status,
+            # Under which terms, read from which kpubdata, and with what confirmation
+            # this was published — kept in the receipt (#688 review).
+            "redistribution": (
+                {
+                    **redistribution.body(),
+                    "kpubdata_version": kpubdata_version(),
+                    "confirm_non_commercial": options.get("confirm_non_commercial") is True,
+                }
+                if redistribution is not None
+                else None
+            ),
         }
         try:
             self._publish_receipts.mark_succeeded(
@@ -632,7 +699,7 @@ class PublishApiService:
             if not token:
                 return None
             try:
-                from huggingface_hub import HfApi  # type: ignore[import-not-found]
+                from huggingface_hub import HfApi
             except ImportError:
                 return None
             try:

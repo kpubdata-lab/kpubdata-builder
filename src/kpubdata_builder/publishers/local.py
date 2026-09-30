@@ -35,6 +35,12 @@ class LocalPublisher(BasePublisher):
         """Publisher tool identifier."""
         return "local"
 
+    def destination_visibility(
+        self, destination: str, *, credentials: Mapping[str, str] | None = None
+    ) -> str:
+        """A directory under the server's publish root is never public."""
+        return "private"
+
     def publish(
         self,
         artifact_paths: tuple[Path, ...],

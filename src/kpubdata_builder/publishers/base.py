@@ -60,6 +60,19 @@ class BasePublisher(ABC):
         """
         return False
 
+    def destination_visibility(
+        self, destination: str, *, credentials: Mapping[str, str] | None = None
+    ) -> str:
+        """Whether ``destination`` already exists and is public: ``"public"``,
+        ``"private"`` or ``"absent"`` (#688).
+
+        Publishing to an existing destination never changes its visibility, so a
+        "private" publish to a public one would be public. A publisher that cannot tell
+        raises; the caller treats that as not knowing, which never allows a private-only
+        publish.
+        """
+        raise NotImplementedError(f"{self.name} cannot tell a destination's visibility")
+
     @abstractmethod
     def publish(
         self,

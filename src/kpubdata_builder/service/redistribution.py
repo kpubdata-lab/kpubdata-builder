@@ -184,6 +184,51 @@ def publish_issues(
     return []
 
 
+def needs_private_destination(
+    verdict: BuildVerdict, *, public: bool, spec: BuildSpec | None
+) -> bool:
+    """Whether the terms allow this publish only because it is private.
+
+    Then the destination itself must not already be public: publishing to an existing
+    repo or dataset does not change its visibility.
+    """
+    if public:
+        return False
+    if verdict.verdict == "unknown":
+        return True
+    return verdict.verdict == "non_commercial"
+
+
+def visibility_issue(visibility: str | None) -> PublishTermsIssue | None:
+    """The refusal a destination's visibility calls for; None when it is fine.
+
+    ``None`` means the visibility could not be read — not knowing is never permission.
+    """
+    if visibility in ("private", "absent"):
+        return None
+    if visibility == "public":
+        return PublishTermsIssue(
+            "destination_public",
+            "the destination already exists and is public, and publishing does not change "
+            "that; the source terms allow only a private publish",
+        )
+    return PublishTermsIssue(
+        "destination_visibility_unknown",
+        "the destination's visibility could not be read, and the source terms allow "
+        "only a private publish",
+    )
+
+
+def kpubdata_version() -> str | None:
+    """The kpubdata release whose catalog the verdict was read from."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("kpubdata")
+    except PackageNotFoundError:
+        return None
+
+
 def forbidden_response(verdict: BuildVerdict, *, what: str) -> ServiceResponse | None:
     """403 when the terms forbid redistribution; None otherwise.
 
@@ -225,6 +270,9 @@ __all__ = [
     "forbidden_response",
     "has_non_commercial_marker",
     "is_public",
+    "kpubdata_version",
+    "needs_private_destination",
+    "visibility_issue",
     "kpubdata_terms",
     "publish_issues",
     "source_verdict",

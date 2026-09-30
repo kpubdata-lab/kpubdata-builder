@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -15,6 +16,7 @@ from kpubdata_builder.service.redistribution import (
     has_non_commercial_marker,
     is_public,
     kpubdata_terms,
+    kpubdata_version,
     publish_issues,
 )
 from kpubdata_builder.service.responses import FileResponse, ServiceResponse
@@ -30,6 +32,7 @@ from .test_service_publish import (
     _service,
     _SpyPublisher,
     _with_credentials,
+    dispatch,
 )
 
 _DEV = Principal("dev")
@@ -230,6 +233,112 @@ def test_non_commercial_publishes_privately_once_confirmed(
     assert confirmed.status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("terms", "options"),
+    [
+        ("unknown", {"private": True}),
+        ("non_commercial", {"private": True, "confirm_non_commercial": True}),
+    ],
+)
+@pytest.mark.parametrize(
+    ("visibility", "code"),
+    [("public", "destination_public"), ("unreadable", "destination_visibility_unknown")],
+)
+def test_a_private_only_publish_to_a_public_destination_is_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terms: str,
+    options: dict[str, object],
+    visibility: str,
+    code: str,
+) -> None:
+    """Negative: publishing to an existing repo never changes its visibility, so a
+    private-only publish to a public one — or one whose visibility cannot be read —
+    would be public."""
+    _with_credentials(monkeypatch, "huggingface")
+    spy = _SpyPublisher("huggingface")
+    monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
+    service = _service(tmp_path, terms=terms, visibility=visibility)
+    _build(service, "r1", LICENSED_SPEC_YAML)
+
+    response = _publish(service, "r1", options=options)
+
+    assert response.status_code == 409
+    assert _blocker_codes(response) == [code]
+    redistribution = cast(dict[str, JsonValue], response.body["redistribution"])
+    assert redistribution["verdict"] == terms
+    assert spy.calls == []
+
+
+@pytest.mark.parametrize("visibility", ["private", "absent"])
+def test_a_private_or_new_destination_is_fine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, visibility: str
+) -> None:
+    _with_credentials(monkeypatch, "huggingface")
+    spy = _SpyPublisher("huggingface")
+    monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
+    service = _service(tmp_path, visibility=visibility)
+    _build(service, "r1", LICENSED_SPEC_YAML)
+
+    assert _publish(service, "r1", options={"private": True}).status_code == 200
+
+
+def test_a_probe_that_fails_is_not_permission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative: an error reading the visibility refuses, it does not let through."""
+    _with_credentials(monkeypatch, "huggingface")
+    spy = _SpyPublisher("huggingface")
+    monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
+
+    def probe(*_: object) -> str:
+        raise ConnectionError("hub unreachable")
+
+    client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=lambda **_: client,
+        publish_visibility_probe=probe,
+    )
+    _build(service, "r1", LICENSED_SPEC_YAML)
+
+    response = _publish(service, "r1", options={"private": True})
+
+    assert response.status_code == 409
+    assert _blocker_codes(response) == ["destination_visibility_unknown"]
+    assert spy.calls == []
+
+
+def test_a_publish_records_the_terms_it_went_out_under(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verdict, the kpubdata release it came from and the confirmation are kept in
+    the response and the receipt."""
+    _with_credentials(monkeypatch, "huggingface")
+    spy = _SpyPublisher("huggingface")
+    monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
+    service = _service(tmp_path, terms="non_commercial")
+    _build(service, "r1", LICENSED_SPEC_YAML)
+
+    response = _publish(service, "r1", options={"private": True, "confirm_non_commercial": True})
+    receipt = dispatch(
+        service,
+        "GET",
+        "/builds/r1/publish/receipt",
+        None,
+        query="target=huggingface&destination=kpubdata%2Fair-quality",
+    )
+
+    assert response.status_code == 200
+    record = cast(dict[str, JsonValue], response.body["redistribution"])
+    assert record["verdict"] == "non_commercial"
+    assert record["confirm_non_commercial"] is True
+    assert record["kpubdata_version"] == kpubdata_version()
+    assert cast(dict[str, JsonValue], receipt.body["result"])["redistribution"] == record
+    # The confirmation is Builder's, not an option the publisher is handed.
+    assert "confirm_non_commercial" not in spy.calls[0][1]
+
+
 # ------------------------------------------------------------------ other ways out
 
 
@@ -279,6 +388,8 @@ def _ways_out(service: BuilderService, table: str) -> dict[str, tuple[int, objec
         "artifact": _code(
             service.serve_artifact_file("r1", "gold/datago.air_quality/out/data.jsonl")
         ),
+        "profile": _code(service.get_warehouse_profile(table, "current", principal=_DEV)),
+        "analysis": _code(service.create_analysis({"name": "a", **query}, principal=_DEV)),
     }
 
 
@@ -293,6 +404,28 @@ def test_forbidden_data_leaves_by_no_way(tmp_path: Path) -> None:
     assert stage.status_code == 200
     assert stage.body["sample"] == []
     assert stage.body["sample_withheld"] == "redistribution_forbidden"
+
+
+def test_the_refusal_matches_the_contract(tmp_path: Path) -> None:
+    """The 403 body is the declared ``RedistributionForbidden`` response."""
+    import yaml
+
+    from ._openapi import validate
+
+    contract = yaml.safe_load(
+        (Path(__file__).parents[2] / "contract" / "builder-api.yaml").read_text(encoding="utf-8")
+    )
+    schema = {"$ref": "#/components/schemas/RedistributionForbiddenError"}
+    service, table = _warehouse_service(tmp_path, "forbidden")
+
+    response = service.read_warehouse_rows({"table": table}, principal=_DEV)
+
+    assert response.status_code == 403
+    assert validate(cast(JsonValue, response.body), schema, contract) == []
+    assert (
+        validate(cast(JsonValue, response.body), {"$ref": "#/components/schemas/Error"}, contract)
+        == []
+    )
 
 
 @pytest.mark.parametrize("terms", ["allowed", "unknown", "non_commercial"])
@@ -328,6 +461,31 @@ def test_an_export_made_before_the_terms_were_declared_is_not_served(tmp_path: P
 
     terms["value"] = "forbidden"
     response = service.download_warehouse_export(export_id, principal=_DEV)
+
+    assert _code(response) == (403, "redistribution_forbidden")
+
+
+def test_a_saved_analysis_does_not_run_once_the_terms_forbid(tmp_path: Path) -> None:
+    """An analysis saved while the terms allowed it is refused when it runs again."""
+    terms = {"value": "allowed"}
+    client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=lambda **_: client,
+        warehouse_root=tmp_path / "wh",
+        terms_lookup=lambda _id: terms["value"],
+    )
+    built = service.build(LICENSED_SPEC_YAML, run_id="r1")
+    materialized = cast(dict[str, dict[str, JsonValue]], built.body["materialized"])
+    table = cast(str, next(iter(materialized.values()))["logical_name"])
+    created = service.create_analysis(
+        {"name": "a", "table": table, "sql": "SELECT * FROM dataset"}, principal=_DEV
+    )
+    assert created.status_code == 200, created.body
+    analysis = cast(dict[str, JsonValue], created.body["analysis"])
+
+    terms["value"] = "forbidden"
+    response = service.run_analysis(cast(str, analysis["analysis_id"]), principal=_DEV)
 
     assert _code(response) == (403, "redistribution_forbidden")
 
@@ -395,3 +553,52 @@ def test_the_cli_publish_has_the_same_gate(
     if exit_code:
         assert "source terms do not allow" in capsys.readouterr().err
         assert not (tmp_path / "dest").exists()
+
+
+class _VisibleSpy(_SpyPublisher):
+    def __init__(self, visibility: str | None) -> None:
+        super().__init__("huggingface")
+        self._visibility = visibility
+
+    def destination_visibility(
+        self, destination: str, *, credentials: Mapping[str, str] | None = None
+    ) -> str:
+        if self._visibility is None:
+            raise ConnectionError("hub unreachable")
+        return self._visibility
+
+
+@pytest.mark.parametrize(
+    ("visibility", "code"),
+    [("public", "destination_public"), (None, "destination_visibility_unknown")],
+)
+def test_the_cli_reads_the_destination_visibility_too(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    visibility: str | None,
+    code: str,
+) -> None:
+    """Negative: a private-only CLI publish to a public (or unreadable) destination."""
+    from kpubdata_builder.cli import _run_publish
+    from kpubdata_builder.publishers import PUBLISHER_REGISTRY
+
+    spy = _VisibleSpy(visibility)
+    monkeypatch.setitem(PUBLISHER_REGISTRY, "huggingface", spy)
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(LICENSED_SPEC_YAML, encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "data.jsonl").write_text('{"a": 1}\n', encoding="utf-8")
+
+    exit_code = _run_publish(
+        str(spec_path),
+        target="huggingface",
+        destination="kpubdata/air-quality",
+        artifacts_dir=str(artifacts),
+        terms_lookup=lambda _id: "unknown",
+    )
+
+    assert exit_code == 2
+    assert code in capsys.readouterr().err
+    assert spy.calls == []

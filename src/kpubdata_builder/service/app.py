@@ -71,7 +71,7 @@ from .providers import (
     require_own_provider_credential,
 )
 from .providers_service import ProvidersService
-from .publish_api import PublishApiService
+from .publish_api import PublishApiService, VisibilityProbe
 from .quality_api import ISSUE_STATUSES, QualityApiService
 from .query_service_api import QueryApiService
 from .redistribution import (
@@ -394,6 +394,7 @@ class BuilderService:
         async_max_queue_size: int = 10,
         warehouse_root: Path | None = None,
         terms_lookup: TermsLookup | None = None,
+        publish_visibility_probe: VisibilityProbe | None = None,
     ) -> None:
         # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
         logging_redaction.install()
@@ -459,7 +460,11 @@ class BuilderService:
         # (even unused result) would eagerly initialize SQLite per request,
         # defeating lazy creation. Check need first here.
         self._uploads_service = UploadsService(repository=lambda: self._upload_repository)
-        self._query_api = QueryApiService(output_root=self._output_root, engine=self._query_service)
+        self._query_api = QueryApiService(
+            output_root=self._output_root,
+            engine=self._query_service,
+            terms_lookup=self._terms_lookup,
+        )
         self._warehouse_api = WarehouseApiService(
             table_catalog=lambda: self._table_catalog(),
             engine=self._query_service,
@@ -476,6 +481,7 @@ class BuilderService:
             output_root=self._output_root,
             table_catalog=lambda: self._table_catalog(),
             engine=self._query_service,
+            terms_lookup=self._terms_lookup,
         )
         self._analysis_store: AnalysisStore | None = None
         self._user_ledger_store: UserLedger | None = None
@@ -562,6 +568,7 @@ class BuilderService:
             async_builds=self._async_builds,
             credential_repository=self._credential_resolver.repository,
             terms_lookup=self._terms_lookup,
+            visibility_probe=publish_visibility_probe,
         )
 
     @property
@@ -760,16 +767,7 @@ class BuilderService:
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
     ) -> ServiceResponse:
         """Execute one validated SQL query against server-resolved stage table."""
-        response = self._query_api.query(body, principal=principal)
-        if response.status_code == 200 and body is not None:
-            # After the run is resolved as the caller's (#688, #796): a refusal never
-            # tells anyone about a run that is not theirs.
-            refusal = forbidden_response(
-                self._run_verdict(str(body.get("run_id"))), what="query results"
-            )
-            if refusal is not None:
-                return refusal
-        return response
+        return self._query_api.query(body, principal=principal)
 
     def _run_verdict(self, run_id: str) -> BuildVerdict:
         """The redistribution verdict of a run's sources (#688)."""

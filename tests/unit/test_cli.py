@@ -303,6 +303,8 @@ def test_publish_huggingface_stub(
     # Real HuggingFacePublisher takes per-file input, so stub matches similarly.
     stub.expects_directory = False
     stub.publish.return_value = fake_result
+    # A new repo: the private-only terms gate (#688) lets it through.
+    stub.destination_visibility.return_value = "absent"
 
     import kpubdata_builder.cli as cli_module
 

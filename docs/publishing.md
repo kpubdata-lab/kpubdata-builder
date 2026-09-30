@@ -158,9 +158,11 @@ BuildSpec 으로 만든 run 은 **kpubdata 가 데이터셋마다 선언한 조�
 | `allowed` | 허용 (BuildSpec `license` 선언은 여전히 필요, #443) | 허용 |
 | `non_commercial` | `confirm_non_commercial: true` 필요. 공개 게시에는 데이터셋 licence 에 비영리 표시(`cc-by-nc-4.0` 등)도 필요 | 허용 |
 | `unknown` | **비공개만** — 공개 게시는 `redistribution_unknown` 으로 거부 | 허용 |
-| `forbidden` | 전부 거부 (`redistribution_forbidden`) | **거부** — `/query`, `/preview`, warehouse 질의·rows·집계·export·export 다운로드, artifact 다운로드가 403, stage 상세는 sample 을 빼고 준다 |
+| `forbidden` | 전부 거부 (`redistribution_forbidden`) | **거부** — `/query`, `/preview`, warehouse 프로파일·질의·rows·집계·export·export 다운로드, 분석 생성·실행, artifact 다운로드가 403, stage 상세는 sample 을 빼고 준다 |
 
 - HTTP: `GET /builds/{run_id}/publish/readiness` 가 `redistribution`(판정과 소스별 이유)을 돌려주고, 막힌 `POST .../publish` 도 같은 값을 준다. 판정은 target 의 기본 옵션(비공개)으로 계산하고, POST 가 실제 옵션으로 다시 확인한다.
+- **비공개로만 허용되는 게시**(`unknown`, `non_commercial`)는 게시 전에 대상의 현재 공개 여부를 호출자 자격증명으로 읽는다. 이미 있는 저장소에 게시해도 공개 여부는 바뀌지 않으므로, 이미 공개인 Hugging Face repo·Kaggle dataset 이면 `destination_public` 으로 막고, 공개 여부를 읽지 못하면 `destination_visibility_unknown` 으로 막는다(모르는 것은 허가가 아니다). 없는 대상(새로 만들 것)과 비공개 대상은 통과한다. CLI 도 같다.
+- 성공한 게시는 응답과 receipt 의 `redistribution` 에 판정, 판정을 읽은 kpubdata 버전(`kpubdata_version`), `confirm_non_commercial` 을 남긴다. `confirm_non_commercial` 은 Builder 의 확인이라 publisher 로 넘기지 않는다.
 - CLI: `kpubdata-builder publish` 에도 같은 게이트가 있다. 막히면 종료 코드 2, 비영리 확인은 `--confirm-non-commercial`.
 - 2026-09-30 현재 kpubdata 카탈로그의 어떤 데이터셋도 `redistribution` 을 선언하지 않았으므로, BuildSpec 경로의 **공개 게시는 모두 막힌다**. 조건을 정하는 일은 kpubdata#524 다.
 
