@@ -47,6 +47,7 @@ import polars as pl
 from polars.datatypes import DataTypeClass
 
 from ..spec import JsonValue
+from ..tabular.builder_parquet import scan_builder_parquet
 from ..tabular.wire import JS_SAFE_INTEGER, encode_value, logical_type
 
 #: Raised whenever what is computed, or how, changes; cached profiles of another
@@ -138,7 +139,7 @@ def profile_table(table_path: str, plan: ProfilePlan) -> dict[str, JsonValue]:
     """Compute the profile body in one lazy pass over the table."""
     from ..stages.silver.pii import VALUE_PATTERNS, suspect_column_kind
 
-    frame = pl.scan_parquet(table_path)
+    frame = scan_builder_parquet(table_path)
     schema = frame.collect_schema()
     exprs: list[pl.Expr] = [pl.len().alias("__rows")]
     for index, (name, dtype) in enumerate(schema.items()):

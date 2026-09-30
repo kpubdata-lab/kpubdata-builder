@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from ..spec import JsonValue
+from ..tabular.builder_parquet import scan_builder_parquet
 from .models import QueryResult
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ def _query_worker(
         # Startup ends after spawn, Polars import, and query setup, immediately before scanning.
         startup_ms = _elapsed_ms(parent_started_ns)
         engine_started_ns = time.monotonic_ns()
-        frame = pl.scan_parquet(table_path)
+        frame = scan_builder_parquet(table_path)
         context = pl.SQLContext({"dataset": frame}, eager=False, register_globals=False)
         result = context.execute(bounded_sql).collect()
         engine_execution_ms = _elapsed_ms(engine_started_ns)

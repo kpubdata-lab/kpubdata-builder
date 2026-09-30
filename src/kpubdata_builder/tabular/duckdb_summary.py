@@ -12,7 +12,7 @@ The meanings are the ones Silver has always recorded:
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import duckdb
 
@@ -24,6 +24,7 @@ from .types import ColumnInfo, PreviewSlice, SchemaInfo, TableStatistics
 from .wire import JS_SAFE_INTEGER, WireEncoding
 
 _INTEGER = ("Int8", "Int16", "Int32", "Int64", "Int128", "UInt8", "UInt16", "UInt32", "UInt64")
+_COLUMNS_PER_QUERY = 32
 _TEXT_LIKE = ("String", "Date", "Datetime", "Time", "Duration", "Categorical", "Enum")
 
 
@@ -50,19 +51,30 @@ def schema_of(connection: duckdb.DuckDBPyConnection, table: LoadedTable) -> Sche
     """Every column's dtype, nullability, distinct count and wire encoding."""
     if not table.physical:
         return SchemaInfo(columns=())
-    parts: list[str] = []
-    for physical, dtype in zip(table.physical, table.dtypes, strict=True):
-        column = quote_identifier(physical)
-        parts.append(f"count(*) - count({column})")
-        parts.append(f"count(DISTINCT {column})")
-        if dtype.split("(", 1)[0] in _INTEGER:
-            parts.append(f"min({column})")
-            parts.append(f"max({column})")
-        else:
-            parts.append("NULL")
-            parts.append("NULL")
-    row = connection.execute(f"SELECT {', '.join(parts)} FROM {table.relation.sql}").fetchone()
-    assert row is not None
+    # A distinct count keeps a hash table per column; a wide table (#497 tests 1,100
+    # columns) is summarised a batch of columns at a time so they do not all live at once.
+    values: list[Any] = []
+    for start in range(0, len(table.physical), _COLUMNS_PER_QUERY):
+        parts: list[str] = []
+        for physical, dtype in zip(
+            table.physical[start : start + _COLUMNS_PER_QUERY],
+            table.dtypes[start : start + _COLUMNS_PER_QUERY],
+            strict=True,
+        ):
+            column = quote_identifier(physical)
+            parts.append(f"count(*) - count({column})")
+            parts.append(f"count(DISTINCT {column})")
+            if dtype.split("(", 1)[0] in _INTEGER:
+                parts.append(f"min({column})")
+                parts.append(f"max({column})")
+            else:
+                parts.extend(("NULL", "NULL"))
+        batch = connection.execute(
+            f"SELECT {', '.join(parts)} FROM {table.relation.sql}"
+        ).fetchone()
+        assert batch is not None
+        values.extend(batch)
+    row = values
     columns = []
     for index, (name, dtype) in enumerate(zip(table.names, table.dtypes, strict=True)):
         nulls, distinct, low, high = row[index * 4 : index * 4 + 4]

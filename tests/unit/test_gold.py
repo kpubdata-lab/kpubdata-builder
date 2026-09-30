@@ -19,6 +19,7 @@ from kpubdata_builder.stages.gold import (
     persist_gold_package,
 )
 from kpubdata_builder.stages.silver import SilverDataset, build_silver_dataset
+from kpubdata_builder.tabular.polars_bridge import to_polars
 
 
 def _silver(records: tuple[Mapping[str, JsonValue], ...]) -> SilverDataset:
@@ -39,7 +40,7 @@ class TestBuildGoldPackage:
 
         assert isinstance(package, GoldPackage)
         assert package.dataset_name == "apt_trade"
-        assert package.table.to_dicts() == silver.table.to_dicts()
+        assert package.table.to_dicts() == to_polars(silver.table).to_dicts()
         assert isinstance(package.export_plan, ExportPlan)
         assert package.export_plan.targets == exports
         assert package.source_silver == "datago.apt_trade"

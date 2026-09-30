@@ -33,10 +33,10 @@ from dataclasses import dataclass
 
 import duckdb
 
-from .polars_helpers import (
+from .cast_names import (
     TEXT_CASTS,
-    YEAR_MONTH_COMPACT,
-    YEAR_MONTH_DASHED,
+    YEAR_MONTH_COMPACT_RE2,
+    YEAR_MONTH_DASHED_RE2,
     CastReport,
 )
 from .sql import quote_identifier
@@ -152,8 +152,12 @@ def _full(pattern: str, value: str) -> str:
     return f"regexp_full_match({value}, '{pattern}')"
 
 
-def _strip(text: str) -> str:
+def strip_expression(text: str) -> str:
+    """``text`` without leading and trailing whitespace, as Polars' ``strip_chars``."""
     return f"regexp_replace({text}, '^{_SPACE}+|{_SPACE}+$', '', 'g')"
+
+
+_strip = strip_expression
 
 
 def text_expression(column: str, source: str) -> str:
@@ -222,8 +226,8 @@ def cast_expression(column: str, source: str, target: str) -> str:
         text = _strip(text_expression(column, source))
         compact = f"left({text}, 4) || '-' || substr({text}, 5, 2)"
         return (
-            f"CASE WHEN regexp_matches({text}, '{YEAR_MONTH_DASHED}') THEN {text} "
-            f"WHEN regexp_matches({text}, '{YEAR_MONTH_COMPACT}') THEN {compact} END"
+            f"CASE WHEN regexp_matches({text}, '{YEAR_MONTH_DASHED_RE2}') THEN {text} "
+            f"WHEN regexp_matches({text}, '{YEAR_MONTH_COMPACT_RE2}') THEN {compact} END"
         )
     if name not in _TARGETS:
         supported = ", ".join(sorted(_TARGETS))
@@ -417,6 +421,7 @@ __all__ = [
     "cast_expression",
     "cast_table",
     "register_functions",
+    "strip_expression",
     "text_expression",
     "zfill_expression",
     "zfill_violations",

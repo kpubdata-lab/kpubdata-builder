@@ -10,10 +10,12 @@ Main functions:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
+
+import duckdb
 
 from ...spec import ColumnNullTokens, DerivedColumn
 from ...tabular import DEFAULT_PREVIEW_LIMIT
-from ...tabular.polars_helpers import DtypeSpec
 from ..bronze.models import BronzeArtifact
 from .models import SilverDataset
 from .normalize import normalize_table
@@ -26,7 +28,7 @@ def build_silver_dataset(
     bronze: BronzeArtifact,
     *,
     required_columns: Sequence[str] = (),
-    casts: Mapping[str, DtypeSpec] | None = None,
+    casts: Mapping[str, str] | None = None,
     rename: Mapping[str, str] | None = None,
     derived: Sequence[DerivedColumn] = (),
     read_as: Mapping[str, str] | None = None,
@@ -34,8 +36,10 @@ def build_silver_dataset(
     column_null_tokens: Mapping[str, ColumnNullTokens] | None = None,
     coalesce: Mapping[str, Sequence[str]] | None = None,
     zfill: Mapping[str, int] | None = None,
-    column_dtypes: Mapping[str, DtypeSpec] | None = None,
+    column_dtypes: Mapping[str, str] | None = None,
     preview_limit: int = DEFAULT_PREVIEW_LIMIT,
+    connection: duckdb.DuckDBPyConnection | None = None,
+    workdir: Path | None = None,
 ) -> SilverDataset:
     """Transform Bronze artifacts into Silver datasets.
 
@@ -51,8 +55,12 @@ def build_silver_dataset(
         coalesce: rule collecting per-generation alias columns into one (#620).
         zfill: rule padding canonical identifiers to declared width (#620).
         column_dtypes: per-column expected dtype rules for validation. Keys are column names,
-            values are DtypeSpec(str | pl.DataType | type[pl.DataType]).
+            values are dtype names as a BuildSpec declares them.
         preview_limit: maximum rows to include in preview.
+        connection: the source's DuckDB connection (#869); a private one if omitted.
+            The caller keeps it open while the dataset is used and closes it.
+        workdir: where the table's spill files go; the Bronze staging directory by
+            default.
 
     Returns:
         SilverDataset: refined table and schema/statistics/preview/validation info.
@@ -72,6 +80,8 @@ def build_silver_dataset(
         column_null_tokens=column_null_tokens,
         coalesce=coalesce,
         zfill=zfill,
+        connection=connection,
+        workdir=workdir,
     )
     validation = validate_table(
         table, required_columns=required_columns, column_dtypes=column_dtypes

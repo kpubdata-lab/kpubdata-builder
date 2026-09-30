@@ -26,6 +26,7 @@ import polars as pl
 
 from ..spec.models import CompareColumnsRule, JsonValue, QualityPolicy, RangeRule
 from ..stages.silver.models import SilverDataset
+from ..tabular.polars_bridge import to_polars
 from ..tabular.polars_helpers import DtypeSpec, _resolve_dtype
 from .models import QualityCheckResult, QualityStatus
 
@@ -290,8 +291,10 @@ def evaluate_quality(
     Returns:
         Tuple of QualityCheckResult. Contains only actually-evaluated checks (PASS included).
     """
+    # Quality still reads a Polars frame until it runs on DuckDB (#872).
+    table = to_polars(silver.table)
     results: list[QualityCheckResult] = _schema_results(
-        silver.table,
+        table,
         source_key=source_key,
         required_columns=required_columns,
         column_dtypes=column_dtypes,
@@ -307,11 +310,11 @@ def evaluate_quality(
     if min_rows_result is not None:
         results.append(min_rows_result)
     for range_rule in policy.range:
-        range_result = _range_result(silver.table, range_rule, source_key=source_key)
+        range_result = _range_result(table, range_rule, source_key=source_key)
         if range_result is not None:
             results.append(range_result)
     for compare_rule in policy.compare_columns:
-        compare_result = _compare_columns_result(silver.table, compare_rule, source_key=source_key)
+        compare_result = _compare_columns_result(table, compare_rule, source_key=source_key)
         if compare_result is not None:
             results.append(compare_result)
     return tuple(results)

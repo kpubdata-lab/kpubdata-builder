@@ -22,6 +22,7 @@ from kpubdata_builder.spec import (
 from kpubdata_builder.spec.models import SchemaContract
 from kpubdata_builder.stages.silver.build import build_silver_dataset
 from kpubdata_builder.tabular import PreviewSlice, SchemaInfo
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
 
 
 class _FakeResult:
@@ -549,7 +550,10 @@ class TestDiffSampleHelper:
 
         def _dropping_build_silver_dataset(bronze, **kwargs):  # type: ignore[no-untyped-def]
             silver = real_build_silver_dataset(bronze, **kwargs)
-            dropped_table = silver.table.head(silver.table.height - 1)
+            frame = to_polars(silver.table)
+            dropped_table = handle_from_frame(
+                frame.head(frame.height - 1), workdir=silver.table.workdir
+            )
             return type(silver)(
                 table=dropped_table,
                 schema=silver.schema,

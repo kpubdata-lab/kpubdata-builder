@@ -31,7 +31,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -44,7 +44,8 @@ from ..errors import TabularError
 from ..spec import JsonValue
 from .convert import RecordTypeScan, apply_read_as
 from .duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation, reserve_row_seq
-from .sql import quote_identifier
+from .sql import quote_identifier, quote_literal
+from .types import PreviewSlice, SchemaInfo, TableStatistics
 
 #: A type as inferred: ``("int",)``, ``("decimal", 2)``, ``("list", node)``,
 #: ``("struct", {name: node})``, ``("datetime", zone)`` …
@@ -156,7 +157,7 @@ def _physical(node: Node, *, top: bool) -> str:
         "null": "INTEGER",
         "bool": "BOOLEAN",
         "int": "BIGINT",
-        "int128": "HUGEINT",
+        "int128": "HUGEINT" if top else "",
         "float": "DOUBLE",
         "str": "VARCHAR",
         "date": "DATE",
@@ -168,6 +169,11 @@ def _physical(node: Node, *, top: bool) -> str:
         return simple[kind]
     if kind == "decimal":
         return f"DECIMAL(38,{node[1]})"
+    if kind == "int128" and not top:
+        raise TabularError(
+            "integers beyond 64 bits inside a list or struct are not supported: "
+            "they cannot be written without rounding"
+        )
     if kind == "binary":
         if not top:
             raise TabularError("binary values inside a list or struct are not supported")
@@ -280,6 +286,267 @@ class LoadedTable:
     def order_by(self) -> str:
         """``ORDER BY`` clause restoring source order."""
         return f"ORDER BY {quote_identifier(ROW_SEQ_COLUMN)}"
+
+
+def derive_table(
+    connection: duckdb.DuckDBPyConnection,
+    source: LoadedTable,
+    *,
+    into: str,
+    columns: Sequence[tuple[str, str, Node]],
+) -> LoadedTable:
+    """A new table ``into`` from ``source``: one column per ``(name, sql, node)``.
+
+    ``sql`` is an expression over ``source``'s physical columns (see
+    :meth:`LoadedTable.column`); ``node`` is the new column's type. Rows keep their order.
+    """
+    physical = tuple(f"c{i}" for i in range(len(columns)))
+    relation = TabularRelation(into)
+    # The row ordinal travels with every derived table (ADR 0021 D8).
+    select = ", ".join(
+        [quote_identifier(ROW_SEQ_COLUMN)]
+        + [
+            f"{sql} AS {quote_identifier(name)}"
+            for name, (_, sql, _) in zip(physical, columns, strict=True)
+        ]
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT {select} FROM {source.relation.sql}"
+    )
+    nodes = tuple(node for _, _, node in columns)
+    return LoadedTable(
+        relation=relation,
+        names=tuple(name for name, _, _ in columns),
+        physical=physical,
+        dtypes=tuple(canonical(n) for n in nodes),
+        row_count=source.row_count,
+        nodes=nodes,
+    )
+
+
+def node_of(target: str) -> Node:
+    """The node of a column after a declared cast to ``target`` (see ``duckdb_casts``)."""
+    name = target.strip().lower()
+    return {
+        "int": ("int",),
+        "int64": ("int",),
+        "int_comma": ("int",),
+        "float": ("float",),
+        "float64": ("float",),
+        "float_comma": ("float",),
+        "str": ("str",),
+        "string": ("str",),
+        "utf8": ("str",),
+        "year_month": ("str",),
+        "date": ("date",),
+        "datetime": ("datetime", None),
+        "bool": ("bool",),
+        "boolean": ("bool",),
+    }[name]
+
+
+class TableClosedError(RuntimeError):
+    """A table was used after its handle closed (its source finished, or it was closed)."""
+
+
+class TableHandle:
+    """A table in a DuckDB connection, for the stages that read it (#869).
+
+    The connection is not part of the handle's surface: the handle offers the operations
+    stages need — schema, statistics, rows, Parquet — and nothing else. It belongs to
+    whoever opened it: a build's source pipeline or a preview closes its own
+    (``owns_connection=False``); a handle that opened a private connection for a library
+    caller closes it itself (``owns_connection=True``). After :meth:`close`, every
+    operation raises :class:`TableClosedError` — except reading a frame the Polars bridge
+    was asked to keep (``tabular.polars_bridge.to_polars(keep=True)``).
+    """
+
+    def __init__(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        table: LoadedTable,
+        workdir: Path,
+        *,
+        owns_connection: bool = False,
+        cache: dict[str, object] | None = None,
+    ) -> None:
+        self._connection: duckdb.DuckDBPyConnection | None = connection
+        self._owns_connection = owns_connection
+        self.table = table
+        self.workdir = workdir
+        #: What a caller asked to keep past the connection (the bridge's frame).
+        self.cache: dict[str, object] = dict(cache or {})
+
+    def __repr__(self) -> str:
+        state = "closed" if self._connection is None else "open"
+        return f"TableHandle({self.table.relation.name!r}, {len(self.columns)} columns, {state})"
+
+    @property
+    def closed(self) -> bool:
+        return self._connection is None
+
+    def _open(self) -> duckdb.DuckDBPyConnection:
+        if self._connection is None:
+            raise TableClosedError(
+                f"table {self.table.relation.name!r} is closed: its DuckDB connection "
+                "ended with the source that built it"
+            )
+        return self._connection
+
+    def close(self) -> None:
+        """Stop using the table; closes the connection only if this handle opened it."""
+        connection, self._connection = self._connection, None
+        if connection is not None and self._owns_connection:
+            connection.close()
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        return self.table.names
+
+    @property
+    def dtypes(self) -> tuple[str, ...]:
+        return self.table.dtypes
+
+    @property
+    def height(self) -> int:
+        return self.table.row_count
+
+    def schema(self) -> SchemaInfo:
+        from .duckdb_summary import schema_of
+
+        return schema_of(self._open(), self.table)
+
+    def statistics(self) -> TableStatistics:
+        from .duckdb_summary import statistics_of
+
+        return statistics_of(self._open(), self.table)
+
+    def preview(self, *, limit: int) -> PreviewSlice:
+        from .duckdb_summary import preview_of
+
+        return preview_of(self._open(), self.table, limit=limit)
+
+    def rows(self, *, limit: int) -> tuple[dict[str, object], ...]:
+        """Up to ``limit`` rows in source order."""
+        return fetch_rows(self._open(), self.table, limit=limit)
+
+    def rows_at(self, indices: Sequence[int]) -> tuple[dict[str, object], ...]:
+        """The rows at ``indices``, in the order asked for, in one query.
+
+        Raises:
+            IndexError: An index is outside the table, as a Polars frame would raise.
+        """
+        wanted = list(indices)
+        if not wanted:
+            return ()
+        for index in wanted:
+            if not 0 <= index < self.table.row_count:
+                raise IndexError(f"row index {index} is out of range for {self.height} rows")
+        seq = quote_identifier(ROW_SEQ_COLUMN)
+        columns = ", ".join(quote_identifier(p) for p in self.table.physical)
+        found = {
+            int(row[0]): row[1:]
+            for row in self._open()
+            .execute(
+                f"SELECT {seq}{', ' + columns if columns else ''} FROM {self.table.relation.sql} "
+                f"WHERE {seq} IN (SELECT unnest(?))",
+                [sorted(set(wanted))],
+            )
+            .fetchall()
+        }
+        return tuple(
+            {
+                name: _decode(node, value)
+                for name, node, value in zip(
+                    self.table.names, self.table.nodes, found[index], strict=True
+                )
+            }
+            for index in wanted
+        )
+
+    def distinct_text_values(self, name: str) -> Iterator[tuple[str, int]]:
+        """``(value, count)`` for each distinct non-null value of a text column."""
+        column = self.table.column(name)
+        cursor = self._open().execute(
+            f"SELECT {column}, count(*) FROM {self.table.relation.sql} "
+            f"WHERE {column} IS NOT NULL GROUP BY {column}"
+        )
+        while batch := cursor.fetchmany(10_000):
+            for value, count in batch:
+                yield str(value), int(count)
+
+    def write_parquet(self, path: Path, *, physical_names: bool = False) -> None:
+        """The table as Parquet, rows in order.
+
+        Under its real column names by default. ``physical_names`` keeps the internal
+        ``c0…`` names instead, for readers that rename themselves (the Polars bridge),
+        and writes Int128 as exact text for them to read back.
+
+        DuckDB writes a HUGEINT to Parquet as a double, so an Int128 column is written as
+        ``DECIMAL(38,0)`` — or as text when a value has more than 38 digits — never
+        rounded. A zoned datetime is written as an instant (``TIMESTAMPTZ``).
+
+        Raises:
+            ValueError: The table has no columns.
+        """
+        connection = self._open()
+        if not self.table.physical:
+            raise ValueError("a table without columns cannot be written as Parquet")
+        parts = []
+        # A name DuckDB cannot write as a column — empty, or one letter case away from
+        # another — is written under its internal name and restored by the reader.
+        folded = [n.casefold() for n in self.table.names]
+        renamed: dict[str, str] = {}
+        for physical, name, node in zip(
+            self.table.physical, self.table.names, self.table.nodes, strict=True
+        ):
+            column = quote_identifier(physical)
+            if node[0] == "int128":
+                column = (
+                    f"CAST({column} AS VARCHAR)"
+                    if physical_names or not self._fits_decimal(physical)
+                    else f"CAST({column} AS DECIMAL(38,0))"
+                )
+            elif node[0] == "datetime" and node[1] is not None and not physical_names:
+                # Stored as UTC wall time; read as UTC whatever the connection's zone.
+                column = f"timezone('UTC', {column})"
+            alias = physical if physical_names else name
+            if not physical_names and (not name or folded.count(name.casefold()) > 1):
+                alias = physical
+                renamed[physical] = name
+            parts.append(f"{column} AS {quote_identifier(alias)}")
+        # The Builder dtypes travel with the file (``builder_parquet``): DuckDB has no
+        # Parquet form for some of them (a Null column is written as INTEGER), and a
+        # reader gives them back.
+        options = "FORMAT PARQUET"
+        if not physical_names:
+            dtypes = json.dumps(dict(zip(self.table.names, self.table.dtypes, strict=True)))
+            metadata = f"'kpubdata_builder.dtypes': {quote_literal(dtypes)}"
+            if renamed:
+                names = json.dumps(renamed)
+                metadata += f", 'kpubdata_builder.names': {quote_literal(names)}"
+            options += f", KV_METADATA {{{metadata}}}"
+        # DuckDB 1.2 takes no bound parameter as a COPY target or option: the path —
+        # Builder's own, under the run — and the dtypes go in as quoted literals.
+        connection.execute(
+            f"COPY (SELECT {', '.join(parts)} FROM {self.table.relation.sql} "
+            f"{self.table.order_by}) TO {quote_literal(str(path))} ({options})"
+        )
+
+    def _fits_decimal(self, physical: str) -> bool:
+        """Whether every value has at most 38 digits — compared by min and max, since
+        ``abs`` of the smallest HUGEINT overflows."""
+        column = quote_identifier(physical)
+        bound = "99999999999999999999999999999999999999::HUGEINT"
+        row = (
+            self._open()
+            .execute(
+                f"SELECT coalesce(max({column}) <= {bound} AND min({column}) >= -{bound}, true) "
+                f"FROM {self.table.relation.sql}"
+            )
+            .fetchone()
+        )
+        return bool(row and row[0])
 
 
 def load_records(
@@ -407,4 +674,14 @@ def fetch_rows(
     )
 
 
-__all__ = ["LoadedTable", "canonical", "fetch_rows", "load_records"]
+__all__ = [
+    "LoadedTable",
+    "Node",
+    "TableClosedError",
+    "TableHandle",
+    "canonical",
+    "derive_table",
+    "fetch_rows",
+    "load_records",
+    "node_of",
+]

@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
+import polars as pl
 import yaml
 
 from ..artifact import ArtifactDataset
@@ -107,8 +108,9 @@ from ..stages.silver.drift import (
 from ..stages.silver.models import SilverDataset
 from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
-from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
+from ..tabular.duckdb_runtime import build_connection, clear_temp_root
+from ..tabular.polars_bridge import to_polars
 from ..tabular.polars_engine import artifact_writer, infer_schema
 from ..tabular.wire import encode_rows
 from ..uploads import UploadRepository
@@ -506,6 +508,7 @@ def _run_source_pipeline(
     pii_masking: PiiMaskResult | None = None
     resumed_combinations = 0
     total_combinations = 0
+    resources = contextlib.ExitStack()
     try:
         # Boundary 0 (#481): This source hasn't started yet. Waiting in worker
         # pool (#247, max 4) and about to start; if cancellation was already
@@ -602,7 +605,16 @@ def _run_source_pipeline(
             coalesce=source.schema.coalesce if source.schema else None,
             zfill=source.schema.zfill if source.schema else None,
             column_dtypes=column_dtypes,
+            # One DuckDB connection per source (#869): its temp files live under the
+            # run, it is closed when the source finishes.
+            connection=resources.enter_context(
+                build_connection(context.output_root / context.run_id, output_key)
+            ),
+            workdir=bronze.staging_dir,
         )
+        # Closed before its connection (ExitStack runs callbacks last-in first-out), so a
+        # late use of the table is a clear error, not a DuckDB one.
+        resources.callback(silver.table.close)
         evaluated_row_count = silver.statistics.row_count
 
         # Structured Quality/Schema evaluation (#486). Uses same common
@@ -756,6 +768,9 @@ def _run_source_pipeline(
         # composition (#506) uses this value directly for join, so validated
         # data only.
         if capture_silver:
+            # Composition reads this after the source's connection has closed: take its
+            # frame now, while the table is there (#869).
+            to_polars(silver.table, keep=True)
             captured_silver = silver
         _record_output_paths(
             outputs,
@@ -773,9 +788,12 @@ def _run_source_pipeline(
         recorder.stage_started(output_key, "gold")
         # The published shape is decided here, not in Silver (#659): Silver keeps
         # every column and row, and quality above was measured on it.
-        gold_table = silver.table
+        # Gold still runs on a Polars frame until #870; Silver's table is read through the
+        # bridge (#869).
+        silver_frame = to_polars(silver.table)
+        gold_table = silver_frame
         if source.gold is not None:
-            gold_table, gold_selection = apply_gold_selection(silver.table, source.gold)
+            gold_table, gold_selection = apply_gold_selection(silver_frame, source.gold)
         # Declared PII (read above) is masked in what is published unless the spec opts
         # a column out (#689). kpubdata declarations this source lacks are recorded (#902).
         gold_table, pii_masking = apply_pii_masking(
@@ -798,12 +816,12 @@ def _run_source_pipeline(
                 ", ".join(sorted(pii_masking.unmasked)),
                 output_key,
             )
-        gold_input = silver if gold_table is silver.table else replace(silver, table=gold_table)
         # The card describes Gold whenever Gold differs from Silver: a dropped column or
         # row, or a masked value, never appears in it.
         gold_differs = gold_selection is not None or bool(pii_masking.masked)
         gold = build_gold_package(
-            gold_input,
+            silver,
+            table=gold_table,
             dataset_name=output_key,
             exports=context.spec.exports,
             metadata=_gold_package_metadata(context.spec),
@@ -976,6 +994,8 @@ def _run_source_pipeline(
             silver=captured_silver,
         )
     finally:
+        # The connection first: its tables and temp files go before the staged records.
+        resources.close()
         # The staged records are needed only while this source runs; its persisted
         # Bronze is in the run's bronze directory (#622).
         staging_root = context.output_root / context.run_id / _STAGING_DIRNAME
@@ -1005,7 +1025,7 @@ def _mask_composition_inputs(
     left: SilverDataset,
     right: SilverDataset,
     pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]],
-) -> tuple[SilverDataset, SilverDataset, list[str], PiiMaskResult]:
+) -> tuple[pl.DataFrame, pl.DataFrame, list[str], PiiMaskResult]:
     """Mask each side's declared PII before the join, join keys after it (#689).
 
     Masking a key before the join would make every masked key equal. A key column
@@ -1032,11 +1052,12 @@ def _mask_composition_inputs(
         if origins:
             key_columns.append(lk)
             masked[lk] = origins
-    masked_left = replace(
-        left, table=mask_columns(left.table, [c for c in left_declared if c not in left_keys])
+    # The sides as frames: composition still joins Polars frames until #870.
+    masked_left = mask_columns(
+        to_polars(left.table), [c for c in left_declared if c not in left_keys]
     )
-    masked_right = replace(
-        right, table=mask_columns(right.table, [c for c in right_declared if c not in right_keys])
+    masked_right = mask_columns(
+        to_polars(right.table), [c for c in right_declared if c not in right_keys]
     )
     return masked_left, masked_right, key_columns, PiiMaskResult(masked=masked, unmasked={})
 
@@ -1074,13 +1095,16 @@ def _run_composition(
 
     # Declared PII is masked in the composed Gold too (#689). A composition has no
     # per-source gold, so there is no opt-out here: every declared column is masked.
-    left_silver, right_silver, pii_key_columns, pii_masking = _mask_composition_inputs(
-        join, silver_by_key[join.left], silver_by_key[join.right], pii_declared or {}
+    left_silver, right_silver = silver_by_key[join.left], silver_by_key[join.right]
+    left_frame, right_frame, pii_key_columns, pii_masking = _mask_composition_inputs(
+        join, left_silver, right_silver, pii_declared or {}
     )
     try:
         package, stats = build_composed_gold_package(
             left_silver=left_silver,
             right_silver=right_silver,
+            left_table=left_frame,
+            right_table=right_frame,
             join=join,
             dataset_name=composition.name,
             exports=context.spec.exports,
@@ -1143,7 +1167,7 @@ def _run_composition(
     export_paths = export_gold_package(package, output_dir=gold_paths.gold_dir)
     _record_output_paths(outputs, *export_paths)
 
-    combined_schema = build_schema(package.table)
+    combined_schema = infer_schema(package.table)
     card = build_dataset_card(
         title=context.spec.title,
         description=context.spec.description,
@@ -1362,6 +1386,9 @@ def run_build(
     # returns results in spec.sources order, not completion order, so
     # downstream merge (manifest) stays deterministic.
     max_workers = min(len(spec.sources), _MAX_PARALLEL_SOURCES)
+    # DuckDB spill directories a crashed attempt at this run left (#869): cleared once,
+    # before any source opens a connection, so none is taken over mid-run.
+    clear_temp_root(context.output_root / context.run_id)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(_worker, spec.sources))
 

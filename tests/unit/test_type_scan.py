@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import polars as pl
 import pytest
 
 from kpubdata_builder.errors import TabularError
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages.bronze.models import BronzeArtifact
-from kpubdata_builder.stages.silver.normalize import normalize_table
+from kpubdata_builder.stages.silver.normalize import normalize_table as _normalize_handle
 from kpubdata_builder.tabular.convert import (
     RecordTypeScan,
     check_case_fold_collisions,
     records_to_dataframe,
 )
+from kpubdata_builder.tabular.polars_bridge import to_polars
+
+
+def normalize_table(*args: Any, **kwargs: Any) -> pl.DataFrame:
+    """Silver's normalization, read as the Polars frame these assertions were written
+    against (#869: the table itself is on DuckDB)."""
+    return to_polars(_normalize_handle(*args, **kwargs))
+
 
 _CASES: list[tuple[str, list[dict[str, JsonValue]], str | None]] = [
     ("R1 number and string", [{"v": 1}, {"v": "a"}], "heterogeneous"),

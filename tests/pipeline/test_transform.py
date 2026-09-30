@@ -310,29 +310,32 @@ class TestBuildSpecPathMatchesTheLegacyScript:
         from kpubdata_builder.spec.models import DerivedColumn
         from kpubdata_builder.stages.bronze.models import BronzeArtifact, utc_now
         from kpubdata_builder.stages.silver.normalize import normalize_table
+        from kpubdata_builder.tabular.polars_bridge import to_polars
 
         bronze = BronzeArtifact.from_records(
             source_key="datago.apt_trade",
             records=tuple(self._records()),
             fetched_at=utc_now(),
         )
-        return normalize_table(
-            bronze,
-            rename={
-                "sggCd": "district_code",
-                "dealAmount": "deal_amount",
-                "dealYear": "deal_year",
-                "dealMonth": "deal_month",
-                "dealDay": "deal_day",
-            },
-            casts={"deal_amount": "int_comma"},
-            derived=(
-                DerivedColumn(
-                    name="deal_date",
-                    kind="date_parts",
-                    columns=("deal_year", "deal_month", "deal_day"),
+        return to_polars(
+            normalize_table(
+                bronze,
+                rename={
+                    "sggCd": "district_code",
+                    "dealAmount": "deal_amount",
+                    "dealYear": "deal_year",
+                    "dealMonth": "deal_month",
+                    "dealDay": "deal_day",
+                },
+                casts={"deal_amount": "int_comma"},
+                derived=(
+                    DerivedColumn(
+                        name="deal_date",
+                        kind="date_parts",
+                        columns=("deal_year", "deal_month", "deal_day"),
+                    ),
                 ),
-            ),
+            )
         )
 
     def test_rename_and_formatted_cast_agree(self) -> None:

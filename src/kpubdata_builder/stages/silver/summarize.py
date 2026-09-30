@@ -1,17 +1,16 @@
-"""Silver summarization (#46)."""
+"""Silver summarization (#46), on DuckDB (#869)."""
 
 from __future__ import annotations
 
-import polars as pl
+from ...tabular import SchemaInfo, TableStatistics
+from ...tabular.duckdb_load import TableHandle
 
-from ...tabular import SchemaInfo, TableStatistics, compute_statistics, infer_schema
 
-
-def build_schema(table: pl.DataFrame) -> SchemaInfo:
+def build_schema(table: TableHandle) -> SchemaInfo:
     """generates table schema summary."""
-    return infer_schema(table)
+    return table.schema()
 
 
-def build_statistics(table: pl.DataFrame) -> TableStatistics:
+def build_statistics(table: TableHandle) -> TableStatistics:
     """generates table statistics summary."""
-    return compute_statistics(table)
+    return table.statistics()

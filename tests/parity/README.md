@@ -39,3 +39,11 @@ python scripts/generate_duckdb_parity_baseline.py --check    # exit 1 when a fil
 The generator runs each scenario twice and refuses to write when the two runs differ. Commit
 a changed baseline only with the reason in the pull request: that diff is what changed for
 users.
+
+## After the Silver cutover (#869)
+
+Silver now runs on DuckDB and this baseline is what it was checked against. One class of
+difference was accepted when regenerating: DuckDB cannot write Parquet's null logical
+type, so a column whose values are all null is stored in `silver/table.parquet` as
+INTEGER and reads back as `Int32`. Its Builder dtype is still `Null` in `schema.json`,
+and every other Silver, Gold, export and query output is unchanged.

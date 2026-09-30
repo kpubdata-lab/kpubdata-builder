@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-import polars as pl
-
-from ...tabular.polars_helpers import DtypeSpec, _resolve_dtype
+from ...tabular.duckdb_load import TableHandle
 from .models import ValidationResult
 
 
@@ -20,11 +18,40 @@ class ValidationProblem:
     message: str
 
 
+#: Declared dtype names and the Builder dtype each one means (``polars_helpers``' names).
+_EXPECTED: Mapping[str, str] = {
+    "bool": "Boolean",
+    "boolean": "Boolean",
+    "date": "Date",
+    "datetime": "Datetime(time_unit='us', time_zone=None)",
+    "float": "Float64",
+    "float64": "Float64",
+    "int": "Int64",
+    "int64": "Int64",
+    "str": "String",
+    "string": "String",
+    "utf8": "String",
+}
+
+
+def expected_dtype(spec: str) -> str:
+    """The Builder dtype a declared dtype name stands for.
+
+    Raises:
+        ValueError: The name is not one Builder knows.
+    """
+    normalized = spec.strip().lower()
+    if normalized not in _EXPECTED:
+        supported = ", ".join(sorted(_EXPECTED))
+        raise ValueError(f"Unsupported dtype: {spec!r}. Supported: {supported}")
+    return _EXPECTED[normalized]
+
+
 def validate_table(
-    table: pl.DataFrame,
+    table: TableHandle,
     *,
     required_columns: Sequence[str] = (),
-    column_dtypes: Mapping[str, DtypeSpec] | None = None,
+    column_dtypes: Mapping[str, str] | None = None,
 ) -> ValidationResult:
     """validates required column existence and declared dtype match."""
     problems: list[ValidationProblem] = []
@@ -48,8 +75,8 @@ def validate_table(
                 )
             )
             continue
-        expected = _resolve_dtype(expected_spec)
-        actual = table.schema[column]
+        expected = expected_dtype(expected_spec)
+        actual = table.dtypes[table.columns.index(column)]
         if actual != expected:
             problems.append(
                 ValidationProblem(
