@@ -112,6 +112,9 @@ class BuildManifest:
     #: What each source's ``gold`` selection did (#659): Silver rows in, Gold rows out,
     #: and the rule. ``row_counts`` stays Silver's — the count quality was measured on.
     gold_selection: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
+    #: Per Gold directory, the declared PII columns Gold masked and those published
+    #: unmasked by ``gold.publish_unmasked``, each with where it was declared (#689).
+    pii_masking: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
     #: Present only when a source resumed from a checkpoint (#648): the run is not
     #: reproducible, and the R1 comparison leaves it out.
     reproducibility: dict[str, JsonValue] | None = None

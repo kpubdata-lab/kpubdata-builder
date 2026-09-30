@@ -65,6 +65,7 @@ from ..spec import (
     BuildSpec,
     CompositionSpec,
     ExportTarget,
+    JoinSpec,
     JsonValue,
     SourceRef,
     parse_spec,
@@ -80,6 +81,14 @@ from ..stages.gold.build import build_gold_package
 from ..stages.gold.card import build_dataset_card, render_dataset_card
 from ..stages.gold.compose import CompositionError, build_composed_gold_package
 from ..stages.gold.persist import persist_gold_package
+from ..stages.gold.pii import (
+    PiiDeclarationError,
+    PiiMaskResult,
+    apply_pii_masking,
+    core_pii_columns,
+    declared_pii_columns,
+    mask_columns,
+)
 from ..stages.gold.select import GoldSelectionError, GoldSelectionResult, apply_gold_selection
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.drift import (
@@ -421,6 +430,11 @@ class _SourcePipelineResult:
     silver: SilverDataset | None = None
     #: What ``sources[].gold`` did to this source (#659); None when it declares none.
     gold_selection: GoldSelectionResult | None = None
+    #: Silver columns declared PII, with where each declaration came from (#689). A
+    #: composition over this source masks them too.
+    pii_declared: Mapping[str, tuple[str, ...]] | None = None
+    #: What Gold masked and published unmasked (#689); None before Gold.
+    pii_masking: PiiMaskResult | None = None
     #: ``(resumed, total)`` param_grid combinations when this source resumed from a
     #: checkpoint (#648); None when every combination was fetched in this run.
     resumed: tuple[int, int] | None = None
@@ -485,6 +499,8 @@ def _run_source_pipeline(
     export_started = False
     fetch_completed = False
     gold_selection: GoldSelectionResult | None = None
+    pii_declared: dict[str, tuple[str, ...]] | None = None
+    pii_masking: PiiMaskResult | None = None
     resumed_combinations = 0
     total_combinations = 0
     try:
@@ -736,10 +752,37 @@ def _run_source_pipeline(
         recorder.stage_started(output_key, "gold")
         # The published shape is decided here, not in Silver (#659): Silver keeps
         # every column and row, and quality above was measured on it.
-        gold_input = silver
+        gold_table = silver.table
         if source.gold is not None:
-            selected, gold_selection = apply_gold_selection(silver.table, source.gold)
-            gold_input = replace(silver, table=selected)
+            gold_table, gold_selection = apply_gold_selection(silver.table, source.gold)
+        # Declared PII is masked in what is published unless the spec opts a column out
+        # (#689). Declared by kpubdata's spec (read through the client that fetched it)
+        # or by the BuildSpec, never guessed from values.
+        pii_declared = declared_pii_columns(
+            core=(
+                core_pii_columns(client.dataset(f"{source.provider}.{source.dataset}"))
+                if source.kind == "public_api"
+                else ()
+            ),
+            build_spec=source.gold.pii_columns if source.gold is not None else (),
+            silver_columns=silver.table.columns,
+            contract=source.schema,
+        )
+        gold_table, pii_masking = apply_pii_masking(
+            gold_table,
+            pii_declared,
+            publish_unmasked=source.gold.publish_unmasked if source.gold is not None else (),
+        )
+        if pii_masking.unmasked:
+            logger.warning(
+                "declared PII published unmasked by gold.publish_unmasked: %s @ %s (#689)",
+                ", ".join(sorted(pii_masking.unmasked)),
+                output_key,
+            )
+        gold_input = silver if gold_table is silver.table else replace(silver, table=gold_table)
+        # The card describes Gold whenever Gold differs from Silver: a dropped column or
+        # row, or a masked value, never appears in it.
+        gold_differs = gold_selection is not None or bool(pii_masking.masked)
         gold = build_gold_package(
             gold_input,
             dataset_name=output_key,
@@ -780,16 +823,14 @@ def _run_source_pipeline(
             fields=(
                 (column.name, column.dtype, column.nullable)
                 for column in (
-                    silver.schema.columns
-                    if gold_selection is None
-                    else infer_schema(gold.table).columns
+                    silver.schema.columns if not gold_differs else infer_schema(gold.table).columns
                 )
             ),
             # A card describes what is published: with a selection, sample rows come
             # from Gold, so a dropped column or row never appears in it.
             sample_rows=(
                 silver.preview.rows
-                if gold_selection is None
+                if not gold_differs
                 else tuple(
                     encode_rows(
                         gold.table.head(len(silver.preview.rows)).to_dicts(),
@@ -833,6 +874,8 @@ def _run_source_pipeline(
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
             gold_selection=gold_selection,
+            pii_declared=pii_declared,
+            pii_masking=pii_masking,
             resumed=((resumed_combinations, total_combinations) if resumed_combinations else None),
         )
     except BuildCancelled:
@@ -865,7 +908,14 @@ def _run_source_pipeline(
         # internal info like destination paths, so log detailed message to
         # server warning, return generic message to client (#225).
         if isinstance(
-            exc, (ValidationError, DatasetValidationError, IngestionError, GoldSelectionError)
+            exc,
+            (
+                ValidationError,
+                DatasetValidationError,
+                IngestionError,
+                GoldSelectionError,
+                PiiDeclarationError,
+            ),
         ):
             error_msg = str(exc)
         else:
@@ -928,6 +978,48 @@ class _CompositionPipelineResult:
     row_count: int | None = None
     schema_summary: SchemaSummary | None = None
     provenance: CompositionProvenance | None = None
+    pii_masking: PiiMaskResult | None = None
+
+
+def _mask_composition_inputs(
+    join: JoinSpec,
+    left: SilverDataset,
+    right: SilverDataset,
+    pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]],
+) -> tuple[SilverDataset, SilverDataset, list[str], PiiMaskResult]:
+    """Mask each side's declared PII before the join, join keys after it (#689).
+
+    Masking a key before the join would make every masked key equal. A key column
+    either side declares PII survives the join as the left key, so that is what is
+    masked afterwards. Returns the masked sides, the output key columns still to mask,
+    and the record under the composed table's column names.
+    """
+    left_declared = pii_declared.get(join.left, {})
+    right_declared = pii_declared.get(join.right, {})
+    left_keys = {lk for lk, _ in join.keys}
+    right_keys = {rk for _, rk in join.keys}
+    masked: dict[str, tuple[str, ...]] = {
+        c: o for c, o in left_declared.items() if c not in left_keys
+    }
+    for column, origins in right_declared.items():
+        if column in right_keys:
+            continue
+        # A right column whose name the left side already has is suffixed by the join.
+        name = f"{column}_{join.right}" if column in left.table.columns else column
+        masked[name] = origins
+    key_columns: list[str] = []
+    for lk, rk in join.keys:
+        origins = tuple(dict.fromkeys((*left_declared.get(lk, ()), *right_declared.get(rk, ()))))
+        if origins:
+            key_columns.append(lk)
+            masked[lk] = origins
+    masked_left = replace(
+        left, table=mask_columns(left.table, [c for c in left_declared if c not in left_keys])
+    )
+    masked_right = replace(
+        right, table=mask_columns(right.table, [c for c in right_declared if c not in right_keys])
+    )
+    return masked_left, masked_right, key_columns, PiiMaskResult(masked=masked, unmasked={})
 
 
 def _run_composition(
@@ -935,6 +1027,7 @@ def _run_composition(
     *,
     silver_by_key: Mapping[str, SilverDataset],
     context: BuildContext,
+    pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]] | None = None,
 ) -> _CompositionPipelineResult:
     """Execute composition (join) and persist combined Gold outputs (#506).
 
@@ -960,10 +1053,15 @@ def _run_composition(
             )
         )
 
+    # Declared PII is masked in the composed Gold too (#689). A composition has no
+    # per-source gold, so there is no opt-out here: every declared column is masked.
+    left_silver, right_silver, pii_key_columns, pii_masking = _mask_composition_inputs(
+        join, silver_by_key[join.left], silver_by_key[join.right], pii_declared or {}
+    )
     try:
         package, stats = build_composed_gold_package(
-            left_silver=silver_by_key[join.left],
-            right_silver=silver_by_key[join.right],
+            left_silver=left_silver,
+            right_silver=right_silver,
             join=join,
             dataset_name=composition.name,
             exports=context.spec.exports,
@@ -1003,6 +1101,13 @@ def _run_composition(
             join.right,
             stats.right_null_key_rows,
         )
+
+    if pii_key_columns:
+        package = replace(package, table=mask_columns(package.table, pii_key_columns))
+    pii_masking = PiiMaskResult(
+        masked={c: o for c, o in pii_masking.masked.items() if c in package.table.columns},
+        unmasked={},
+    )
 
     outputs: list[str] = []
     gold_paths = persist_gold_package(
@@ -1064,7 +1169,21 @@ def _run_composition(
         row_count=stats.output_row_count,
         schema_summary=schema_summary,
         provenance=provenance,
+        pii_masking=pii_masking,
     )
+
+
+def _pii_unmasked_warnings(pii_masking: Mapping[str, PiiMaskResult]) -> tuple[str, ...]:
+    """One manifest warning per Gold that publishes a declared PII column unmasked (#689)."""
+    warnings: list[str] = []
+    for key, result in sorted(pii_masking.items()):
+        if result.unmasked:
+            columns = ", ".join(sorted(result.unmasked))
+            warnings.append(
+                f"{key}: declared PII column(s) {columns} published unmasked by "
+                "gold.publish_unmasked (#689)"
+            )
+    return tuple(warnings)
 
 
 def _reclaim(catalog: TableCatalog, table_id: str, keep: int | None) -> None:
@@ -1239,6 +1358,8 @@ def run_build(
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
     silver_by_key: dict[str, SilverDataset] = {}
     gold_selection: dict[str, GoldSelectionResult] = {}
+    pii_declared: dict[str, Mapping[str, tuple[str, ...]]] = {}
+    pii_masking: dict[str, PiiMaskResult] = {}
     resumed_sources: dict[str, dict[str, JsonValue]] = {}
     for result in results:
         outputs.extend(result.output_paths)
@@ -1249,6 +1370,10 @@ def run_build(
             }
         if result.gold_selection is not None:
             gold_selection[result.outcome.source_key] = result.gold_selection
+        if result.pii_declared is not None:
+            pii_declared[result.outcome.source_key] = result.pii_declared
+        if result.pii_masking is not None and not result.pii_masking.is_empty():
+            pii_masking[result.outcome.source_key] = result.pii_masking
         if result.row_count is not None:
             row_counts[result.outcome.source_key] = result.row_count
         if result.schema_summary is not None:
@@ -1297,8 +1422,16 @@ def run_build(
     composition_provenance: CompositionProvenance | None = None
     if spec.composition is not None and not cancelled:
         composition_result = _run_composition(
-            spec.composition, silver_by_key=silver_by_key, context=context
+            spec.composition,
+            silver_by_key=silver_by_key,
+            context=context,
+            pii_declared=pii_declared,
         )
+        if (
+            composition_result.pii_masking is not None
+            and not composition_result.pii_masking.is_empty()
+        ):
+            pii_masking[composition_result.outcome.name] = composition_result.pii_masking
         composition_outcome = composition_result.outcome
         composition_provenance = composition_result.provenance
         outputs.extend(composition_result.output_paths)
@@ -1419,7 +1552,7 @@ def run_build(
         # # recorder absorbed event logging failures (#496) here — reusing
         # existing authoritative warnings channel without new API field,
         # so API consumers can see if event timeline actually has gaps.
-        warnings=recorder.dropped_events(),
+        warnings=(*recorder.dropped_events(), *_pii_unmasked_warnings(pii_masking)),
         errors=errors,
         row_counts=row_counts,
         schema_summaries=schema_summaries,
@@ -1435,6 +1568,7 @@ def run_build(
         composition=composition_provenance,
         warehouse_failures=warehouse_failures,
         gold_selection={key: value.body() for key, value in gold_selection.items()},
+        pii_masking={key: value.body() for key, value in pii_masking.items()},
         reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,
         artifacts=_artifact_digests(
             context,

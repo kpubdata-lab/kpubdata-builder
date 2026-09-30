@@ -166,7 +166,7 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
     if source.gold is not None:
         # Part of the recipe (#659): which columns and rows are published. Omitted when
         # absent, so existing specs keep their digest.
-        entry["gold"] = {
+        gold: dict[str, JsonValue] = {
             "select": list(source.gold.select),
             "filters": [
                 {
@@ -177,6 +177,13 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
                 for f in source.gold.filters
             ],
         }
+        # PII declarations (#689) only when present, so earlier gold specs keep their
+        # digest.
+        if source.gold.pii_columns:
+            gold["pii_columns"] = list(source.gold.pii_columns)
+        if source.gold.publish_unmasked:
+            gold["publish_unmasked"] = list(source.gold.publish_unmasked)
+        entry["gold"] = gold
     if source.kind == "file":
         entry["upload_id"] = source.upload_id
         entry["format"] = source.format

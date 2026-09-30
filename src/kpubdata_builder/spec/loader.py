@@ -366,17 +366,12 @@ def _parse_sources(value: object) -> tuple[SourceRef, ...]:
 def _parse_gold(value: object, *, prefix: str) -> GoldSelection:
     """Parse ``sources[].gold`` — the columns and rows Gold keeps (#659)."""
     mapping = _ensure_mapping(value, field_name=prefix)
-    unknown = set(mapping) - {"select", "filters"}
+    unknown = set(mapping) - {"select", "filters", "pii_columns", "publish_unmasked"}
     if unknown:
         raise TypeError(f"{prefix} has unknown keys: {sorted(unknown)}")
-    select_obj = mapping.get("select", [])
-    if not isinstance(select_obj, list) or not all(
-        isinstance(c, str) and c for c in cast(list[object], select_obj)
-    ):
-        raise TypeError(f"{prefix}.select must be a list of column names")
-    select = tuple(cast(list[str], select_obj))
-    if len(set(select)) != len(select):
-        raise ValueError(f"{prefix}.select names a column twice")
+    select = _parse_gold_columns(mapping, "select", prefix=prefix)
+    pii_columns = _parse_gold_columns(mapping, "pii_columns", prefix=prefix)
+    publish_unmasked = _parse_gold_columns(mapping, "publish_unmasked", prefix=prefix)
     filters_obj = mapping.get("filters", [])
     if not isinstance(filters_obj, list):
         raise TypeError(f"{prefix}.filters must be a list")
@@ -402,7 +397,25 @@ def _parse_gold(value: object, *, prefix: str) -> GoldSelection:
         elif filter_value is None or isinstance(filter_value, (list, dict)):
             raise ValueError(f"{where}: {op} takes one non-null value")
         filters.append(GoldFilter(column=column, op=op, value=filter_value))
-    return GoldSelection(select=select, filters=tuple(filters))
+    return GoldSelection(
+        select=select,
+        filters=tuple(filters),
+        pii_columns=pii_columns,
+        publish_unmasked=publish_unmasked,
+    )
+
+
+def _parse_gold_columns(mapping: dict[str, object], key: str, *, prefix: str) -> tuple[str, ...]:
+    """A ``sources[].gold`` list of distinct column names; absent is empty."""
+    value = mapping.get(key, [])
+    if not isinstance(value, list) or not all(
+        isinstance(c, str) and c for c in cast(list[object], value)
+    ):
+        raise TypeError(f"{prefix}.{key} must be a list of column names")
+    columns = tuple(cast(list[str], value))
+    if len(set(columns)) != len(columns):
+        raise ValueError(f"{prefix}.{key} names a column twice")
+    return columns
 
 
 def _parse_public_api_source(

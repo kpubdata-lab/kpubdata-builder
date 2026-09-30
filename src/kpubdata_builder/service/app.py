@@ -347,7 +347,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.61.0"
+# 1.61.0 -> 1.62.0: declared PII columns masked in Gold by default; SourceRef.gold gains
+#   pii_columns and publish_unmasked, the manifest pii_masking (#689, additive).
+API_CONTRACT_VERSION = "1.62.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
