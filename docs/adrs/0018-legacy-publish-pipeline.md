@@ -1,6 +1,7 @@
 # ADR 0018 — 레거시 publish 파이프라인과 BuildSpec 경로의 공존
 
-- 상태: 제안됨(Proposed) — **결정 대기**
+- 상태: 승인됨(Accepted) — 2026-09-30 소유자 결정, **선택지 C 채택**
+- 관련 이슈: #636, #659, #688
 - 관련 문서: [ADR 0003 — persistent build store](./0003-persistent-build-store.md), [BUILD_SPEC.md](../BUILD_SPEC.md), [DATA_FRESHNESS.md](https://github.com/yeongseon/kpubdata-builder/blob/main/DATA_FRESHNESS.md)
 
 ## 맥락
@@ -75,6 +76,24 @@
 무관하게 지금 필요하고(공공누리 준수), 나머지 둘의 설계에도 영향을 주지 않는다.
 
 이 ADR 은 어느 쪽도 확정하지 않는다. 결정 전에 레거시를 지우지 말 것.
+
+## 결정 (소유자, 2026-09-30)
+
+**선택지 C 를 채택한다.** BuildSpec 을 채운 뒤 레거시 config 를 하나씩 이관한다.
+
+- **`filters` 와 컬럼 선택은 Gold 에 둔다** (#659 의 선택지 a). Silver 는 Bronze 의
+  컬럼을 전부 보존한다는 계약을 유지하고, 게시본의 컬럼·행을 정하는 것은 Gold 다.
+  Silver 에 행 삭제 규칙을 두지 않는다는 #611 의 판단은 그대로다.
+- **이관 단위는 config 하나다.** 옮긴 config 는 정식 경로로 게시하고, 옮기지 않은
+  config 는 레거시 경로에 남는다. 레거시 코드(`scripts/pipeline/`,
+  `scripts/publish_to_hf.py`)는 **마지막 config 가 옮겨질 때까지 지우지 않는다.**
+- 이관 확인은 레코드 집합 비교다. `param_grid` 전개 순서가 달라 바이트 비교는
+  성립하지 않는다(`tests/pipeline/test_param_grid_parity.py`, #636).
+- 두 경로가 공존하는 동안 게시 게이트(#688)는 **두 경로 모두**에 있어야 한다.
+- 실행 단위는 #636 이다.
+
+`variants`(en/ko)의 표현 방식과 스키마 변경 공지 방법은 아래 "결정되지 않은 것"에
+그대로 남는다 — 해당 config 를 옮길 때 정한다.
 
 ## 결정되지 않은 것
 

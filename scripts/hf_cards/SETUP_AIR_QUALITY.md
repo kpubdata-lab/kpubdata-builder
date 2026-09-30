@@ -1,5 +1,11 @@
 # Air Quality Dataset — Setup & Publish Guide
 
+> **Publishing is stopped (owner decision, 2026-09-30, #759).** The source is KOGL
+> Type 3 (attribution, no derivatives). `scheduled-air-quality.yml` stays disabled and
+> must not be re-enabled. The card licence is `license: other` /
+> `license_name: kogl-type-3` in `scripts/configs/air_quality.yaml`; correcting the card
+> already on Hugging Face is the owner's step (see "Correcting the published card").
+
 ## Prerequisites
 
 ### 1. API Key Registration
@@ -27,13 +33,13 @@ export HF_TOKEN="hf_your_token_here"
 ### Dry Run (validate without uploading)
 
 ```bash
-python scripts/publish_to_hf.py --config scripts/configs/air_quality.yaml --dry-run
+python scripts/publish_to_hf.py scripts/configs/air_quality.yaml --dry-run
 ```
 
 ### Actual Publish
 
 ```bash
-python scripts/publish_to_hf.py --config scripts/configs/air_quality.yaml
+python scripts/publish_to_hf.py scripts/configs/air_quality.yaml
 ```
 
 ## Config Reference
@@ -54,6 +60,18 @@ This is normal — the pipeline handles it gracefully.
 
 ## Scheduled Updates
 
-Once the API key is approved, the air quality dataset will be
-automatically updated every 2 hours via GitHub Actions
-(`.github/workflows/scheduled-air-quality.yml`).
+`.github/workflows/scheduled-air-quality.yml` is **disabled** (#759) and stays disabled.
+
+## Correcting the published card
+
+Owner only. This re-uploads `README.md` alone and leaves the published data files
+untouched:
+
+```bash
+python scripts/publish_to_hf.py scripts/configs/air_quality.yaml --local-only
+huggingface-cli upload kpubdata/air-quality ./staging/air-quality/README.md README.md \
+  --repo-type dataset --commit-message "fix(card): licence is KOGL Type 3 (#759)"
+```
+
+`--local-only` still fetches from the API to render the card, so it needs
+`KPUBDATA_DATAGO_API_KEY`.
