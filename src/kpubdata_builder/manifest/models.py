@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from ..quality.models import DriftEvaluation, QualityCheckResult, SchemaDriftFinding
+from ..spec import JsonValue
 from .composition import CompositionProvenance
 from .environment import BuildEnvironment
 from .provenance import SourceProvenance
@@ -108,6 +109,9 @@ class BuildManifest:
     composition: CompositionProvenance | None = None
     #: Sources whose warehouse commit failed after they built, by reason (#788).
     warehouse_failures: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: What each source's ``gold`` selection did (#659): Silver rows in, Gold rows out,
+    #: and the rule. ``row_counts`` stays Silver's — the count quality was measured on.
+    gold_selection: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
 
 
 __all__ = ["MANIFEST_SCHEMA_VERSION", "BuildManifest"]

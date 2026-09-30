@@ -129,6 +129,39 @@ SOURCE_URL_FORMATS: tuple[str, ...] = ("json", "jsonl", "csv")
 UPLOAD_ID_PATTERN: re.Pattern[str] = re.compile(r"^upl_[a-f0-9]{32}$")
 
 
+#: Comparison operators a Gold row filter may use (#659). Named, not free text: a
+#: filter is data, and is never evaluated as an expression.
+GOLD_FILTER_OPS: tuple[str, ...] = ("eq", "ne", "gt", "ge", "lt", "le", "in", "not_null")
+
+
+@dataclass(frozen=True)
+class GoldFilter:
+    """Keep only rows where ``column`` ``op`` ``value`` holds (#659).
+
+    A row whose value is null fails every comparison except ``ne`` against a
+    non-null value — nulls are not silently kept by a ``>`` filter. ``in`` takes a
+    list; ``not_null`` takes no value.
+    """
+
+    column: str
+    op: str
+    value: JsonValue = None
+
+
+@dataclass(frozen=True)
+class GoldSelection:
+    """Which columns and rows a source's Gold keeps (#659, ADR 0018 option C).
+
+    Silver keeps every column and row of Bronze (#611) — quality is measured there.
+    What is published is Gold, so choosing columns and dropping rows happens here:
+    ``filters`` first (they may use columns ``select`` drops), then ``select``, in
+    the order listed. An empty ``select`` keeps every column.
+    """
+
+    select: tuple[str, ...] = ()
+    filters: tuple[GoldFilter, ...] = ()
+
+
 @dataclass(frozen=True)
 class SourceRef:
     """Canonical source reference — represents three kinds: Public API/File/URL (#498)."""
@@ -145,6 +178,8 @@ class SourceRef:
     encoding: str = "utf-8"
     endpoint: str = ""
     method: str = "GET"
+    #: Columns and rows this source's Gold keeps (#659); None keeps all of Silver.
+    gold: GoldSelection | None = None
 
 
 @dataclass(frozen=True)
@@ -426,6 +461,9 @@ __all__ = [
     "DerivedColumn",
     "CompositionSpec",
     "ExportTarget",
+    "GOLD_FILTER_OPS",
+    "GoldFilter",
+    "GoldSelection",
     "JoinSpec",
     "JsonPrimitive",
     "JsonValue",

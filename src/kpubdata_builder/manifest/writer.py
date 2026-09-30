@@ -99,6 +99,11 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         payload["warehouse_failures"] = {
             key: dict(value) for key, value in manifest.warehouse_failures.items()
         }
+    # additive (#659): only when a source declares a Gold selection.
+    if manifest.gold_selection:
+        payload["gold_selection"] = {
+            key: dict(value) for key, value in manifest.gold_selection.items()
+        }
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)

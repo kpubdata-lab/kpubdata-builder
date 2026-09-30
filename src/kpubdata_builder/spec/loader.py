@@ -12,6 +12,7 @@ Main functions:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -19,6 +20,7 @@ import yaml
 
 from ..errors import SpecLoadError
 from .models import (
+    GOLD_FILTER_OPS,
     SOURCE_KINDS,
     BuildSpec,
     ColumnNullTokens,
@@ -26,6 +28,8 @@ from .models import (
     CompositionSpec,
     DerivedColumn,
     ExportTarget,
+    GoldFilter,
+    GoldSelection,
     JoinSpec,
     JsonValue,
     PiiPolicy,
@@ -340,18 +344,58 @@ def _parse_sources(value: object) -> tuple[SourceRef, ...]:
         schema = _parse_schema(schema_obj, prefix=prefix) if schema_obj is not None else None
 
         if kind_obj == "file":
-            parsed_sources.append(
-                _parse_file_source(mapping, index=index, alias=alias_obj, schema=schema)
-            )
+            source = _parse_file_source(mapping, index=index, alias=alias_obj, schema=schema)
         elif kind_obj == "url":
-            parsed_sources.append(
-                _parse_url_source(mapping, index=index, alias=alias_obj, schema=schema)
-            )
+            source = _parse_url_source(mapping, index=index, alias=alias_obj, schema=schema)
         else:
-            parsed_sources.append(
-                _parse_public_api_source(mapping, index=index, alias=alias_obj, schema=schema)
-            )
+            source = _parse_public_api_source(mapping, index=index, alias=alias_obj, schema=schema)
+        gold_obj = mapping.get("gold")
+        if gold_obj is not None:
+            source = replace(source, gold=_parse_gold(gold_obj, prefix=f"{prefix}.gold"))
+        parsed_sources.append(source)
     return tuple(parsed_sources)
+
+
+def _parse_gold(value: object, *, prefix: str) -> GoldSelection:
+    """Parse ``sources[].gold`` — the columns and rows Gold keeps (#659)."""
+    mapping = _ensure_mapping(value, field_name=prefix)
+    unknown = set(mapping) - {"select", "filters"}
+    if unknown:
+        raise TypeError(f"{prefix} has unknown keys: {sorted(unknown)}")
+    select_obj = mapping.get("select", [])
+    if not isinstance(select_obj, list) or not all(
+        isinstance(c, str) and c for c in cast(list[object], select_obj)
+    ):
+        raise TypeError(f"{prefix}.select must be a list of column names")
+    select = tuple(cast(list[str], select_obj))
+    if len(set(select)) != len(select):
+        raise ValueError(f"{prefix}.select names a column twice")
+    filters_obj = mapping.get("filters", [])
+    if not isinstance(filters_obj, list):
+        raise TypeError(f"{prefix}.filters must be a list")
+    filters: list[GoldFilter] = []
+    for index, item in enumerate(cast(list[object], filters_obj)):
+        where = f"{prefix}.filters[{index}]"
+        rule = _ensure_mapping(item, field_name=where)
+        unknown = set(rule) - {"column", "op", "value"}
+        if unknown:
+            raise TypeError(f"{where} has unknown keys: {sorted(unknown)}")
+        column, op = rule.get("column"), rule.get("op")
+        if not isinstance(column, str) or not column:
+            raise TypeError(f"{where}.column must be a column name")
+        if op not in GOLD_FILTER_OPS:
+            raise ValueError(f"{where}.op must be one of {GOLD_FILTER_OPS}")
+        filter_value = cast(JsonValue, rule.get("value"))
+        if op == "not_null":
+            if "value" in rule:
+                raise ValueError(f"{where}: not_null takes no value")
+        elif op == "in":
+            if not isinstance(filter_value, list) or not filter_value:
+                raise ValueError(f"{where}: in takes a non-empty list")
+        elif filter_value is None or isinstance(filter_value, (list, dict)):
+            raise ValueError(f"{where}: {op} takes one non-null value")
+        filters.append(GoldFilter(column=column, op=op, value=filter_value))
+    return GoldSelection(select=select, filters=tuple(filters))
 
 
 def _parse_public_api_source(

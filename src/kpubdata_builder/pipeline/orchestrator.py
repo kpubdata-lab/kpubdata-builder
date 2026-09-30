@@ -74,6 +74,7 @@ from ..stages.gold.build import build_gold_package
 from ..stages.gold.card import build_dataset_card, render_dataset_card
 from ..stages.gold.compose import CompositionError, build_composed_gold_package
 from ..stages.gold.persist import persist_gold_package
+from ..stages.gold.select import GoldSelectionError, GoldSelectionResult, apply_gold_selection
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.drift import (
     COVERAGE_MISMATCH,
@@ -90,6 +91,8 @@ from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
 from ..stages.silver.summarize import build_schema
 from ..tabular import DEFAULT_PREVIEW_LIMIT
+from ..tabular.polars_engine import infer_schema
+from ..tabular.wire import encode_rows
 from ..uploads import UploadRepository
 from ..warehouse import (
     MaterializeResult,
@@ -387,6 +390,8 @@ class _SourcePipelineResult:
     # empty schema_drift alone cannot tell "nothing changed" from "no baseline".
     drift_evaluation: tuple[DriftEvaluation, ...] = ()
     silver: SilverDataset | None = None
+    #: What ``sources[].gold`` did to this source (#659); None when it declares none.
+    gold_selection: GoldSelectionResult | None = None
 
 
 def _run_source_pipeline(
@@ -447,6 +452,7 @@ def _run_source_pipeline(
     # *after* fetch), distinguishing success boundaries.
     export_started = False
     fetch_completed = False
+    gold_selection: GoldSelectionResult | None = None
     try:
         # Boundary 0 (#481): This source hasn't started yet. Waiting in worker
         # pool (#247, max 4) and about to start; if cancellation was already
@@ -677,8 +683,14 @@ def _run_source_pipeline(
         raise_if_cancelled(cancellation)
 
         recorder.stage_started(output_key, "gold")
+        # The published shape is decided here, not in Silver (#659): Silver keeps
+        # every column and row, and quality above was measured on it.
+        gold_input = silver
+        if source.gold is not None:
+            selected, gold_selection = apply_gold_selection(silver.table, source.gold)
+            gold_input = replace(silver, table=selected)
         gold = build_gold_package(
-            silver,
+            gold_input,
             dataset_name=output_key,
             exports=context.spec.exports,
             metadata=_gold_package_metadata(context.spec),
@@ -715,9 +727,25 @@ def _run_source_pipeline(
             description=context.spec.description,
             sources=(output_key,),
             fields=(
-                (column.name, column.dtype, column.nullable) for column in silver.schema.columns
+                (column.name, column.dtype, column.nullable)
+                for column in (
+                    silver.schema.columns
+                    if gold_selection is None
+                    else infer_schema(gold.table).columns
+                )
             ),
-            sample_rows=silver.preview.rows,
+            # A card describes what is published: with a selection, sample rows come
+            # from Gold, so a dropped column or row never appears in it.
+            sample_rows=(
+                silver.preview.rows
+                if gold_selection is None
+                else tuple(
+                    encode_rows(
+                        gold.table.head(len(silver.preview.rows)).to_dicts(),
+                        infer_schema(gold.table).columns,
+                    )
+                )
+            ),
             license=_dataset_card_license(context.spec),
             version=_dataset_card_version(context.spec),
         )
@@ -753,6 +781,7 @@ def _run_source_pipeline(
             schema_drift=schema_drift,
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
+            gold_selection=gold_selection,
         )
     except BuildCancelled:
         # Cooperative cancellation is not failure (#481) — caught before
@@ -783,7 +812,9 @@ def _run_source_pipeline(
         # Other BuildError subclasses (ExportError/ManifestError) may include
         # internal info like destination paths, so log detailed message to
         # server warning, return generic message to client (#225).
-        if isinstance(exc, (ValidationError, DatasetValidationError, IngestionError)):
+        if isinstance(
+            exc, (ValidationError, DatasetValidationError, IngestionError, GoldSelectionError)
+        ):
             error_msg = str(exc)
         else:
             logger.error(
@@ -1147,8 +1178,11 @@ def run_build(
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = {}
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
     silver_by_key: dict[str, SilverDataset] = {}
+    gold_selection: dict[str, GoldSelectionResult] = {}
     for result in results:
         outputs.extend(result.output_paths)
+        if result.gold_selection is not None:
+            gold_selection[result.outcome.source_key] = result.gold_selection
         if result.row_count is not None:
             row_counts[result.outcome.source_key] = result.row_count
         if result.schema_summary is not None:
@@ -1268,7 +1302,13 @@ def run_build(
                     schema_contract_version=(
                         fingerprints.schema_contract if fingerprints else None
                     ),
-                    row_count=row_counts.get(outcome.source_key),
+                    # The table holds Gold's rows; with a selection that is not Silver's
+                    # count (#659).
+                    row_count=(
+                        gold_selection[outcome.source_key].output_rows
+                        if outcome.source_key in gold_selection
+                        else row_counts.get(outcome.source_key)
+                    ),
                     expected_revision=start_revisions.get(outcome.source_key),
                     # A snapshot of a partial fetch says so (#816), so a reader can show
                     # it rather than present part of the data as the whole.
@@ -1327,6 +1367,7 @@ def run_build(
         drift_evaluation=drift_evaluation,
         composition=composition_provenance,
         warehouse_failures=warehouse_failures,
+        gold_selection={key: value.body() for key, value in gold_selection.items()},
     )
     manifest_path = context.output_root / context.run_id / "manifest.json"
     manifest_writer(manifest, manifest_path)
