@@ -856,7 +856,7 @@ class TestCancelOwnership:
         finally:
             release.set()
 
-        assert response.status_code == 403
+        assert response.status_code == 404
         # Actual state did not change.
         self._oidc(monkeypatch, "oidc:owner-a", label="a")
         assert completed.wait(timeout=5)
@@ -886,7 +886,7 @@ class TestCancelOwnership:
         finally:
             release.set()
 
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     def test_owner_can_cancel_and_owner_id_never_leaks(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -25,6 +25,17 @@ def _read_manifest_ownership(service: BuilderService, run_id: str) -> tuple[str 
         return None, None
 
 
+def not_owner(run_id: str) -> ServiceResponse:
+    """The answer to a request for another owner's run (#796).
+
+    In a multi-user deployment it is the same 404 a missing run gets, so a run id cannot
+    be probed for existence; otherwise 403, as before.
+    """
+    if ownership_module.hides_foreign_runs():
+        return ServiceResponse(404, {"error": f"run not found: {run_id}"})
+    return ServiceResponse(403, {"error": "forbidden: not run owner"})
+
+
 def check_ownership(
     service: BuilderService, run_id: str, principal: Principal
 ) -> ServiceResponse | None:
@@ -33,7 +44,7 @@ def check_ownership(
         created_by=created_by, owner_id=owner_id, principal=principal
     ):
         return None
-    return ServiceResponse(403, {"error": "forbidden: not run owner"})
+    return not_owner(run_id)
 
 
 def check_run_exists(service: BuilderService, run_id: str) -> ServiceResponse | None:
@@ -94,7 +105,7 @@ def check_active_run_access(
             created_by=snapshot.created_by, owner_id=snapshot.owner_id, principal=principal
         ):
             return None
-        return ServiceResponse(403, {"error": "forbidden: not run owner"})
+        return not_owner(run_id)
     return ServiceResponse(404, {"error": f"run not found: {run_id}"})
 
 
@@ -114,7 +125,15 @@ def check_existing_run_access(
     run_dir = service._output_root / run_id
     ensure_within(service._output_root, run_dir, label="run directory")
     if (run_dir / "manifest.json").exists():
-        return check_ownership(service, run_id, principal)
+        created_by, owner_id = _read_manifest_ownership(service, run_id)
+        if ownership_module.ownership_allows(
+            created_by=created_by, owner_id=owner_id, principal=principal
+        ):
+            return None
+        # Stays 403 in every deployment (#796 hides reads, not this): a build that
+        # names a taken run id is refused whatever the answer, and a 404 to a write
+        # would say the id is free when it is not.
+        return ServiceResponse(403, {"error": "forbidden: not run owner"})
     snapshot = service._async_builds.get(run_id)
     if snapshot is None:
         # run_id does not exist yet — new build.

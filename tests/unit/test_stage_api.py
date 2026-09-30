@@ -316,7 +316,7 @@ class TestGoldDetail:
 class TestStageOwnership:
     """ownership 403 sidecar read    (#488)."""
 
-    def test_stages_list_403_before_sidecar_read(
+    def test_stages_list_404_before_sidecar_read(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
@@ -330,7 +330,7 @@ class TestStageOwnership:
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="b")
         )
         resp = dispatch(service, "GET", "/builds/r1/stages", None)
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
         # ownership   stage sidecar    . (manifest.json
         # created_by  ownership    ,  **
@@ -341,9 +341,9 @@ class TestStageOwnership:
             lambda *a, **kw: pytest.fail("stage sidecar read leaked past 403"),
         )
         resp2 = dispatch(service, "GET", "/builds/r1/stages", None)
-        assert resp2.status_code == 403
+        assert resp2.status_code == 404
 
-    def test_stage_detail_403_before_sidecar_read(
+    def test_stage_detail_404_before_sidecar_read(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
@@ -357,7 +357,7 @@ class TestStageOwnership:
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="b")
         )
         resp = dispatch(service, "GET", "/builds/r1/stages/bronze", None, query="source=air")
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
         monkeypatch.setattr(
             stages_api_module.stages_service,
@@ -365,7 +365,7 @@ class TestStageOwnership:
             lambda *a, **kw: pytest.fail("stage sidecar read leaked past 403"),
         )
         resp2 = dispatch(service, "GET", "/builds/r1/stages/bronze", None, query="source=air")
-        assert resp2.status_code == 403
+        assert resp2.status_code == 404
 
     def test_owner_still_reaches_stage_data(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

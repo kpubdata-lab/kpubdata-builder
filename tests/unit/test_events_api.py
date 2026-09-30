@@ -331,7 +331,7 @@ class TestLimitAndTail:
 
 
 class TestOwnership:
-    def test_cross_owner_returns_403_before_query(
+    def test_cross_owner_returns_404_before_query(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
@@ -345,7 +345,7 @@ class TestOwnership:
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="b")
         )
         resp = dispatch(service, "GET", "/builds/r1/events", None)
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
         # when ownership is denied, event store lookup logic is not reached.
         monkeypatch.setattr(
@@ -354,7 +354,7 @@ class TestOwnership:
             lambda *a, **kw: pytest.fail("event store leaked past 403"),
         )
         resp2 = dispatch(service, "GET", "/builds/r1/events", None)
-        assert resp2.status_code == 403
+        assert resp2.status_code == 404
 
     def test_owner_can_read_own_run_events(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -520,7 +520,7 @@ class TestActiveAsyncRunEvents:
         assert resp.status_code == 200
         assert completed.wait(timeout=5)
 
-    def test_ownership_enforced_other_principal_gets_403(
+    def test_ownership_enforced_other_principal_gets_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
@@ -546,7 +546,7 @@ class TestActiveAsyncRunEvents:
         )
         resp = dispatch(service, "GET", "/builds/run1/events", None)
         release.set()
-        assert resp.status_code == 403
+        assert resp.status_code == 404
         assert completed.wait(timeout=5)
 
     def test_unknown_run_still_404_when_not_in_async_registry(self, tmp_path: Path) -> None:
@@ -589,7 +589,7 @@ class TestActiveAsyncRunEvents:
         assert "run_submitted" in event_names
         assert "run_finished" in event_names
 
-    def test_same_label_different_owner_id_active_run_returns_403(
+    def test_same_label_different_owner_id_active_run_returns_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Even with same created_by/label (legacy), different stable owner_id (#505)
@@ -622,7 +622,7 @@ class TestActiveAsyncRunEvents:
         )
         resp = dispatch(service, "GET", "/builds/run1/events", None)
         release.set()
-        assert resp.status_code == 403
+        assert resp.status_code == 404
         assert completed.wait(timeout=5)
 
     def test_matching_owner_id_active_run_returns_200(
@@ -726,13 +726,13 @@ class TestActiveAsyncRunEvents:
             lambda **_kwargs: Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b"),
         )
         resp_other = dispatch(service, "GET", "/builds/run1/events", None)
-        assert resp_other.status_code == 403
+        assert resp_other.status_code == 404
 
         monkeypatch.setattr(
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="b")
         )
         resp2 = dispatch(service, "GET", "/builds/run1/events", None)
-        assert resp2.status_code == 403
+        assert resp2.status_code == 404
 
 
 class TestAsyncManifestOwnerIdPropagation:
@@ -782,7 +782,7 @@ class TestAsyncManifestOwnerIdPropagation:
         )
         assert manifest_data["owner_id"] == "oidc:owner-A"
 
-    def test_completed_run_owner_gets_200_other_same_label_principal_gets_403(
+    def test_completed_run_owner_gets_200_other_same_label_principal_gets_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Requirement scenarios 2/3: A gets 200, B (different owner_id) using same label gets
@@ -812,9 +812,9 @@ class TestAsyncManifestOwnerIdPropagation:
 
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: principal_b)
         resp_other = dispatch(service, "GET", "/builds/run1/events", None)
-        assert resp_other.status_code == 403
+        assert resp_other.status_code == 404
 
-    def test_active_same_label_different_owner_still_returns_403(
+    def test_active_same_label_different_owner_still_returns_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Regression prevention: even active period without manifest yet (#496 previous round fix)
@@ -847,7 +847,7 @@ class TestAsyncManifestOwnerIdPropagation:
         )
         resp = dispatch(service, "GET", "/builds/run1/events", None)
         release.set()
-        assert resp.status_code == 403
+        assert resp.status_code == 404
         assert completed.wait(timeout=5)
 
     def test_owner_id_not_exposed_via_wire_after_completion(

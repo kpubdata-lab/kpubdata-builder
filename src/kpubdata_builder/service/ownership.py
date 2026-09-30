@@ -47,6 +47,16 @@ def multi_user_mode() -> bool:
     return oidc_enabled() or enforce_ownership()
 
 
+def hides_foreign_runs() -> bool:
+    """Whether another owner's run is answered as missing rather than forbidden (#796).
+
+    ADR 0012's 2026-09-30 amendment: in a multi-user deployment another owner's run is
+    not revealed — the answer is the one a run that does not exist gets. A single-user
+    deployment keeps 403, as before.
+    """
+    return multi_user_mode()
+
+
 PERSONAL_WORKSPACE = "ws_personal"
 
 

@@ -231,7 +231,7 @@ class TestQueryOwnershipEnforcement:
             query_service=cast(QueryService, _QueryStub()),
         )
 
-    def test_query_from_non_owner_returns_403(
+    def test_query_from_non_owner_looks_like_a_missing_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
@@ -240,8 +240,8 @@ class TestQueryOwnershipEnforcement:
 
         response = service.query(_body(), principal=Principal(kind="oidc", identifier="userB"))
 
-        assert response.status_code == 403
-        assert cast(dict[str, JsonValue], response.body)["code"] == "forbidden"
+        assert response.status_code == 400
+        assert cast(dict[str, JsonValue], response.body)["code"] == "invalid_context"
 
     def test_query_from_owner_succeeds(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -301,7 +301,7 @@ class TestQueryOwnershipEnforcement:
         impostor = Principal(kind="oidc", identifier="userA", owner_id="oidc:different-owner")
         response = service.query(_body(), principal=impostor)
 
-        assert response.status_code == 403
+        assert response.status_code == 400
 
     def test_query_ambiguous_record_with_no_owner_info_fails_closed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -315,7 +315,7 @@ class TestQueryOwnershipEnforcement:
             _body(), principal=Principal(kind="oidc", identifier="userA", owner_id="oidc:abc")
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 400
 
 
 class TestQueryRequestValidation:

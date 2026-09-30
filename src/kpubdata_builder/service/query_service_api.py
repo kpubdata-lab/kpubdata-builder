@@ -30,6 +30,7 @@ from kpubdata_builder.query.resolver import (
 from kpubdata_builder.query.security import UnsafeQueryError, validate_read_only_sql
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.ownership import hides_foreign_runs
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 
@@ -89,6 +90,9 @@ class QueryApiService:
             request = query_request_from_body(body)
             context = resolve_query_context(self._output_root, request, principal)
         except PermissionError:
+            if hides_foreign_runs():
+                # The answer a missing run gets (#796).
+                return ServiceResponse(400, {"error": "run not found", "code": "invalid_context"})
             return ServiceResponse(403, {"error": "forbidden", "code": "forbidden"})
         except QueryArtifactUnavailableError:
             return ServiceResponse(
