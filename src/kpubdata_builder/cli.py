@@ -24,6 +24,7 @@ from . import __version__, logging_redaction
 from .errors import PublishError, SpecLoadError, ValidationError
 from .pipeline import preview_build, run_build
 from .publishers import PUBLISHER_REGISTRY
+from .replay import BUNDLED_FIXTURES, REPLAY_DIR_ENV, enable_replay, export_fixtures
 from .spec import load_spec
 from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
@@ -188,6 +189,34 @@ def build_parser() -> argparse.ArgumentParser:
             "credential. Default: KPUBDATA_BUILDER_WAREHOUSE, or no catalog."
         ),
     )
+    replay_group = serve_cmd.add_mutually_exclusive_group()
+    replay_group.add_argument(
+        "--replay",
+        action="store_true",
+        help=(
+            "Serve provider responses from the fixtures bundled with this package "
+            "instead of the live API, for client end-to-end tests (#837)."
+        ),
+    )
+    replay_group.add_argument(
+        "--replay-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Like --replay, from a fixture directory (see `fixtures export`). "
+            "Default: KPUBDATA_BUILDER_REPLAY_DIR, or no replay."
+        ),
+    )
+
+    fixtures_cmd = subparsers.add_parser(
+        "fixtures",
+        help="Export the replay fixtures bundled with this package (#837).",
+    )
+    fixtures_actions = fixtures_cmd.add_subparsers(dest="fixtures_action", required=True)
+    fixtures_export = fixtures_actions.add_parser(
+        "export", help="Copy the bundled fixtures into DIR; existing files are never overwritten."
+    )
+    fixtures_export.add_argument("destination", metavar="DIR")
 
     rebuild_cmd = subparsers.add_parser(
         "rebuild-index",
@@ -701,6 +730,8 @@ def _run_serve(
     port: int,
     max_workers: int | None,
     warehouse: str | None = None,
+    replay: bool = False,
+    replay_dir: str | None = None,
 ) -> int:
     """Run BuilderService as HTTP server (#249).
 
@@ -712,9 +743,13 @@ def _run_serve(
             else default (10) (#374).
         warehouse: Table catalog root (#703). If None, use KPUBDATA_BUILDER_WAREHOUSE env,
             else no catalog — builds then end at Gold and commit no snapshot.
+        replay: Serve provider responses from the bundled fixtures (#837).
+        replay_dir: Serve them from this directory. If None and ``replay`` is off, use
+            KPUBDATA_BUILDER_REPLAY_DIR env, else no replay.
 
     Returns:
-        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM.
+        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when the replay
+        fixtures cannot be used.
     """
     from .service import BuilderService
     from .service.http import _DEFAULT_MAX_WORKERS, serve
@@ -731,6 +766,23 @@ def _run_serve(
     # service accepted a catalog root, but nothing that starts it passed one (#703).
     if warehouse is None:
         warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+
+    # Priority: --replay / --replay-dir > KPUBDATA_BUILDER_REPLAY_DIR env > live API.
+    if not replay and replay_dir is None:
+        replay_dir = os.environ.get(REPLAY_DIR_ENV) or None
+    replay_root = BUNDLED_FIXTURES if replay else Path(replay_dir) if replay_dir else None
+    if replay_root is not None:
+        try:
+            placeholders = enable_replay(replay_root)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"replay mode: provider responses come from {replay_root}; requests it has "
+            "no recording for go to the live API"
+            + (f" (placeholder key for: {', '.join(placeholders)})" if placeholders else ""),
+            flush=True,
+        )
 
     service = BuilderService(
         output_root=Path(output_dir),
@@ -749,6 +801,17 @@ def _run_serve(
         serve(service, host=host, port=port, max_workers=max_workers)
     except KeyboardInterrupt:
         print("\nshutting down", file=sys.stderr)
+    return 0
+
+
+def _run_fixtures_export(*, destination: str) -> int:
+    """Copy the bundled replay fixtures into ``destination`` (#837)."""
+    try:
+        copied = export_fixtures(Path(destination))
+    except FileExistsError as exc:
+        print(f"error: {exc}; nothing was copied", file=sys.stderr)
+        return 1
+    print(f"exported {len(copied)} file(s) to {destination}")
     return 0
 
 
@@ -1239,7 +1302,11 @@ def dispatch(args: argparse.Namespace) -> int:
             port=args.port,
             max_workers=args.max_workers,
             warehouse=args.warehouse,
+            replay=args.replay,
+            replay_dir=args.replay_dir,
         )
+    if command == "fixtures":
+        return _run_fixtures_export(destination=args.destination)
     if command == "verify":
         return _run_verify(
             dataset=args.dataset,
