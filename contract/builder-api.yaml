@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.63.0"
+  version: "1.64.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.64.0 reconciles declared-PII masking with the `pii` scan gate (#902, additive): the Silver scan counts a declared column Gold will mask as handled, so `pii.mode: block` passes without `allow_columns`; a `gold.publish_unmasked` column is still scanned and needs `allow_columns` under `block`. `allow_columns` never unmasks a declared column and `publish_unmasked` never silences the gate. A masked column keeps its dtype: text holds `[masked]`, any other dtype becomes null; each `pii_masking.masked` entry says which (`masked_as`). kpubdata-declared fields the source does not carry are listed in `pii_masking.declared_absent` instead of being skipped silently.
     v1.63.0 tightens warehouse column profiles (#896, #897): profiling has its own 60-second timeout instead of the query timeout, and after a timeout the same snapshot answers 504 `query_timeout` for 5 minutes without profiling again. `ColumnProfile.nan_count` and `infinite_count` gain `minimum: 0`. The value-pattern PII check now reads `Categorical` and `Enum` columns as text and `List`/`Array` columns of text element by element (a row matches when any element does); a column of any other type that can hold text (`Struct`, `Object`, `Binary`, nested lists) is not pattern-checked and is `suspected` with the kind `unchecked_values`. The profile `algorithm_version` becomes 2, so cached profiles are recomputed.
     v1.62.0 masks declared PII in the published Gold by default (#689, additive): every column kpubdata's dataset spec declares in `license.pii_columns`, or the BuildSpec declares in `SourceRef.gold.pii_columns`, has each non-null value replaced by `[masked]` in Gold — the table exports, the dataset card, publishing, Gold `/query` and the warehouse read. Silver keeps the values. Nothing is detected from values. `SourceRef.gold.publish_unmasked` is the explicit opt-out for a declared column and adds a manifest warning. The manifest gains `pii_masking`, per Gold directory the masked and unmasked columns and who declared each. A composed Gold masks every declared column of both sides and has no opt-out.
     v1.61.0 reports kpubdata's code columns as identifiers (#702, additive): where a run's kpubdata dataset spec declares a field `semantic_kind: code` (kpubdata ADR 0006) and Builder stores it as text, its column metadata says `logical_type: identifier` — on `/query` and `/warehouse/query` `column_meta`, `/warehouse/rows`, `/warehouse/aggregate`, warehouse export `output.columns`, the `/preview` schema items and warehouse profile columns. An identifier's `wire_encoding` is always `string` and its values are the stored text, leading zeros kept; a client never converts it to a number. The declaration is also carried as `semantic` (`origin: core_spec`) with its `display` label, format and description where the spec has them. Builder does not guess identifiers from values: a column no spec declares a code, or a code stored as a number, keeps its storage logical type. `logical_type` stays an open string, so a client that does not know `identifier` shows the text it receives.
@@ -5344,7 +5345,9 @@ components:
               items: {type: string}
               description: >-
                 Declared PII columns to publish unmasked anyway (#689). Each one is
-                recorded as a manifest warning; unmasked is never the default.
+                recorded as a manifest warning; unmasked is never the default. The
+                `pii` scan gate still counts such a column: under `mode: block` it
+                must also be in `pii.allow_columns` (#902).
             filters:
               type: array
               items:
@@ -5564,6 +5567,12 @@ components:
 
     PiiPolicy:
       type: object
+      description: >-
+        The Silver PII scan gate (#441). Declared PII columns Gold masks (#689) are
+        handled and not counted (#902). `allow_columns` accepts a column's plain
+        values as publishable (the gate, warehouse profiles and exports read it so);
+        it does not unmask a declared column, and `gold.publish_unmasked` does not
+        exempt a column from the gate.
       properties:
         mode:
           type: string
@@ -6706,10 +6715,15 @@ components:
         pii_masking:
           type: object
           description: >-
-            Present only when a Gold holds a declared PII column (#689): Gold directory
-            (source key or composition name) -> the mask `token`, the `masked` columns
-            and the `unmasked` ones (`gold.publish_unmasked`, also listed in
-            `warnings`), each with `declared_by` (`kpubdata_spec`, `build_spec`).
+            Present only when a Gold holds a declared PII column, or kpubdata declares
+            one the source lacks (#689, #902): Gold directory (source key or
+            composition name) -> the mask `token`, the `masked` columns and the
+            `unmasked` ones (`gold.publish_unmasked`, also listed in `warnings`), each
+            with `declared_by` (`kpubdata_spec`, `build_spec`); each masked column
+            says whether text cells hold the token (`masked_as: token`) or, for a
+            non-text dtype, the column became null (`masked_as: null`), so Gold keeps
+            Silver's schema. `declared_absent` lists kpubdata-declared fields, as
+            kpubdata spells them, that the source does not carry.
           additionalProperties:
             type: object
             properties:
@@ -6723,6 +6737,7 @@ components:
                     declared_by:
                       type: array
                       items: {type: string, enum: [kpubdata_spec, build_spec]}
+                    masked_as: {type: string, enum: [token, "null"]}
               unmasked:
                 type: array
                 items:
@@ -6732,6 +6747,9 @@ components:
                     declared_by:
                       type: array
                       items: {type: string, enum: [kpubdata_spec, build_spec]}
+              declared_absent:
+                type: array
+                items: {type: string}
         gold_selection:
           type: object
           description: >-

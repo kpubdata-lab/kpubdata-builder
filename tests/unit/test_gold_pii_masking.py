@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field, replace
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -34,6 +35,7 @@ from kpubdata_builder.spec.serializer import canonical_spec_mapping
 from kpubdata_builder.stages.gold.pii import (
     PII_MASK_TOKEN,
     PiiDeclarationError,
+    absent_core_pii_columns,
     apply_pii_masking,
     builder_column_names,
     core_pii_columns,
@@ -141,10 +143,13 @@ def test_a_permit_dataset_publishes_no_plaintext_phone_number(tmp_path: Path) ->
     (key,) = cast(dict[str, JsonValue], manifest["pii_masking"])
     assert cast(dict[str, JsonValue], manifest["pii_masking"])[key] == {
         "token": PII_MASK_TOKEN,
-        "masked": [{"column": "siteTel", "declared_by": ["kpubdata_spec"]}],
+        "masked": [{"column": "siteTel", "declared_by": ["kpubdata_spec"], "masked_as": "token"}],
         "unmasked": [],
+        "declared_absent": [],
     }
     assert manifest["warnings"] == []
+    # Masking keeps each column's dtype, so Gold's schema is Silver's (#902).
+    assert gold.schema == silver.schema
 
 
 def test_unmasked_is_not_the_default(tmp_path: Path) -> None:
@@ -188,8 +193,9 @@ def test_a_build_spec_can_declare_its_own_pii_column(tmp_path: Path) -> None:
     record = cast(dict[str, JsonValue], _manifest(run)["pii_masking"])
     assert list(record.values())[0] == {
         "token": PII_MASK_TOKEN,
-        "masked": [{"column": "bplcNm", "declared_by": ["build_spec"]}],
+        "masked": [{"column": "bplcNm", "declared_by": ["build_spec"], "masked_as": "token"}],
         "unmasked": [],
+        "declared_absent": [],
     }
 
 
@@ -245,8 +251,86 @@ exports:
     assert not _PHONE_PATTERN.search(_published_text(run))
     record = cast(dict[str, JsonValue], _manifest(run)["pii_masking"])
     assert cast(dict[str, JsonValue], record["combined"])["masked"] == [
-        {"column": "siteTel", "declared_by": ["kpubdata_spec"]}
+        {"column": "siteTel", "declared_by": ["kpubdata_spec"], "masked_as": "token"}
     ]
+
+
+# ------------------------------------------------------- the pii scan gate (#902)
+
+_BLOCK = "pii:\n  mode: block\n"
+# bplcNm trips the scan's name heuristic (``NM``), so these specs declare it too.
+_DECLARE_NAME = "    gold:\n      pii_columns: [bplcNm]\n"
+
+
+def test_a_declared_and_masked_column_passes_the_block_gate_without_allow_columns(
+    tmp_path: Path,
+) -> None:
+    """#902: a phone column Gold masks is handled; ``allow_columns`` is not needed."""
+    response = _service(tmp_path).build(_SPEC.format(gold=_DECLARE_NAME + _BLOCK), run_id="r1")
+
+    assert response.status_code == 200, response.body
+    run = tmp_path / "r1"
+    assert not _PHONE_PATTERN.search(_published_text(run))
+    (record,) = cast(dict[str, JsonValue], _manifest(run)["pii_masking"]).values()
+    assert [
+        e["column"]
+        for e in cast(list[dict[str, JsonValue]], cast(dict[str, JsonValue], record)["masked"])
+    ] == ["bplcNm", "siteTel"]
+
+
+def test_the_block_gate_still_stops_an_undeclared_phone_column(tmp_path: Path) -> None:
+    """Negative: with nothing declaring siteTel, block fails the source as before."""
+    response = _service(tmp_path, _Client(pii=())).build(
+        _SPEC.format(gold=_DECLARE_NAME + _BLOCK), run_id="r1"
+    )
+
+    assert response.status_code == 502
+    assert "siteTel" in str(response.body.get("error"))
+
+
+def test_publish_unmasked_does_not_silence_the_block_gate(tmp_path: Path) -> None:
+    """Negative: a column published as is is still plain PII to the gate."""
+    gold = "    gold:\n      pii_columns: [bplcNm]\n      publish_unmasked: [siteTel]\n"
+
+    response = _service(tmp_path).build(_SPEC.format(gold=gold + _BLOCK), run_id="r1")
+
+    assert response.status_code == 502
+    assert "siteTel" in str(response.body.get("error"))
+
+    # Accepting its plain values takes allow_columns as well.
+    allowed = gold + "pii:\n  mode: block\n  allow_columns: [siteTel]\n"
+    response = _service(tmp_path).build(_SPEC.format(gold=allowed), run_id="r2")
+    assert response.status_code == 200, response.body
+    published = pl.read_parquet(next((tmp_path / "r2").glob("gold/*/table.parquet")))
+    assert "010-0000-0000" in published["siteTel"].to_list()
+
+
+def test_allow_columns_does_not_unmask_a_declared_column(tmp_path: Path) -> None:
+    """``allow_columns`` answers the gate; only ``publish_unmasked`` unmasks."""
+    spec = _SPEC.format(gold=_DECLARE_NAME + "pii:\n  mode: block\n  allow_columns: [siteTel]\n")
+
+    response = _service(tmp_path).build(spec, run_id="r1")
+
+    assert response.status_code == 200, response.body
+    gold = pl.read_parquet(next((tmp_path / "r1").glob("gold/*/table.parquet")))
+    assert set(gold["siteTel"].drop_nulls().to_list()) == {PII_MASK_TOKEN}
+
+
+def test_a_kpubdata_declaration_the_source_lacks_is_recorded(tmp_path: Path) -> None:
+    """#902: a field spelt differently from the source is not skipped silently."""
+    response = _service(tmp_path, _Client(pii=("SiteTel", "rprsvNm"))).build(
+        _SPEC.format(gold=""), run_id="r1"
+    )
+
+    assert response.status_code == 200, response.body
+    run = tmp_path / "r1"
+    (record,) = cast(dict[str, JsonValue], _manifest(run)["pii_masking"]).values()
+    assert record == {
+        "token": PII_MASK_TOKEN,
+        "masked": [],
+        "unmasked": [],
+        "declared_absent": ["SiteTel", "rprsvNm"],
+    }
 
 
 # ------------------------------------------------------------------- the pieces
@@ -298,19 +382,47 @@ def test_declarations_name_their_origins_and_skip_absent_kpubdata_fields() -> No
         declared_pii_columns(core=(), build_spec=("nope",), silver_columns=["a"], contract=None)
 
 
-def test_masking_keeps_nulls_and_turns_other_types_into_the_token() -> None:
-    frame = pl.DataFrame({"tel": ["010-0000-0000", None], "code": [1, 2], "keep": ["a", "b"]})
-
-    masked, result = apply_pii_masking(
-        frame, {"tel": ("kpubdata_spec",), "code": ("build_spec",), "gone": ("build_spec",)}
+def test_masking_keeps_each_dtype_text_gets_the_token_and_the_rest_null() -> None:
+    """#902: the Gold schema stays Silver's; a non-text column cannot hold the token."""
+    frame = pl.DataFrame(
+        {
+            "tel": ["010-0000-0000", None],
+            "code": [1, 2],
+            "born": [date(2000, 1, 1), None],
+            "keep": ["a", "b"],
+        }
     )
 
+    masked, result = apply_pii_masking(
+        frame,
+        {
+            "tel": ("kpubdata_spec",),
+            "code": ("build_spec",),
+            "born": ("build_spec",),
+            "gone": ("build_spec",),
+        },
+    )
+
+    assert masked.schema == frame.schema
     assert masked.to_dicts() == [
-        {"tel": PII_MASK_TOKEN, "code": PII_MASK_TOKEN, "keep": "a"},
-        {"tel": None, "code": PII_MASK_TOKEN, "keep": "b"},
+        {"tel": PII_MASK_TOKEN, "code": None, "born": None, "keep": "a"},
+        {"tel": None, "code": None, "born": None, "keep": "b"},
     ]
     # A declared column Gold does not carry is not reported as published.
-    assert set(result.masked) == {"tel", "code"}
+    assert set(result.masked) == {"tel", "code", "born"}
+    assert {
+        cast(str, e["column"]): e["masked_as"]
+        for e in cast(list[dict[str, JsonValue]], result.body()["masked"])
+    } == {"born": "null", "code": "null", "tel": "token"}
+
+
+def test_absent_kpubdata_fields_are_named_as_kpubdata_spells_them() -> None:
+    contract = SchemaContract(rename={"siteTel": "phone"})
+
+    assert absent_core_pii_columns(
+        ("siteTel", "SiteTel", "rprsvNm"), silver_columns=["phone", "mgtNo"], contract=contract
+    ) == ("SiteTel", "rprsvNm")
+    assert absent_core_pii_columns((), silver_columns=["a"], contract=None) == ()
 
 
 # ------------------------------------------------------------------------- spec

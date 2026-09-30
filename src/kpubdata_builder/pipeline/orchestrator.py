@@ -84,10 +84,13 @@ from ..stages.gold.persist import persist_gold_package
 from ..stages.gold.pii import (
     PiiDeclarationError,
     PiiMaskResult,
+    absent_core_pii_columns,
     apply_pii_masking,
+    columns_masked_in_gold,
     core_pii_columns,
     declared_pii_columns,
     mask_columns,
+    nulled_columns,
 )
 from ..stages.gold.select import GoldSelectionError, GoldSelectionResult, apply_gold_selection
 from ..stages.silver.build import build_silver_dataset
@@ -627,13 +630,31 @@ def _run_source_pipeline(
             problem_messages = [problem.message for problem in silver.validation.problems]
             raise DatasetValidationError(problem_messages)
 
+        # Declared PII (#689): declared by kpubdata's spec (read through the client that
+        # fetched it) or by the BuildSpec, never guessed from values. Read before the
+        # scan gate, which counts a column Gold will mask as handled (#902).
+        core_pii = (
+            core_pii_columns(client.dataset(f"{source.provider}.{source.dataset}"))
+            if source.kind == "public_api"
+            else ()
+        )
+        pii_declared = declared_pii_columns(
+            core=core_pii,
+            build_spec=source.gold.pii_columns if source.gold is not None else (),
+            silver_columns=silver.table.columns,
+            contract=source.schema,
+        )
+        publish_unmasked = source.gold.publish_unmasked if source.gold is not None else ()
+
         # PII scan gate (#441, QG-1). Original values not included in
         # results/logs. block: fail on detection, warn: manifest/log warning,
-        # allow: pass through.
+        # allow: pass through. allow_columns and declared columns Gold masks are
+        # handled; a publish_unmasked column is not (#902).
         if context.spec.pii is not None:
-            findings = [
-                f for f in scan_pii(silver.table) if f.column not in context.spec.pii.allow_columns
-            ]
+            handled = set(context.spec.pii.allow_columns) | columns_masked_in_gold(
+                pii_declared, publish_unmasked
+            )
+            findings = [f for f in scan_pii(silver.table) if f.column not in handled]
             if findings:
                 if context.spec.pii.mode == "block":
                     raise DatasetValidationError(
@@ -755,24 +776,22 @@ def _run_source_pipeline(
         gold_table = silver.table
         if source.gold is not None:
             gold_table, gold_selection = apply_gold_selection(silver.table, source.gold)
-        # Declared PII is masked in what is published unless the spec opts a column out
-        # (#689). Declared by kpubdata's spec (read through the client that fetched it)
-        # or by the BuildSpec, never guessed from values.
-        pii_declared = declared_pii_columns(
-            core=(
-                core_pii_columns(client.dataset(f"{source.provider}.{source.dataset}"))
-                if source.kind == "public_api"
-                else ()
-            ),
-            build_spec=source.gold.pii_columns if source.gold is not None else (),
-            silver_columns=silver.table.columns,
-            contract=source.schema,
-        )
+        # Declared PII (read above) is masked in what is published unless the spec opts
+        # a column out (#689). kpubdata declarations this source lacks are recorded (#902).
         gold_table, pii_masking = apply_pii_masking(
             gold_table,
             pii_declared,
-            publish_unmasked=source.gold.publish_unmasked if source.gold is not None else (),
+            publish_unmasked=publish_unmasked,
+            declared_absent=absent_core_pii_columns(
+                core_pii, silver_columns=silver.table.columns, contract=source.schema
+            ),
         )
+        if pii_masking.declared_absent:
+            logger.warning(
+                "kpubdata-declared PII field(s) not in this source: %s @ %s (#902)",
+                ", ".join(pii_masking.declared_absent),
+                output_key,
+            )
         if pii_masking.unmasked:
             logger.warning(
                 "declared PII published unmasked by gold.publish_unmasked: %s @ %s (#689)",
@@ -1104,9 +1123,11 @@ def _run_composition(
 
     if pii_key_columns:
         package = replace(package, table=mask_columns(package.table, pii_key_columns))
+    composed_masked = {c: o for c, o in pii_masking.masked.items() if c in package.table.columns}
     pii_masking = PiiMaskResult(
-        masked={c: o for c, o in pii_masking.masked.items() if c in package.table.columns},
+        masked=composed_masked,
         unmasked={},
+        nulled=nulled_columns(package.table, composed_masked),
     )
 
     outputs: list[str] = []

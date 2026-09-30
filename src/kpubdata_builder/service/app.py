@@ -351,7 +351,10 @@ _BuildListEntry = dict[str, str | None]
 #   pii_columns and publish_unmasked, the manifest pii_masking (#689, additive).
 # 1.62.0 -> 1.63.0: profiles get their own timeout and remember it per snapshot; nan_count/
 #   infinite_count minimum 0; categorical/enum/list PII value checks (#896, #897).
-API_CONTRACT_VERSION = "1.63.0"
+# 1.63.0 -> 1.64.0: the pii scan gate counts declared columns Gold masks as handled;
+#   manifest pii_masking gains declared_absent and masked[].masked_as, and a non-text
+#   masked column keeps its dtype as null (#902, additive).
+API_CONTRACT_VERSION = "1.64.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
