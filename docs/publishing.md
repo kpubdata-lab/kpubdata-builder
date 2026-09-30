@@ -167,6 +167,23 @@ BuildSpec 으로 만든 run 은 **kpubdata 가 데이터셋마다 선언한 조�
 - 2026-09-30 현재 kpubdata 카탈로그의 어떤 데이터셋도 `redistribution` 을 선언하지 않았으므로, BuildSpec 경로의 **공개 게시는 모두 막힌다**. 조건을 정하는 일은 kpubdata#524 다.
 - 선언된 PII(#689, #900)는 같은 출구(`/query`, `/preview`, stage 상세, artifact 다운로드)에서 약관 판정 **다음에** 확인한다. 약관이 `forbidden` 이 아니면 Silver·Bronze 를 읽는 경로가 선언 컬럼을 Gold 처럼 가리거나(질의·미리보기·sample), 원본 파일이면 403 `declared_pii_withheld` 로 거부한다. kpubdata 선언을 읽지 못하면 가릴 컬럼을 모르므로 503 `pii_declaration_unavailable` 로 거부한다(모르는 것은 허가가 아니다). 결정과 이유는 [API_CONTRACT.md](../API_CONTRACT.md) 의 "Silver·Bronze 읽기의 선언된 PII".
 
+### 데이터셋 카드 (#694)
+
+BuildSpec 경로의 Gold 출력마다 카드(`README.md`)와 같은 내용의 `card.json` 이 생긴다. 카드는
+기록된 것에서만 채운다.
+
+| 섹션 | 출처 |
+| :--- | :--- |
+| 제공 기관 | BuildSpec `attribution` (kpubdata 가 출처표시를 선언하면 그것) |
+| 출처 URL | kpubdata 카탈로그의 `source_url` / url 소스의 endpoint(query 제거) / file 소스는 업로드 id |
+| 라이선스 | BuildSpec `license_name`·`license`(`license_link`) **원래 이름 그대로**. kpubdata 가 제공기관 조건을 선언했으면 옆에 적는다 |
+| 수집 일시 | provenance 의 `fetched_at` |
+| 가공 | 선언된 read_as·null_tokens·coalesce·rename·zfill·casts·derived·gold selection·splits. 없으면 "없음" 을 적는다 |
+| 개인정보 처리 | `pii` 정책. 없으면 "스캔하지 않음" 을 적는다 |
+
+필수 섹션이 비면 게시가 막힌다(`card_incomplete`, 빈 섹션 이름을 알려준다). 카드가 없던 이전 run 은
+`card_missing` 으로 막히며 다시 빌드하면 된다. Kaggle 패키지에도 같은 카드가 복사된다.
+
 ---
 
 ## Config YAML 스키마

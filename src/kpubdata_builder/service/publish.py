@@ -38,6 +38,7 @@ from ..spec import BuildSpec
 from ..spec.validator import validate_spec
 from ..stages._path_safety import ensure_within
 from ..stages._stage_reader import gold_source_dir
+from ..stages.gold.card import missing_sections
 from . import stages as stages_service
 from .publish_credentials import PublishCredentialResolution
 from .redistribution import (
@@ -115,6 +116,9 @@ PUBLISH_ISSUE_CODES: tuple[str, ...] = (
     # Destination visibility, POST only (#688)
     "destination_public",
     "destination_visibility_unknown",
+    # Dataset cards (#694)
+    "card_missing",
+    "card_incomplete",
 )
 
 _DEFAULT_OPTIONS: dict[str, dict[str, object]] = {
@@ -891,6 +895,50 @@ def resolve_gold_artifacts(
     return ResolvedArtifacts(paths=tuple(unique_sorted_files), expects_directory=False)
 
 
+def card_blockers(
+    output_root: Path, run_id: str, manifest: dict[str, object]
+) -> list[PublishIssue]:
+    """Every published Gold output carries a complete dataset card (#694).
+
+    The card's sections are read from ``card.json`` beside its README — provenance
+    (institution, source URL, licence, collection date), processing and personal
+    information. A section left empty blocks publishing rather than going out blank; a
+    run built before cards had them has none and must be rebuilt.
+    """
+    issues: list[PublishIssue] = []
+    failed = stages_service.failed_source_keys(manifest)
+    for key in stages_service.known_source_keys(manifest):
+        if key in failed:
+            continue
+        try:
+            gold_dir = gold_source_dir(output_root, run_id, key)
+        except ValueError:
+            continue
+        if not gold_dir.is_dir():
+            continue
+        try:
+            sections = json.loads((gold_dir / "card.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            issues.append(
+                PublishIssue(
+                    "card_missing",
+                    f"{key}: the Gold output has no dataset card; rebuild the run to make one",
+                )
+            )
+            continue
+        missing = missing_sections(sections) if isinstance(sections, dict) else ["card"]
+        if missing:
+            issues.append(
+                PublishIssue(
+                    "card_incomplete",
+                    f"{key}: the dataset card leaves required sections empty: "
+                    f"{', '.join(missing)}. The providing institution is the BuildSpec's "
+                    "`attribution`; the licence is its `license`.",
+                )
+            )
+    return issues
+
+
 def validate_destination(target: str, destination: object) -> str | None:
     """Allow only canonical 'owner/name' identifier form required by target.
 
@@ -1027,6 +1075,8 @@ def build_readiness(
                 spec=spec,
             )
         )
+        if artifacts is not None:
+            blockers.extend(card_blockers(output_root, run_id, manifest))
 
     credential_issue = credential_blocker(target, credentials)
     if credential_issue is not None:
@@ -1045,6 +1095,7 @@ def build_readiness(
 __all__ = [
     "HTTP_PUBLISH_TARGETS",
     "PUBLISH_ISSUE_CODES",
+    "card_blockers",
     "PublishClaimStatus",
     "PublishIssue",
     "PublishReceipt",

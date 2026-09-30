@@ -1,4 +1,18 @@
-"""dataset card (README) contract and Markdown template (#37)."""
+"""dataset card (README) contract and Markdown template (#37), filled from provenance (#694).
+
+Besides the schema and a sample, a card says where the data comes from and what was done
+to it — the facts a reuser needs and #677 found missing on most published datasets:
+
+- **Provenance**, per source: the providing institution (the BuildSpec's declared
+  ``attribution``), the source URL, the licence **under its original name** (never
+  rewritten — KOGL type 1 stays KOGL type 1), and when it was collected;
+- **Processing**: every declared transformation, or a statement that there was none;
+- **Personal information**: the PII policy the build ran under.
+
+The same sections are written as ``card.json`` next to the README, so publishing can
+check them without parsing Markdown: a section left empty blocks publishing
+(:func:`missing_sections`).
+"""
 
 from __future__ import annotations
 
@@ -20,6 +34,22 @@ class CardField:
 
 
 @dataclass(frozen=True)
+class CardSource:
+    """Where one source's data comes from (#694)."""
+
+    source: str
+    institution: str
+    url: str
+    license: str
+    collected_at: str
+
+
+#: Sections a published card must fill; each is checked per source where it is per source.
+REQUIRED_SOURCE_FIELDS: tuple[str, ...] = ("institution", "url", "license", "collected_at")
+REQUIRED_SECTIONS: tuple[str, ...] = ("provenance", "processing", "personal_information")
+
+
+@dataclass(frozen=True)
 class DatasetCard:
     """dataset card (README) contract."""
 
@@ -30,6 +60,9 @@ class DatasetCard:
     sample_rows: tuple[dict[str, JsonValue], ...] = ()
     license: str = ""
     version: str = ""
+    provenance: tuple[CardSource, ...] = ()
+    processing: tuple[str, ...] = ()
+    personal_information: str = ""
 
 
 def build_dataset_card(
@@ -41,6 +74,9 @@ def build_dataset_card(
     sample_rows: Iterable[Mapping[str, JsonValue]] = (),
     license: str = "",
     version: str = "",
+    provenance: Iterable[CardSource] = (),
+    processing: Iterable[str] = (),
+    personal_information: str = "",
 ) -> DatasetCard:
     """assembles DatasetCard from raw input."""
     return DatasetCard(
@@ -51,7 +87,50 @@ def build_dataset_card(
         sample_rows=tuple(dict(row) for row in sample_rows),
         license=license,
         version=version,
+        provenance=tuple(provenance),
+        processing=tuple(processing),
+        personal_information=personal_information,
     )
+
+
+def card_sections(card: DatasetCard) -> dict[str, JsonValue]:
+    """The card's provenance, processing and personal-information sections as data."""
+    return {
+        "card_version": 1,
+        "title": card.title,
+        "provenance": [
+            {
+                "source": s.source,
+                "institution": s.institution,
+                "url": s.url,
+                "license": s.license,
+                "collected_at": s.collected_at,
+            }
+            for s in card.provenance
+        ],
+        "processing": list(card.processing),
+        "personal_information": card.personal_information,
+    }
+
+
+def missing_sections(sections: Mapping[str, object]) -> list[str]:
+    """The required sections a ``card.json`` leaves empty, as ``section`` or
+    ``provenance[source].field``; empty when the card is complete."""
+    missing: list[str] = []
+    for name in REQUIRED_SECTIONS:
+        value = sections.get(name)
+        if not value or (isinstance(value, str) and not value.strip()):
+            missing.append(name)
+    provenance = sections.get("provenance")
+    for entry in provenance if isinstance(provenance, list) else []:
+        if not isinstance(entry, Mapping):
+            missing.append("provenance")
+            continue
+        for field in REQUIRED_SOURCE_FIELDS:
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                missing.append(f"provenance[{entry.get('source')}].{field}")
+    return missing
 
 
 def _cell(value: object) -> str:
@@ -99,6 +178,24 @@ def _render_sample(card: DatasetCard) -> list[str]:
     return lines
 
 
+def _render_provenance(provenance: Sequence[CardSource]) -> list[str]:
+    lines = ["## Provenance", ""]
+    if not provenance:
+        lines.append("_Not recorded._")
+        return lines
+    for source in provenance:
+        lines += [
+            f"### {source.source}",
+            "",
+            f"- Provided by: {source.institution or '_not declared_'}",
+            f"- Source: {source.url or '_not known_'}",
+            f"- Licence: {source.license or '_not declared_'}",
+            f"- Collected: {source.collected_at or '_not known_'}",
+            "",
+        ]
+    return lines[:-1]
+
+
 def render_dataset_card(card: DatasetCard) -> str:
     """renders DatasetCard to Markdown README string."""
     lines: list[str] = [f"# {card.title}", ""]
@@ -117,14 +214,25 @@ def render_dataset_card(card: DatasetCard) -> str:
     lines += _render_sample(card)
     lines.append("")
 
+    lines += _render_provenance(card.provenance)
+    lines.append("")
+    lines += ["## Processing", ""]
+    lines += [f"- {step}" for step in card.processing] or ["_Not recorded._"]
+    lines.append("")
+    lines += ["## Personal information", "", card.personal_information or "_Not recorded._", ""]
     lines += ["## License", "", card.license or "N/A", ""]
     lines += ["## Version", "", card.version or "unversioned"]
     return "\n".join(lines) + "\n"
 
 
 __all__ = [
+    "REQUIRED_SECTIONS",
+    "REQUIRED_SOURCE_FIELDS",
     "CardField",
+    "CardSource",
     "DatasetCard",
     "build_dataset_card",
+    "card_sections",
+    "missing_sections",
     "render_dataset_card",
 ]

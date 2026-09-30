@@ -45,6 +45,7 @@ exports:
   - kind: jsonl
     output_path: out/data.jsonl
 license: CC-BY-4.0
+attribution: 한국환경공단 에어코리아
 """.strip()
     + "\n"
 )
