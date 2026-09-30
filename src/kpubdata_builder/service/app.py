@@ -315,12 +315,14 @@ _BuildListEntry = dict[str, str | None]
 #   caller's tables with filters, a cursor and evaluation coverage (#843, additive).
 # 1.49.0 -> 1.50.0: provider tests call a dataset chosen by declared parameters or answer
 #   not_testable, and GET /providers reports each provider's last_test (#842).
+# 1.50.0 -> 1.51.0: in a multi-user deployment another owner's run answers 404 on every run
+#   route, like a missing run (#796, behaviour only).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
 #   completeness, health, access, maturity as separate fields (#781, additive).
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.50.0"
+API_CONTRACT_VERSION = "1.51.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

@@ -354,7 +354,7 @@ class TestReadiness:
         resp = _readiness(service, "does-not-exist")
         assert resp.status_code == 404
 
-    def test_cross_owner_returns_403(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cross_owner_returns_404(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         owner = Principal(kind="oidc", identifier="a", owner_id="oidc:owner-a")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: owner)
@@ -364,7 +364,7 @@ class TestReadiness:
         other = Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: other)
         resp = _readiness(service, "run-owned")
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     def test_readiness_never_calls_publisher(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -465,7 +465,7 @@ class TestPublish:
         other = Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: other)
         resp = _publish(service, "run-owned-post")
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     def test_invalid_target_returns_400(self, tmp_path: Path) -> None:
         service = _service(tmp_path)
@@ -1364,7 +1364,7 @@ class TestReceiptReconcile:
             None,
             query="target=huggingface&destination=kpubdata%2Fair-quality",
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
         reset_resp = dispatch(
             service,
             "DELETE",
@@ -1372,7 +1372,7 @@ class TestReceiptReconcile:
             None,
             query="target=huggingface&destination=kpubdata%2Fair-quality",
         )
-        assert reset_resp.status_code == 403
+        assert reset_resp.status_code == 404
 
     def test_reset_audit_survives_and_audit_api_returns_history(self, tmp_path, monkeypatch):
         """reset    owner/run  API   (#563)."""
@@ -1416,7 +1416,7 @@ class TestReceiptReconcile:
         other = Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: other)
         audit = dispatch(service, "GET", "/builds/run-audit-owned/publish/audit", None)
-        assert audit.status_code == 403
+        assert audit.status_code == 404
 
     def test_reconcile_succeeded_records_owner_run_audit(self, tmp_path, monkeypatch):
         """reconcile    owner/run    (#563)."""

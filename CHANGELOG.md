@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- In a multi-user deployment, another owner's run looks like no run at all (#796, ADR 0012 amendment of 2026-09-30, API contract 1.51.0). Every run route — status, manifest, spec, stages, quality, events, publish readiness, `GET /datasets/{id}/runs/{run_id}` — answers the 404 a missing run gets instead of 403, and `POST /query` the same 400 `invalid_context`, so a run id cannot be probed for existence. A single-user deployment is unchanged. A build that names a run id another owner already holds is still refused with 403: any refusal says the id is taken.
+
 ### Changed
 
 - Builder owns the wire vocabulary it translates from kpubdata (#831, Independence Rule 7). `DatasetStatusAxes.access` is Builder's `AccessStatus`, and `CatalogDataset.representation`, `operations` and `CatalogQuerySupport.pagination` go through explicit tables in `service/vocabulary.py` instead of passing kpubdata's enum values through. The values still mirror kpubdata's, so no response changes today; a value kpubdata adds later becomes `unknown` (access), `other` (representation), is left out (operations) or makes `query_support` null (pagination), instead of an off-contract string. Contract descriptions only; no version raise.

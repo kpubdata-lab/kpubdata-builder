@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import cast
 
 from kpubdata_builder.service import datasets as datasets_service
+from kpubdata_builder.service import ownership as ownership_module
 from kpubdata_builder.service import quality as quality_service
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.jobs import BuildJobSnapshot
@@ -243,7 +244,9 @@ class DatasetsApiService:
 
             404  no run with this id belongs to this dataset — missing, or another
                  dataset's run. Both mean "this URL does not open".
-            403  the run belongs to the dataset, but not to this principal.
+            403  the run belongs to the dataset, but not to this principal — in a
+                 single-user deployment only. A multi-user deployment answers 404, so
+                 another owner's run id cannot be probed for existence (#796).
 
         The body is one item of the runs list, so a client treats both the same way.
         """
@@ -262,6 +265,11 @@ class DatasetsApiService:
         if not datasets_service.filter_ownership(
             [record], principal, enforce=self._enforce_ownership()
         ):
+            if ownership_module.hides_foreign_runs():
+                # Another owner's run looks like no run at all (#796).
+                return ServiceResponse(
+                    404, {"error": f"run not found in dataset {dataset_id}: {run_id}"}
+                )
             return ServiceResponse(403, {"error": "forbidden: not run owner"})
         return ServiceResponse(200, {"dataset_id": dataset_id, "run": _run_item(record)})
 

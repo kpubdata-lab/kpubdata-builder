@@ -450,7 +450,7 @@ class TestBuildJobStatusOwnership:
             lambda **_kwargs: Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b"),
         )
         resp = dispatch(service, "GET", "/builds/run1", None)
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
         release.set()
 

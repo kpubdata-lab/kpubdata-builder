@@ -2631,7 +2631,7 @@ class TestBuildSpecSnapshot:
         response = dispatch(_service(tmp_path), "GET", f"/builds/{run_id}/spec", None)
         assert response.status_code == 400
 
-    def test_another_owner_receives_403(
+    def test_another_owner_receives_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
@@ -2646,12 +2646,12 @@ class TestBuildSpecSnapshot:
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="b")
         )
         response = dispatch(service, "GET", "/builds/owned/spec", None)
-        assert response.status_code == 403
+        assert response.status_code == 404
 
         # If ownership denied, never reach snapshot reader.
         monkeypatch.setattr(Path, "read_bytes", lambda _path: pytest.fail("snapshot read leaked"))
         response = dispatch(service, "GET", "/builds/owned/spec", None)
-        assert response.status_code == 403
+        assert response.status_code == 404
 
     def test_unknown_run_returns_404_before_ownership(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

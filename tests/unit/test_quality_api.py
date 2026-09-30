@@ -445,7 +445,7 @@ class TestBuildQualityDetail:
         resp = dispatch(_service(tmp_path), "GET", "/builds/nope/quality", None)
         assert resp.status_code == 404
 
-    def test_403_for_non_owner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_404_for_non_owner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         monkeypatch.setattr(
@@ -463,7 +463,7 @@ class TestBuildQualityDetail:
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="userB")
         )
         resp = dispatch(service, "GET", "/builds/r-owned/quality", None)
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
 
 class TestBuildQualityAvailability:

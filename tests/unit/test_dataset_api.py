@@ -625,11 +625,12 @@ class TestDatasetOwnership:
         detail = dispatch(service, "GET", "/datasets/dataset.shared", None)
         assert detail.status_code == 404
 
-    def test_another_users_run_is_forbidden_not_missing(
+    def test_another_users_run_is_missing_not_forbidden(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # studio#418: the server, not the screen, refuses a run the caller does not own,
-        # and says so differently from a run that does not exist.
+        # studio#418: the server, not the screen, refuses a run the caller does not own.
+        # Ownership enforced means a multi-user deployment, where another owner's run
+        # answers exactly as a run that does not exist (#796).
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path)
         self._build_as(service, "dataset.shared", "r-a", "userA")
@@ -638,7 +639,7 @@ class TestDatasetOwnership:
             app_module, "authenticate", lambda **_kwargs: Principal(kind="oidc", identifier="userB")
         )
         assert (
-            dispatch(service, "GET", "/datasets/dataset.shared/runs/r-a", None).status_code == 403
+            dispatch(service, "GET", "/datasets/dataset.shared/runs/r-a", None).status_code == 404
         )
         assert (
             dispatch(service, "GET", "/datasets/dataset.shared/runs/nope", None).status_code == 404
