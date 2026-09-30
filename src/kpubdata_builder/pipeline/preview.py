@@ -33,6 +33,7 @@ Main components:
 from __future__ import annotations
 
 import random
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -43,6 +44,7 @@ from ..spec.models import QualityPolicy
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
 from ..stages.bronze.resolve import build_bronze_artifact_for_source, source_identity
+from ..stages.bronze.writer import new_staging_dir
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.preview import select_preview_rows
 from ..tabular import DEFAULT_PREVIEW_LIMIT, PreviewSlice, SchemaInfo, TableStatistics
@@ -264,6 +266,9 @@ def _preview_source(
     upload_repository/owner_id are used only in kind="file" sources (#498).
     """
     out_key = _output_key(source)
+    # Preview writes nothing that outlives it: Bronze is staged in a private directory
+    # (#622) and removed however the preview ends.
+    staging_dir = new_staging_dir()
     try:
         required_columns = source.schema.required if source.schema else ()
         column_dtypes = source.schema.dtypes if source.schema else None
@@ -283,6 +288,7 @@ def _preview_source(
             upload_repository=upload_repository,
             owner_id=owner_id,
             secret_values=secret_values,
+            staging_dir=staging_dir,
         )
         silver = build_silver_dataset(
             bronze,
@@ -315,7 +321,7 @@ def _preview_source(
         # column structure (#620: coalesce removes candidate *columns*, not rows);
         # validate_table() never touches table — no step filters/dedups/reorders rows
         # (test_silver.py::TestRowPreservingInvariant #497 regression-locks invariant).
-        # While invariant holds, bronze.raw_records[i] always matches silver.table row i,
+        # While invariant holds, Bronze record i always matches silver.table row i,
         # so same index list safely reused for both.
         #
         # Below count check is cheap runtime guard only confirming invariant held "this
@@ -328,7 +334,7 @@ def _preview_source(
             total_rows=total_rows, limit=limit, sample_mode=sample_mode, seed=seed
         )
 
-        source_sample = tuple(bronze.raw_records[i] for i in indices) if aligned else ()
+        source_sample = bronze.records_at(indices) if aligned else ()
         transformed_rows = select_preview_rows(silver.table, indices)
         sample_slice = PreviewSlice(rows=transformed_rows, total_rows=total_rows)
 
@@ -376,6 +382,8 @@ def _preview_source(
             transform_summary=None,
             diff_truncated=False,
         )
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def preview_build(

@@ -311,9 +311,9 @@ class TestBuildSpecPathMatchesTheLegacyScript:
         from kpubdata_builder.stages.bronze.models import BronzeArtifact, utc_now
         from kpubdata_builder.stages.silver.normalize import normalize_table
 
-        bronze = BronzeArtifact(
+        bronze = BronzeArtifact.from_records(
             source_key="datago.apt_trade",
-            raw_records=tuple(self._records()),
+            records=tuple(self._records()),
             fetched_at=utc_now(),
         )
         return normalize_table(

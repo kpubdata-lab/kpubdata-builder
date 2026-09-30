@@ -11,6 +11,7 @@ from pathlib import Path
 from ...spec import JsonValue
 from .._path_safety import ensure_within, validate_path_segment
 from .models import BronzeArtifact, ProvenanceEvent
+from .writer import canonical_line
 
 
 @dataclass(frozen=True)
@@ -65,11 +66,13 @@ def persist_bronze_artifact(
         tmp_records = tmp_dir / "raw_records.jsonl"
         tmp_metadata = tmp_dir / "metadata.json"
 
+        # Streamed from the working copy (#622): one record in memory at a time, the
+        # same sorted-key bytes as ever.
         with tmp_records.open("w", encoding="utf-8") as f:
-            for record in artifact.raw_records:
+            for record in artifact.iter_records():
                 # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail recording
                 # instead raise ValueError (#201).
-                f.write(json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False))
+                f.write(canonical_line(record))
                 f.write("\n")
 
         metadata = _metadata_for_artifact(

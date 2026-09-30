@@ -12,9 +12,11 @@ call time.
 
 from __future__ import annotations
 
+import io
 from collections.abc import Callable
 
-from kpubdata_builder.ingestion import IngestionError, parse_tabular_bytes
+from kpubdata_builder.ingestion import IngestionError
+from kpubdata_builder.ingestion.tabular_ingest import iter_tabular_batches
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
@@ -66,7 +68,9 @@ class UploadsService:
                 {"error": f"format must be one of {SOURCE_FILE_FORMATS}, got {format!r}"},
             )
         try:
-            _ = parse_tabular_bytes(raw, format=format, encoding=encoding)
+            # Parsed to prove it parses; the batches are dropped as they come (#622).
+            for _batch in iter_tabular_batches(io.BytesIO(raw), format=format, encoding=encoding):
+                pass
         except IngestionError as exc:
             return ServiceResponse(400, {"error": str(exc)})
         try:

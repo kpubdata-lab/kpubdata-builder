@@ -12,8 +12,9 @@ from kpubdata_builder.manifest.reproducibility import is_reproducible, reproduci
 from kpubdata_builder.service import BuilderService
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages.bronze.build import build_bronze_artifact
-from kpubdata_builder.stages.bronze.checkpoint import CombinationCheckpoint
+from kpubdata_builder.stages.bronze.checkpoint import INDEX_NAME, CombinationCheckpoint
 from kpubdata_builder.stages.bronze.models import CallTotal
+from kpubdata_builder.stages.bronze.writer import read_records
 
 _COMBOS: list[dict[str, JsonValue]] = [{"sido": s} for s in ("a", "b", "c", "d")]
 _SPEC = """\
@@ -64,33 +65,77 @@ def _total(index: int) -> CallTotal:
 # -------------------------------------------------------------------- checkpoint
 
 
-def test_the_checkpoint_appends_one_line_per_combination(tmp_path: Path) -> None:
-    checkpoint = CombinationCheckpoint(tmp_path / "c.jsonl")
+def test_the_checkpoint_keeps_a_fragment_and_an_index_line_per_combination(
+    tmp_path: Path,
+) -> None:
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
     for index in range(3):
         checkpoint.append(index, _COMBOS[index], [{"i": index}], _total(index))
 
-    assert len((tmp_path / "c.jsonl").read_text(encoding="utf-8").splitlines()) == 3
+    index_lines = (tmp_path / "c" / INDEX_NAME).read_text(encoding="utf-8").splitlines()
+    assert len(index_lines) == 3
+    assert sorted(p.name for p in (tmp_path / "c").glob("0*.jsonl")) == [
+        "000000.jsonl",
+        "000001.jsonl",
+        "000002.jsonl",
+    ]
     loaded = checkpoint.load(_COMBOS)
     assert sorted(loaded) == [0, 1, 2]
-    assert loaded[1] == ([{"i": 1}], _total(1))
+    fragment, total = loaded[1]
+    assert list(read_records(fragment)) == [{"i": 1}]
+    assert total == _total(1)
+
+
+def test_records_are_not_packed_into_the_index(tmp_path: Path) -> None:
+    """#622: a large combination is never one JSON line holding every record."""
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
+    checkpoint.append(0, _COMBOS[0], [{"i": n} for n in range(1000)], _total(0))
+
+    (entry,) = [json.loads(line) for line in (tmp_path / "c" / INDEX_NAME).open()]
+    assert "records" not in entry
+    assert entry["record_count"] == 1000
+    assert entry["fragment"] == "000000.jsonl"
 
 
 def test_a_changed_spec_discards_the_checkpoint(tmp_path: Path) -> None:
     """Negative: records from another expansion are never mixed in."""
-    checkpoint = CombinationCheckpoint(tmp_path / "c.jsonl")
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
     checkpoint.append(0, {"sido": "old"}, [{"i": 0}], _total(0))
 
     assert checkpoint.load(_COMBOS) == {}
-    assert not (tmp_path / "c.jsonl").exists()
+    assert not (tmp_path / "c").exists()
 
 
 def test_a_cut_short_last_line_is_ignored(tmp_path: Path) -> None:
-    checkpoint = CombinationCheckpoint(tmp_path / "c.jsonl")
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
     checkpoint.append(0, _COMBOS[0], [{"i": 0}], _total(0))
-    with (tmp_path / "c.jsonl").open("a", encoding="utf-8") as handle:
+    with (tmp_path / "c" / INDEX_NAME).open("a", encoding="utf-8") as handle:
         handle.write('{"index": 1, "params": ')
 
     assert sorted(checkpoint.load(_COMBOS)) == [0]
+
+
+def test_a_fragment_without_its_index_line_is_not_a_finished_combination(
+    tmp_path: Path,
+) -> None:
+    """A crash after the fragment and before the index line: fetched again."""
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
+    checkpoint.append(0, _COMBOS[0], [{"i": 0}], _total(0))
+    with checkpoint.fragment(1) as fragment:
+        fragment.write_batch([{"i": 1}])
+        fragment.close()
+
+    assert sorted(checkpoint.load(_COMBOS)) == [0]
+
+
+def test_a_fragment_that_lost_lines_discards_the_checkpoint(tmp_path: Path) -> None:
+    """Negative: a fragment shorter than its index line says is never resumed from."""
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
+    checkpoint.append(0, _COMBOS[0], [{"i": 0}, {"i": 1}], _total(0))
+    (tmp_path / "c" / "000000.jsonl").write_text('{"i": 0}\n', encoding="utf-8")
+
+    assert checkpoint.load(_COMBOS) == {}
+    assert not (tmp_path / "c").exists()
 
 
 def test_no_key_is_written(tmp_path: Path) -> None:
@@ -98,18 +143,19 @@ def test_no_key_is_written(tmp_path: Path) -> None:
     from kpubdata_builder.stages.bronze.resolve import scrub_secret_values
 
     checkpoint = CombinationCheckpoint(
-        tmp_path / "c.jsonl", scrub=lambda v: scrub_secret_values(v, ("canary-648",))
+        tmp_path / "c", scrub=lambda v: scrub_secret_values(v, ("canary-648",))
     )
     checkpoint.append(0, _COMBOS[0], [{"echo": "serviceKey=canary-648"}], _total(0))
 
-    assert "canary-648" not in (tmp_path / "c.jsonl").read_text(encoding="utf-8")
+    for path in (tmp_path / "c").iterdir():
+        assert "canary-648" not in path.read_text(encoding="utf-8")
 
 
 # ------------------------------------------------------------------------ bronze
 
 
 def test_a_rerun_fetches_only_what_is_missing(tmp_path: Path) -> None:
-    checkpoint = CombinationCheckpoint(tmp_path / "c.jsonl")
+    checkpoint = CombinationCheckpoint(tmp_path / "c")
     failing = _Client(fail_on="c")
     with pytest.raises(RuntimeError):
         build_bronze_artifact(
@@ -130,7 +176,7 @@ def test_a_rerun_fetches_only_what_is_missing(tmp_path: Path) -> None:
 
     assert working.calls == ["c", "d"]
     assert resumed.resumed_combinations == 2
-    assert resumed.raw_records == fresh.raw_records
+    assert tuple(resumed.iter_records()) == tuple(fresh.iter_records())
     assert [t.index for t in resumed.call_totals] == [0, 1, 2, 3]
     assert fresh.resumed_combinations == 0
 
@@ -143,7 +189,7 @@ def test_a_resumed_build_is_marked_not_reproducible(tmp_path: Path) -> None:
     failing = BuilderService(output_root=tmp_path, client_factory=lambda **_: first)
     assert failing.build(_SPEC, run_id="r1").status_code != 200
     checkpoint = tmp_path / "r1" / "_checkpoints"
-    assert list(checkpoint.glob("*.jsonl"))
+    assert list(checkpoint.rglob("*.jsonl"))
 
     second = _Client()
     service = BuilderService(output_root=tmp_path, client_factory=lambda **_: second)
@@ -155,7 +201,7 @@ def test_a_resumed_build_is_marked_not_reproducible(tmp_path: Path) -> None:
     assert manifest["reproducibility"]["reason"] == "resumed_from_checkpoint"
     (entry,) = manifest["reproducibility"]["resumed_sources"].values()
     assert entry == {"resumed_combinations": 2, "total_combinations": 4}
-    assert not list(checkpoint.glob("*.jsonl"))
+    assert not list(checkpoint.rglob("*.jsonl"))
 
 
 def test_a_build_run_start_to_finish_has_no_mark(tmp_path: Path) -> None:

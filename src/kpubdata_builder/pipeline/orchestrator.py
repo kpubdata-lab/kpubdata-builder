@@ -23,7 +23,9 @@ Key components:
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import shutil
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -116,6 +118,9 @@ logger = logging.getLogger(__name__)
 _MAX_PARALLEL_SOURCES = 4
 #: Per-run directory of param_grid checkpoints (#648).
 _CHECKPOINT_DIRNAME = "_checkpoints"
+#: Per-run directory where each source's Bronze records are written as they arrive,
+#: until the source finishes (#622).
+_STAGING_DIRNAME = "_bronze_staging"
 
 
 def _dataset_card_license(spec: BuildSpec) -> str:
@@ -482,11 +487,16 @@ def _run_source_pipeline(
             if done < total:
                 raise_if_cancelled(cancellation)
 
-        # A param_grid fetch appends each finished combination here and a rebuild of
+        # A param_grid fetch keeps each finished combination here and a rebuild of
         # the same run resumes from it (#648). Removed once Bronze is written.
-        checkpoint_path = (
-            context.output_root / context.run_id / _CHECKPOINT_DIRNAME / f"{output_key}.jsonl"
-        )
+        run_dir = context.output_root / context.run_id
+        checkpoint_path = run_dir / _CHECKPOINT_DIRNAME / output_key
+        # The single-file checkpoint of earlier versions cannot be resumed from (#622).
+        (run_dir / _CHECKPOINT_DIRNAME / f"{output_key}.jsonl").unlink(missing_ok=True)
+        # Records are written here as they arrive (#622), and read from here by Silver.
+        # Anything a crashed attempt left is removed first.
+        staging_dir = run_dir / _STAGING_DIRNAME / output_key
+        shutil.rmtree(staging_dir, ignore_errors=True)
         bronze = build_bronze_artifact_for_source(
             source,
             client=client,
@@ -495,14 +505,15 @@ def _run_source_pipeline(
             secret_values=secret_values,
             on_combination_done=after_combination,
             checkpoint_path=checkpoint_path,
+            staging_dir=staging_dir,
         )
-        recorder.source_fetch_completed(output_key, record_count=len(bronze.raw_records))
+        recorder.source_fetch_completed(output_key, record_count=bronze.record_count)
         fetch_completed = True
         bronze = _retag_bronze_artifact(bronze, output_key=output_key)
         bronze_paths = persist_bronze_artifact(
             bronze, output_root=context.output_root, run_id=context.run_id
         )
-        checkpoint_path.unlink(missing_ok=True)
+        shutil.rmtree(checkpoint_path, ignore_errors=True)
         resumed_combinations = bronze.resumed_combinations
         total_combinations = len(bronze.call_totals)
         completed.append("bronze")
@@ -510,7 +521,7 @@ def _run_source_pipeline(
             output_key,
             "bronze",
             message="Bronze written",
-            metrics={"records": len(bronze.raw_records)},
+            metrics={"records": bronze.record_count},
         )
         _record_output_paths(outputs, bronze_paths.records_path, bronze_paths.metadata_path)
         # Finalize immediately after bronze success: even if later stages fail
@@ -521,7 +532,9 @@ def _run_source_pipeline(
             provider=provenance_provider,
             dataset=provenance_dataset,
             fetched_at=bronze.fetched_at,
-            records=bronze.raw_records,
+            # The persisted file, checksummed without loading it (#622).
+            records_path=bronze_paths.records_path,
+            record_count=bronze.record_count,
             # bronze.fetch_params is already scrubbed of secret/path by
             # kind-specific resolver (#498) — file has upload_id/format/
             # encoding, url has endpoint/method without query string,
@@ -873,6 +886,14 @@ def _run_source_pipeline(
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
         )
+    finally:
+        # The staged records are needed only while this source runs; its persisted
+        # Bronze is in the run's bronze directory (#622).
+        staging_root = context.output_root / context.run_id / _STAGING_DIRNAME
+        shutil.rmtree(staging_root / output_key, ignore_errors=True)
+        # Sources run in parallel; whichever finishes last removes the empty parent.
+        with contextlib.suppress(OSError):
+            staging_root.rmdir()
 
 
 @dataclass(frozen=True)

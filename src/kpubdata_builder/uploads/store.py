@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import os
 import re
 import secrets
@@ -25,7 +26,7 @@ import threading
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol
 
 from ..spec.models import SOURCE_FILE_FORMATS
 from ..stages._path_safety import ensure_within
@@ -114,6 +115,13 @@ class UploadRepository(Protocol):
     def get_metadata(self, owner_id: str, upload_id: str) -> UploadMetadata | None: ...
 
     def get_content(self, owner_id: str, upload_id: str) -> bytes | None: ...
+
+    def open_content(self, owner_id: str, upload_id: str) -> BinaryIO | None:
+        """The content as a readable binary stream, for reading without loading it (#622).
+
+        The caller closes it. None when the upload is absent or another owner's.
+        """
+        ...
 
     def delete(self, owner_id: str, upload_id: str) -> bool: ...
 
@@ -291,6 +299,46 @@ class SQLiteUploadRepository:
                 f"stored content for {upload_id} does not match its recorded checksum"
             )
         return content
+
+    def open_content(self, owner_id: str, upload_id: str) -> BinaryIO | None:
+        """The content as a stream (#622). A file-backed payload is not read into memory:
+        its checksum is verified in one streaming pass, then the file is opened."""
+        self._validate_owner_id(owner_id)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT blob_path, content_sha256
+                FROM uploads WHERE owner_id = ? AND upload_id = ?
+                """,
+                (owner_id, upload_id),
+            ).fetchone()
+            if row is not None and row[0] is None:
+                # A small payload lives in the row; it is below the spill threshold.
+                blob = connection.execute(
+                    "SELECT content FROM uploads WHERE owner_id = ? AND upload_id = ?",
+                    (owner_id, upload_id),
+                ).fetchone()
+                return io.BytesIO(bytes(blob[0])) if blob is not None else None
+        if row is None:
+            return None
+        relative = str(row[0])
+        expected = str(row[1]) if row[1] is not None else None
+        try:
+            path = self._blob_file(relative)
+            if expected is not None:
+                digest = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != expected:
+                    raise UploadContentCorrupted(
+                        f"stored content for {upload_id} does not match its recorded checksum"
+                    )
+            return path.open("rb")
+        except OSError as exc:
+            raise UploadContentCorrupted(
+                f"stored upload payload is unreadable: {relative}"
+            ) from exc
 
     def delete(self, owner_id: str, upload_id: str) -> bool:
         self._validate_owner_id(owner_id)

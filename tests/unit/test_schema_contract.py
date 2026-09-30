@@ -112,9 +112,9 @@ class TestSchemaContractEnforcement:
 
     @staticmethod
     def _bronze(records: list[dict[str, object]]) -> BronzeArtifact:
-        return BronzeArtifact(
+        return BronzeArtifact.from_records(
             source_key="test",
-            raw_records=records,
+            records=records,
             fetch_params={},
             fetched_at=utc_now(),
             provenance=None,

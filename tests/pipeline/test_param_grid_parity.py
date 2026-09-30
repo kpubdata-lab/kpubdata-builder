@@ -102,4 +102,4 @@ def test_a_build_fetches_exactly_the_script_s_combination_set() -> None:
     assert {tuple(sorted(c.items())) for c in client.seen} == {
         tuple(sorted(c.items())) for c in _script_order(_DISTRICTS, _MONTHS)
     }
-    assert len(artifact.raw_records) == len(_script_order(_DISTRICTS, _MONTHS))
+    assert len(tuple(artifact.iter_records())) == len(_script_order(_DISTRICTS, _MONTHS))
