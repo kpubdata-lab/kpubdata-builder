@@ -15,12 +15,13 @@ KPubData Builder의 주요 설계 결정을 기록합니다. 각 ADR은 배경·
 | [0009](./0009-user-authentication-google-oidc.md) | 사용자 인증 모델: Google OIDC ID 토큰 검증 | 대체됨(0015) | #383 |
 | [0010](./0010-artifactstore-state-backend.md) | ArtifactStore 추상화 + BuildIndex 백엔드 분리 | 제안됨 | #375 |
 | [0011](./0011-buildspec-assistant-grounding.md) | BuildSpec 어시스턴트 그라운딩 계약 | 제안됨 | #415 |
-| [0012](./0012-provider-credential-boundary.md) | Provider credential 저장·주입 경계 | 승인됨 | #492, #505 |
+| [0012](./0012-provider-credential-boundary.md) | Provider credential 저장·주입 경계 | 승인됨 (2026-09-30 개정: 다중 사용자 규칙) | #492, #505, #682 |
 | [0013](./0013-api-contract-release-policy.md) | API 계약 버전과 릴리스 경계 정책 | 승인됨 | #521 |
 | [0014](./0014-source-ingestion-file-url-boundary.md) | Public API·File·URL Source 통합 경계 | 승인됨 | #498 |
 | [0015](./0015-email-password-oidc-idp-keycloak.md) | 사용자 인증 IdP: 이메일/비밀번호-capable OIDC(Keycloak) 전환 | 승인됨 | #515 |
 | [0016](./0016-cubrid-state-backend.md) | CUBRID 상태 백엔드 전환 + OCI Compute VM 배포 | 승인됨 | #579 |
 | [0017](./0017-fullstack-oci-deployment.md) | 풀스택 배포 토폴로지: OCI 단일 VM(Builder) + Cloudflare Pages(Studio) | 제안됨 | — |
+| [0018](./0018-legacy-publish-pipeline.md) | 레거시 publish 파이프라인과 BuildSpec 경로의 공존 | 승인됨(2026-09-30, 선택지 C) | #636, #659 |
 | [0019](./0019-column-metadata-semantics.md) | 컬럼 메타: 저장 타입·의미·표시·단위·출처의 분리 | 제안됨 | #813 |
 
 ## 작성 규칙
