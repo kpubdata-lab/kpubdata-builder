@@ -22,7 +22,7 @@ from typing import Any
 import yaml
 from pipeline.fetch import fetch_records
 from pipeline.package import generate_dataset_card, write_parquet
-from pipeline.publish import upload_to_hf, upload_to_kaggle
+from pipeline.publish import PrivatePublishRefused, upload_to_hf, upload_to_kaggle
 from pipeline.redistribution import publish_refusal
 from pipeline.transform import build_variant_dataframes, transform_records, validate_schema
 
@@ -139,7 +139,11 @@ def main(argv: list[str] | None = None) -> None:
     if target in ("hf", "all"):
         upload_to_hf(staging_dir, output_cfg["hf_repo"], dry_run=args.dry_run)
     if target in ("kaggle", "all") and output_cfg.get("kaggle_slug"):
-        upload_to_kaggle(staging_dir, config, dry_run=args.dry_run, public=args.public)
+        try:
+            upload_to_kaggle(staging_dir, config, dry_run=args.dry_run, public=args.public)
+        except PrivatePublishRefused as exc:
+            logger.error("Refusing to publish %s: %s", args.config, exc)
+            sys.exit(2)
 
     # Clean up checkpoint on successful completion
     if checkpoint_dir.exists():

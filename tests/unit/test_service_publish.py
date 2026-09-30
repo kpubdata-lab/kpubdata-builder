@@ -624,9 +624,16 @@ class TestPublish:
         secret = "create_repo failed with token=hf_create_secret"
         create_calls = 0
 
+        class RepositoryNotFoundError(Exception):
+            pass
+
         class FailingHfApi:
             def __init__(self, token: str | None = None) -> None:
                 del token
+
+            def repo_info(self, **_kwargs: object) -> object:
+                # A missing repo: the private-target check (#901) lets create_repo run.
+                raise RepositoryNotFoundError("absent")
 
             def create_repo(self, **_kwargs: object) -> None:
                 nonlocal create_calls

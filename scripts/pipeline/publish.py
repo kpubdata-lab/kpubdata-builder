@@ -17,6 +17,23 @@ from typing import Any
 logger = logging.getLogger("publish_to_hf.publish")
 
 
+class PrivatePublishRefused(RuntimeError):
+    """A private publish targets an existing dataset that is not confirmed private."""
+
+
+def _kaggle_dataset_is_private(dataset: object) -> bool | None:
+    """Return the visibility a Kaggle ``dataset_list`` entry reports, or None.
+
+    kaggle 1.7+ exposes ``is_private``; 1.6 copies the API's ``isPrivate`` onto the
+    model. Anything other than a real bool is unknown.
+    """
+    for attribute in ("is_private", "isPrivate"):
+        value = getattr(dataset, attribute, None)
+        if isinstance(value, bool):
+            return value
+    return None
+
+
 def upload_to_hf(staging_dir: Path, hf_repo: str, *, dry_run: bool = False) -> None:
     """Upload staged dataset files to HuggingFace Hub.
 
@@ -79,6 +96,14 @@ def upload_to_kaggle(
         staging_dir: Directory containing data/*.parquet.
         config: Full pipeline config (needs output.kaggle_slug and card info).
         dry_run: If True, skip actual upload.
+        public: Create a new dataset as public. When False (a private publish) and
+            the dataset already exists, its actual visibility is checked first: a
+            new version keeps the dataset's visibility, so a public or unconfirmable
+            dataset is refused before anything is uploaded (#901).
+
+    Raises:
+        PrivatePublishRefused: A private publish targets a public dataset or one
+            whose visibility cannot be confirmed.
     """
     output_cfg = config["output"]
     kaggle_slug = output_cfg.get("kaggle_slug")
@@ -149,7 +174,7 @@ def upload_to_kaggle(
 
     try:
         results = api.dataset_list(mine=True, search=kaggle_slug.split("/")[-1])
-        dataset_exists = any(str(d) == kaggle_slug for d in results)
+        matches = [d for d in results if str(d) == kaggle_slug]
     except Exception as exc:
         # Query failure means "unknown", not "absent". Treating as absent risks
         # calling create_new on existing datasets or creating unintended new
@@ -157,6 +182,20 @@ def upload_to_kaggle(
         logger.error("Kaggle dataset lookup failed for %s: %s", kaggle_slug, exc)
         shutil.rmtree(upload_dir)
         raise
+    dataset_exists = bool(matches)
+
+    if dataset_exists and not public:
+        # A new version keeps the dataset's visibility, so a private publish (no
+        # --public, which the redistribution gate may require) to a public dataset
+        # would go out public (#901). Unknown visibility is refused as well (#688).
+        visibility = _kaggle_dataset_is_private(matches[0])
+        if visibility is not True:
+            shutil.rmtree(upload_dir)
+            state = "is public" if visibility is False else "has unknown visibility"
+            raise PrivatePublishRefused(
+                f"refusing private publish: Kaggle dataset {kaggle_slug} already exists "
+                f"and {state}. Make it private first, or publish to another dataset."
+            )
 
     if dataset_exists:
         api.dataset_create_version(

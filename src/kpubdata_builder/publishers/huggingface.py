@@ -5,9 +5,60 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from ..errors import PublishError
 from .base import BasePublisher, PublishResult
+
+
+def _hub_error_names(exc: BaseException) -> set[str]:
+    """Class names in ``exc``'s MRO.
+
+    huggingface_hub moved its error classes between modules across releases
+    (``huggingface_hub.utils`` to ``huggingface_hub.errors``), so they are matched by
+    name, as ``_probe_remote_publish_target`` does, rather than imported.
+    """
+    return {cls.__name__ for cls in type(exc).__mro__}
+
+
+def _require_private_target(api: Any, destination: str) -> None:
+    """Refuse a private publish unless the target repo is private or does not exist.
+
+    ``create_repo(exist_ok=True)`` never changes an existing repo's visibility, so the
+    ``private`` option alone does not say where the data lands: an existing public
+    repo would receive it (#901). The actual visibility is looked up here, before
+    anything is created or uploaded:
+
+    - not found: nothing to leak into; the caller creates it private.
+    - found and ``private is True``: proceed.
+    - found and public, or visibility not reported: refuse.
+    - lookup failed for any other reason (network, auth, gated): refuse. What is
+      unknown is not permission (#688).
+    """
+    try:
+        info = api.repo_info(repo_id=destination, repo_type="dataset")
+    except Exception as exc:
+        names = _hub_error_names(exc)
+        # GatedRepoError subclasses RepositoryNotFoundError, but a gated repo exists,
+        # so it is not "absent".
+        if "RepositoryNotFoundError" in names and "GatedRepoError" not in names:
+            return
+        raise PublishError(
+            f"refusing private publish to {destination}: could not look up the "
+            f"repository's visibility ({type(exc).__name__})"
+        ) from exc
+    visibility = getattr(info, "private", None)
+    if visibility is True:
+        return
+    if visibility is False:
+        raise PublishError(
+            f"refusing private publish: Hugging Face dataset {destination} already "
+            "exists and is public. Make it private first, or publish to another repository."
+        )
+    raise PublishError(
+        f"refusing private publish to {destination}: the repository's visibility "
+        "could not be determined"
+    )
 
 
 def _repo_path_for(path: Path, common_root: Path | None) -> str:
@@ -44,8 +95,16 @@ class HuggingFacePublisher(BasePublisher):
         Args:
             artifact_paths: List of files or directories to upload.
             destination: HF repository ID (e.g., "kpubdata/air-quality").
-            private: Visibility on new repo creation. Since ``exist_ok=True``, existing
-                repo visibility is not changed.
+            private: Requested visibility. A new repo is created with it. An existing
+                repo's visibility is never changed (``exist_ok=True``), so when
+                ``private`` is true the repo's actual visibility is looked up first and
+                the publish is refused, before anything is uploaded, if the repo is
+                public or its visibility cannot be confirmed (#901). A public publish
+                (``private=False``) to an existing private repo is not checked: it
+                exposes nothing.
+
+        Raises:
+            PublishError: A private publish targets a public or unconfirmable repo.
         """
         try:
             from huggingface_hub import HfApi  # type: ignore[import-not-found]
@@ -68,6 +127,8 @@ class HuggingFacePublisher(BasePublisher):
             )
 
         api = HfApi(token=token)
+        if private:
+            _require_private_target(api, destination)
         # First ensure new dataset repo exists. For existing repo with exist_ok=True,
         # no visibility mutation or update_repo_settings call (#491).
         api.create_repo(

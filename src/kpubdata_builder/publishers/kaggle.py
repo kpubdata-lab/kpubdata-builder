@@ -74,6 +74,19 @@ def _kaggle_environment(credentials: Mapping[str, str] | None) -> Iterator[None]
                     os.environ[key] = value
 
 
+def _dataset_is_private(dataset: object) -> bool | None:
+    """Return the visibility a Kaggle ``dataset_list`` entry reports, or None.
+
+    kaggle 1.7+ (kagglesdk ``ApiDataset``) exposes ``is_private``; 1.6 copies the
+    API's ``isPrivate`` onto the model. Anything other than a real bool is unknown.
+    """
+    for attribute in ("is_private", "isPrivate"):
+        value = getattr(dataset, attribute, None)
+        if isinstance(value, bool):
+            return value
+    return None
+
+
 class KagglePublisher(BasePublisher):
     """Upload directory containing dataset-metadata.json via Kaggle API."""
 
@@ -101,7 +114,15 @@ class KagglePublisher(BasePublisher):
             destination: Kaggle dataset ID (e.g. "username/dataset-name").
                 Must match ``id`` in directory's ``dataset-metadata.json``.
             public: Whether new dataset is public. For safety, default is private;
-                pass explicit ``True`` to make public intentionally (#177).
+                pass explicit ``True`` to make public intentionally (#177). A new
+                version of an existing dataset keeps that dataset's visibility, so for
+                a private publish (``public=False``) the existing dataset's actual
+                visibility is read first, and the publish is refused before anything
+                is uploaded if it is public or its visibility is not reported (#901).
+
+        Raises:
+            PublishError: A private publish targets a public dataset, or one whose
+                visibility cannot be confirmed.
         """
         try:
             from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore[import-not-found]
@@ -161,7 +182,24 @@ class KagglePublisher(BasePublisher):
                 raise PublishError(
                     f"Failed to query existing Kaggle datasets for {destination}: {exc}"
                 ) from exc
-            dataset_exists = any(str(d) == destination for d in results)
+            matches = [d for d in results if str(d) == destination]
+            dataset_exists = bool(matches)
+            if dataset_exists and not public:
+                # dataset_create_version keeps the dataset's visibility, so a private
+                # publish to a public dataset would go out public (#901). Unknown
+                # visibility is refused too: what is unknown is not permission (#688).
+                visibility = _dataset_is_private(matches[0])
+                if visibility is False:
+                    raise PublishError(
+                        f"refusing private publish: Kaggle dataset {destination} already "
+                        "exists and is public. Make it private first, or publish to "
+                        "another dataset."
+                    )
+                if visibility is None:
+                    raise PublishError(
+                        f"refusing private publish to {destination}: the existing "
+                        "dataset's visibility could not be determined"
+                    )
 
             try:
                 if dataset_exists:
