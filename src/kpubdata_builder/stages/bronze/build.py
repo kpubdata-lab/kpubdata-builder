@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Protocol, cast, runtime_checkable
 
 from ...spec import JsonValue
+from .checkpoint import CombinationCheckpoint
 from .models import (
     BronzeArtifact,
     CallTotal,
@@ -69,6 +70,7 @@ def build_bronze_artifact(
     fetched_at: datetime | None = None,
     param_combinations: Sequence[dict[str, JsonValue]] | None = None,
     on_combination_done: Callable[[int, int], None] | None = None,
+    checkpoint: CombinationCheckpoint | None = None,
 ) -> BronzeArtifact:
     """Fetch raw records from compatible client and return bronze output.
 
@@ -88,6 +90,9 @@ def build_bronze_artifact(
             caller uses it to report progress and to stop when cancellation was asked
             for — by raising, which abandons the fetch before anything is persisted.
             Not called for a single call.
+        checkpoint: where finished combinations are appended, and read back from on a
+            rebuild of the same run (#648). Combinations it holds are not fetched again;
+            the artifact says how many were taken from it. Ignored for a single call.
 
     Returns:
         BronzeArtifact: output containing raw records and provenance.
@@ -109,20 +114,29 @@ def build_bronze_artifact(
     dataset = client.dataset(source_key)
     records: list[dict[str, JsonValue]] = []
     call_totals: list[CallTotal] = []
+    use_checkpoint = checkpoint if combinations is not None else None
+    resumed = use_checkpoint.load(calls) if use_checkpoint is not None else {}
     for done, call_params in enumerate(calls, start=1):
         # Concatenate in combination order. Order change alters raw_records.jsonl
         # bytes and artifact_id follows—R1 rebuild determinism depends on it.
-        batches: Iterable[DatasetResult] = (
-            dataset.list_all(**call_params)
-            if isinstance(dataset, PaginatedSourceDataset)
-            else (dataset.list(**call_params),)
-        )
-        before = len(records)
-        reported: list[int | None] = []
-        for batch in batches:
-            records.extend(batch.items)
-            reported.append(_reported_total(batch))
-        call_totals.append(_call_total(done - 1, reported, fetched=len(records) - before))
+        if done - 1 in resumed:
+            kept, total = resumed[done - 1]
+            records.extend(kept)
+            call_totals.append(total)
+        else:
+            batches: Iterable[DatasetResult] = (
+                dataset.list_all(**call_params)
+                if isinstance(dataset, PaginatedSourceDataset)
+                else (dataset.list(**call_params),)
+            )
+            before = len(records)
+            reported: list[int | None] = []
+            for batch in batches:
+                records.extend(batch.items)
+                reported.append(_reported_total(batch))
+            call_totals.append(_call_total(done - 1, reported, fetched=len(records) - before))
+            if use_checkpoint is not None:
+                use_checkpoint.append(done - 1, call_params, records[before:], call_totals[-1])
         if combinations is not None and on_combination_done is not None:
             on_combination_done(done, len(calls))
     raw_records = tuple(records)
@@ -149,6 +163,7 @@ def build_bronze_artifact(
         fetched_at=resolved_fetched_at,
         provenance=provenance,
         call_totals=tuple(call_totals),
+        resumed_combinations=len(resumed),
     )
 
 

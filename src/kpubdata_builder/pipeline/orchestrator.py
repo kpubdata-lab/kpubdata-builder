@@ -49,6 +49,7 @@ from ..manifest import (
     manifest_writer,
     snapshot_coverage,
 )
+from ..manifest.reproducibility import not_reproducible
 from ..quality import (
     DriftEvaluation,
     QualityCheckResult,
@@ -60,6 +61,7 @@ from ..spec import (
     BuildSpec,
     CompositionSpec,
     ExportTarget,
+    JsonValue,
     SourceRef,
     parse_spec,
     write_buildspec_snapshot,
@@ -112,6 +114,8 @@ logger = logging.getLogger(__name__)
 # are mostly network I/O waits, so sequential execution time grows linearly
 # with source count. Cap threads to avoid unlimited spawning (#247).
 _MAX_PARALLEL_SOURCES = 4
+#: Per-run directory of param_grid checkpoints (#648).
+_CHECKPOINT_DIRNAME = "_checkpoints"
 
 
 def _dataset_card_license(spec: BuildSpec) -> str:
@@ -392,6 +396,9 @@ class _SourcePipelineResult:
     silver: SilverDataset | None = None
     #: What ``sources[].gold`` did to this source (#659); None when it declares none.
     gold_selection: GoldSelectionResult | None = None
+    #: ``(resumed, total)`` param_grid combinations when this source resumed from a
+    #: checkpoint (#648); None when every combination was fetched in this run.
+    resumed: tuple[int, int] | None = None
 
 
 def _run_source_pipeline(
@@ -453,6 +460,8 @@ def _run_source_pipeline(
     export_started = False
     fetch_completed = False
     gold_selection: GoldSelectionResult | None = None
+    resumed_combinations = 0
+    total_combinations = 0
     try:
         # Boundary 0 (#481): This source hasn't started yet. Waiting in worker
         # pool (#247, max 4) and about to start; if cancellation was already
@@ -473,6 +482,11 @@ def _run_source_pipeline(
             if done < total:
                 raise_if_cancelled(cancellation)
 
+        # A param_grid fetch appends each finished combination here and a rebuild of
+        # the same run resumes from it (#648). Removed once Bronze is written.
+        checkpoint_path = (
+            context.output_root / context.run_id / _CHECKPOINT_DIRNAME / f"{output_key}.jsonl"
+        )
         bronze = build_bronze_artifact_for_source(
             source,
             client=client,
@@ -480,6 +494,7 @@ def _run_source_pipeline(
             owner_id=owner_id,
             secret_values=secret_values,
             on_combination_done=after_combination,
+            checkpoint_path=checkpoint_path,
         )
         recorder.source_fetch_completed(output_key, record_count=len(bronze.raw_records))
         fetch_completed = True
@@ -487,6 +502,9 @@ def _run_source_pipeline(
         bronze_paths = persist_bronze_artifact(
             bronze, output_root=context.output_root, run_id=context.run_id
         )
+        checkpoint_path.unlink(missing_ok=True)
+        resumed_combinations = bronze.resumed_combinations
+        total_combinations = len(bronze.call_totals)
         completed.append("bronze")
         recorder.stage_completed(
             output_key,
@@ -782,6 +800,7 @@ def _run_source_pipeline(
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
             gold_selection=gold_selection,
+            resumed=((resumed_combinations, total_combinations) if resumed_combinations else None),
         )
     except BuildCancelled:
         # Cooperative cancellation is not failure (#481) — caught before
@@ -1179,8 +1198,14 @@ def run_build(
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
     silver_by_key: dict[str, SilverDataset] = {}
     gold_selection: dict[str, GoldSelectionResult] = {}
+    resumed_sources: dict[str, dict[str, JsonValue]] = {}
     for result in results:
         outputs.extend(result.output_paths)
+        if result.resumed is not None:
+            resumed_sources[result.outcome.source_key] = {
+                "resumed_combinations": result.resumed[0],
+                "total_combinations": result.resumed[1],
+            }
         if result.gold_selection is not None:
             gold_selection[result.outcome.source_key] = result.gold_selection
         if result.row_count is not None:
@@ -1368,6 +1393,7 @@ def run_build(
         composition=composition_provenance,
         warehouse_failures=warehouse_failures,
         gold_selection={key: value.body() for key, value in gold_selection.items()},
+        reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,
     )
     manifest_path = context.output_root / context.run_id / "manifest.json"
     manifest_writer(manifest, manifest_path)

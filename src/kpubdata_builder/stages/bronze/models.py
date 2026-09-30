@@ -80,6 +80,10 @@ class BronzeArtifact:
     #: Provider-reported totals, one per call (#816). Empty for a file or URL source,
     #: which has no provider to report one.
     call_totals: tuple[CallTotal, ...] = ()
+    #: ``param_grid`` combinations taken from a checkpoint rather than fetched in this
+    #: run (#648). Non-zero makes the run not reproducible: its records came from two
+    #: fetches at two times.
+    resumed_combinations: int = 0
 
     def __post_init__(self) -> None:
         """enforces fetched_at timezone validity immediately after creation."""
