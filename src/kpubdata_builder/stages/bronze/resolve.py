@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
@@ -16,6 +17,7 @@ from ...spec import JsonValue, SourceRef, expand_param_grid
 from ...spec.models import SOURCE_KINDS
 from ...uploads import UploadRepository
 from .build import SourceClient, build_bronze_artifact
+from .checkpoint import CombinationCheckpoint
 from .models import BronzeArtifact, ProvenanceEvent, require_timezone_aware, utc_now
 
 _NON_SLUG_CHARS = re.compile(r"[^a-zA-Z0-9]+")
@@ -57,8 +59,12 @@ def build_bronze_artifact_for_source(
     fetched_at: datetime | None = None,
     secret_values: tuple[str, ...] = (),
     on_combination_done: Callable[[int, int], None] | None = None,
+    checkpoint_path: Path | None = None,
 ) -> BronzeArtifact:
     """fetches per source.kind and creates BronzeArtifact (#498).
+
+    ``checkpoint_path`` (#648): where a public_api ``param_grid`` fetch appends each
+    finished combination, scrubbed of ``secret_values``, and resumes from on a rebuild.
 
     ``on_combination_done`` reaches the ``param_grid`` loop of a public_api source
     (#648); other kinds make one read and never call it.
@@ -75,6 +81,14 @@ def build_bronze_artifact_for_source(
         owner_id=owner_id,
         fetched_at=fetched_at,
         on_combination_done=on_combination_done,
+        checkpoint=(
+            CombinationCheckpoint(
+                checkpoint_path,
+                scrub=lambda value: scrub_secret_values(value, secret_values),
+            )
+            if checkpoint_path is not None
+            else None
+        ),
     )
     if not secret_values:
         return artifact
@@ -113,6 +127,7 @@ def _fetch_bronze(
     owner_id: str | None,
     fetched_at: datetime | None,
     on_combination_done: Callable[[int, int], None] | None = None,
+    checkpoint: CombinationCheckpoint | None = None,
 ) -> BronzeArtifact:
     if source.kind == "file":
         return _build_from_upload(
@@ -136,6 +151,7 @@ def _fetch_bronze(
             fetched_at=fetched_at,
             param_combinations=combinations,
             on_combination_done=on_combination_done,
+            checkpoint=checkpoint,
         )
     # BuildSpec that bypassed loader validation (direct SourceRef construction) also
     # already rejected, but, resolver itself "else is public_api"implicit
