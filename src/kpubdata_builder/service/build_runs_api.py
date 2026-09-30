@@ -48,6 +48,7 @@ from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
 from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
 from .redaction import redact_json_secrets, redact_secret_text
 from .responses import ServiceResponse
+from .source_policy import url_source_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,9 @@ class BuildRunsApiService:
         spec_or_error = self._load_validated(spec_yaml)
         if isinstance(spec_or_error, ServiceResponse):
             return spec_or_error
+        refusal = url_source_refusal(spec_or_error)
+        if refusal is not None:
+            return refusal
 
         # Provider credential meaningful only for kind="public_api" sources (#498) —
         # file/url sources' provider always empty string.
@@ -342,6 +346,10 @@ class BuildRunsApiService:
         ``runner`` is what the worker calls — ``BuilderService._run_build_job``, passed
         at submit time so a subclass override is the one that runs.
 
+        A spec whose ``url`` source a multi-user deployment refuses (#685) is refused
+        here, before it is queued, with the same 403 ``build`` would give; any other
+        problem with the spec is still found by the worker, as before.
+
         ``owner_id`` persisted in job registry snapshot — not exposed in wire
         response (``to_body()``). This value in registry serves two: (1) active
         run ownership judgment (``check_active_run_access``, #496 follow-up),
@@ -407,6 +415,12 @@ class BuildRunsApiService:
                     resolved_run_id,
                     exc_info=True,
                 )
+
+        spec = self._load_validated(spec_yaml)
+        if not isinstance(spec, ServiceResponse):
+            refusal = url_source_refusal(spec)
+            if refusal is not None:
+                return refusal
 
         try:
             result = self._async_builds.submit(
