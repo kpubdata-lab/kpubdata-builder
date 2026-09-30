@@ -438,6 +438,11 @@ class BuildSpec:
     attribution: str | None = None
     quality: QualityPolicy | None = None
     composition: CompositionSpec | None = None
+    #: How often the table is expected to be refreshed, as an ISO 8601 duration of
+    #: weeks, days or hours (``P1D``, ``PT6H``, ``P1W``) (#781, owner decision D7). A
+    #: table whose last successful refresh is older than this is ``stale``; without it,
+    #: health is ``unknown``. Months and years are not accepted — their length varies.
+    refresh_cadence: str | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> BuildSpec:

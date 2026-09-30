@@ -191,6 +191,7 @@ class DatasetsApiService:
                     self._output_root,
                     record,
                     active_statuses=active.get(record.dataset_id, ()),
+                    last_success_at=datasets_service.last_success_at(records, record.dataset_id),
                 )
                 if view is None:
                     continue
@@ -216,6 +217,7 @@ class DatasetsApiService:
             self._output_root,
             latest,
             active_statuses=self._active_statuses(principal).get(dataset_id, ()),
+            last_success_at=datasets_service.last_success_at(records, dataset_id),
         )
         if view is None:
             return ServiceResponse(404, {"error": f"dataset not found: {dataset_id}"})
