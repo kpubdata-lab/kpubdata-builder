@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.60.0",
+  "contract_version": "1.61.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -3150,8 +3150,12 @@
         "column_meta": [
           {
             "name": "station_code",
-            "logical_type": "string",
-            "wire_encoding": "string"
+            "logical_type": "identifier",
+            "wire_encoding": "string",
+            "semantic": {
+              "kind": "code",
+              "origin": "core_spec"
+            }
           },
           {
             "name": "measured_at",
@@ -3208,8 +3212,13 @@
         "column_meta": [
           {
             "name": "station_code",
-            "logical_type": "string",
+            "logical_type": "identifier",
             "wire_encoding": "string",
+            "semantic": {
+              "kind": "code",
+              "origin": "core_spec",
+              "future_optional_field": "added by a later minor contract version"
+            },
             "future_optional_field": "added by a later minor contract version"
           },
           {
@@ -3259,6 +3268,7 @@
       },
       "additive_paths": [
         "$.snapshot",
+        "$.column_meta[0].semantic",
         "$.column_meta[0]",
         "$.column_meta[1]",
         "$.column_meta[2]",
@@ -3280,8 +3290,12 @@
         "column_meta": [
           {
             "name": "station_code",
-            "logical_type": "string",
-            "wire_encoding": "string"
+            "logical_type": "identifier",
+            "wire_encoding": "string",
+            "semantic": {
+              "kind": "code",
+              "origin": "core_spec"
+            }
           },
           {
             "name": "measured_at",

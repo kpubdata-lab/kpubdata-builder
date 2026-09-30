@@ -50,8 +50,9 @@ MAX_EXPORT_BYTES = 256 * 1024 * 1024
 #: (``exporters/csv.py``), which applies the same guard to build artifacts.
 FORMULA_TRIGGER_CHARS = frozenset("=+-@\t\r")
 #: Logical types whose cells are free text a formula could hide in. A negative number
-#: or a Decimal sent as text is not text, and is never prefixed.
-_TEXT_TYPES = frozenset({"string", "categorical", "enum"})
+#: or a Decimal sent as text is not text, and is never prefixed. An identifier (#702) is
+#: text: its cells are written as the strings they are stored as, leading zeros kept.
+_TEXT_TYPES = frozenset({"string", "categorical", "enum", "identifier"})
 
 
 class ExportLimitExceeded(Exception):

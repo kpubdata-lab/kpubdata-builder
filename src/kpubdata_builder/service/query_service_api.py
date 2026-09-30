@@ -30,9 +30,12 @@ from kpubdata_builder.query.resolver import (
 from kpubdata_builder.query.security import UnsafeQueryError, validate_read_only_sql
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.column_semantics import describe_columns, spec_semantics
+from kpubdata_builder.service.datasets import read_snapshot_spec
 from kpubdata_builder.service.ownership import hides_foreign_runs
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
+from kpubdata_builder.tabular.semantics import ColumnSemantics
 
 _ALLOWED_FIELDS = {"dataset_id", "run_id", "stage", "source", "sql", "limit"}
 
@@ -102,16 +105,30 @@ class QueryApiService:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_context"})
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
-        return execute_query(self._engine, context.table_path, request.sql, limit=request.limit)
+        # What the run's kpubdata sources declare about the columns (#702): a code column
+        # is reported as an identifier. Metadata only; the rows are sent as they are.
+        semantics = spec_semantics(
+            read_snapshot_spec(self._output_root, context.run_id), context.source
+        )
+        return execute_query(
+            self._engine, context.table_path, request.sql, limit=request.limit, semantics=semantics
+        )
 
 
 def execute_query(
-    engine: QueryService, table_path: Path, sql: str, *, limit: int
+    engine: QueryService,
+    table_path: Path,
+    sql: str,
+    *,
+    limit: int,
+    semantics: Mapping[str, ColumnSemantics] | None = None,
 ) -> ServiceResponse:
     """Validate and run ``sql`` against one table file, and classify what went wrong.
 
     Shared by ``POST /query`` and ``POST /warehouse/query`` (#797), so the same failure
     maps to the same status code and ``code`` whichever way the table was found.
+    ``semantics`` describes the table's columns by name (#702); a result column that
+    keeps a described name gets its hints, and a text code column is an identifier.
     """
     try:
         validated = validate_read_only_sql(sql)
@@ -130,7 +147,7 @@ def execute_query(
         200,
         {
             "columns": list(result.columns),
-            "column_meta": list(result.column_meta),
+            "column_meta": cast(list[JsonValue], describe_columns(result.column_meta, semantics)),
             "rows": list(result.rows),
             "truncated": result.truncated,
             "execution_ms": result.execution_ms,

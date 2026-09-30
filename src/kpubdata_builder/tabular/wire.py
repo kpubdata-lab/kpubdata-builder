@@ -24,8 +24,15 @@ arriving as numbers. That makes the encoding a property of one response, not of 
 column (#794): another page or query over the same column can come back the other way,
 so a client reads `wire_encoding` from every response.
 
-Which columns are identifiers (postcodes, PNU, legal-dong codes) is a separate decision
-(#702) and is not made here.
+Identifiers (#702). A postcode, a PNU or a legal-dong code is a code, not a quantity:
+`01234` cast to a number is `1234`, and a join against the text form matches nothing or
+the wrong row. Builder does not decide which columns are codes — kpubdata declares them
+(`semantic_kind: code`, kpubdata ADR 0006) and keeps them as text. Where a column's
+resolved semantic kind is `code` and Builder stores it as text, `mark_identifiers`
+reports its logical type as `identifier`. Its wire encoding stays `string` and its
+values are sent exactly as stored; nothing here casts a code to a number. A code column
+stored as a number (a user cast it, or a query did) keeps its numeric logical type:
+the label describes what is sent, never a conversion back.
 """
 
 from __future__ import annotations
@@ -39,9 +46,16 @@ from typing import Literal, cast
 import polars as pl
 
 from ..spec import JsonValue
+from .semantics import ColumnSemantics
 from .types import ColumnInfo
 
 WireEncoding = Literal["number", "decimal_string", "string", "boolean", "json"]
+
+IDENTIFIER_LOGICAL_TYPE = "identifier"
+"""The logical type of a text column that holds codes (#702). Always sent as `string`."""
+
+TEXT_LOGICAL_TYPES: frozenset[str] = frozenset({"string", "categorical", "enum"})
+"""Logical types of columns Builder stores as text."""
 
 JS_SAFE_INTEGER = 2**53 - 1
 """The largest integer a JavaScript number holds exactly (`Number.MAX_SAFE_INTEGER`)."""
@@ -128,12 +142,43 @@ def column_meta(columns: Sequence[ColumnInfo]) -> list[dict[str, JsonValue]]:
     ]
 
 
+def mark_identifiers(
+    meta: Iterable[Mapping[str, JsonValue]],
+    semantics: Mapping[str, ColumnSemantics] | None,
+) -> list[dict[str, JsonValue]]:
+    """Report text columns whose resolved kind is `code` as logical type `identifier`.
+
+    Only `logical_type` changes, and only from a text type. Every other key, the wire
+    encoding included, is copied as it is, so the values below keep being sent as the
+    strings they are stored as. A column with no semantics, a kind other than `code`, or
+    a non-text storage type is left alone.
+    """
+    out: list[dict[str, JsonValue]] = []
+    for entry in meta:
+        item = dict(entry)
+        name = item.get("name")
+        sem = semantics.get(name) if semantics and isinstance(name, str) else None
+        if (
+            sem is not None
+            and sem.semantic is not None
+            and sem.semantic.kind == "code"
+            and item.get("logical_type") in TEXT_LOGICAL_TYPES
+            and item.get("wire_encoding", "string") == "string"
+        ):
+            item["logical_type"] = IDENTIFIER_LOGICAL_TYPE
+        out.append(item)
+    return out
+
+
 __all__ = [
+    "IDENTIFIER_LOGICAL_TYPE",
     "JS_SAFE_INTEGER",
+    "TEXT_LOGICAL_TYPES",
     "WireEncoding",
     "column_meta",
     "encode_rows",
     "encode_value",
     "logical_type",
+    "mark_identifiers",
     "wire_encoding",
 ]

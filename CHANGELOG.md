@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- kpubdata's code columns reach clients as identifiers (#702, API contract 1.61.0). A text column that the run's kpubdata dataset spec declares `semantic_kind: code` (kpubdata ADR 0006) — a legal-dong code, a PNU, a lot number — is reported as `logical_type: identifier` with `wire_encoding: string` on `/query`, `/warehouse/query`, `/warehouse/rows`, `/warehouse/aggregate`, warehouse export `output.columns`, the `/preview` schema and warehouse profiles; its values are sent as the stored text, leading zeros kept, and nothing casts them to a number. `from_field_descriptor` now maps `semantic_kind` to a `core_spec` semantic hint (unknown kinds carried verbatim), and those responses carry the spec's `semantic`/`display` hints (ADR 0019, amended). Builder does not guess: a column no spec declares a code, a file or url source, and a code stored as a number keep their storage logical type. The spreadsheet export treats `identifier` as text.
+
 ### Changed
 
 - A table whose columns differ only in letter case (`Name`, `name`, `NAME`) is refused (#868, R7). SQL engines, DuckDB included, read such names as one column, or rename one behind the user's back; the check runs on the final Silver columns, after every declared rename, coalesce and derived column, so a rename in the source's schema resolves it. Such a build used to succeed with three columns; the DuckDB parity baseline records the new failure.

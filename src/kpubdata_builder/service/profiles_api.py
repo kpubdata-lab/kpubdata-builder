@@ -26,10 +26,13 @@ from kpubdata_builder.query.profile import PROFILE_ALGORITHM_VERSION, ProfilePla
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.column_semantics import spec_semantics, table_key
 from kpubdata_builder.service.datasets import read_snapshot_spec
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.service.warehouse_api import _pin, _readable_table
 from kpubdata_builder.spec import JsonValue
+from kpubdata_builder.tabular.semantics import ColumnSemantics
+from kpubdata_builder.tabular.wire import mark_identifiers
 from kpubdata_builder.warehouse import (
     SnapshotLayout,
     SnapshotNotFound,
@@ -73,6 +76,8 @@ class ProfilesApiService:
             return _error(409, "snapshot_unavailable", str(exc))
         try:
             row = catalog.get_snapshot(pin.snapshot_id)
+            spec = read_snapshot_spec(self._output_root, row.run_id)
+            semantics = spec_semantics(spec, table_key(spec, table.logical_name))
             layout = SnapshotLayout(catalog.root, table.id)
             cache = layout.profile_path(pin.snapshot_id)
             profile = _cached(cache, pin.snapshot_id, row.artifact_digest)
@@ -82,7 +87,6 @@ class ProfilesApiService:
                     return _error(
                         404, "artifact_unavailable", "the snapshot holds no queryable table"
                     )
-                spec = read_snapshot_spec(self._output_root, row.run_id)
                 policy = spec.pii if spec is not None else None
                 plan = ProfilePlan(
                     allow_all_pii=policy is not None and policy.mode == "allow",
@@ -117,9 +121,26 @@ class ProfilesApiService:
                     "snapshot_id": pin.snapshot_id,
                     "revision": pin.revision,
                 },
-                "profile": cast(JsonValue, profile),
+                "profile": cast(JsonValue, _with_identifiers(profile, semantics)),
             },
         )
+
+
+def _with_identifiers(
+    profile: dict[str, JsonValue], semantics: dict[str, ColumnSemantics]
+) -> dict[str, JsonValue]:
+    """The profile with text code columns reported as `identifier` (#702).
+
+    Applied to each answer, not to the cached file: the cache holds what the bytes are,
+    and the declaration comes from the snapshot's BuildSpec and kpubdata.
+    """
+    columns = profile.get("columns")
+    if not semantics or not isinstance(columns, list):
+        return profile
+    if not all(isinstance(column, dict) for column in columns):
+        return profile
+    entries = cast(list[dict[str, JsonValue]], columns)
+    return {**profile, "columns": cast(JsonValue, mark_identifiers(entries, semantics))}
 
 
 def _cached(path: Path, snapshot_id: str, digest: str) -> dict[str, JsonValue] | None:

@@ -34,6 +34,7 @@ from ..uploads import UploadRepository
 from . import vocabulary
 from .auth import Principal
 from .build_runs_api import OpenClient
+from .column_semantics import describe_columns, spec_semantics
 from .providers import (
     ProviderCredentialConflictError,
     ProviderCredentialRequired,
@@ -375,17 +376,25 @@ class SpecApiService:
                 "source_key": p.source_key,
                 "status": p.status,
                 "error": redact_secret_text(p.error, provider_keys.values()),
-                "schema": [
-                    {
-                        "name": column.name,
-                        "dtype": column.dtype,
-                        "nullable": column.nullable,
-                        "unique_count": column.unique_count,
-                        "logical_type": column.logical_type,
-                        "wire_encoding": column.wire_encoding,
-                    }
-                    for column in p.schema.columns
-                ],
+                # A text column the source's kpubdata spec declares a code is reported
+                # as an identifier (#702); its sample values are the strings it holds.
+                "schema": cast(
+                    JsonValue,
+                    describe_columns(
+                        [
+                            {
+                                "name": column.name,
+                                "dtype": column.dtype,
+                                "nullable": column.nullable,
+                                "unique_count": column.unique_count,
+                                "logical_type": column.logical_type,
+                                "wire_encoding": column.wire_encoding,
+                            }
+                            for column in p.schema.columns
+                        ],
+                        spec_semantics(spec_or_error, p.source_key),
+                    ),
+                ),
                 # Wire-encoded by column (#735). The diff below was computed on the
                 # unencoded values, so encoding here changes what is sent, not what changed.
                 "sample": list(encode_rows(p.preview.rows, p.schema.columns)),
