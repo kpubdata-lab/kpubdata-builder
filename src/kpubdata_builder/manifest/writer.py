@@ -110,6 +110,9 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         payload["gold_selection"] = {
             key: dict(value) for key, value in manifest.gold_selection.items()
         }
+    # additive (#689): only when a Gold holds a declared PII column.
+    if manifest.pii_masking:
+        payload["pii_masking"] = {key: dict(value) for key, value in manifest.pii_masking.items()}
     # additive (#867): which algorithm made inputs_fingerprint; absent before it, which
     # reads as sources-sha256-v1.
     if manifest.inputs_fingerprint_algorithm is not None:

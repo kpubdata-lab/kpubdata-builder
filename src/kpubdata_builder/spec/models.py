@@ -156,10 +156,19 @@ class GoldSelection:
     What is published is Gold, so choosing columns and dropping rows happens here:
     ``filters`` first (they may use columns ``select`` drops), then ``select``, in
     the order listed. An empty ``select`` keeps every column.
+
+    Declared PII columns are masked in Gold by default (#689): those kpubdata's spec
+    lists in ``license.pii_columns`` and those named in ``pii_columns`` here.
+    ``publish_unmasked`` is the explicit opt-out for a declared column, and each one
+    is recorded as a manifest warning.
     """
 
     select: tuple[str, ...] = ()
     filters: tuple[GoldFilter, ...] = ()
+    #: Silver columns this BuildSpec declares PII, on top of kpubdata's (#689).
+    pii_columns: tuple[str, ...] = ()
+    #: Declared PII columns to publish unmasked anyway; each is warned (#689).
+    publish_unmasked: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
