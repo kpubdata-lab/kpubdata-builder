@@ -180,6 +180,34 @@ jobs:
       - name: Run tests against kpubdata ${{ matrix.kpubdata }}
         run: uv run --no-sync pytest
 
+  # DuckDB's floor (#866): 1.2.0 is pyproject's lower bound because it is the first
+  # release with every sandbox setting Builder relies on. The lock resolves the newest
+  # release, so without this job nothing would notice the floor stop working.
+  duckdb-floor:
+    name: DuckDB floor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (normal resolution)
+        run: uv sync --extra dev --no-sources
+
+      - name: Pin DuckDB to the declared floor
+        run: |
+          floor=$(sed -n 's/^ *"duckdb>=\([0-9.]*\),.*/\1/p' pyproject.toml)
+          test -n "${floor}"
+          uv pip install "duckdb==${floor}" --no-deps
+          uv run --no-sync python -c "import duckdb; print('duckdb', duckdb.__version__)"
+
+      - name: Run the DuckDB tests against the floor
+        run: uv run --no-sync pytest tests/unit -k duckdb
+
   # One gate, so that editing the matrix is not also editing branch protection
   # (studio#416). Requiring a matrix-suffixed context means every matrix edit is a
   # protection edit, and the edit that gets forgotten leaves a required context that
@@ -192,7 +220,7 @@ jobs:
   gate:
     name: CI gate
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, kpubdata-releases, min-deps]
+    needs: [lint, test, coverage, kpubdata-releases, min-deps, duckdb-floor]
     # `always()` so a failed job still reaches this step. Without it the gate is
     # skipped when something upstream fails, and a skipped required check is the same
     # absence this job exists to remove.
