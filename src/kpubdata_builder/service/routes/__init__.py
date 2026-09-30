@@ -15,6 +15,7 @@ from . import (
     publish,
     quality,
     query,
+    revisions,
     stages,
     warehouse,
 )
@@ -33,6 +34,7 @@ ROUTE_ADAPTERS: tuple[RouteAdapter, ...] = (
     query.route,
     warehouse.route,
     analyses.route,
+    revisions.route,
     datasets.route,
     builds.route,
     events.route,
