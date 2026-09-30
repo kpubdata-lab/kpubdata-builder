@@ -6,9 +6,21 @@ principle (no raw value exposure).
 
 from __future__ import annotations
 
-import polars as pl
+import tempfile
+from pathlib import Path
 
-from kpubdata_builder.stages.silver.pii import scan_pii
+import polars as pl
+import pytest
+
+from kpubdata_builder.query.export import _scan_frame_pii
+from kpubdata_builder.stages.silver.pii import PiiFinding, scan_pii_values
+from kpubdata_builder.stages.silver.pii import scan_pii as _scan_table
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+
+
+def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
+    """Silver's scan of ``table`` loaded into DuckDB (#869)."""
+    return _scan_table(handle_from_frame(table, workdir=Path(tempfile.mkdtemp())))
 
 
 class TestScanPiiPatterns:
@@ -74,3 +86,41 @@ class TestScanPiiSecurityPrinciple:
         # Serialization of all findings fields (column/kind/count) must not include original values.
         serialized = " ".join(f"{f.column}|{f.kind}|{f.count}" for f in findings)
         assert secret not in serialized
+
+
+_TRICKY = [
+    "900101-1234567",
+    "주민번호900101-1234567입니다",
+    "x900101-1234567",
+    "010-1234-5678",
+    "연락처:01012345678",
+    "０１０-1234-5678",
+    "홍길동hong@example.com",
+    "메일 hong@example.co.kr 로",
+    "a@b.c",
+    "user.name+tag@sub-domain.example.org.",
+    "123-45-67890",
+    "사업자123-45-67890번",
+    "١٢٣٤٥٦-1234567",
+    "",
+    None,
+]
+
+
+@pytest.mark.parametrize("value", [v for v in _TRICKY if v is not None])
+def test_value_scan_matches_the_polars_scan(value: str) -> None:
+    """#869: the patterns run in Python over DuckDB's distinct values; the counts are the
+    ones Polars' Rust regex gave, Unicode digits and word boundaries included."""
+    frame = pl.DataFrame({"v": [value, value, None, "plain"]})
+
+    duck = scan_pii_values(handle_from_frame(frame, workdir=Path(tempfile.mkdtemp())))
+
+    assert duck == _scan_frame_pii(frame)
+
+
+def test_counts_are_per_row_not_per_distinct_value() -> None:
+    frame = pl.DataFrame({"v": ["010-1234-5678"] * 3 + ["x"]})
+
+    (finding,) = scan_pii_values(handle_from_frame(frame, workdir=Path(tempfile.mkdtemp())))
+
+    assert (finding.kind, finding.count) == ("phone", 3)

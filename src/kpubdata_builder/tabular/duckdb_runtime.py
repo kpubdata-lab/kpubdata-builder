@@ -172,7 +172,9 @@ def build_connection(
 ) -> Iterator[duckdb.DuckDBPyConnection]:
     """A connection for one build worker, closed and its temp directory removed on exit."""
     temp_directory = worker_temp_directory(run_dir, source_key, worker_id)
-    temp_directory.mkdir(parents=True, exist_ok=False)
+    # What a crashed attempt at the same run left is not this connection's to reuse.
+    shutil.rmtree(temp_directory, ignore_errors=True)
+    temp_directory.mkdir(parents=True)
     try:
         connection = connect(profile or BuildProfile(), temp_directory)
         try:

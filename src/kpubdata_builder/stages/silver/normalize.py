@@ -1,28 +1,50 @@
-"""Silver normalization (#46).
+"""Silver normalization on DuckDB (#46, #869).
 
-Convert Bronze raw records to Polars table and apply only declared normalization rules
-(type casting). Builder does not arbitrarily define "clean data"—undeclared
-transformations are not performed.
+Load Bronze records into a DuckDB table and apply only the declared normalization rules.
+Builder does not arbitrarily define "clean data" — undeclared transformations are not
+performed.
+
+Each declaration is its own step and its own table, in the order Silver has always
+applied them::
+
+    raw → null tokens (on the records, before any type is decided) → coalesced →
+    renamed → zero-filled → cast → derived
+
+so a failure names the declaration and the column it failed on, as before. The column
+types, values and messages are those of the Polars implementation this replaces
+(``tabular/duckdb_load.py`` for loading, ``tabular/duckdb_casts.py`` for casts).
 
 Main functions:
-    - normalize_table: BronzeArtifact → pl.DataFrame
+    - normalize_table: BronzeArtifact → TableHandle
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import dataclasses
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from pathlib import Path
 
-import polars as pl
+import duckdb
 
 from ...errors import TabularError
 from ...spec import ColumnNullTokens, DerivedColumn, JsonValue
-from ...tabular.convert import check_case_fold_collisions, records_to_dataframe
-from ...tabular.polars_helpers import (
-    YEAR_MONTH_COMPACT,
-    YEAR_MONTH_DASHED,
-    DtypeSpec,
-    cast_columns,
+from ...tabular.convert import check_case_fold_collisions
+from ...tabular.duckdb_casts import (
+    cast_expression,
+    register_functions,
+    strip_expression,
+    text_expression,
+    zfill_expression,
 )
+from ...tabular.duckdb_load import (
+    LoadedTable,
+    Node,
+    TableHandle,
+    derive_table,
+    load_records,
+    node_of,
+)
+from ...tabular.polars_helpers import TEXT_CASTS, YEAR_MONTH_COMPACT, YEAR_MONTH_DASHED
 from ..bronze.models import BronzeArtifact
 
 #: separator for join_key derived columns (#611).
@@ -31,11 +53,21 @@ JOIN_KEY_SEPARATOR = "|"
 #: escape character used when embedding separator within values (#611).
 JOIN_KEY_ESCAPE = "\\"
 
+_NULL_NODE: Node = ("null",)
+
+
+def open_connection(workdir: Path) -> duckdb.DuckDBPyConnection:
+    """A private connection for a Silver built outside a run (library use, tests)."""
+    from ...tabular.duckdb_runtime import BuildProfile, connect
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    return connect(BuildProfile(), workdir)
+
 
 def normalize_table(
     bronze: BronzeArtifact,
     *,
-    casts: Mapping[str, DtypeSpec] | None = None,
+    casts: Mapping[str, str] | None = None,
     rename: Mapping[str, str] | None = None,
     derived: Sequence[DerivedColumn] = (),
     read_as: Mapping[str, str] | None = None,
@@ -43,91 +75,77 @@ def normalize_table(
     column_null_tokens: Mapping[str, ColumnNullTokens] | None = None,
     coalesce: Mapping[str, Sequence[str]] | None = None,
     zfill: Mapping[str, int] | None = None,
-) -> pl.DataFrame:
-    """converts Bronze raw records to table and applies only declared casts."""
-    # null_tokens applied *before* table is created. records_to_dataframe
-    # rejects heterogeneous type columns(#187), if public API gives missing as "", same column has
-    # number 84.5 and string "" mixed, build stops before declaration takes effect — declared
-    # notation must first be collected as null for that declaration to take effect (#613).
-    # Silver still builds one Polars table, so it reads every Bronze record here; the
-    # DuckDB Silver (#869) reads the file instead. Bronze itself no longer holds them (#622).
-    records = _apply_null_tokens(list(bronze.iter_records()), null_tokens, column_null_tokens or {})
-    table = records_to_dataframe(records, read_as=read_as)
+    connection: duckdb.DuckDBPyConnection | None = None,
+    workdir: Path | None = None,
+) -> TableHandle:
+    """Loads Bronze records into DuckDB and applies only the declared normalization.
+
+    ``connection`` is the source's connection (the caller closes it); without one, a
+    private connection is opened. ``workdir`` holds the load file while loading; the
+    Bronze staging directory by default.
+    """
+    workdir = workdir or bronze.staging_dir
+    connection = connection or open_connection(workdir)
+    register_functions(connection)
+    # null_tokens applied *before* the table is typed: the type checks reject
+    # heterogeneous columns (#187), so if a public API gives missing as "", a column of
+    # 84.5 and "" would stop the build before the declaration takes effect (#613).
+    tokens = _null_token_rule(bronze, null_tokens, column_null_tokens or {})
+
+    def records() -> Iterator[dict[str, JsonValue]]:
+        for record in bronze.iter_records():
+            yield tokens(record) if tokens is not None else record
+
+    table = load_records(connection, records, table="silver_raw", workdir=workdir, read_as=read_as)
     if coalesce:
         for target, candidates in _coalesce_order(coalesce):
-            table = _apply_coalesce(table, target, candidates)
+            table = _apply_coalesce(connection, table, target, candidates)
     if rename:
-        missing = [source for source in rename if source not in table.columns]
-        if missing:
-            raise TabularError(
-                f"declared rename refers to columns absent from the source: {missing}"
-            )
-        # two source columns merge to same name, or target name overlaps with existing
-        # column, Polars raises DuplicateError — not internal exception
-        # fail in spec terms. (value duplicates caught by validator at declaration time.)
-        untouched = set(table.columns) - set(rename)
-        collisions = sorted({target for target in rename.values() if target in untouched})
-        if collisions:
-            raise TabularError(
-                f"declared rename targets collide with existing columns: {collisions}"
-            )
-        table = table.rename(dict(rename))
+        table = _apply_rename(table, rename)
     if zfill:
         for column, width in zfill.items():
-            table = _apply_zfill(table, column, width)
+            table = _apply_zfill(connection, table, column, width)
     if casts:
-        _check_year_month(table, casts)
-        result = cast_columns(table, casts, audit=True)
-        if result.has_nulls_introduced:
-            details = "; ".join(
-                f"{report.column!r}: {report.nulls_introduced} value(s) -> null"
-                for report in result.reports
-                if report.nulls_introduced > 0
-            )
-            raise TabularError(f"declared cast dropped values to null (data loss): {details}")
-        table = result.df
+        _check_year_month(connection, table, casts)
+        table = _apply_casts(connection, table, casts)
     for rule in derived:
-        table = _apply_derived(table, rule)
+        table = _apply_derived(connection, table, rule)
     # After every declared transform, so a rename or a coalesce can resolve it (#868).
-    check_case_fold_collisions(table.columns)
-    return table
+    check_case_fold_collisions(table.names)
+    return TableHandle(connection, table, workdir)
 
 
-def _apply_null_tokens(
-    records: Sequence[dict[str, JsonValue]],
+def _null_token_rule(
+    bronze: BronzeArtifact,
     null_tokens: Sequence[str],
     column_null_tokens: Mapping[str, ColumnNullTokens],
-) -> Sequence[dict[str, JsonValue]]:
-    """collects missing notation as null. global + per-column declaration (#620, #623).
+) -> Callable[[dict[str, JsonValue]], dict[str, JsonValue]] | None:
+    """The per-record rewrite collecting missing notations as null (#620, #623).
 
-    Missing representation recognized in one column is **global + that column's declaration**.
-    Per-column declaration does not overwrite global—if it did, adding one token to one
-    column could silently lose global tokens.
+    Missing representation recognized in one column is **global + that column's
+    declaration**. Per-column declaration does not overwrite global — if it did, adding
+    one token to one column could silently lose global tokens.
 
-    Same-meaning missing values may be notated differently per column. Global declaration alone
-    cannot express that **without changing other columns' meaning**—declaring empty string as
-    missing in gender would also null empty strings in rental station names.
-
-    Fails if declared column doesn't exist in table. If typo silently does nothing,
-    missing stays as value and quality metrics don't count it.
-
-    runs on raw records *before* table creation (#613). records_to_dataframe
-    rejects heterogeneous type columns (#187). if public API gives missing as `""`, same column has
-    Number ``84.5`` mixed with string ``""`` causes build to halt before declaration
-    even takes effect.
+    Fails if a declared column doesn't exist in the source (unless ``on_absent:
+    ignore``), or holds values but no text: a typo or a wrong type must not silently do
+    nothing. Checked in one pass over the records before any is rewritten.
     """
     if not null_tokens and not column_null_tokens:
-        return records
-
-    # source column set is union of record keys — keys may be missing per record.
+        return None
     columns: dict[str, None] = {}
-    for record in records:
-        for key in record:
+    first_value_type: dict[str, str] = {}
+    has_text: set[str] = set()
+    for record in bronze.iter_records():
+        for key, value in record.items():
             columns.setdefault(key, None)
+            if key in column_null_tokens and value is not None:
+                first_value_type.setdefault(key, type(value).__name__)
+                if isinstance(value, str):
+                    has_text.add(key)
 
     # "what is missing in this column" and "must this column always exist" are separate
-    # contracts. latter declared separately with on_absent — else marking missing would mean
-    # all generations must have that column.
+    # contracts. latter declared separately with on_absent — else marking missing would
+    # mean all generations must have that column.
     missing = [
         name
         for name, rule in column_null_tokens.items()
@@ -143,11 +161,11 @@ def _apply_null_tokens(
     # token cannot match in column with no string values. silently do nothing
     # or no one knows declaration is wrong. all-null column is exception — match
     # no values exist, not that declaration is wrong.
-    wrong_type: dict[str, str] = {}
-    for name in present:
-        values = [record[name] for record in records if record.get(name) is not None]
-        if values and not any(isinstance(value, str) for value in values):
-            wrong_type[name] = type(values[0]).__name__
+    wrong_type = {
+        name: first_value_type[name]
+        for name in present
+        if name in first_value_type and name not in has_text
+    }
     if wrong_type:
         raise TabularError(
             f"column_null_tokens declared on non-string columns: {wrong_type}. "
@@ -156,15 +174,16 @@ def _apply_null_tokens(
 
     shared = frozenset(null_tokens)
     per_column = {name: shared | frozenset(column_null_tokens[name].tokens) for name in present}
-    return [
-        {
+
+    def rewrite(record: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        return {
             key: (
                 None if isinstance(value, str) and value in per_column.get(key, shared) else value
             )
             for key, value in record.items()
         }
-        for record in records
-    ]
+
+    return rewrite
 
 
 def _coalesce_order(
@@ -202,9 +221,23 @@ def _coalesce_order(
     return sorted(rules)
 
 
-def _apply_coalesce(table: pl.DataFrame, target: str, candidates: tuple[str, ...]) -> pl.DataFrame:
+def _keep(table: LoadedTable, names: Sequence[str]) -> list[tuple[str, str, Node]]:
+    """``(name, sql, node)`` for keeping ``names`` of ``table`` as they are."""
+    return [(name, table.column(name), table.nodes[table.names.index(name)]) for name in names]
+
+
+def _dtype(table: LoadedTable, name: str) -> str:
+    return table.dtypes[table.names.index(name)]
+
+
+def _apply_coalesce(
+    connection: duckdb.DuckDBPyConnection,
+    table: LoadedTable,
+    target: str,
+    candidates: tuple[str, ...],
+) -> LoadedTable:
     """collects per-generation alias columns into single canonical column (#620)."""
-    present = [name for name in candidates if name in table.columns]
+    present = [name for name in candidates if name in table.names]
     if not present:
         raise TabularError(
             f"coalesce target {target!r} found none of its candidates in the source: "
@@ -212,170 +245,239 @@ def _apply_coalesce(table: pl.DataFrame, target: str, candidates: tuple[str, ...
         )
     # if target name overlaps with non-candidate existing column, silently overwrites it.
     # contract limiting to alias group breaks there.
-    if target in table.columns and target not in present:
+    if target in table.names and target not in present:
         raise TabularError(
             f"coalesce target {target!r} would overwrite an existing column that is not "
             "one of its candidates"
         )
-    # all-null candidate inferred as pl.Null — common shape in mixed-generation snapshots, and,
-    # fits any type so excluded from consensus judgment.
-    dtypes = {table.schema[name] for name in present} - {pl.Null}
-    if len(dtypes) > 1:
+    # an all-null candidate is typed Null — common shape in mixed-generation snapshots,
+    # and fits any type, so it is excluded from the consensus.
+    typed = [name for name in present if _dtype(table, name) != "Null"]
+    if len({_dtype(table, name) for name in typed}) > 1:
         raise TabularError(
             f"coalesce target {target!r} has candidates of differing dtypes: "
-            f"{ {name: str(table.schema[name]) for name in present} }. "
+            f"{ {name: _dtype(table, name) for name in present} }. "
             "Declare read_as to read them as one type."
         )
-    if len(present) > 1:
+    if len(typed) > 1:
         # if multiple non-null candidates in one row with different values, generation
         # boundary wrong; caught incorrectly. first-wins silently passes wrong value.
-        distinct = (
-            pl.concat_list([pl.col(name) for name in present])
-            .list.drop_nulls()
-            .list.unique()
-            .list.len()
-        )
-        conflicts = table.select(present).filter(distinct > 1)
-        if conflicts.height:
-            # does not include value itself. this message appears in manifest and /builds response
-            # and, PII scan(#441)runs after it — if original value included
-            # resident ID/phone leaks before scan. Naming which column and how
-            # many rows is sufficient to locate the fix.
+        values = ", ".join(table.column(name) for name in typed)
+        row = connection.execute(
+            f"SELECT count(*) FROM {table.relation.sql} WHERE len(list_distinct([{values}])) > 1"
+        ).fetchone()
+        conflicts = int(row[0]) if row else 0
+        if conflicts:
+            # does not include value itself. this message appears in manifest and
+            # /builds response, and the PII scan (#441) runs after it — naming which
+            # column and how many rows is sufficient to locate the fix.
             raise TabularError(
-                f"coalesce target {target!r} has {conflicts.height} row(s) where candidates "
+                f"coalesce target {target!r} has {conflicts} row(s) where candidates "
                 f"{present} disagree"
             )
-    # extract value first then discard candidate. target may have same name as one candidate, so
-    # reversing drop and with_columns order makes newly created column disappear.
-    merged = table.select(pl.coalesce([pl.col(name) for name in present]).alias(target)).to_series()
-    return table.drop(present).with_columns(merged)
+    merged = (
+        f"coalesce({', '.join(table.column(name) for name in typed)})"
+        if typed
+        else "CAST(NULL AS INTEGER)"
+    )
+    node = table.nodes[table.names.index(typed[0])] if typed else _NULL_NODE
+    kept = [name for name in table.names if name not in present]
+    return derive_table(
+        connection,
+        table,
+        into="silver_coalesced",
+        columns=[*_keep(table, kept), (target, merged, node)],
+    )
 
 
-def _apply_zfill(table: pl.DataFrame, column: str, width: int) -> pl.DataFrame:
+def _apply_rename(table: LoadedTable, rename: Mapping[str, str]) -> LoadedTable:
+    missing = [source for source in rename if source not in table.names]
+    if missing:
+        raise TabularError(f"declared rename refers to columns absent from the source: {missing}")
+    # two source columns merging to one name, or a target that is an existing column,
+    # would lose a column; fail in spec terms. (value duplicates are caught by the
+    # validator at declaration time.)
+    untouched = set(table.names) - set(rename)
+    collisions = sorted({target for target in rename.values() if target in untouched})
+    if collisions:
+        raise TabularError(f"declared rename targets collide with existing columns: {collisions}")
+    # Names only: the physical columns are unchanged.
+    return dataclasses.replace(table, names=tuple(rename.get(n, n) for n in table.names))
+
+
+def _apply_zfill(
+    connection: duckdb.DuckDBPyConnection, table: LoadedTable, column: str, width: int
+) -> LoadedTable:
     """aligns identifier width (#620).
 
-    Same rental station as ``3`` and ``00003`` splits in aggregation. null stays null—if
+    Same rental station as ``3`` and ``00003`` splits in aggregation. null stays null — if
     filled with ``"00000"``, missing becomes valid identifier and quality metrics count
     different missing values.
     """
-    if column not in table.columns:
+    if column not in table.names:
         raise TabularError(f"declared zfill refers to a column absent from the table: {column!r}")
-    dtype = table.schema[column]
-    if dtype == pl.Null:
-        # if all values null, Polars infers as pl.Null — mixed-generation snapshots or
-        # common result of coalescing all-null alias. cannot be resolved by read_as
-        # (_apply_read_as deliberately does not touch null). zfill leaves null as
-        # so no reason to reject this shape, thus, promote to string column
-        # but leave values as null.
-        return table.with_columns(pl.col(column).cast(pl.Utf8).alias(column))
-    if dtype != pl.Utf8:
+    dtype = _dtype(table, column)
+    if dtype == "Null":
+        # an all-null column (mixed-generation snapshots, or coalesced all-null aliases)
+        # cannot be fixed by read_as, which leaves null alone; zfill leaves nulls as they
+        # are, so the column becomes a text column of nulls.
+        sql = "CAST(NULL AS VARCHAR)"
+    elif dtype != "String":
         raise TabularError(
             f"zfill target {column!r} is {dtype}, not a string; "
             "declare read_as so the leading zeros survive reading"
         )
-    # values longer than declared width fail instead of being truncated. silent truncation
-    # corrupts identifiers; contract declares width, longer values are drift signal.
-    too_long = table.filter(pl.col(column).str.len_chars() > width)
-    if too_long.height:
-        longest = int(too_long.select(pl.col(column).str.len_chars().max()).item())
-        raise TabularError(
-            f"zfill target {column!r} has {too_long.height} value(s) longer than the declared "
-            f"width {width} (longest is {longest} characters)"
-        )
-    return table.with_columns(pl.col(column).str.zfill(width).alias(column))
+    else:
+        # values longer than declared width fail instead of being truncated. silent
+        # truncation corrupts identifiers; contract declares width, longer values are a
+        # drift signal.
+        quoted = table.column(column)
+        row = connection.execute(
+            f"SELECT count(*), coalesce(max(length({quoted})), 0) "
+            f"FROM {table.relation.sql} WHERE length({quoted}) > ?",
+            [width],
+        ).fetchone()
+        too_long, longest = (int(row[0]), int(row[1])) if row else (0, 0)
+        if too_long:
+            raise TabularError(
+                f"zfill target {column!r} has {too_long} value(s) longer than the declared "
+                f"width {width} (longest is {longest} characters)"
+            )
+        sql = zfill_expression(quoted, width)
+    columns = [
+        (name, sql, ("str",)) if name == column else _keep(table, [name])[0] for name in table.names
+    ]
+    return derive_table(connection, table, into="silver_zfilled", columns=columns)
 
 
-def _check_year_month(table: pl.DataFrame, casts: Mapping[str, DtypeSpec]) -> None:
-    """pre-reports values that `year_month` cast will reject (#620).
+def _check_year_month(
+    connection: duckdb.DuckDBPyConnection, table: LoadedTable, casts: Mapping[str, str]
+) -> None:
+    """pre-reports values that the `year_month` cast will reject (#620).
 
-    cast itself nulls mismatched values; #188's audit counts them. count alone is insufficient
-    What and why is unclear; R2 must read exactly that.
+    The cast itself nulls mismatched values and the audit counts them, but a count alone
+    does not say what and why.
     """
     for column, dtype in casts.items():
-        if not isinstance(dtype, str) or dtype.strip().lower() != "year_month":
+        if dtype.strip().lower() not in TEXT_CASTS or column not in table.names:
             continue
-        if column not in table.columns:
-            continue
-        text = pl.col(column).cast(pl.Utf8).str.strip_chars()
-        bad = table.filter(
-            text.is_not_null()
-            & ~text.str.contains(YEAR_MONTH_DASHED)
-            & ~text.str.contains(YEAR_MONTH_COMPACT)
-        )
-        if bad.height:
+        text = strip_expression(text_expression(table.column(column), _dtype(table, column)))
+        row = connection.execute(
+            f"SELECT count(*) FROM {table.relation.sql} WHERE {text} IS NOT NULL "
+            f"AND NOT regexp_matches({text}, ?) AND NOT regexp_matches({text}, ?)",
+            [YEAR_MONTH_DASHED, YEAR_MONTH_COMPACT],
+        ).fetchone()
+        bad = int(row[0]) if row else 0
+        if bad:
             raise TabularError(
-                f"year_month cast on {column!r} rejected {bad.height} value(s); "
-                "expected YYYY-MM or YYYYMM"
+                f"year_month cast on {column!r} rejected {bad} value(s); expected YYYY-MM or YYYYMM"
             )
 
 
-def _apply_derived(table: pl.DataFrame, rule: DerivedColumn) -> pl.DataFrame:
+def _apply_casts(
+    connection: duckdb.DuckDBPyConnection, table: LoadedTable, casts: Mapping[str, str]
+) -> LoadedTable:
+    for column in casts:
+        if column not in table.names:
+            raise ValueError(
+                f"Cannot cast missing column: {column!r}. Available columns: {list(table.names)}"
+            )
+    columns = [
+        (
+            (
+                name,
+                cast_expression(table.column(name), _dtype(table, name), casts[name]),
+                node_of(casts[name]),
+            )
+            if name in casts
+            else _keep(table, [name])[0]
+        )
+        for name in table.names
+    ]
+    cast_table = derive_table(connection, table, into="silver_cast", columns=columns)
+    before = _null_counts(connection, table, list(casts))
+    after = _null_counts(connection, cast_table, list(casts))
+    lost = {column: after[column] - before[column] for column in casts}
+    if any(n > 0 for n in lost.values()):
+        details = "; ".join(
+            f"{column!r}: {n} value(s) -> null" for column, n in lost.items() if n > 0
+        )
+        raise TabularError(f"declared cast dropped values to null (data loss): {details}")
+    return cast_table
+
+
+def _null_counts(
+    connection: duckdb.DuckDBPyConnection, table: LoadedTable, names: Sequence[str]
+) -> dict[str, int]:
+    counts = ", ".join(f"count(*) - count({table.column(name)})" for name in names)
+    row = connection.execute(f"SELECT {counts} FROM {table.relation.sql}").fetchone()
+    assert row is not None
+    return {name: int(value) for name, value in zip(names, row, strict=True)}
+
+
+def _apply_derived(
+    connection: duckdb.DuckDBPyConnection, table: LoadedTable, rule: DerivedColumn
+) -> LoadedTable:
     """applies single derivation rule (#611)."""
-    missing = [column for column in rule.columns if column not in table.columns]
+    missing = [column for column in rule.columns if column not in table.names]
     if missing:
         raise TabularError(
             f"derived column {rule.name!r} refers to columns absent from the table: {missing}"
         )
-    if rule.name in table.columns:
-        # with_columns silently overwrites existing column of same name — source values
-        # disappear so downstream builds; surface as declaration error. if derivation rule
-        # uses its input column as result name(name=dealMonth,
-        # columns=[dealYear, dealMonth, dealDay])also caught here.
+    if rule.name in table.names:
+        # a derived column would silently replace a source column of the same name —
+        # its values would disappear; surface it as a declaration error. (a rule using
+        # one of its inputs as its name is caught here too.)
         raise TabularError(
             f"derived column {rule.name!r} would overwrite an existing column of the same name"
         )
+    text = {name: text_expression(table.column(name), _dtype(table, name)) for name in rule.columns}
     if rule.kind == "date_parts":
         year, month, day = rule.columns
         composed = (
-            pl.col(year).cast(pl.Utf8).str.zfill(4)
-            + pl.lit("-")
-            + pl.col(month).cast(pl.Utf8).str.zfill(2)
-            + pl.lit("-")
-            + pl.col(day).cast(pl.Utf8).str.zfill(2)
+            f"{zfill_expression(text[year], 4)} || '-' || {zfill_expression(text[month], 2)} "
+            f"|| '-' || {zfill_expression(text[day], 2)}"
         )
-        result = table.with_columns(composed.str.to_date("%Y-%m-%d", strict=False).alias(rule.name))
-        # same as #188: rows where all pieces exist but fail to become date are losses by rule
-        # values. if cast, build would have failed; but only derivation rule silently nulls
-        # not allowed. rows where pieces already missing are not losses.
-        #
-        # piece existence must be judged from *original* table. if rule.name is input
-        # column name (e.g., name=dealMonth, columns=[dealYear, dealMonth,
-        # dealDay]—validator permits declaration) with_columns already overwrote that input column
-        # so, in rows with invalid date, piece itself appears null. then
-        # "all pieces existed"becomes false and intended loss slips through.
-        parts_present = table.select(
-            pl.all_horizontal(pl.col(c).is_not_null() for c in rule.columns)
-        ).to_series()
-        lost = table.filter(parts_present & result.get_column(rule.name).is_null())
-        if lost.height:
+        sql = f"CAST(try_strptime({composed}, '%Y-%m-%d') AS DATE)"
+        derived = derive_table(
+            connection,
+            table,
+            into="silver_derived",
+            columns=[*_keep(table, table.names), (rule.name, sql, ("date",))],
+        )
+        # same as #188: rows where all pieces exist but form no date are losses by the
+        # rule. rows where a piece is already missing are not losses.
+        present = " AND ".join(f"{table.column(c)} IS NOT NULL" for c in rule.columns)
+        row = connection.execute(
+            f"SELECT count(*) FROM {table.relation.sql} WHERE {present} AND {sql} IS NULL"
+        ).fetchone()
+        lost = int(row[0]) if row else 0
+        if lost:
             raise TabularError(
-                f"derived column {rule.name!r} dropped {lost.height} value(s) to null "
+                f"derived column {rule.name!r} dropped {lost} value(s) to null "
                 f"(data loss): rows whose {list(rule.columns)} form no valid date"
             )
-        return result
+        return derived
     if rule.kind == "join_key":
-        # if any key column null, result null(concat_str default behavior) —
-        # does not create rows that cannot form join key as empty string.
-        composed_key = pl.concat_str(
-            [_escape_join_key_part(column) for column in rule.columns],
-            separator=JOIN_KEY_SEPARATOR,
+        # if any key column is null, the key is null — no row gets an empty-string key.
+        sql = " || '|' || ".join(_escape_join_key_part(text[c]) for c in rule.columns)
+        return derive_table(
+            connection,
+            table,
+            into="silver_derived",
+            columns=[*_keep(table, table.names), (rule.name, sql, ("str",))],
         )
-        return table.with_columns(composed_key.alias(rule.name))
     raise TabularError(f"unsupported derived column kind: {rule.kind!r}")
 
 
-def _escape_join_key_part(column: str) -> pl.Expr:
-    """escapes single join_key component to avoid separator collision (#611).
+def _escape_join_key_part(text: str) -> str:
+    """escapes one join_key component so the separator cannot collide (#611).
 
-    Concatenating separator naively is not injective—``("a|b", "c")`` and ``("a", "b|c")``
-    both become ``a|b|c``, so different key tuples merge into same join key. Gold composition
-    (``stages/gold/compose.py``) uses this as single equi-join key, so unrelated rows join
-    and duplicate-key stats corrupt. First double escape chars, then escape separator to
-    recover original components.
+    Concatenating naively is not injective — ``("a|b", "c")`` and ``("a", "b|c")`` both
+    become ``a|b|c``, so different key tuples would merge into one join key. First double
+    the escape character, then escape the separator, so the components can be recovered.
     """
-    return (
-        pl.col(column)
-        .cast(pl.Utf8)
-        .str.replace_all(JOIN_KEY_ESCAPE, JOIN_KEY_ESCAPE * 2, literal=True)
-        .str.replace_all(JOIN_KEY_SEPARATOR, JOIN_KEY_ESCAPE + JOIN_KEY_SEPARATOR, literal=True)
-    )
+    return f"replace(replace({text}, '\\', '\\\\'), '|', '\\|')"
+
+
+__all__ = ["JOIN_KEY_ESCAPE", "JOIN_KEY_SEPARATOR", "normalize_table", "open_connection"]

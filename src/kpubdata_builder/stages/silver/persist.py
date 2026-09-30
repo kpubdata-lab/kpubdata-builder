@@ -57,6 +57,22 @@ def _write_json(path: Path, payload: object) -> None:
     )
 
 
+def _write_table(dataset: SilverDataset, path: Path) -> None:
+    """The table as Parquet, written by DuckDB (#869).
+
+    A table with no columns (a source that returned nothing) is written through the
+    Polars bridge: DuckDB cannot write a Parquet file without columns. Where DuckDB has
+    no Parquet form for a Builder dtype (a Null column is written as INTEGER), the dtype
+    is the one in schema.json.
+    """
+    if dataset.table.table.physical:
+        dataset.table.write_parquet(path)
+        return
+    from ...tabular.polars_bridge import to_polars
+
+    to_polars(dataset.table).write_parquet(path)
+
+
 def persist_silver_dataset(
     dataset: SilverDataset,
     *,
@@ -88,7 +104,7 @@ def persist_silver_dataset(
     # Atomic write: write to temp dir then rename
     tmp_dir = Path(tempfile.mkdtemp(dir=silver_dir.parent, prefix=".silver_tmp_"))
     try:
-        dataset.table.write_parquet(tmp_dir / "table.parquet")
+        _write_table(dataset, tmp_dir / "table.parquet")
         _write_json(tmp_dir / "schema.json", asdict(dataset.schema))
         _write_json(tmp_dir / "stats.json", asdict(dataset.statistics))
         # The sample is served as-is by stage detail, so it is written wire-encoded (#735):

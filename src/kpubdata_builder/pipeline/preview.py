@@ -32,6 +32,7 @@ Main components:
 
 from __future__ import annotations
 
+import contextlib
 import random
 import shutil
 from collections.abc import Mapping, Sequence
@@ -48,6 +49,7 @@ from ..stages.bronze.writer import new_staging_dir
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.preview import select_preview_rows
 from ..tabular import DEFAULT_PREVIEW_LIMIT, PreviewSlice, SchemaInfo, TableStatistics
+from ..tabular.duckdb_runtime import build_connection
 from ..uploads import UploadRepository
 
 SampleMode = Literal["first", "random"]
@@ -269,6 +271,7 @@ def _preview_source(
     # Preview writes nothing that outlives it: Bronze is staged in a private directory
     # (#622) and removed however the preview ends.
     staging_dir = new_staging_dir()
+    resources = contextlib.ExitStack()
     try:
         required_columns = source.schema.required if source.schema else ()
         column_dtypes = source.schema.dtypes if source.schema else None
@@ -303,6 +306,8 @@ def _preview_source(
             coalesce=coalesce,
             zfill=zfill,
             column_dtypes=column_dtypes,
+            connection=resources.enter_context(build_connection(staging_dir, "preview")),
+            workdir=staging_dir,
         )
         # Same shared evaluator as Build (#486) — no file persist.
         quality_results = evaluate_quality(
@@ -383,6 +388,7 @@ def _preview_source(
             diff_truncated=False,
         )
     finally:
+        resources.close()
         shutil.rmtree(staging_dir, ignore_errors=True)
 
 

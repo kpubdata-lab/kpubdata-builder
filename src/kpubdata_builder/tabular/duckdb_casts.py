@@ -152,8 +152,12 @@ def _full(pattern: str, value: str) -> str:
     return f"regexp_full_match({value}, '{pattern}')"
 
 
-def _strip(text: str) -> str:
+def strip_expression(text: str) -> str:
+    """``text`` without leading and trailing whitespace, as Polars' ``strip_chars``."""
     return f"regexp_replace({text}, '^{_SPACE}+|{_SPACE}+$', '', 'g')"
+
+
+_strip = strip_expression
 
 
 def text_expression(column: str, source: str) -> str:
@@ -417,6 +421,7 @@ __all__ = [
     "cast_expression",
     "cast_table",
     "register_functions",
+    "strip_expression",
     "text_expression",
     "zfill_expression",
     "zfill_violations",

@@ -32,7 +32,7 @@ import datetime as dt
 import json
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -156,7 +156,7 @@ def _physical(node: Node, *, top: bool) -> str:
         "null": "INTEGER",
         "bool": "BOOLEAN",
         "int": "BIGINT",
-        "int128": "HUGEINT",
+        "int128": "HUGEINT" if top else "",
         "float": "DOUBLE",
         "str": "VARCHAR",
         "date": "DATE",
@@ -168,6 +168,11 @@ def _physical(node: Node, *, top: bool) -> str:
         return simple[kind]
     if kind == "decimal":
         return f"DECIMAL(38,{node[1]})"
+    if kind == "int128" and not top:
+        raise TabularError(
+            "integers beyond 64 bits inside a list or struct are not supported: "
+            "they cannot be written without rounding"
+        )
     if kind == "binary":
         if not top:
             raise TabularError("binary values inside a list or struct are not supported")
@@ -280,6 +285,147 @@ class LoadedTable:
     def order_by(self) -> str:
         """``ORDER BY`` clause restoring source order."""
         return f"ORDER BY {quote_identifier(ROW_SEQ_COLUMN)}"
+
+
+def derive_table(
+    connection: duckdb.DuckDBPyConnection,
+    source: LoadedTable,
+    *,
+    into: str,
+    columns: Sequence[tuple[str, str, Node]],
+) -> LoadedTable:
+    """A new table ``into`` from ``source``: one column per ``(name, sql, node)``.
+
+    ``sql`` is an expression over ``source``'s physical columns (see
+    :meth:`LoadedTable.column`); ``node`` is the new column's type. Rows keep their order.
+    """
+    physical = tuple(f"c{i}" for i in range(len(columns)))
+    relation = TabularRelation(into)
+    # The row ordinal travels with every derived table (ADR 0021 D8).
+    select = ", ".join(
+        [quote_identifier(ROW_SEQ_COLUMN)]
+        + [
+            f"{sql} AS {quote_identifier(name)}"
+            for name, (_, sql, _) in zip(physical, columns, strict=True)
+        ]
+    )
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT {select} FROM {source.relation.sql}"
+    )
+    nodes = tuple(node for _, _, node in columns)
+    return LoadedTable(
+        relation=relation,
+        names=tuple(name for name, _, _ in columns),
+        physical=physical,
+        dtypes=tuple(canonical(n) for n in nodes),
+        row_count=source.row_count,
+        nodes=nodes,
+    )
+
+
+def node_of(target: str) -> Node:
+    """The node of a column after a declared cast to ``target`` (see ``duckdb_casts``)."""
+    name = target.strip().lower()
+    return {
+        "int": ("int",),
+        "int64": ("int",),
+        "int_comma": ("int",),
+        "float": ("float",),
+        "float64": ("float",),
+        "float_comma": ("float",),
+        "str": ("str",),
+        "string": ("str",),
+        "utf8": ("str",),
+        "year_month": ("str",),
+        "date": ("date",),
+        "datetime": ("datetime", None),
+        "bool": ("bool",),
+        "boolean": ("bool",),
+    }[name]
+
+
+@dataclass(eq=False)
+class TableHandle:
+    """A table in an open DuckDB connection, for the stages that read it (#869).
+
+    The connection belongs to whoever opened it (the build's source pipeline, a preview);
+    the handle never closes it. ``workdir`` is where exports of the table are spilled.
+    ``cache`` holds what a caller derived from the table and may need after the
+    connection closes (the Polars bridge keeps its frame there).
+    """
+
+    connection: duckdb.DuckDBPyConnection
+    table: LoadedTable
+    workdir: Path
+    cache: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        return self.table.names
+
+    @property
+    def dtypes(self) -> tuple[str, ...]:
+        return self.table.dtypes
+
+    @property
+    def height(self) -> int:
+        return self.table.row_count
+
+    def rows(self, *, limit: int) -> tuple[dict[str, object], ...]:
+        """Up to ``limit`` rows in source order."""
+        return fetch_rows(self.connection, self.table, limit=limit)
+
+    def rows_at(self, indices: Sequence[int]) -> tuple[dict[str, object], ...]:
+        """The rows at ``indices``, in the order asked for."""
+        out: list[dict[str, object]] = []
+        for index in indices:
+            out.extend(fetch_rows(self.connection, self.table, limit=1, offset=index))
+        return tuple(out)
+
+    def write_parquet(self, path: Path, *, physical_names: bool = False) -> None:
+        """The table as Parquet, rows in order.
+
+        Under its real column names by default. ``physical_names`` keeps the internal
+        ``c0…`` names instead, for readers that rename themselves (the Polars bridge),
+        and writes Int128 as exact text for them to read back.
+
+        DuckDB writes a HUGEINT to Parquet as a double, so an Int128 column is written as
+        ``DECIMAL(38,0)`` — or as text when a value has more than 38 digits — never
+        rounded. A zoned datetime is written as an instant (``TIMESTAMPTZ``).
+
+        Raises:
+            ValueError: The table has no columns.
+        """
+        if not self.table.physical:
+            raise ValueError("a table without columns cannot be written as Parquet")
+        parts = []
+        for physical, name, node in zip(
+            self.table.physical, self.table.names, self.table.nodes, strict=True
+        ):
+            column = quote_identifier(physical)
+            if node[0] == "int128":
+                column = (
+                    f"CAST({column} AS VARCHAR)"
+                    if physical_names or not self._fits_decimal(physical)
+                    else f"CAST({column} AS DECIMAL(38,0))"
+                )
+            elif node[0] == "datetime" and node[1] is not None and not physical_names:
+                column = f"CAST({column} AS TIMESTAMPTZ)"
+            alias = physical if physical_names else name
+            parts.append(f"{column} AS {quote_identifier(alias)}")
+        self.connection.execute(
+            f"COPY (SELECT {', '.join(parts)} FROM {self.table.relation.sql} "
+            f"{self.table.order_by}) TO ? (FORMAT PARQUET)",
+            [str(path)],
+        )
+
+    def _fits_decimal(self, physical: str) -> bool:
+        column = quote_identifier(physical)
+        row = self.connection.execute(
+            f"SELECT coalesce(max(abs({column})) < CAST('1e38' AS DOUBLE), true) "
+            f"FROM {self.table.relation.sql}"
+        ).fetchone()
+        return bool(row and row[0])
 
 
 def load_records(
@@ -407,4 +553,13 @@ def fetch_rows(
     )
 
 
-__all__ = ["LoadedTable", "canonical", "fetch_rows", "load_records"]
+__all__ = [
+    "LoadedTable",
+    "Node",
+    "TableHandle",
+    "canonical",
+    "derive_table",
+    "fetch_rows",
+    "load_records",
+    "node_of",
+]

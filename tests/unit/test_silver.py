@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import polars as pl
 import pytest
@@ -19,9 +19,9 @@ from kpubdata_builder.stages.silver import (
     SilverDataset,
     ValidationResult,
     build_silver_dataset,
-    normalize_table,
     persist_silver_dataset,
 )
+from kpubdata_builder.stages.silver.normalize import normalize_table as _normalize_handle
 from kpubdata_builder.tabular import (
     PreviewSlice,
     SchemaInfo,
@@ -30,6 +30,13 @@ from kpubdata_builder.tabular import (
     generate_preview,
     infer_schema,
 )
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+
+
+def normalize_table(*args: Any, **kwargs: Any) -> pl.DataFrame:
+    """Silver's normalization, read as the Polars frame these assertions were written
+    against (#869: the table itself is on DuckDB)."""
+    return to_polars(_normalize_handle(*args, **kwargs))
 
 
 def _bronze(
@@ -55,8 +62,8 @@ class TestBuildSilverDataset:
         dataset = build_silver_dataset(bronze)
 
         assert isinstance(dataset, SilverDataset)
-        assert isinstance(dataset.table, pl.DataFrame)
-        assert dataset.table.shape == (2, 3)
+        assert isinstance(to_polars(dataset.table), pl.DataFrame)
+        assert to_polars(dataset.table).shape == (2, 3)
         assert isinstance(dataset.schema, SchemaInfo)
         assert [c.name for c in dataset.schema.columns] == ["id", "amount", "district"]
         assert isinstance(dataset.statistics, TableStatistics)
@@ -122,7 +129,7 @@ class TestBuildSilverDataset:
 
         dataset = build_silver_dataset(bronze, casts={"amount": "int"})
 
-        assert dataset.table.schema["amount"] == pl.Int64
+        assert to_polars(dataset.table).schema["amount"] == pl.Int64
 
     def test_cast_data_loss_raises_instead_of_silently_nulling(self) -> None:
         # Declared cast dropping value to null must fail with TabularError, not silently (#188).
@@ -162,8 +169,8 @@ class TestRowPreservingInvariant:
 
         dataset = build_silver_dataset(bronze, coalesce={"merged": ("a", "b")})
 
-        assert dataset.table.height == len(records)
-        assert dataset.table["merged"].to_list() == [str(i) for i in range(20)]
+        assert to_polars(dataset.table).height == len(records)
+        assert to_polars(dataset.table)["merged"].to_list() == [str(i) for i in range(20)]
 
     def test_row_count_is_preserved(self) -> None:
         records = tuple({"id": str(i), "amount": i * 100} for i in range(50))
@@ -171,7 +178,7 @@ class TestRowPreservingInvariant:
 
         dataset = build_silver_dataset(bronze, casts={"amount": "float"})
 
-        assert dataset.table.height == len(records)
+        assert to_polars(dataset.table).height == len(records)
         assert dataset.statistics.row_count == len(records)
 
     def test_row_order_is_preserved_across_normalize_and_validate(self) -> None:
@@ -188,7 +195,7 @@ class TestRowPreservingInvariant:
             column_dtypes={"amount": "int"},
         )
 
-        assert dataset.table["id"].to_list() == [r["id"] for r in records]
+        assert to_polars(dataset.table)["id"].to_list() == [r["id"] for r in records]
         assert dataset.validation.ok is True
 
     def test_row_order_is_preserved_without_declared_casts(self) -> None:
@@ -198,7 +205,7 @@ class TestRowPreservingInvariant:
 
         dataset = build_silver_dataset(bronze)
 
-        assert dataset.table["id"].to_list() == [r["id"] for r in records]
+        assert to_polars(dataset.table)["id"].to_list() == [r["id"] for r in records]
 
 
 class TestPersistSilverDataset:
@@ -220,7 +227,7 @@ class TestPersistSilverDataset:
         assert result.validation_path.exists()
 
         # parquet round-trip
-        assert pl.read_parquet(result.table_path).to_dicts() == dataset.table.to_dicts()
+        assert pl.read_parquet(result.table_path).to_dicts() == to_polars(dataset.table).to_dicts()
 
         # json sidecars are well-formed and reflect the dataset
         stats = cast(
@@ -307,7 +314,7 @@ class TestPersistSilverDataset:
         )
         assert table.schema["ts"].time_zone is not None
         dataset = SilverDataset(
-            table=table,
+            table=handle_from_frame(table, workdir=tmp_path),
             schema=infer_schema(table),
             statistics=compute_statistics(table),
             preview=generate_preview(table),
@@ -603,8 +610,8 @@ class TestSchemaContractReachesNormalization:
             ),
         )
 
-        assert "district_code" in dataset.table.columns
-        assert dataset.table["deal_date"].to_list() == [date(2026, 9, 8)]
+        assert "district_code" in to_polars(dataset.table).columns
+        assert to_polars(dataset.table)["deal_date"].to_list() == [date(2026, 9, 8)]
 
 
 class TestSourceTypeDeclaration:

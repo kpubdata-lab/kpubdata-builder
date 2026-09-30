@@ -1,11 +1,19 @@
-"""PII (Personally Identifiable Information) scanner (#441, QG-1)."""
+"""PII (Personally Identifiable Information) scanner (#441, QG-1).
+
+The table is on DuckDB (#869), but the patterns are not handed to DuckDB's regex engine:
+RE2 reads ``\\d``, ``\\w`` and ``\\b`` as ASCII and has no lookaround to emulate a
+Unicode word boundary, so a Korean sentence around an email or a full-width digit would
+match differently. DuckDB groups each text column's distinct values with their counts,
+and the same Unicode-aware patterns run over those in Python — one match per distinct
+value, however often it repeats.
+"""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-import polars as pl
+from ...tabular.duckdb_load import TableHandle
 
 # Korean PII regex — requires digit/separator patterns to mitigate over-detection.
 # Resident ID: YYMMDD-SXXXXXX (S is 1-4, gender/nationality)
@@ -44,22 +52,29 @@ class PiiFinding:
     count: int
 
 
-def scan_pii_values(table: pl.DataFrame) -> list[PiiFinding]:
+def scan_pii_values(table: TableHandle) -> list[PiiFinding]:
     """Findings from value patterns only: text cells that look like PII (#441, #819).
 
     Evidence in the values themselves, without the column-name heuristic, which flags
     any column whose name merely contains e.g. ``NM``.
     """
     findings: list[PiiFinding] = []
-    for column_name in table.columns:
-        series = table.get_column(column_name)
-        if series.dtype != pl.Utf8:
+    loaded = table.table
+    for column_name, dtype in zip(loaded.names, loaded.dtypes, strict=True):
+        if dtype != "String":
             continue
-        non_null = series.drop_nulls()
-        if non_null.len() == 0:
-            continue
-        for kind, pattern in _PATTERNS.items():
-            count = int(non_null.str.contains(pattern.pattern).sum())
+        column = loaded.column(column_name)
+        counts = dict.fromkeys(_PATTERNS, 0)
+        cursor = table.connection.execute(
+            f"SELECT {column}, count(*) FROM {loaded.relation.sql} "
+            f"WHERE {column} IS NOT NULL GROUP BY {column}"
+        )
+        while batch := cursor.fetchmany(10_000):
+            for value, count in batch:
+                for kind, pattern in _PATTERNS.items():
+                    if pattern.search(value):
+                        counts[kind] += int(count)
+        for kind, count in counts.items():
             if count > 0:
                 findings.append(PiiFinding(column=column_name, kind=kind, count=count))
     return findings
@@ -78,7 +93,7 @@ def suspect_column_kind(column_name: str) -> str | None:
     return None
 
 
-def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:
+def scan_pii(table: TableHandle) -> list[PiiFinding]:
     """scans refined table with PII patterns + column name heuristics (#441)."""
     by_column: dict[str, list[PiiFinding]] = {}
     for finding in scan_pii_values(table):

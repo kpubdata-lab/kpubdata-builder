@@ -311,3 +311,27 @@ def test_the_loader_agrees_with_the_committed_baseline(
     assert list(loaded.names) == silver["columns"]
     assert list(loaded.dtypes) == silver["dtypes"]
     assert [[r[c] for c in loaded.names] for r in rows] == silver["rows"]
+
+
+# ------------------------------------------------------------------ Polars bridge
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_the_bridge_gives_the_frame_polars_built(tmp_path: Path, name: str) -> None:
+    from kpubdata_builder.tabular.duckdb_load import TableHandle
+    from kpubdata_builder.tabular.polars_bridge import to_polars
+
+    records = CASES[name]
+    expected = records_to_dataframe([dict(r) for r in records])
+    connection = duckdb.connect()
+    loaded = load_records(connection, lambda: iter(records), table="raw", workdir=tmp_path)
+    handle = TableHandle(connection, loaded, tmp_path)
+
+    frame = to_polars(handle)
+
+    assert frame.columns == expected.columns
+    assert frame.schema == expected.schema
+    if expected.width:
+        assert _same(frame.to_dicts(), expected.to_dicts())
+    connection.close()
+    assert to_polars(handle) is frame  # cached: readable after the connection closed

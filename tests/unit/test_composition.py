@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import cast
@@ -29,6 +30,7 @@ from kpubdata_builder.stages.gold.compose import CompositionError, build_compose
 from kpubdata_builder.stages.silver.models import SilverDataset, ValidationResult
 from kpubdata_builder.stages.silver.preview import build_preview
 from kpubdata_builder.stages.silver.summarize import build_schema, build_statistics
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
 
 _SALES = SourceRef(provider="datago", dataset="sales", alias="sales")
 _REGION = SourceRef(provider="datago", dataset="region", alias="region")
@@ -36,7 +38,7 @@ _EXPORTS = (ExportTarget(kind="jsonl", output_path="data.jsonl"),)
 
 
 def _make_silver(rows: list[dict[str, JsonValue]]) -> SilverDataset:
-    table = pl.DataFrame(rows)
+    table = handle_from_frame(pl.DataFrame(rows), workdir=Path(tempfile.mkdtemp()))
     return SilverDataset(
         table=table,
         schema=build_schema(table),
@@ -616,7 +618,9 @@ def test_expansion_and_unmatched_ratios() -> None:
 def test_expansion_ratio_is_none_for_an_empty_left_side() -> None:
     template = _make_silver([{"k": "A"}])
     empty_left = SilverDataset(
-        table=template.table.clear(),
+        table=handle_from_frame(
+            to_polars(template.table).clear(), workdir=Path(tempfile.mkdtemp())
+        ),
         schema=template.schema,
         statistics=template.statistics,
         preview=template.preview,

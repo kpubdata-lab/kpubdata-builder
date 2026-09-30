@@ -1,6 +1,6 @@
 """Silver stage package (#46).
 
-Exposes Silver stage implementation that converts Bronze raw records to Polars tables and
+Exposes Silver stage implementation that loads Bronze raw records into DuckDB (#869) and
 generates schema validation, statistics summary, and preview.
 
 Main components:

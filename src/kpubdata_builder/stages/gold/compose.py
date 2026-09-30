@@ -14,6 +14,7 @@ from typing import Literal
 import polars as pl
 
 from ...spec import ExportTarget, JoinSpec
+from ...tabular.polars_bridge import to_polars
 from ..silver.models import SilverDataset
 from .models import ExportPlan, GoldPackage
 
@@ -176,10 +177,19 @@ def build_composed_gold_package(
     dataset_name: str,
     exports: Sequence[ExportTarget] = (),
     metadata: Mapping[str, str] | None = None,
+    left_table: pl.DataFrame | None = None,
+    right_table: pl.DataFrame | None = None,
 ) -> tuple[GoldPackage, CompositionStats]:
-    """joins two SilverDatasets to create combined GoldPackage and execution statistics."""
-    left_table = left_silver.table
-    right_table = right_silver.table
+    """joins two SilverDatasets to create combined GoldPackage and execution statistics.
+
+    ``left_table``/``right_table`` are the sides as they are joined, when they differ
+    from Silver's (declared PII masked, #689); Silver's own tables otherwise.
+    """
+    # Composition still joins Polars frames until Gold runs on DuckDB (#870).
+    if left_table is None:
+        left_table = to_polars(left_silver.table)
+    if right_table is None:
+        right_table = to_polars(right_silver.table)
     _validate_join_keys(left_table, right_table, join)
 
     left_columns = [lc for lc, _ in join.keys]

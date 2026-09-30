@@ -7,6 +7,9 @@ drift scope is test_drift.py, API surface is test_dataset_api.py/test_stage_api.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import polars as pl
 import pytest
 
@@ -15,11 +18,12 @@ from kpubdata_builder.quality.models import QualityCheckResult
 from kpubdata_builder.spec.models import CompareColumnsRule, QualityPolicy, RangeRule
 from kpubdata_builder.stages.silver.models import SilverDataset, ValidationResult
 from kpubdata_builder.tabular import PreviewSlice, compute_statistics, infer_schema
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame
 
 
 def _silver(df: pl.DataFrame) -> SilverDataset:
     return SilverDataset(
-        table=df,
+        table=handle_from_frame(df, workdir=Path(tempfile.mkdtemp())),
         schema=infer_schema(df),
         statistics=compute_statistics(df),
         preview=PreviewSlice(rows=(), total_rows=df.height),

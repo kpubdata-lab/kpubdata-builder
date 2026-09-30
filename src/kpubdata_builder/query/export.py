@@ -35,9 +35,12 @@ from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import IO, Literal, cast
+from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
 from ..spec import JsonValue
+
+if TYPE_CHECKING:
+    from ..stages.silver.pii import PiiFinding
 
 ExportFormat = Literal["csv", "jsonl"]
 ExportProfile = Literal["machine", "spreadsheet"]
@@ -216,7 +219,6 @@ def export_worker(
         if result.height > plan.max_rows:
             meta["refusal"] = {"code": "row_limit_exceeded", "limit": plan.max_rows}
         else:
-            from ..stages.silver.pii import scan_pii_values
             from ..tabular.polars_engine import infer_schema
             from ..tabular.wire import column_meta, encode_rows
 
@@ -243,7 +245,7 @@ def export_worker(
                     altered=cast(JsonValue, altered),
                     pii=[
                         {"column": f.column, "kind": f.kind, "count": f.count}
-                        for f in scan_pii_values(result)
+                        for f in _scan_frame_pii(result)
                     ],
                     column_meta=cast(JsonValue, wire_meta),
                 )
@@ -265,6 +267,31 @@ def export_worker(
             connection.send({"ok": False})
     finally:
         connection.close()
+
+
+def _scan_frame_pii(frame: Any) -> list[PiiFinding]:
+    """Value-pattern PII findings in a query result frame (#819).
+
+    The query worker still runs on Polars (#874), so its result is scanned here as a
+    frame, with the same patterns Silver's scan uses.
+    """
+    import polars as pl
+
+    from ..stages.silver.pii import VALUE_PATTERNS, PiiFinding
+
+    findings: list[PiiFinding] = []
+    for column_name in frame.columns:
+        series = frame.get_column(column_name)
+        if series.dtype != pl.Utf8:
+            continue
+        non_null = series.drop_nulls()
+        if non_null.len() == 0:
+            continue
+        for kind, pattern in VALUE_PATTERNS.items():
+            count = int(non_null.str.contains(pattern.pattern).sum())
+            if count > 0:
+                findings.append(PiiFinding(column=column_name, kind=kind, count=count))
+    return findings
 
 
 __all__ = [
