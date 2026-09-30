@@ -124,7 +124,9 @@ class _SharedCacheFactory:
         provider_keys: dict[str, str] | None = None,
         timeout: float | None = None,
         cache: bool | None = None,
+        environment_keys: bool = True,
     ) -> _Client:
+        del environment_keys  # multi-user mode keeps clients from the environment (#683)
         self.cache_args.append(cache)
         return _Client(None if cache is False else self.store, dict(provider_keys or {}))
 

@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import cast
 
 from kpubdata_builder.service.auth import Principal
+from kpubdata_builder.service.ownership import multi_user_mode
 from kpubdata_builder.service.provider_tests import ProviderTestLog
 from kpubdata_builder.service.providers import (
     CredentialResolver,
@@ -167,10 +168,16 @@ class ProvidersService:
             _logger_exception("could not record the provider test result")
 
     def provider_credential(self, provider: str, *, principal: Principal) -> ServiceResponse:
-        """Return current principal's stored credential metadata without raw value."""
+        """Return current principal's stored credential metadata without raw value.
+
+        In a multi-user deployment nothing is stored or used (#683), so the answer is
+        always "not configured" — even for a key saved before the deployment changed.
+        """
         known = self.known_provider(provider)
         if isinstance(known, ServiceResponse):
             return known
+        if multi_user_mode():
+            return ServiceResponse(200, {"configured": False, "masked": None, "updated_at": None})
         repository = self._credential_resolver.repository
         if repository is None:
             return ServiceResponse(503, {"error": "credential store is not configured"})
@@ -193,10 +200,24 @@ class ProvidersService:
         *,
         principal: Principal,
     ) -> ServiceResponse:
-        """Create or replace current principal's Provider credential."""
+        """Create or replace current principal's Provider credential.
+
+        Refused in a multi-user deployment (#683, ADR 0012 amendment of 2026-09-30):
+        there a key exists only while a request or job runs, sent in the
+        ``X-Provider-Key`` header, and is never stored.
+        """
         known = self.known_provider(provider)
         if isinstance(known, ServiceResponse):
             return known
+        if multi_user_mode():
+            return ServiceResponse(
+                403,
+                {
+                    "error": "this deployment does not store provider keys; send the key "
+                    "with each request in the X-Provider-Key header",
+                    "code": "credential_storage_disabled",
+                },
+            )
         repository = self._credential_resolver.repository
         if repository is None:
             return ServiceResponse(503, {"error": "credential store is not configured"})

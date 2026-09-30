@@ -18,7 +18,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -51,6 +51,7 @@ from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
 from . import publish as publish_service
+from . import request_credentials
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
@@ -323,6 +324,8 @@ _BuildListEntry = dict[str, str | None]
 #   signup_pending/signup_rejected for OIDC users not admitted (#785, additive).
 # 1.54.0 -> 1.55.0: SourceRef gains gold (select/filters) and the manifest gold_selection
 #   (#659, additive).
+# 1.55.0 -> 1.56.0: provider keys by X-Provider-Key header for the request or job only, in a
+#   multi-user deployment (#683, behaviour and a header).
 # 1.51.0 -> 1.52.0: preview/build/builds answer 403 url_source_forbidden for a url source in a
 #   multi-user deployment, and declare the existing provider_credential_required (#685).
 # 1.35.0 -> 1.36.0: DatasetSummary / DatasetDetailResponse gain status_axes — refresh,
@@ -330,7 +333,7 @@ _BuildListEntry = dict[str, str | None]
 # 1.34.0 -> 1.35.0: GET /version also reports the application version (#777, additive).
 # 1.33.0 -> 1.34.0: the source_fetch_progress build event, one per finished param_grid
 #   combination with metrics {done, total} (#648, additive).
-API_CONTRACT_VERSION = "1.55.0"
+API_CONTRACT_VERSION = "1.56.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -440,6 +443,8 @@ class BuilderService:
         )
         self._analysis_store: AnalysisStore | None = None
         self._user_ledger_store: UserLedger | None = None
+        # Provider keys of submitted async jobs, in memory only (#683).
+        self._job_credentials = request_credentials.JobCredentials()
         self._provider_test_log: ProviderTestLog | None = None
         self._analyses_api = AnalysesApiService(
             store=lambda: self._analyses(),
@@ -884,6 +889,7 @@ class BuilderService:
             run_id=run_id,
             created_by=created_by,
             owner_id=owner_id,
+            job_credentials=(self._job_credentials if ownership_module.multi_user_mode() else None),
         )
 
     def build_status(self, run_id: str) -> ServiceResponse:
@@ -891,8 +897,24 @@ class BuilderService:
         return self._build_runs.build_status(run_id)
 
     def cancel_build(self, run_id: str) -> ServiceResponse:
-        """Request cancel of an active async build job (#481)."""
-        return self._build_runs.cancel_build(run_id)
+        """Request cancel of an active async build job (#481).
+
+        A queued job's keys are dropped now (#683): if it never starts, nothing else
+        would. A running job has already taken them.
+        """
+        response = self._build_runs.cancel_build(run_id)
+        self._job_credentials.discard(run_id)
+        return response
+
+    def mark_interrupted_runs(self) -> tuple[str, ...]:
+        """At startup of a multi-user deployment, fail runs a restart interrupted (#683).
+
+        A single-user deployment keeps its stored and environment keys, so nothing is
+        lost with a restart and nothing is marked.
+        """
+        if not ownership_module.multi_user_mode():
+            return ()
+        return self._build_runs.mark_interrupted_runs()
 
     def _record_run_cancelled(self, run_id: str) -> None:
         """Record the cancelled terminal event (#481); never raises."""
@@ -944,16 +966,25 @@ class BuilderService:
         """
         snapshot = self._async_builds.get(run_id)
         manifest_owner_id = snapshot.owner_id if snapshot is not None else None
-        return self.build(
-            spec_yaml,
-            run_id=run_id,
-            created_by=created_by,
-            manifest_owner_id=manifest_owner_id,
-            credential_owner_id=manifest_owner_id,
-            # Pass cooperative cancel probe (#481) down to pipeline — don't carry
-            # service concepts (registry/HTTP/Principal) across pipeline domain boundary.
-            cancellation=cancellation,
-        )
+        # Multi-user mode (#683): the keys bound at submission, taken once and dropped
+        # whichever way the job ends — success, failure or cancellation.
+        keys = self._job_credentials.take(run_id, manifest_owner_id)
+        try:
+            with request_credentials.request_scope(keys):
+                return self.build(
+                    spec_yaml,
+                    run_id=run_id,
+                    created_by=created_by,
+                    manifest_owner_id=manifest_owner_id,
+                    credential_owner_id=manifest_owner_id,
+                    # Pass cooperative cancel probe (#481) down to pipeline — don't carry
+                    # service concepts (registry/HTTP/Principal) across pipeline domain
+                    # boundary.
+                    cancellation=cancellation,
+                )
+        finally:
+            keys = None
+            self._job_credentials.discard(run_id)
 
     # --- build artifacts query (#637) -------------------------------------------
     #
@@ -1176,6 +1207,7 @@ def dispatch(
     bearer_token: str | None = None,
     raw_body: bytes | None = None,
     client_id: str | None = None,
+    provider_key_headers: Sequence[str] = (),
 ) -> ServiceResponse | FileResponse:
     """Call ``_dispatch_impl`` and record processing time as Monitoring latency
     sample (#516).
@@ -1190,17 +1222,24 @@ def dispatch(
     """
     started = time.perf_counter()
     try:
-        return _dispatch_impl(
-            service,
-            method,
-            path,
-            body,
-            query,
-            api_key=api_key,
-            bearer_token=bearer_token,
-            raw_body=raw_body,
-            client_id=client_id,
-        )
+        # Provider keys for this request only (#683): parsed from the X-Provider-Key
+        # header — never the URL — and forgotten when the request ends.
+        try:
+            request_keys = request_credentials.parse_provider_key_headers(provider_key_headers)
+        except ValueError as exc:
+            return ServiceResponse(400, {"error": str(exc), "code": "invalid_provider_key"})
+        with request_credentials.request_scope(request_keys):
+            return _dispatch_impl(
+                service,
+                method,
+                path,
+                body,
+                query,
+                api_key=api_key,
+                bearer_token=bearer_token,
+                raw_body=raw_body,
+                client_id=client_id,
+            )
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000
         service._latency_recorder.record(elapsed_ms)
