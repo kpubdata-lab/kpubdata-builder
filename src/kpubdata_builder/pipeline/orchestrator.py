@@ -1032,12 +1032,10 @@ def _run_source_pipeline(
         # The connection first: its tables and temp files go before the staged records.
         resources.close()
         # The staged records are needed only while this source runs; its persisted
-        # Bronze is in the run's bronze directory (#622).
-        staging_root = context.output_root / context.run_id / _STAGING_DIRNAME
+        # Bronze is in the run's bronze directory (#622). Only this source's own entry:
+        # the shared parent is removed by run_build once every source has finished,
+        # because a sibling may be between creating it and creating its entry (#936).
         _remove_source_staging(context.output_root / context.run_id, output_key)
-        # Sources run in parallel; whichever finishes last removes the empty parent.
-        with contextlib.suppress(OSError):
-            staging_root.rmdir()
 
 
 @dataclass(frozen=True)
@@ -1452,8 +1450,14 @@ def run_build(
     # DuckDB spill directories a crashed attempt at this run left (#869): cleared once,
     # before any source opens a connection, so none is taken over mid-run.
     clear_temp_root(context.output_root / context.run_id)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(_worker, spec.sources))
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(_worker, spec.sources))
+    finally:
+        # Each source removed its own staging entry; the empty parent goes only now,
+        # when no source can still be creating an entry in it (#936).
+        with contextlib.suppress(OSError):
+            (context.output_root / context.run_id / _STAGING_DIRNAME).rmdir()
 
     outcomes = tuple(result.outcome for result in results)
 
