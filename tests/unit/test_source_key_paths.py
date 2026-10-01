@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -131,6 +133,59 @@ def test_unvalidated_unsafe_key_fails_without_deleting_outside_the_run(
     # The safe source still cleans up after itself.
     assert not (tmp_path / "r1" / "_bronze_staging").exists()
     assert not (tmp_path / "r1" / "_checkpoints" / "datago.slow").exists()
+
+
+def test_a_finished_source_leaves_the_shared_staging_root_to_its_siblings(
+    tmp_path: Path, skip_validation: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source that finishes cannot remove the staging root a sibling is building in (#936).
+
+    ``Path.mkdir(parents=True)`` creates ``_bronze_staging`` and then the source's
+    own entry in it. The ordering CI hit by chance is forced here: the safe source
+    stops right after the parent exists, the unsafe source fails and runs its
+    cleanup, and only then does the safe source create its entry.
+    """
+    parent_created = threading.Event()
+    sibling_finished = threading.Event()
+    unsafe_key = "../../victim-run"
+
+    original_mkdir = Path.mkdir
+
+    def mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+        original_mkdir(self, *args, **kwargs)
+        if self.name == orchestrator._STAGING_DIRNAME and not parent_created.is_set():
+            parent_created.set()
+            sibling_finished.wait(timeout=10)
+
+    original_work_path = orchestrator._source_work_path
+
+    def work_path(run_dir: Path, dirname: str, output_key: str, *, suffix: str = "") -> Path:
+        if output_key == unsafe_key:
+            parent_created.wait(timeout=10)
+        return original_work_path(run_dir, dirname, output_key, suffix=suffix)
+
+    original_pipeline = orchestrator._run_source_pipeline
+
+    def pipeline(source: SourceRef, **kwargs: Any) -> Any:
+        try:
+            return original_pipeline(source, **kwargs)
+        finally:
+            if orchestrator._output_source_key(source) == unsafe_key:
+                sibling_finished.set()
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    monkeypatch.setattr(orchestrator, "_source_work_path", work_path)
+    monkeypatch.setattr(orchestrator, "_run_source_pipeline", pipeline)
+
+    result = run_build(_unsafe_spec(), client=_Client(), output_root=tmp_path, run_id="r1")
+
+    assert parent_created.is_set(), "the safe source never created the staging root"
+    assert sibling_finished.is_set()
+    outcomes = {o.source_key: (o.status, o.error) for o in result.outcomes}
+    assert outcomes["datago.slow"] == ("ok", None)
+    assert outcomes[unsafe_key][0] == "failed"
+    # The empty root is still removed, once, after every source has finished.
+    assert not (tmp_path / "r1" / orchestrator._STAGING_DIRNAME).exists()
 
 
 class _CancelNow:
