@@ -993,16 +993,28 @@ def _composition_name_problems(spec: BuildSpec, name: str) -> list[ValidationPro
                 hint="composition.name becomes the composed Gold directory name in the run",
             )
         ]
+    from ..stages.bronze.resolve import source_identity
+
     folded = path_collision_key(name)
     for source in spec.sources:
-        key = source.alias if source.alias else f"{source.provider}.{source.dataset}"
+        if source.alias:
+            key = source.alias
+        else:
+            # The real output key, as _source_key_problems computes it: a file or url
+            # source without an alias is stored under ``file.<upload_id>`` or a url slug,
+            # not under its (empty) provider and dataset.
+            try:
+                provider, dataset = source_identity(source)
+            except (AttributeError, TypeError):
+                continue
+            key = f"{provider}.{dataset}"
         if path_collision_key(key) == folded:
             return [
                 _p(
                     "composition_name_collision",
                     "composition.name",
                     f"composition.name {name!r} collides with the source output key {key!r} "
-                    "(alias or provider.dataset; compared ignoring case and trailing dots)",
+                    "(alias or the source's output key; compared ignoring case and trailing dots)",
                 )
             ]
     return []

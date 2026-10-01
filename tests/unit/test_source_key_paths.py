@@ -363,6 +363,31 @@ def test_composition_name_colliding_as_a_path_is_rejected(name: str) -> None:
     assert ("composition_name_collision", "composition.name") in _problem_codes(_composed(name))
 
 
+_UPLOAD_ID = "upl_" + "0" * 31 + "1"
+
+
+@pytest.mark.parametrize("name", [f"file.{_UPLOAD_ID}", f"FILE.{_UPLOAD_ID}"])
+def test_composition_name_colliding_with_a_file_source_key_is_rejected(name: str) -> None:
+    """A file source without an alias is stored under ``file.<upload_id>`` (#930 review)."""
+    spec = BuildSpec(
+        dataset_id="demo",
+        title="t",
+        description="d",
+        sources=(
+            SourceRef(provider="datago", dataset="sales", alias="sales"),
+            SourceRef(kind="file", upload_id=_UPLOAD_ID, format="csv"),
+        ),
+        exports=(ExportTarget(kind="jsonl", output_path="out.jsonl"),),
+        composition=CompositionSpec(
+            name=name,
+            join=JoinSpec(
+                left="sales", right=f"file.{_UPLOAD_ID}", left_key="region_id", right_key="id"
+            ),
+        ),
+    )
+    assert ("composition_name_collision", "composition.name") in _problem_codes(spec)
+
+
 def test_safe_distinct_composition_name_still_validates() -> None:
     validate_spec(_composed("sales_by_region"))
 
