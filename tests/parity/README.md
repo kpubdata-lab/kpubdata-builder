@@ -63,3 +63,25 @@ Ratio splits are `hash-sort-v2` (ADR 0021 D7), so `spec_seoul_apartment_trades` 
 regenerated for its seeded split: only `splits/train/rows` and `splits/test/rows`
 changed — which rows went where. The sizes (16 and 4), the rows of the two splits
 together, the Gold table and every export are what they were. Key splits are unchanged.
+
+## After the query cutover (#874)
+
+SQL, rows, aggregates, profiles and exports run on DuckDB. The baseline was regenerated for
+the differences the plan calls compatibility notes (R8–R15), each intended:
+
+| Scenario | Before (Polars) | Now (DuckDB) |
+| :--- | :--- | :--- |
+| `r08_integer_sum` | `SUM` of Int64 is `int64` | `int128`; still sent as exact decimal text because the values are beyond 2**53 |
+| `r09_interval` | `date + INTERVAL` failed | it works and is a `datetime` (`2024-01-31 + 1 month` is `2024-02-29`) |
+| `r10_unnamed_aggregate_column` | `COUNT(*)` named `len`, `uint32`; `SUM(v), MAX(v)` failed | named `count_star()`, `int64`; `sum(v)` (`int128`) and `max(v)` work |
+| `r11_null_sorting` | SQL `ORDER BY v DESC` put nulls first | nulls last in both directions, as rows and aggregates always did |
+| `r14_introspection_and_path_leakage` | `current_setting(...)` refused for not reading `dataset` | refused first for the function itself |
+| `query_workers` | `COUNT(*)` `uint32` | `int64` |
+
+`query_workers`' export orders by `aptNm, dealAmount` instead of `aptNm` alone: SQL leaves
+the order of tied rows undefined, and DuckDB's sort does not keep it from one version to the
+next (1.2 and 1.5 differ), so the scenario now orders completely.
+
+Two differences no scenario pins: a column that is Null in Builder is `int32` (every value
+null) in SQL results, since DuckDB types a projected NULL INTEGER — a page of rows still
+reports it Null; and a zoned datetime is sent in UTC.

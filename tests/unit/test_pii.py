@@ -12,7 +12,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from kpubdata_builder.query.export import _scan_frame_pii
+from kpubdata_builder.query.export import _PiiScan
 from kpubdata_builder.stages.silver.pii import PiiFinding, scan_pii_values
 from kpubdata_builder.stages.silver.pii import scan_pii as _scan_table
 from kpubdata_builder.tabular.polars_bridge import handle_from_frame
@@ -108,14 +108,18 @@ _TRICKY = [
 
 
 @pytest.mark.parametrize("value", [v for v in _TRICKY if v is not None])
-def test_value_scan_matches_the_polars_scan(value: str) -> None:
-    """#869: the patterns run in Python over DuckDB's distinct values; the counts are the
-    ones Polars' Rust regex gave, Unicode digits and word boundaries included."""
-    frame = pl.DataFrame({"v": [value, value, None, "plain"]})
+def test_the_silver_and_export_scans_agree(value: str) -> None:
+    """#869, #874: Silver scans DuckDB's distinct values and an export scans its rows as
+    they are written; both run the same Python patterns, Unicode digits and word
+    boundaries included, and count the same rows."""
+    values = [value, value, None, "plain"]
+    frame = pl.DataFrame({"v": values})
 
-    duck = scan_pii_values(handle_from_frame(frame, workdir=Path(tempfile.mkdtemp())))
+    silver = scan_pii_values(handle_from_frame(frame, workdir=Path(tempfile.mkdtemp())))
+    export = _PiiScan([0], ["v"])
+    list(export.rows(((v,), {}) for v in values))
 
-    assert duck == _scan_frame_pii(frame)
+    assert silver == export.findings()
 
 
 def test_counts_are_per_row_not_per_distinct_value() -> None:

@@ -20,10 +20,8 @@ from pathlib import Path
 
 import polars as pl
 
-KV_KEY = "kpubdata_builder.dtypes"
-#: Columns written under an internal name because DuckDB cannot write their own (an
-#: empty name, or names one letter case apart): ``{internal: real}``.
-KV_NAMES_KEY = "kpubdata_builder.names"
+from .builder_kv import KV_KEY as KV_KEY
+from .builder_kv import KV_NAMES_KEY as KV_NAMES_KEY
 
 _SIMPLE: dict[str, pl.DataType] = {
     "Null": pl.Null(),

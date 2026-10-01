@@ -516,7 +516,12 @@ def query_workers() -> dict[str, Any]:
     with _workspace() as root:
         service, table = _warehouse_table(root, _fixture_records("seoul-apartment-trades")[:12])
         export = service.create_warehouse_export(
-            {"table": table, "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm"},
+            # Ordered on both columns: SQL leaves the order of ties undefined, and DuckDB's
+            # sort does not keep it from one version to the next (#874).
+            {
+                "table": table,
+                "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm, dealAmount",
+            },
             principal=_DEV,
         )
         exported: Any = None

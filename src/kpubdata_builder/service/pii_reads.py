@@ -41,6 +41,7 @@ answer differs — the terms refuse a read, a declaration masks it.
 
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -65,7 +66,7 @@ from ..stages.gold.pii import (
     source_fields_of,
 )
 from ..tabular import PreviewSlice
-from ..tabular.builder_parquet import read_builder_parquet_schema, scan_builder_parquet
+from ..tabular.builder_parquet import read_builder_parquet_schema
 from . import datasets as datasets_service
 from . import stages as stages_service
 from .responses import ServiceResponse
@@ -312,41 +313,69 @@ class MaskedTable:
 def masked_silver_table(table_path: Path, withheld: frozenset[str]) -> MaskedTable | None:
     """A copy of ``table_path`` with the withheld columns masked; None when none are there.
 
-    The table is read as the query engine reads it (:func:`scan_builder_parquet`), so
-    the Builder dtypes and real column names the DuckDB writer recorded in the file's
-    metadata (#891) are given back before masking; Polars then writes those dtypes
-    as they are (a Null column, a Duration, an Int128, a zoned datetime). A query of
-    the copy reports the same ``column_meta`` as a query of the original.
+    Written by DuckDB from the file as it is stored (#874): every column keeps its
+    stored type and the copy carries the original's key-value metadata, so the Builder
+    dtypes and real names it records (#891) come back when the copy is queried — a
+    query of the copy reports the same ``column_meta`` as a query of the original.
+    Text keeps its null pattern and gets the token; any other column becomes null of
+    its own type (Gold's masking, ``stages/gold/pii``, #902).
     """
-    frame = scan_builder_parquet(table_path)
-    schema = frame.collect_schema()
-    present = tuple(sorted(c for c in withheld if c in schema))
-    if not present:
-        return None
+    from ..query.sandbox import _kv
+    from ..tabular.builder_kv import KV_KEY, KV_NAMES_KEY
+    from ..tabular.duckdb_runtime import BuildProfile, connect
+    from ..tabular.sql import quote_identifier, quote_literal
+
     directory = tempfile.TemporaryDirectory(prefix="kpubdata-pii-")
+    spill = Path(directory.name) / "spill"
+    spill.mkdir()
     path = Path(directory.name) / "table.parquet"
     try:
-        frame.with_columns(_mask_expressions(schema, present)).sink_parquet(path)
+        connection = connect(BuildProfile.from_env(), spill)
+        try:
+            source = f"read_parquet({quote_literal(str(table_path))})"
+            kv = _kv(connection, str(table_path))
+            dtypes, renamed = kv.get(KV_KEY, {}), kv.get(KV_NAMES_KEY, {})
+            stored = connection.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
+            parts: list[str] = []
+            present: list[str] = []
+            for physical, storage, *_ in stored:
+                name = renamed.get(physical, physical)
+                column = quote_identifier(physical)
+                if name not in withheld:
+                    parts.append(column)
+                    continue
+                present.append(name)
+                text = dtypes.get(name, "String" if storage == "VARCHAR" else "") == "String"
+                masked = (
+                    f"CASE WHEN {column} IS NULL THEN NULL ELSE {quote_literal(PII_MASK_TOKEN)} END"
+                    if text
+                    else f"CAST(NULL AS {storage})"
+                )
+                parts.append(f"{masked} AS {column}")
+            if not present:
+                directory.cleanup()
+                return None
+            options = "FORMAT PARQUET"
+            metadata = {
+                key: json.dumps(value)
+                for key, value in ((KV_KEY, dtypes), (KV_NAMES_KEY, renamed))
+                if value
+            }
+            if metadata:
+                pairs = ", ".join(
+                    f"{quote_literal(k)}: {quote_literal(v)}" for k, v in metadata.items()
+                )
+                options += f", KV_METADATA {{{pairs}}}"
+            connection.execute(
+                f"COPY (SELECT {', '.join(parts)} FROM {source}) "
+                f"TO {quote_literal(str(path))} ({options})"
+            )
+        finally:
+            connection.close()
     except BaseException:
         directory.cleanup()
         raise
-    return MaskedTable(path=path, columns=present, _directory=directory)
-
-
-def _mask_expressions(schema: pl.Schema, columns: Sequence[str]) -> list[pl.Expr]:
-    """Gold's masking (``stages/gold/pii.mask_columns``) as Polars expressions.
-
-    Text keeps the null pattern and gets the token; any other dtype becomes null of
-    its own dtype (#902).
-    """
-    return [
-        (
-            pl.when(pl.col(c).is_null()).then(None).otherwise(pl.lit(PII_MASK_TOKEN))
-            if schema[c] == pl.String
-            else pl.lit(None, dtype=schema[c])
-        ).alias(c)
-        for c in columns
-    ]
+    return MaskedTable(path=path, columns=tuple(sorted(present)), _directory=directory)
 
 
 # ------------------------------------------------------------------ /preview

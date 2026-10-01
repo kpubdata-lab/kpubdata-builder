@@ -4,17 +4,17 @@
    "result": {
     "column_meta": [
      {
-      "logical_type": "uint32",
-      "name": "len",
+      "logical_type": "int64",
+      "name": "count_star()",
       "wire_encoding": "number"
      }
     ],
     "columns": [
-     "len"
+     "count_star()"
     ],
     "rows": [
      {
-      "len": 2
+      "count_star()": 2
      }
     ],
     "truncated": false
@@ -27,9 +27,35 @@
  },
  "SELECT SUM(v), MAX(v) FROM dataset": {
   "body": {
-   "code": "query_execution_failed",
-   "error": "query execution failed"
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "int128",
+      "name": "sum(v)",
+      "wire_encoding": "number"
+     },
+     {
+      "logical_type": "int64",
+      "name": "max(v)",
+      "wire_encoding": "number"
+     }
+    ],
+    "columns": [
+     "sum(v)",
+     "max(v)"
+    ],
+    "rows": [
+     {
+      "max(v)": 2,
+      "sum(v)": 3
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
   },
-  "status_code": 400
+  "status_code": 200
  }
 }

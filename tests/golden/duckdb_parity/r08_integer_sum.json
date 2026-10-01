@@ -8,7 +8,7 @@
      "wire_encoding": "string"
     },
     {
-     "logical_type": "int64",
+     "logical_type": "int128",
      "name": "total",
      "wire_encoding": "decimal_string"
     }
@@ -76,7 +76,7 @@
       "wire_encoding": "string"
      },
      {
-      "logical_type": "int64",
+      "logical_type": "int128",
       "name": "total",
       "wire_encoding": "decimal_string"
      }
