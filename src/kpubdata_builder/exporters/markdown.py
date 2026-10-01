@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import itertools
 import os
 import tempfile
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 from ..artifact import ArtifactDataset
 from ..errors import ExportError
 from ..spec import ExportTarget
+from ._rows import resolve_columns
 from .base import BaseExporter, ExportResult, ensure_output_dir
 
 SAMPLE_ROW_LIMIT = 5
@@ -65,21 +67,15 @@ def _title_section(artifact: ArtifactDataset) -> list[str]:
     description = artifact.metadata.get("description")
     if description:
         lines.extend([description, ""])
-    lines.extend([f"- Records: {len(artifact.records)}", ""])
+    lines.extend([f"- Records: {artifact.data_source.row_count}", ""])
     return lines
 
 
 def _column_names(artifact: ArtifactDataset) -> list[str]:
-    """returns schema column names, or union of all record keys if absent."""
+    """returns schema column names, or the keys the rows carry if absent."""
     if artifact.schema:
         return list(artifact.schema.keys())
-    if artifact.records:
-        columns: dict[str, None] = {}
-        for record in artifact.records:
-            for key in record:
-                columns.setdefault(key, None)
-        return list(columns.keys())
-    return []
+    return resolve_columns(artifact)
 
 
 def _schema_section(artifact: ArtifactDataset) -> list[str]:
@@ -101,13 +97,19 @@ def _schema_section(artifact: ArtifactDataset) -> list[str]:
 def _sample_section(artifact: ArtifactDataset) -> list[str]:
     """outputs up to SAMPLE_ROW_LIMIT records as markdown table."""
     lines = ["## Sample Rows", ""]
-    if not artifact.records:
+    # Only the sample is read: the rest of the rows never leave the data source (#873).
+    sample = list(
+        itertools.islice(
+            artifact.data_source.iter_records(batch_size=SAMPLE_ROW_LIMIT), SAMPLE_ROW_LIMIT
+        )
+    )
+    if not sample:
         lines.extend(["_No records available._", ""])
         return lines
     columns = _column_names(artifact)
     lines.append("| " + " | ".join(columns) + " |")
     lines.append("| " + " | ".join("---" for _ in columns) + " |")
-    for record in artifact.records[:SAMPLE_ROW_LIMIT]:
+    for record in sample:
         cells = [_format_cell(record.get(col)) for col in columns]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")

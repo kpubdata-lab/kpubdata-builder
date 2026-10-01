@@ -1,39 +1,24 @@
 """CSV exporter implementation.
 
-This module provides exporter to serialize ArtifactDataset records to RFC 4180 style
-CSV file. Columns follow artifact.schema order if present, else order of first
-appearance in records. Values containing commas/quotes/newlines are auto-quoted by
-stdlib csv.
+This module provides exporter to serialize ArtifactDataset rows to RFC 4180 style CSV
+file. Columns follow artifact.schema order, then any other key in order of first
+appearance in the rows (``_rows.resolve_columns``); rows are streamed from the data
+source (#873). Values containing commas/quotes/newlines are auto-quoted by stdlib csv.
 """
 
 from __future__ import annotations
 
-import contextlib
 import csv
-import io
 import json
-import os
-import tempfile
 from pathlib import Path
+from typing import TextIO
 
 from ..artifact import ArtifactDataset
 from ..errors import ExportError
 from ..spec import ExportTarget, JsonValue
 from ._json_safe import json_safe
+from ._rows import BATCH_SIZE, resolve_columns, write_text_atomically
 from .base import BaseExporter, ExportResult, ensure_output_dir
-
-
-def _resolve_columns(artifact: ArtifactDataset) -> list[str]:
-    """determines column order for CSV header."""
-    columns: dict[str, None] = {}
-    if artifact.schema:
-        for key in artifact.schema:
-            columns.setdefault(key, None)
-    for record in artifact.records:
-        for key in record:
-            columns.setdefault(key, None)
-    return list(columns.keys())
-
 
 # leading characters that spreadsheets interpret as formulas.
 # prefix with single quote if cell starts with this character to prevent formula execution
@@ -60,6 +45,17 @@ def _format_cell(value: JsonValue) -> str:
     if isinstance(safe, str):
         return safe
     return json.dumps(safe, ensure_ascii=False, sort_keys=True)
+
+
+def write_csv(artifact: ArtifactDataset, handle: TextIO) -> None:
+    """Header, then every row, streamed from the data source a batch at a time (#873)."""
+    columns = resolve_columns(artifact)
+    if not columns:
+        return
+    writer = csv.writer(handle, lineterminator="\n")
+    writer.writerow(columns)
+    for record in artifact.data_source.iter_records(batch_size=BATCH_SIZE):
+        writer.writerow([_format_cell(record.get(column)) for column in columns])
 
 
 class CsvExporter(BaseExporter):
@@ -92,26 +88,8 @@ class CsvExporter(BaseExporter):
             ExportError: if file write fails.
         """
         destination = ensure_output_dir(output_dir, target.output_path)
-        columns = _resolve_columns(artifact)
-
-        buffer = io.StringIO()
-        if columns:
-            writer = csv.writer(buffer, lineterminator="\n")
-            writer.writerow(columns)
-            for record in artifact.records:
-                writer.writerow([_format_cell(record.get(column)) for column in columns])
-        content = buffer.getvalue()
-
         try:
-            fd, tmp_name = tempfile.mkstemp(dir=destination.parent, suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(content)
-                os.replace(tmp_name, destination)
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_name)
-                raise
+            write_text_atomically(destination, lambda handle: write_csv(artifact, handle))
         except OSError as exc:
             raise ExportError(f"Failed to export CSV artifact to {destination}: {exc}") from exc
 

@@ -67,7 +67,22 @@ AGENTS.md는 "exporter는 플러그형으로 유지할 것"을 기본 규칙으�
 - `EXPORT_MODEL.md`에 exporter 계약 절 신설(현재 AGENTS.md의 간단 가이드를 정식 계약으로 승격).
 - 신규 exporter 추가 시 골든 테스트 요구(AGENTS.md 체크리스트)와 연결.
 
+## 갱신 (2026-10-01, #873) — 입력은 replayable data source
+
+DuckDB 전환(ADR 0021) 뒤로 Gold 테이블은 메모리보다 클 수 있다. 그래서 `export()`의 입력 계약을 바꾼다(0.x breaking).
+
+- `ArtifactDataset.records`(레코드 tuple)를 없애고 `ArtifactDataset.data_source`(`ArtifactDataSource`)를 둔다:
+  `row_count`, `parquet_path`, `iter_records(*, batch_size)`. `iter_records()`는 호출마다 처음부터 새로 시작하며
+  one-shot iterator가 아니다. 전체를 tuple로 들고 있을 필요가 없다.
+- `parquet_path`가 있으면 Parquet을 쓰는 exporter는 그 파일을 복사할 수 있다(Parquet fast-path).
+- metadata·provenance·schema·statistics는 데이터와 분리된 필드로 남는다.
+- 메모리의 레코드로 만드는 artifact는 `ArtifactDataset.from_records(...)`(`RecordsSource`).
+- 등록 API(`register_exporter_factory`, `register_exporter_instance`, entry point의 instance 분기)는 이번에
+  바꾸지 않는다. registry 정리는 cutover 이후 별도 이슈다.
+
+계약의 자세한 내용은 [EXPORT_MODEL.md](../EXPORT_MODEL.md) 2.1에 있다.
+
 ## 미해결 질문
 
-- `export()`가 스트리밍(대용량)에 대응해야 하는가, 전량 메모리 로드로 충분한가?
+- ~~`export()`가 스트리밍(대용량)에 대응해야 하는가, 전량 메모리 로드로 충분한가?~~ — 스트리밍한다(위 갱신, #873).
 - exporter별 옵션 스키마 검증을 어디서 수행할지(validator vs exporter 내부)?

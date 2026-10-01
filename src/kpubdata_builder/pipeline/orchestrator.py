@@ -889,7 +889,9 @@ def _run_source_pipeline(
         # boundary records started/completed/failed separately.
         export_started = True
         recorder.stage_started(output_key, "export")
-        export_paths = export_gold_package(gold, output_dir=gold_paths.gold_dir)
+        export_paths = export_gold_package(
+            gold, output_dir=gold_paths.gold_dir, table_path=gold_paths.table_path
+        )
         _record_output_paths(outputs, *export_paths)
 
         card = build_dataset_card(
@@ -1234,7 +1236,9 @@ def _compose(
         gold_paths.package_path,
         *gold_paths.splits_paths.values(),
     )
-    export_paths = export_gold_package(package, output_dir=gold_paths.gold_dir)
+    export_paths = export_gold_package(
+        package, output_dir=gold_paths.gold_dir, table_path=gold_paths.table_path
+    )
     _record_output_paths(outputs, *export_paths)
 
     provenance_by_key = provenance_by_key or {}

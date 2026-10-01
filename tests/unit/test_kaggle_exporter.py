@@ -31,7 +31,7 @@ def _read_metadata(directory: Path) -> dict[str, object]:
 
 def test_writes_csv_following_schema_and_valid_metadata(tmp_path: Path) -> None:
     # CSV header follows schema order; metadata json must be valid.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"b": "2", "a": "1"}, {"a": "3", "b": "4"}),
         schema={"a": "str", "b": "str"},
         metadata={"title": "Air Quality", "dataset_id": "kpub/air", "license": "CC-BY-4.0"},
@@ -51,7 +51,7 @@ def test_writes_csv_following_schema_and_valid_metadata(tmp_path: Path) -> None:
 
 def test_empty_records_with_schema_writes_header_only(tmp_path: Path) -> None:
     # If schema exists but records absent, write header line only.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=(), schema={"id": "str", "name": "str"}, metadata={"license": "CC-BY-4.0"}
     )
     target = ExportTarget(kind="kaggle", output_path="out/data.csv")
@@ -63,7 +63,7 @@ def test_empty_records_with_schema_writes_header_only(tmp_path: Path) -> None:
 
 def test_license_override_from_metadata(tmp_path: Path) -> None:
     # If metadata.license exists, its value is reflected in licenses name.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"id": "1"},),
         schema={"id": "str"},
         metadata={"license": "CC0-1.0", "title": "X", "dataset_id": "kpub/x"},
@@ -78,7 +78,7 @@ def test_license_override_from_metadata(tmp_path: Path) -> None:
 
 def test_formula_injection_trigger_chars_prefixed_in_kaggle(tmp_path: Path) -> None:
     # KaggleExporter shares _format_cell, so formula-trigger values must have prefix.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"cmd": '=HYPERLINK("evil.com")'},),
         schema={"cmd": "str"},
         metadata={"title": "T", "dataset_id": "kpub/t", "license": "CC-BY-4.0"},
@@ -100,7 +100,7 @@ def test_merges_resource_into_existing_metadata(tmp_path: Path) -> None:
     # Exporting twice to same directory accumulates both paths in resources.
     target_one = ExportTarget(kind="kaggle", output_path="out/first.csv")
     target_two = ExportTarget(kind="kaggle", output_path="out/second.csv")
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"id": "1"},),
         schema={"id": "str"},
         metadata={"title": "First", "dataset_id": "kpub/first", "license": "CC-BY-4.0"},
@@ -108,7 +108,7 @@ def test_merges_resource_into_existing_metadata(tmp_path: Path) -> None:
 
     first = KaggleExporter().export(artifact, target_one, tmp_path)
     KaggleExporter().export(
-        ArtifactDataset(
+        ArtifactDataset.from_records(
             records=({"id": "2"},),
             schema={"id": "str"},
             metadata={"title": "Second", "dataset_id": "kpub/second", "license": "CC-BY-4.0"},
@@ -130,7 +130,7 @@ def test_reexport_refreshes_stale_top_level_metadata(tmp_path: Path) -> None:
     target = ExportTarget(kind="kaggle", output_path="out/data.csv")
 
     KaggleExporter().export(
-        ArtifactDataset(
+        ArtifactDataset.from_records(
             records=({"id": "1"},),
             schema={"id": "str"},
             metadata={"title": "Old", "dataset_id": "kpub/old", "license": "CC-BY-4.0"},
@@ -139,7 +139,7 @@ def test_reexport_refreshes_stale_top_level_metadata(tmp_path: Path) -> None:
         tmp_path,
     )
     result = KaggleExporter().export(
-        ArtifactDataset(
+        ArtifactDataset.from_records(
             records=({"id": "1"},),
             schema={"id": "str"},
             metadata={"title": "New", "dataset_id": "kpub/new", "license": "CC0-1.0"},
@@ -158,7 +158,7 @@ def test_wraps_io_failure_in_export_error(tmp_path: Path, monkeypatch: pytest.Mo
     # Verify file write failures are wrapped as ExportError.
     # Declare license — without it, license check fails before I/O is even touched,
     # so ExportError is raised, test passes for different reason than name suggests.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"id": "1"},), schema={"id": "str"}, metadata={"license": "CC-BY-4.0"}
     )
     target = ExportTarget(kind="kaggle", output_path="out/data.csv")
@@ -181,7 +181,7 @@ class TestTheLicenseIsNeverGuessed:
     """
 
     def _artifact(self, **metadata: object) -> ArtifactDataset:
-        return ArtifactDataset(
+        return ArtifactDataset.from_records(
             records=({"a": "1"},),
             schema={"a": "str"},
             metadata={"title": "T", "dataset_id": "kpub/t", **metadata},

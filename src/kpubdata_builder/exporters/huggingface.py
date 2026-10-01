@@ -28,8 +28,8 @@ from ..spec import ExportTarget
 from ..stages._atomic import atomic_replace_dir
 from ..stages._path_safety import safe_output_path
 from ..tabular.convert import records_to_dataframe
-from ._json_safe import json_safe
 from .base import BaseExporter, ExportResult
+from .jsonl import write_jsonl
 
 _SUPPORTED_FORMATS = ("parquet", "jsonl")
 
@@ -50,7 +50,12 @@ def _write_data_file(artifact: ArtifactDataset, data_dir: Path, fmt: str) -> Pat
     """Write single shard data file under data/ and return path."""
     data_path = data_dir / f"train-00000-of-00001.{fmt}"
     if fmt == "parquet":
-        records_to_dataframe(list(artifact.records)).write_parquet(data_path)
+        source = artifact.data_source.parquet_path
+        if source is not None:
+            # The Gold table's own file: rows are not read into Python (#873).
+            shutil.copyfile(source, data_path)
+        else:
+            records_to_dataframe(list(artifact.data_source.iter_records())).write_parquet(data_path)
     else:
         # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail with
         # ValueError (#217).
@@ -60,11 +65,8 @@ def _write_data_file(artifact: ArtifactDataset, data_dir: Path, fmt: str) -> Pat
         # `date`/`Decimal` objects as-is, and `json.dumps` cannot
         # serialize them. that fix applied only to jsonl, so same spec works in jsonl
         # but fails with TypeError in huggingface.
-        content = "\n".join(
-            json.dumps(json_safe(record), ensure_ascii=False, sort_keys=True, allow_nan=False)
-            for record in artifact.records
-        )
-        _ = data_path.write_text(f"{content}\n" if content else "", encoding="utf-8")
+        with data_path.open("w", encoding="utf-8") as handle:
+            write_jsonl(artifact, handle)
     return data_path
 
 
@@ -106,7 +108,7 @@ def _dataset_infos(artifact: ArtifactDataset) -> dict[str, object]:
     """Construct metadata to be included in HF dataset_infos.json."""
     return {
         "features": dict(artifact.schema),
-        "num_examples": len(artifact.records),
+        "num_examples": artifact.data_source.row_count,
         "provenance": list(artifact.provenance),
         "metadata": dict(artifact.metadata),
     }

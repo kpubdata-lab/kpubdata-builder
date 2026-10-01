@@ -9,8 +9,6 @@ Output structure::
 from __future__ import annotations
 
 import contextlib
-import csv
-import io
 import json
 import os
 import tempfile
@@ -20,8 +18,9 @@ from typing import Any
 from ..artifact import ArtifactDataset
 from ..errors import ExportError
 from ..spec import ExportTarget
+from ._rows import write_text_atomically
 from .base import BaseExporter, ExportResult, ensure_output_dir
-from .csv import _format_cell, _resolve_columns
+from .csv import write_csv
 
 
 class KaggleExporter(BaseExporter):
@@ -35,26 +34,8 @@ class KaggleExporter(BaseExporter):
         self, artifact: ArtifactDataset, target: ExportTarget, output_dir: Path
     ) -> ExportResult:
         destination = ensure_output_dir(output_dir, target.output_path)
-        columns = _resolve_columns(artifact)
-
-        buffer = io.StringIO()
-        if columns:
-            writer = csv.writer(buffer, lineterminator="\n")
-            writer.writerow(columns)
-            for record in artifact.records:
-                writer.writerow([_format_cell(record.get(column)) for column in columns])
-        content = buffer.getvalue()
-
         try:
-            fd, tmp_name = tempfile.mkstemp(dir=destination.parent, suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(content)
-                os.replace(tmp_name, destination)
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_name)
-                raise
+            write_text_atomically(destination, lambda handle: write_csv(artifact, handle))
         except OSError as exc:
             raise ExportError(f"Failed to export Kaggle artifact to {destination}: {exc}") from exc
 

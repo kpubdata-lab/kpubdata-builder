@@ -6,17 +6,27 @@ newline-delimited JSON (JSONL) format.
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
-import tempfile
 from pathlib import Path
+from typing import TextIO
 
 from ..artifact import ArtifactDataset
 from ..errors import ExportError
 from ..spec import ExportTarget
 from ._json_safe import json_safe
+from ._rows import BATCH_SIZE, write_text_atomically
 from .base import BaseExporter, ExportResult, ensure_output_dir
+
+
+def write_jsonl(artifact: ArtifactDataset, handle: TextIO) -> None:
+    """One JSON object per row, streamed from the data source (#873)."""
+    for record in artifact.data_source.iter_records(batch_size=BATCH_SIZE):
+        # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail with
+        # ValueError instead of silently recording (#217).
+        handle.write(
+            json.dumps(json_safe(record), ensure_ascii=False, sort_keys=True, allow_nan=False)
+        )
+        handle.write("\n")
 
 
 class JsonlExporter(BaseExporter):
@@ -50,26 +60,7 @@ class JsonlExporter(BaseExporter):
         """
         destination = ensure_output_dir(output_dir, target.output_path)
         try:
-            fd, tmp_name = tempfile.mkstemp(dir=destination.parent, suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    for record in artifact.records:
-                        # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail
-                        # with ValueError instead of silently recording (#217).
-                        f.write(
-                            json.dumps(
-                                json_safe(record),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                allow_nan=False,
-                            )
-                        )
-                        f.write("\n")
-                os.replace(tmp_name, destination)
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_name)
-                raise
+            write_text_atomically(destination, lambda handle: write_jsonl(artifact, handle))
         except OSError as exc:
             raise ExportError(f"Failed to export JSONL artifact to {destination}: {exc}") from exc
 

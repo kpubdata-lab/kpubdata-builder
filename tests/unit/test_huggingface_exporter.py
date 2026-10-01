@@ -14,7 +14,7 @@ from kpubdata_builder.spec import ExportTarget
 
 
 def _artifact() -> ArtifactDataset:
-    return ArtifactDataset(
+    return ArtifactDataset.from_records(
         records=({"id": "1", "name": "강남구"}, {"id": "2", "name": "서초구"}),
         schema={"id": "str", "name": "str"},
         metadata={
@@ -122,7 +122,7 @@ def test_reexport_with_format_change_removes_stale_shards(tmp_path: Path) -> Non
 def test_jsonl_format_rejects_non_finite_float(tmp_path: Path) -> None:
     # NaN/Infinity in jsonl shards become non-standard JSON tokens, so fail with ValueError
     # (same contract as bronze guard) (#217).
-    artifact = ArtifactDataset(records=({"v": float("inf")},))
+    artifact = ArtifactDataset.from_records(records=({"v": float("inf")},))
     target = ExportTarget(
         kind="huggingface", output_path="hf/apt_trade", options={"format": "jsonl"}
     )
@@ -174,7 +174,7 @@ class TestJsonlRecordsGoThroughJsonSafe:
         import datetime
         from decimal import Decimal
 
-        return ArtifactDataset(
+        return ArtifactDataset.from_records(
             records=({"deal_date": datetime.date(2024, 3, 1), "price": Decimal("12345.67")},),
             schema={"deal_date": "date", "price": "decimal"},
             metadata={"title": "T", "dataset_id": "kpub/t", "license": "CC-BY-4.0"},

@@ -435,6 +435,31 @@ class TableHandle:
         """Up to ``limit`` rows in source order."""
         return fetch_rows(self._open(), self.table, limit=limit)
 
+    def iter_rows(self, *, batch_size: int = 1000) -> Iterator[dict[str, object]]:
+        """Every row in source order, ``batch_size`` at a time (#873).
+
+        Each call starts over; at most one batch is in Python memory. Reads through its
+        own cursor, so other queries on the connection may run between batches.
+        """
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+        loaded = self.table
+        if not loaded.physical:
+            yield from ({} for _ in range(loaded.row_count))
+            return
+        cursor = self._open().cursor()
+        try:
+            columns = ", ".join(quote_identifier(p) for p in loaded.physical)
+            cursor.execute(f"SELECT {columns} FROM {loaded.relation.sql} {loaded.order_by}")
+            while batch := cursor.fetchmany(batch_size):
+                for row in batch:
+                    yield {
+                        name: _decode(node, value)
+                        for name, node, value in zip(loaded.names, loaded.nodes, row, strict=True)
+                    }
+        finally:
+            cursor.close()
+
     def rows_at(self, indices: Sequence[int]) -> tuple[dict[str, object], ...]:
         """The rows at ``indices``, in the order asked for, in one query.
 

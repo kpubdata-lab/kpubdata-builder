@@ -18,7 +18,7 @@ def _export(artifact: ArtifactDataset, tmp_path: Path) -> str:
 
 
 def test_title_and_description_rendered(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"date": "2025-04-01", "temp": 15},),
         schema={"date": "string", "temp": "int"},
         metadata={"title": "날씨 데이터셋", "description": "기상청 API 기반 데이터셋."},
@@ -30,7 +30,7 @@ def test_title_and_description_rendered(tmp_path: Path) -> None:
 
 
 def test_schema_table_rendered(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"date": "2025-04-01", "temp": 15},),
         schema={"date": "string", "temp": "int"},
     )
@@ -42,7 +42,7 @@ def test_schema_table_rendered(tmp_path: Path) -> None:
 
 
 def test_sample_rows_rendered(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=(
             {"date": "2025-04-01", "sky": "맑음"},
             {"date": "2025-04-02", "sky": "흐림"},
@@ -56,7 +56,7 @@ def test_sample_rows_rendered(tmp_path: Path) -> None:
 
 
 def test_sample_rows_limited_to_five(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=tuple({"n": i} for i in range(10)),
         schema={"n": "int"},
     )
@@ -71,7 +71,7 @@ def test_sample_rows_limited_to_five(tmp_path: Path) -> None:
 
 
 def test_provenance_rendered(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"a": 1},),
         schema={"a": "int"},
         provenance=("datago.weather", "datago.air_quality"),
@@ -83,7 +83,7 @@ def test_provenance_rendered(tmp_path: Path) -> None:
 
 
 def test_schema_falls_back_to_record_keys(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"city": "Seoul", "pop": 1000},),
     )
     content = _export(artifact, tmp_path)
@@ -92,7 +92,7 @@ def test_schema_falls_back_to_record_keys(tmp_path: Path) -> None:
 
 
 def test_empty_dataset_does_not_break(tmp_path: Path) -> None:
-    artifact = ArtifactDataset()
+    artifact = ArtifactDataset.from_records()
     content = _export(artifact, tmp_path)
     assert "# Dataset Artifact" in content
     assert "_No schema available._" in content
@@ -101,7 +101,7 @@ def test_empty_dataset_does_not_break(tmp_path: Path) -> None:
 
 
 def test_cell_with_pipe_is_escaped(tmp_path: Path) -> None:
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"note": "a|b"},),
         schema={"note": "string"},
     )
@@ -111,7 +111,7 @@ def test_cell_with_pipe_is_escaped(tmp_path: Path) -> None:
 
 def test_cell_with_carriage_return_is_escaped(tmp_path: Path) -> None:
     # #225: \r breaks markdown tables, must be replaced with space.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"note": "line1\rline2"},),
         schema={"note": "string"},
     )
