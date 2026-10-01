@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.75.0"
+  version: "1.76.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -19,6 +19,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.76.0 records which SQL a saved analysis is written in (#875, additive): `SavedAnalysis` gains `sql_dialect` (`duckdb`, or `legacy-polars` for one saved before the DuckDB cutover), `engine`, `engine_version`, `query_contract_version` and `migration_required`. A legacy analysis is never re-run on DuckDB: `POST /analyses/{analysis_id}/run` answers 409 `analysis_migration_required` until its SQL is reviewed and saved as a new analysis. Existing stores gain the columns on start; their rows are the legacy ones.
     v1.74.0 runs SQL, rows, aggregates, profiles and exports on DuckDB (#874, ADR 0021 step 13): each in a child process over a DuckDB connection that may read only the pinned snapshot file and spill into its own directory, with no other file, network or extension access and its configuration locked. The validator now parses the DuckDB dialect and refuses introspective functions (settings, variables, versions, sequences …) and nondeterministic SQL (random values, UUIDs, the current time, `USING SAMPLE`/`TABLESAMPLE`) with `unsafe_query`. Results keep the types DuckDB gives them, in Builder's spelling, where they differ from the Polars engine: `COUNT(*)` is `int64` (was `uint32`) and an unnamed aggregate is named as DuckDB names it (`count_star()`, `sum(v)` — they were `len` or failed); a `SUM` of an integer column is `int128`, sent as a number or as exact decimal text by its values; `ORDER BY … DESC` puts nulls last (Polars put them first; rows and aggregates always did); `date + INTERVAL` now works and is a datetime; a column that is Null in Builder is `int32` (all null) in SQL results, while a page of rows still reports it Null; a zoned datetime is sent in UTC. A table with a column SQL cannot name (an empty name, or two names one letter case apart) answers `query_execution_failed` to SQL, while rows, aggregates and profiles still read it.
     v1.10.0은 `POST /preview`에 Source↔Silver diff와 sample_mode(first/random)
     옵션을 추가한다(#497, additive — 기존 필드는 유지된다). `limit`의 상한(1000)을
@@ -3673,7 +3674,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: The snapshot cannot be read (`snapshot_unavailable`).
+          description: >-
+            The snapshot cannot be read (`snapshot_unavailable`), or the analysis was saved
+            in another SQL dialect and is not re-run (`analysis_migration_required`, #875;
+            the body names its `sql_dialect`).
           content:
             application/json:
               schema:
@@ -4501,6 +4505,26 @@ components:
             truncated: {type: boolean}
             executed_at: {type: string}
         created_at: {type: string}
+        sql_dialect:
+          type: string
+          description: >-
+            The SQL dialect the analysis was saved in (#875): `duckdb` since the DuckDB
+            cutover (#874); `legacy-polars` for an analysis saved before it.
+        engine:
+          type: string
+          description: The engine that ran it when it was saved (`duckdb`, or `polars`).
+        engine_version:
+          type: [string, "null"]
+          description: That engine's version; null for a legacy analysis.
+        query_contract_version:
+          type: [string, "null"]
+          description: The API contract version it was saved under; null for a legacy analysis.
+        migration_required:
+          type: boolean
+          description: >-
+            True when the analysis was saved in another SQL dialect. It is not re-run
+            (`POST /analyses/{analysis_id}/run` answers 409 `analysis_migration_required`):
+            review its SQL in DuckDB SQL and save it as a new analysis.
 
     AnalysisListResponse:
       type: object

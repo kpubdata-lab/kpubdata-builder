@@ -10,6 +10,14 @@ releases the hold.
 Only metadata of the result is kept (columns, row count, truncated, when it ran), not
 the rows. Analyses live in the same workspace as the tables they read
 (``ownership.warehouse_workspace``): another owner's analysis is absent, not forbidden.
+
+**Which SQL it is (#875).** The same text can mean something else to another engine:
+unnamed aggregates are named differently, nulls sort differently, functions and
+operators differ. So an analysis records the SQL dialect and engine it was saved with —
+``sql_dialect``, ``engine``, ``engine_version``, ``query_contract_version``. Analyses
+saved before the DuckDB cutover (#874) carry ``sql_dialect: legacy-polars``; they are
+never re-run on DuckDB as if nothing had changed: ``run`` refuses them
+(``analysis_migration_required``) until the SQL is reviewed and saved as a new analysis.
 """
 
 from __future__ import annotations
@@ -35,6 +43,48 @@ from kpubdata_builder.warehouse import TableCatalog, WarehouseError
 _MAX_NAME_LENGTH = 200
 
 
+#: The dialect saved SQL is written in now, and the one analyses saved before the
+#: DuckDB cutover (#874) are recorded with.
+SQL_DIALECT = "duckdb"
+LEGACY_SQL_DIALECT = "legacy-polars"
+
+#: Columns added after the first schema, with what existing rows get (#875).
+_ADDED_COLUMNS = (
+    ("sql_dialect", f"TEXT NOT NULL DEFAULT '{LEGACY_SQL_DIALECT}'"),
+    ("engine", "TEXT NOT NULL DEFAULT 'polars'"),
+    ("engine_version", "TEXT"),
+    ("query_contract_version", "TEXT"),
+)
+_COLUMNS = (
+    "analysis_id",
+    "workspace_id",
+    "owner_id",
+    "name",
+    "sql",
+    "row_limit",
+    "table_name",
+    "snapshot_id",
+    "hold_id",
+    "result_meta",
+    "created_at",
+    *(name for name, _ in _ADDED_COLUMNS),
+)
+
+
+def current_provenance() -> dict[str, str]:
+    """The dialect and engine an analysis saved now is written for."""
+    import duckdb
+
+    from kpubdata_builder.service.app import API_CONTRACT_VERSION
+
+    return {
+        "sql_dialect": SQL_DIALECT,
+        "engine": "duckdb",
+        "engine_version": duckdb.__version__,
+        "query_contract_version": API_CONTRACT_VERSION,
+    }
+
+
 @dataclass(frozen=True)
 class SavedAnalysis:
     """One stored analysis."""
@@ -50,6 +100,15 @@ class SavedAnalysis:
     hold_id: str
     result_meta: dict[str, JsonValue]
     created_at: str
+    sql_dialect: str = SQL_DIALECT
+    engine: str = "duckdb"
+    engine_version: str | None = None
+    query_contract_version: str | None = None
+
+    @property
+    def migration_required(self) -> bool:
+        """Saved for another SQL dialect: it must be reviewed, not re-run (#875)."""
+        return self.sql_dialect != SQL_DIALECT
 
     def body(self) -> dict[str, JsonValue]:
         return {
@@ -60,6 +119,11 @@ class SavedAnalysis:
             "bindings": [{"table": self.table, "snapshot_id": self.snapshot_id}],
             "result_meta": self.result_meta,
             "created_at": self.created_at,
+            "sql_dialect": self.sql_dialect,
+            "engine": self.engine,
+            "engine_version": self.engine_version,
+            "query_contract_version": self.query_contract_version,
+            "migration_required": self.migration_required,
         }
 
 
@@ -82,6 +146,12 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analyses_workspace"
                 " ON analyses(workspace_id, created_at DESC)"
             )
+            # The dialect columns (#875): an existing store gains them, and its rows are
+            # the legacy analyses they describe.
+            present = {row[1] for row in conn.execute("PRAGMA table_info(analyses)")}
+            for name, definition in _ADDED_COLUMNS:
+                if name not in present:
+                    conn.execute(f"ALTER TABLE analyses ADD COLUMN {name} {definition}")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -92,7 +162,8 @@ class AnalysisStore:
     def put(self, analysis: SavedAnalysis) -> None:
         with self._lock, self._connect() as conn:
             conn.execute(
-                "INSERT INTO analyses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO analyses ({', '.join(_COLUMNS)})"
+                f" VALUES ({', '.join('?' for _ in _COLUMNS)})",
                 (
                     analysis.analysis_id,
                     analysis.workspace_id,
@@ -105,13 +176,17 @@ class AnalysisStore:
                     analysis.hold_id,
                     json.dumps(analysis.result_meta, ensure_ascii=False),
                     analysis.created_at,
+                    analysis.sql_dialect,
+                    analysis.engine,
+                    analysis.engine_version,
+                    analysis.query_contract_version,
                 ),
             )
 
     def get(self, workspace_id: str, analysis_id: str) -> SavedAnalysis | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM analyses WHERE workspace_id = ? AND analysis_id = ?",
+                f"SELECT {_SELECT} FROM analyses WHERE workspace_id = ? AND analysis_id = ?",
                 (workspace_id, analysis_id),
             ).fetchone()
         return None if row is None else _row(row)
@@ -119,7 +194,7 @@ class AnalysisStore:
     def list(self, workspace_id: str) -> list[SavedAnalysis]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM analyses WHERE workspace_id = ?"
+                f"SELECT {_SELECT} FROM analyses WHERE workspace_id = ?"
                 " ORDER BY created_at DESC, analysis_id DESC",
                 (workspace_id,),
             ).fetchall()
@@ -128,13 +203,16 @@ class AnalysisStore:
     def delete(self, workspace_id: str, analysis_id: str) -> SavedAnalysis | None:
         with self._lock, self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM analyses WHERE workspace_id = ? AND analysis_id = ?",
+                f"SELECT {_SELECT} FROM analyses WHERE workspace_id = ? AND analysis_id = ?",
                 (workspace_id, analysis_id),
             ).fetchone()
             if row is None:
                 return None
             conn.execute("DELETE FROM analyses WHERE analysis_id = ?", (analysis_id,))
         return _row(row)
+
+
+_SELECT = ", ".join(_COLUMNS)
 
 
 def _row(row: tuple[object, ...]) -> SavedAnalysis:
@@ -150,6 +228,10 @@ def _row(row: tuple[object, ...]) -> SavedAnalysis:
         hold_id,
         result_meta,
         created_at,
+        sql_dialect,
+        engine,
+        engine_version,
+        query_contract_version,
     ) = row
     return SavedAnalysis(
         analysis_id=cast(str, analysis_id),
@@ -163,6 +245,10 @@ def _row(row: tuple[object, ...]) -> SavedAnalysis:
         hold_id=cast(str, hold_id),
         result_meta=cast(dict[str, JsonValue], json.loads(cast(str, result_meta))),
         created_at=cast(str, created_at),
+        sql_dialect=cast(str, sql_dialect),
+        engine=cast(str, engine),
+        engine_version=cast("str | None", engine_version),
+        query_contract_version=cast("str | None", query_contract_version),
     )
 
 
@@ -235,6 +321,7 @@ class AnalysesApiService:
                 "executed_at": datetime.now(timezone.utc).isoformat(),
             },
             created_at=datetime.now(timezone.utc).isoformat(),
+            **current_provenance(),
         )
         try:
             self._store().put(analysis)
@@ -264,11 +351,24 @@ class AnalysesApiService:
         return ServiceResponse(200, {"analysis_id": analysis_id, "deleted": True})
 
     def run(self, analysis_id: str, *, principal: Principal) -> ServiceResponse:
-        """Run the stored SQL against the stored snapshot — not today's current one."""
+        """Run the stored SQL against the stored snapshot — not today's current one —
+        in the dialect it was saved with; an analysis saved for another refuses (#875)."""
         workspace = ownership.warehouse_workspace(principal.owner_id)
         analysis = self._store().get(workspace, analysis_id)
         if analysis is None:
             return _not_found(analysis_id)
+        if analysis.migration_required:
+            # Never silently: the same text may mean something else on this engine.
+            return ServiceResponse(
+                409,
+                {
+                    "error": f"analysis {analysis_id} was saved for {analysis.sql_dialect} "
+                    f"SQL and is not re-run as {SQL_DIALECT} SQL; review the SQL and save "
+                    "it as a new analysis",
+                    "code": "analysis_migration_required",
+                    "sql_dialect": analysis.sql_dialect,
+                },
+            )
         return self._warehouse.run(
             analysis.table,
             analysis.snapshot_id,
@@ -289,4 +389,11 @@ class AnalysesApiService:
             return
 
 
-__all__ = ["AnalysesApiService", "AnalysisStore", "SavedAnalysis"]
+__all__ = [
+    "LEGACY_SQL_DIALECT",
+    "SQL_DIALECT",
+    "AnalysesApiService",
+    "AnalysisStore",
+    "SavedAnalysis",
+    "current_provenance",
+]
