@@ -6,6 +6,7 @@ bronze/silver/gold persist. segment rules changes only need one edit location.
 main functions:
     - validate_path_segment: reject segments that could escape workspace
     - ensure_within: verify resolved path is under root
+    - contained_child: build ``parent / name`` that is proven to stay strictly below parent
 """
 
 from __future__ import annotations
@@ -80,6 +81,37 @@ def ensure_within(root: Path, target: Path, *, label: str) -> None:
     resolved_target = _strip_windows_extended_prefix(target.resolve())
     if not resolved_target.is_relative_to(resolved_root):
         raise ValueError(f"Resolved {label} {resolved_target} escapes output_root {resolved_root}")
+
+
+def contained_child(parent: Path, name: str, *, field_name: str, label: str) -> Path:
+    """Return ``parent / name`` after proving it stays strictly below ``parent`` (#916).
+
+    Paths that are later deleted (staging and checkpoint directories) are built from
+    spec-derived source keys. ``name`` must be a single safe segment, the resolved
+    result must stay under the resolved ``parent`` (a symlink cannot lead elsewhere),
+    and it must not be ``parent`` itself, so removing it never removes the parent.
+
+    Args:
+        parent: directory the child must live in.
+        name: single path segment derived from user input.
+        field_name: field name for segment validation errors.
+        label: target description for containment errors.
+
+    Returns:
+        Path: ``parent / name`` (unresolved form).
+
+    Raises:
+        ValueError: if ``name`` is unsafe or the child escapes or equals ``parent``.
+    """
+    validate_path_segment(name, field_name=field_name)
+    child = parent / name
+    ensure_within(parent, child, label=label)
+    resolved_parent = _strip_windows_extended_prefix(parent.resolve())
+    if _strip_windows_extended_prefix(child.resolve()) == resolved_parent:
+        raise ValueError(
+            f"Resolved {label} must be below {resolved_parent}, not the directory itself"
+        )
+    return child
 
 
 def safe_output_path(base_dir: Path, relative_path: str | os.PathLike[str]) -> Path:
