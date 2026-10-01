@@ -647,15 +647,30 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
     including staging/checkpoint directories that are deleted before and after fetch.
     ``provider``/``dataset`` and the derived key follow the alias rule, regardless of
     alias or kind, so ``../.`` + ``/victim-run`` never reaches the filesystem (#916).
+
+    Keys that differ as strings can still be one directory (#930): ``Trades`` and
+    ``trades`` on a case-insensitive filesystem, ``trades.`` and ``trades`` on Windows.
+    Keys are compared in ``path_collision_key`` form, the same function that defines
+    which names collide on disk. A key must also not equal another key plus the legacy
+    checkpoint suffix: ``_checkpoints/foo.jsonl`` is source ``foo``'s legacy checkpoint
+    file and source ``foo.jsonl``'s checkpoint directory at once.
     """
     # spec -> stages top-level import is circular (stages.bronze.resolve reads spec).
     # Duplicating key calculation here risks diverging definitions (#629 was exactly
     # that bug) so keep definition singular, defer import only.
-    from ..stages._path_safety import validate_path_segment
+    from ..stages._path_safety import (
+        LEGACY_CHECKPOINT_SUFFIX,
+        path_collision_key,
+        validate_path_segment,
+    )
     from ..stages.bronze.resolve import source_identity
 
     problems: list[ValidationProblem] = []
     first_index: dict[str, int] = {}
+    # Folded key -> (index, key) of the first source that claimed that directory name.
+    claimed: dict[str, tuple[int, str]] = {}
+    # Folded ``key + LEGACY_CHECKPOINT_SUFFIX`` -> (index, key) of the owning source.
+    legacy_claimed: dict[str, tuple[int, str]] = {}
     for i, source in enumerate(spec.sources):
         identity_problems = _source_identity_problems(source, i)
         problems.extend(identity_problems)
@@ -706,8 +721,44 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
                     hint="give each source a distinct alias",
                 )
             )
-        else:
-            first_index[key] = i
+            continue
+        first_index[key] = i
+
+        folded = path_collision_key(key)
+        folded_legacy = path_collision_key(f"{key}{LEGACY_CHECKPOINT_SUFFIX}")
+        collision = claimed.get(folded)
+        if collision is not None:
+            other_index, other_key = collision
+            problems.append(
+                _p(
+                    "source_key_path_collision",
+                    f"sources[{i}]",
+                    f"sources[{i}] output key {key!r} and sources[{other_index}] output key "
+                    f"{other_key!r} name the same directory on a case-insensitive or "
+                    "Windows filesystem; outputs would overwrite each other",
+                    hint="give each source an alias that differs in more than case or "
+                    "trailing dots",
+                )
+            )
+            continue
+        # Either this key is an earlier key plus the suffix, or the reverse.
+        legacy_collision = legacy_claimed.get(folded) or claimed.get(folded_legacy)
+        if legacy_collision is not None:
+            other_index, other_key = legacy_collision
+            problems.append(
+                _p(
+                    "source_key_path_collision",
+                    f"sources[{i}]",
+                    f"sources[{i}] output key {key!r} and sources[{other_index}] output key "
+                    f"{other_key!r} differ only by the legacy checkpoint suffix "
+                    f"{LEGACY_CHECKPOINT_SUFFIX!r}; one source's checkpoint directory is "
+                    "the other's legacy checkpoint file",
+                    hint=f"choose an alias that does not end in {LEGACY_CHECKPOINT_SUFFIX!r}",
+                )
+            )
+            continue
+        claimed[folded] = (i, key)
+        legacy_claimed[folded_legacy] = (i, key)
     return problems
 
 
@@ -921,6 +972,42 @@ def _gold_selection_problems(spec: BuildSpec) -> list[ValidationProblem]:
     ]
 
 
+def _composition_name_problems(spec: BuildSpec, name: str) -> list[ValidationProblem]:
+    """Check ``composition.name`` as the Gold directory name it becomes (#930).
+
+    Gold persist checks the segment too, but only after every source has been fetched,
+    so an unsafe name is reported here. A name equal to a source output key in
+    ``path_collision_key`` form shares that source's directory.
+    """
+    # Deferred for the same circular-import reason as in _source_key_problems.
+    from ..stages._path_safety import path_collision_key, validate_path_segment
+
+    try:
+        validate_path_segment(name, field_name="composition.name")
+    except ValueError as error:
+        return [
+            _p(
+                "unsafe_source_key",
+                "composition.name",
+                str(error),
+                hint="composition.name becomes the composed Gold directory name in the run",
+            )
+        ]
+    folded = path_collision_key(name)
+    for source in spec.sources:
+        key = source.alias if source.alias else f"{source.provider}.{source.dataset}"
+        if path_collision_key(key) == folded:
+            return [
+                _p(
+                    "composition_name_collision",
+                    "composition.name",
+                    f"composition.name {name!r} collides with the source output key {key!r} "
+                    "(alias or provider.dataset; compared ignoring case and trailing dots)",
+                )
+            ]
+    return []
+
+
 def _composition_problems(spec: BuildSpec) -> list[ValidationProblem]:
     """Validate composition alias references and structural consistency (#506).
 
@@ -939,19 +1026,7 @@ def _composition_problems(spec: BuildSpec) -> list[ValidationProblem]:
             _p("empty_field", "composition.name", "composition.name must be a non-empty string")
         )
     else:
-        existing_output_keys = {
-            source.alias if source.alias else f"{source.provider}.{source.dataset}"
-            for source in spec.sources
-        }
-        if composition.name in existing_output_keys:
-            problems.append(
-                _p(
-                    "composition_name_collision",
-                    "composition.name",
-                    f"composition.name {composition.name!r} collides with an existing source "
-                    "output key (alias or provider.dataset)",
-                )
-            )
+        problems.extend(_composition_name_problems(spec, composition.name))
 
     join = composition.join
     aliases = [source.alias for source in spec.sources if source.alias]

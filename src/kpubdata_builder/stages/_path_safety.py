@@ -7,17 +7,42 @@ main functions:
     - validate_path_segment: reject segments that could escape workspace
     - ensure_within: verify resolved path is under root
     - contained_child: build ``parent / name`` that is proven to stay strictly below parent
+    - path_collision_key: fold a segment to the form under which two names hit one entry
 """
 
 from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 from ..errors import PathTraversalError
 
 _SAFE_PATH_SEGMENT = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+# Suffix of the single-file checkpoint earlier versions wrote next to the per-source
+# checkpoint directory (#622). It is deleted on every fetch, so it is a path the
+# source key occupies too (#930).
+LEGACY_CHECKPOINT_SUFFIX = ".jsonl"
+
+
+def path_collision_key(segment: str) -> str:
+    """Return the form under which two path segments name the same directory entry (#930).
+
+    Two keys that differ as strings can still be one directory: case-insensitive
+    filesystems (macOS APFS default, Windows) ignore case, macOS normalizes Unicode,
+    and Windows drops trailing dots and spaces. Validation compares keys in this form
+    and the run directories are built from the same keys, so two sources that pass
+    validation never share a directory on any of those filesystems.
+
+    Args:
+        segment: a single path segment (already validated or not).
+
+    Returns:
+        str: the segment NFC-normalized, case-folded, with trailing dots/spaces removed.
+    """
+    return unicodedata.normalize("NFC", segment).casefold().rstrip(". ")
 
 
 def validate_path_segment(value: str, *, field_name: str) -> None:
