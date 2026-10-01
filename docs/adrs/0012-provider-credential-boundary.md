@@ -3,6 +3,7 @@
 - 상태: 승인됨 — **그러나 제품 원칙과 충돌한다 (아래 참조)**
 - 관련 이슈: #492, #505, `yeongseon/kpubdata#263`, #681, #682
 - 개정: 2026-09-30 — 다중 사용자 모드의 규칙 (맨 아래 "개정" 절)
+- 확인: 2026-10-01 — D1 에서 따라 나온 다중 사용자 세부 규칙을 소유자가 확인했다 ("개정" 절 끝)
 
 > **이 ADR 은 credential 을 저장한다는 전제 위에 있다.** 그런데 POLICY 1.2 는
 > "키는 요청·작업이 도는 동안 메모리에만 두고 영속 저장하지 않는다" 고 적는다.
@@ -85,3 +86,15 @@ credential, `ENFORCE_OWNERSHIP` 기본값 모두 지금 그대로다.
 `PUT /providers/{provider}/credential` 은 403 으로 거절하고(`service/providers_service.py`),
 데이터 조회는 운영자 키로 내려가지 않는다(`service/providers.py`). 이 날부터 다중 사용자
 배포의 구현 상태는 위 표다.
+
+**2026-10-01: the owner confirmed** the multi-user details derived from D1 and recorded
+in ADR 0020 (#682). 다중 사용자 모드에서:
+
+- HF 토큰(publish 토큰)도 "키" 다 — provider 키와 같은 규칙, 요청·작업 수명만
+- 서버 환경변수·운영자 키 폴백은 없다. 공유 credential 은 두지 않는다
+- 스케줄 빌드는 단일 사용자 전용이다
+- 재시작으로 키를 잃은 작업은 `credentials_required` 로 실패한다
+- 이미 저장된 credential 은 읽지 않고, ADR 0020 의 삭제 절차(사용자 `DELETE`, 운영자의
+  저장소 파일 삭제와 master key 폐기)로 지운다
+
+publish 경로는 아직 이 규칙을 따르지 않는다 — #925.

@@ -642,6 +642,11 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
 
     alias becomes path segment. persist's ``validate_path_segment`` eventually catches
     it but only after fetch completes. Stop at declaration stage.
+
+    Without an alias the key is ``provider.dataset`` and becomes the same path segment,
+    including staging/checkpoint directories that are deleted before and after fetch.
+    ``provider``/``dataset`` and the derived key follow the alias rule, regardless of
+    alias or kind, so ``../.`` + ``/victim-run`` never reaches the filesystem (#916).
     """
     # spec -> stages top-level import is circular (stages.bronze.resolve reads spec).
     # Duplicating key calculation here risks diverging definitions (#629 was exactly
@@ -652,6 +657,8 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
     problems: list[ValidationProblem] = []
     first_index: dict[str, int] = {}
     for i, source in enumerate(spec.sources):
+        identity_problems = _source_identity_problems(source, i)
+        problems.extend(identity_problems)
         if source.alias:
             try:
                 validate_path_segment(source.alias, field_name=f"sources[{i}].alias")
@@ -673,7 +680,21 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
                 # When kind-specific required field empty. _source_kind_problems already
                 # reports that; don't repeat here.
                 continue
+            if identity_problems:
+                continue
             key = f"{provider}.{dataset}"
+            try:
+                validate_path_segment(key, field_name=f"sources[{i}] output key")
+            except ValueError as error:
+                problems.append(
+                    _p(
+                        "unsafe_source_key",
+                        f"sources[{i}]",
+                        str(error),
+                        hint="set a safe alias or use a provider/dataset id without path syntax",
+                    )
+                )
+                continue
 
         if key in first_index:
             problems.append(
@@ -687,6 +708,36 @@ def _source_key_problems(spec: BuildSpec) -> list[ValidationProblem]:
             )
         else:
             first_index[key] = i
+    return problems
+
+
+def _source_identity_problems(source: SourceRef, index: int) -> list[ValidationProblem]:
+    """Reject ``provider``/``dataset`` values that are not single safe path segments (#916).
+
+    Empty values are left to the empty-field rule. Every kpubdata catalogue id
+    (``bok.base_rate``, ``datago.air_quality``, ...) splits into segments that pass.
+    """
+    # Deferred for the same circular-import reason as in _source_key_problems.
+    from ..stages._path_safety import validate_path_segment
+
+    if source.kind != "public_api":
+        return []
+    problems: list[ValidationProblem] = []
+    for field_name, value in (("provider", source.provider), ("dataset", source.dataset)):
+        if not value.strip():
+            continue
+        path = f"sources[{index}].{field_name}"
+        try:
+            validate_path_segment(value, field_name=path)
+        except ValueError as error:
+            problems.append(
+                _p(
+                    "unsafe_source_key",
+                    path,
+                    str(error),
+                    hint="provider and dataset become the source's directory name in the run",
+                )
+            )
     return problems
 
 

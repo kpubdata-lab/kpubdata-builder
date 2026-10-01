@@ -73,6 +73,7 @@ from ..spec import (
 )
 from ..spec.fingerprints import SourceFingerprints, fingerprint_source
 from ..spec.validator import validate_spec
+from ..stages._path_safety import contained_child, ensure_within
 from ..stages.bronze.build import SourceClient
 from ..stages.bronze.models import BronzeArtifact, utc_now
 from ..stages.bronze.persist import persist_bronze_artifact
@@ -285,6 +286,36 @@ def _fetch_source_key(source: SourceRef) -> str:
 def _output_source_key(source: SourceRef) -> str:
     """Return user-facing output key for workspace/result recording."""
     return source.alias if source.alias else _fetch_source_key(source)
+
+
+def _source_work_path(run_dir: Path, dirname: str, output_key: str, *, suffix: str = "") -> Path:
+    """Return ``<run_dir>/<dirname>/<output_key><suffix>``, proven to stay in the run (#916).
+
+    The output key comes from the spec (alias or ``provider.dataset``). validate_spec
+    rejects unsafe keys, but this is the last check before the path is deleted, so it
+    holds even for a spec that bypassed validation.
+
+    Raises:
+        ValueError: if the key is not a single safe segment or the path leaves the run.
+    """
+    work_root = run_dir / dirname
+    ensure_within(run_dir, work_root, label=f"{dirname} directory")
+    return contained_child(
+        work_root,
+        f"{output_key}{suffix}",
+        field_name="source output key",
+        label=f"{dirname} entry",
+    )
+
+
+def _remove_source_staging(run_dir: Path, output_key: str) -> None:
+    """Remove one source's staging directory, refusing any path outside the run (#916)."""
+    try:
+        staging_dir = _source_work_path(run_dir, _STAGING_DIRNAME, output_key)
+    except ValueError as exc:
+        logger.warning("staging cleanup skipped for unsafe source key %r: %s", output_key, exc)
+        return
+    shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def _recorded_fingerprints(run_dir: Path, output_key: str) -> SourceFingerprints | None:
@@ -532,12 +563,17 @@ def _run_source_pipeline(
         # A param_grid fetch keeps each finished combination here and a rebuild of
         # the same run resumes from it (#648). Removed once Bronze is written.
         run_dir = context.output_root / context.run_id
-        checkpoint_path = run_dir / _CHECKPOINT_DIRNAME / output_key
+        # Every path below is built from the output key and some are deleted, so each
+        # is proven to stay inside this run before anything is touched (#916).
+        checkpoint_path = _source_work_path(run_dir, _CHECKPOINT_DIRNAME, output_key)
+        legacy_checkpoint = _source_work_path(
+            run_dir, _CHECKPOINT_DIRNAME, output_key, suffix=".jsonl"
+        )
+        staging_dir = _source_work_path(run_dir, _STAGING_DIRNAME, output_key)
         # The single-file checkpoint of earlier versions cannot be resumed from (#622).
-        (run_dir / _CHECKPOINT_DIRNAME / f"{output_key}.jsonl").unlink(missing_ok=True)
+        legacy_checkpoint.unlink(missing_ok=True)
         # Records are written here as they arrive (#622), and read from here by Silver.
         # Anything a crashed attempt left is removed first.
-        staging_dir = run_dir / _STAGING_DIRNAME / output_key
         shutil.rmtree(staging_dir, ignore_errors=True)
         bronze = build_bronze_artifact_for_source(
             source,
@@ -995,7 +1031,7 @@ def _run_source_pipeline(
         # The staged records are needed only while this source runs; its persisted
         # Bronze is in the run's bronze directory (#622).
         staging_root = context.output_root / context.run_id / _STAGING_DIRNAME
-        shutil.rmtree(staging_root / output_key, ignore_errors=True)
+        _remove_source_staging(context.output_root / context.run_id, output_key)
         # Sources run in parallel; whichever finishes last removes the empty parent.
         with contextlib.suppress(OSError):
             staging_root.rmdir()
