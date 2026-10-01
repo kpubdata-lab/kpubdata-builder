@@ -240,7 +240,7 @@ Gold 는 선언된 PII(kpubdata `license.pii_columns` + BuildSpec `sources[].gol
 
 | 경로 | 동작 |
 | :--- | :--- |
-| `POST /query` `stage: silver` | 선언 컬럼을 마스킹한 Silver 사본 위에서 질의한다. `upper(col)`·`substr`·`WHERE col = '…'` 같은 식도 원래 값을 보지 못한다. 응답의 `masked_columns` 가 가린 컬럼을 적는다. `stage: gold` 는 빌드 때 이미 마스킹되어 변하지 않는다 |
+| `POST /query` `stage: silver` | 선언 컬럼을 마스킹한 Silver 사본 위에서 질의한다. `upper(col)`·`substr`·`WHERE col = '…'` 같은 식도 원래 값을 보지 못한다. 사본은 질의 엔진과 같은 `scan_builder_parquet` 로 읽어 DuckDB 가 파일 metadata 에 남긴 Builder dtype·실제 컬럼 이름(#891)을 되살린 뒤 쓰므로, 응답의 `columns`·`column_meta` 는 마스킹하지 않은 질의와 같다(all-null·Duration·Int128·zone 포함). 응답의 `masked_columns` 가 가린 컬럼을 적는다. `stage: gold` 는 빌드 때 이미 마스킹되어 변하지 않는다 |
 | `POST /preview` | 소스별 `sample`, `source_sample`(원본 필드명 — `schema.coalesce`·`rename` 을 거꾸로 따라간다), 그 컬럼의 `diffs` 를 가리고 `masked_columns` 를 적는다 |
 | `GET /builds/{run_id}/stages/silver/{source}` | `sample` 을 가리고 `masked_columns` 를 적는다. Bronze stage 상세에는 행이 없다 |
 | `GET /artifacts/{run_id}/{file_path}` | 선언 컬럼이 있는 소스의 `bronze/{source}/…`·`silver/{source}/…` 파일은 **전부 403 `declared_pii_withheld`**(`columns` 에 컬럼 이름만). Gold 파일과 manifest 는 그대로 내려간다 |

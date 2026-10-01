@@ -126,6 +126,102 @@ def test_a_gold_query_is_unchanged(tmp_path: Path) -> None:
     assert "masked_columns" not in response.body
 
 
+# ------------------------------------------------- the masked copy keeps Builder dtypes
+
+_DTYPE_CASES = ["null only", "duration", "int128", "zoned", "odd names", "list null"]
+
+
+@pytest.mark.parametrize("name", _DTYPE_CASES)
+def test_the_masked_silver_copy_keeps_every_builder_dtype(tmp_path: Path, name: str) -> None:
+    """#891 review: DuckDB records Builder dtypes and real names in the file's metadata.
+
+    A query of the masked copy reports the same columns and dtypes as a query of the
+    original — an all-null column stays Null, a Duration, an Int128 and a zoned datetime
+    keep their dtype, and an internally named column keeps its real name.
+    """
+    import duckdb
+
+    from kpubdata_builder.query.service import QueryService
+    from kpubdata_builder.service.pii_reads import masked_silver_table
+    from kpubdata_builder.service.query_service_api import execute_query
+    from kpubdata_builder.tabular.builder_parquet import (
+        builder_dtypes,
+        read_builder_parquet_schema,
+    )
+    from kpubdata_builder.tabular.duckdb_load import TableHandle, load_records
+
+    from .test_duckdb_load import CASES
+
+    records = [{**r, "phone": f"010-0000-000{i}"} for i, r in enumerate(CASES[name])]
+    connection = duckdb.connect()
+    loaded = load_records(connection, lambda: iter(records), table="raw", workdir=tmp_path)
+    original = tmp_path / "table.parquet"
+    TableHandle(connection, loaded, tmp_path).write_parquet(original)
+    assert builder_dtypes(original)  # written with the recorded dtypes
+
+    masked = masked_silver_table(original, frozenset({"phone"}))
+    assert masked is not None
+    try:
+        expected = read_builder_parquet_schema(original)
+        assert read_builder_parquet_schema(masked.path) == expected
+        engine = QueryService()
+        plain = execute_query(engine, original, "SELECT * FROM dataset", limit=10)
+        hidden = execute_query(engine, masked.path, "SELECT * FROM dataset", limit=10)
+    finally:
+        masked.close()
+
+    assert plain.status_code == hidden.status_code == 200, (plain.body, hidden.body)
+    assert hidden.body["columns"] == plain.body["columns"]
+    assert hidden.body["column_meta"] == plain.body["column_meta"]
+    _no_phone(hidden.body)
+    rows = cast(list[dict[str, JsonValue]], hidden.body["rows"])
+    assert {r["phone"] for r in rows} == {PII_MASK_TOKEN}
+
+
+class _NullColumnResult:
+    def __init__(self) -> None:
+        self.items = [
+            {"mgtNo": str(i), "siteTel": phone, "memo": None} for i, phone in enumerate(_PHONES)
+        ]
+
+
+class _NullColumnClient(_Client):
+    def dataset(self, key: str) -> object:
+        inner = super().dataset(key)
+
+        class _Dataset:
+            ref = inner.ref
+
+            def list(self, **_params: object) -> _NullColumnResult:
+                return _NullColumnResult()
+
+        return _Dataset()
+
+
+def test_a_silver_query_reports_the_same_dtypes_with_and_without_declared_pii(
+    tmp_path: Path,
+) -> None:
+    """End to end: masking changes the values of a declared column, never a dtype."""
+    sql = "SELECT * FROM dataset"
+    for sub in ("a", "b"):
+        (tmp_path / sub).mkdir()
+    declared = _service(tmp_path / "a", _NullColumnClient())
+    plain = _service(tmp_path / "b", _NullColumnClient(pii=()))
+    for service in (declared, plain):
+        assert service.build(_SPEC.format(gold=""), run_id="r1").status_code == 200
+
+    masked = _silver_query(declared, sql)
+    unmasked = _silver_query(plain, sql)
+
+    assert masked.status_code == unmasked.status_code == 200, (masked.body, unmasked.body)
+    assert masked.body["masked_columns"] == ["siteTel"]
+    assert masked.body["columns"] == unmasked.body["columns"]
+    assert masked.body["column_meta"] == unmasked.body["column_meta"]
+    meta = {m["name"]: m for m in cast(list[dict[str, JsonValue]], masked.body["column_meta"])}
+    assert meta["memo"]["logical_type"] == "null"
+    _no_phone(masked.body)
+
+
 # ------------------------------------------------------------------ /preview
 
 
