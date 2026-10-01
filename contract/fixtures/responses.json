@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.71.0",
+  "contract_version": "1.72.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -4619,6 +4619,951 @@
         "deleted": true
       },
       "broken_path": "$.export_id"
+    }
+  ],
+  "error_fixtures": [
+    {
+      "operation_id": "validateSpec",
+      "method": "POST",
+      "path": "/validate",
+      "status": 400,
+      "example": "MissingSources",
+      "current": {
+        "status": "invalid",
+        "problems": [
+          "sources must contain at least one source"
+        ]
+      },
+      "with_additive_fields": {
+        "status": "invalid",
+        "problems": [
+          "sources must contain at least one source"
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "problems": [
+          "sources must contain at least one source"
+        ]
+      },
+      "broken_path": "$.status"
+    },
+    {
+      "operation_id": "validateSpec",
+      "method": "POST",
+      "path": "/validate",
+      "status": 400,
+      "example": "MalformedYaml",
+      "current": {
+        "status": "error",
+        "error": "could not parse BuildSpec YAML"
+      },
+      "with_additive_fields": {
+        "status": "error",
+        "error": "could not parse BuildSpec YAML",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "error": "could not parse BuildSpec YAML"
+      },
+      "broken_path": "$.status"
+    },
+    {
+      "operation_id": "previewBuild",
+      "method": "POST",
+      "path": "/preview",
+      "status": 400,
+      "example": "InvalidLimit",
+      "current": {
+        "error": "'limit' must be a positive integer"
+      },
+      "with_additive_fields": {
+        "error": "'limit' must be a positive integer",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
+      "status": 400,
+      "example": "UnsafeRunId",
+      "current": {
+        "error": "run_id must be a path-safe single segment"
+      },
+      "with_additive_fields": {
+        "error": "run_id must be a path-safe single segment",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
+      "status": 502,
+      "example": "ProviderFetchFailed",
+      "current": {
+        "status": "failed",
+        "run_id": "air-quality-20260815",
+        "outcomes": [
+          {
+            "source_key": "air",
+            "status": "failed",
+            "stages_completed": [],
+            "error": "provider request failed"
+          }
+        ],
+        "manifest": "build/air-quality-20260815/manifest.json",
+        "api_version": "1.8.0",
+        "error": "provider request failed"
+      },
+      "with_additive_fields": {
+        "status": "failed",
+        "run_id": "air-quality-20260815",
+        "outcomes": [
+          {
+            "source_key": "air",
+            "status": "failed",
+            "stages_completed": [],
+            "error": "provider request failed",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "manifest": "build/air-quality-20260815/manifest.json",
+        "api_version": "1.8.0",
+        "error": "provider request failed",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.outcomes[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "run_id": "air-quality-20260815",
+        "outcomes": [
+          {
+            "source_key": "air",
+            "status": "failed",
+            "stages_completed": [],
+            "error": "provider request failed"
+          }
+        ],
+        "manifest": "build/air-quality-20260815/manifest.json",
+        "api_version": "1.8.0",
+        "error": "provider request failed"
+      },
+      "broken_path": "$.status"
+    },
+    {
+      "operation_id": "listBuildArtifacts",
+      "method": "GET",
+      "path": "/artifacts/{run_id}",
+      "status": 404,
+      "example": "RunNotFound",
+      "current": {
+        "error": "run not found: missing-run"
+      },
+      "with_additive_fields": {
+        "error": "run not found: missing-run",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getBuildArtifactFile",
+      "method": "GET",
+      "path": "/artifacts/{run_id}/{file_path}",
+      "status": 403,
+      "example": "DeclaredPiiWithheld",
+      "current": {
+        "error": "silver files hold the declared PII columns siteTel in plain text, so they cannot be downloaded; Gold holds the table with them masked",
+        "code": "declared_pii_withheld",
+        "columns": [
+          "siteTel"
+        ]
+      },
+      "with_additive_fields": {
+        "error": "silver files hold the declared PII columns siteTel in plain text, so they cannot be downloaded; Gold holds the table with them masked",
+        "code": "declared_pii_withheld",
+        "columns": [
+          "siteTel"
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "declared_pii_withheld",
+        "columns": [
+          "siteTel"
+        ]
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getBuildManifest",
+      "method": "GET",
+      "path": "/builds/{run_id}/manifest",
+      "status": 404,
+      "example": "ManifestNotFound",
+      "current": {
+        "error": "manifest not found: missing-run"
+      },
+      "with_additive_fields": {
+        "error": "manifest not found: missing-run",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getBuildSpecSnapshot",
+      "method": "GET",
+      "path": "/builds/{run_id}/spec",
+      "status": 404,
+      "example": "SnapshotNotFound",
+      "current": {
+        "error": "BuildSpec snapshot unavailable for run: legacy-run"
+      },
+      "with_additive_fields": {
+        "error": "BuildSpec snapshot unavailable for run: legacy-run",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "listBuilds",
+      "method": "GET",
+      "path": "/builds",
+      "status": 400,
+      "example": "InvalidLimit",
+      "current": {
+        "error": "limit must be a positive integer"
+      },
+      "with_additive_fields": {
+        "error": "limit must be a positive integer",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getDataset",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}",
+      "status": 404,
+      "example": "DatasetNotFound",
+      "current": {
+        "error": "dataset not found: unknown-dataset"
+      },
+      "with_additive_fields": {
+        "error": "dataset not found: unknown-dataset",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "listDatasetRuns",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}/runs",
+      "status": 404,
+      "example": "DatasetNotFound",
+      "current": {
+        "error": "dataset not found: unknown-dataset"
+      },
+      "with_additive_fields": {
+        "error": "dataset not found: unknown-dataset",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getPublishReadiness",
+      "method": "GET",
+      "path": "/builds/{run_id}/publish/readiness",
+      "status": 400,
+      "example": "UnsupportedTarget",
+      "current": {
+        "error": "target 'local' is not available over the publish HTTP API"
+      },
+      "with_additive_fields": {
+        "error": "target 'local' is not available over the publish HTTP API",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 400,
+      "example": "InvalidDestination",
+      "current": {
+        "error": "'destination' must not contain path traversal segments"
+      },
+      "with_additive_fields": {
+        "error": "'destination' must not contain path traversal segments",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 400,
+      "example": "UnknownOption",
+      "current": {
+        "error": "unsupported option for target 'huggingface': 'visibility'"
+      },
+      "with_additive_fields": {
+        "error": "unsupported option for target 'huggingface': 'visibility'",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 400,
+      "example": "InvalidPublishCredential",
+      "current": {
+        "error": "X-Publish-Credential must be '<VARIABLE>=<value>'",
+        "code": "invalid_publish_credential"
+      },
+      "with_additive_fields": {
+        "error": "X-Publish-Credential must be '<VARIABLE>=<value>'",
+        "code": "invalid_publish_credential",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "invalid_publish_credential"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 409,
+      "example": "Blocked",
+      "current": {
+        "error": "run is not ready to publish to 'huggingface'",
+        "blockers": [
+          {
+            "code": "gold_unavailable",
+            "message": "no successful Gold output is available for this run"
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "error": "run is not ready to publish to 'huggingface'",
+        "blockers": [
+          {
+            "code": "gold_unavailable",
+            "message": "no successful Gold output is available for this run",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.blockers[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "blockers": [
+          {
+            "code": "gold_unavailable",
+            "message": "no successful Gold output is available for this run"
+          }
+        ]
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 409,
+      "example": "InProgress",
+      "current": {
+        "error": "publish operation is already in progress",
+        "code": "publish_in_progress"
+      },
+      "with_additive_fields": {
+        "error": "publish operation is already in progress",
+        "code": "publish_in_progress",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "publish_in_progress"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 409,
+      "example": "UnknownState",
+      "current": {
+        "error": "publish operation outcome is unknown; automatic retry is blocked",
+        "code": "publish_state_unknown"
+      },
+      "with_additive_fields": {
+        "error": "publish operation outcome is unknown; automatic retry is blocked",
+        "code": "publish_state_unknown",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "publish_state_unknown"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 409,
+      "example": "Conflict",
+      "current": {
+        "error": "this run and destination were already published with different options",
+        "code": "publish_conflict"
+      },
+      "with_additive_fields": {
+        "error": "this run and destination were already published with different options",
+        "code": "publish_conflict",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "publish_conflict"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "publishBuild",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish",
+      "status": 502,
+      "example": "RemoteFailure",
+      "current": {
+        "error": "publish failed due to an unexpected error",
+        "code": "publish_failed"
+      },
+      "with_additive_fields": {
+        "error": "publish failed due to an unexpected error",
+        "code": "publish_failed",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "publish_failed"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getBuildStageDetail",
+      "method": "GET",
+      "path": "/builds/{run_id}/stages/{stage}",
+      "status": 400,
+      "example": "MissingSource",
+      "current": {
+        "error": "source query parameter is required"
+      },
+      "with_additive_fields": {
+        "error": "source query parameter is required",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getDatasetQualityHistory",
+      "method": "GET",
+      "path": "/datasets/{dataset_id}/quality/history",
+      "status": 404,
+      "example": "DatasetNotFound",
+      "current": {
+        "error": "dataset not found: unknown-dataset"
+      },
+      "with_additive_fields": {
+        "error": "dataset not found: unknown-dataset",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getBuildQuality",
+      "method": "GET",
+      "path": "/builds/{run_id}/quality",
+      "status": 404,
+      "example": "RunNotFound",
+      "current": {
+        "error": "manifest not found: missing-run"
+      },
+      "with_additive_fields": {
+        "error": "manifest not found: missing-run",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 400,
+      "example": "UnsafeQuery",
+      "current": {
+        "error": "only read-only SELECT queries are allowed",
+        "code": "unsafe_query"
+      },
+      "with_additive_fields": {
+        "error": "only read-only SELECT queries are allowed",
+        "code": "unsafe_query",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "unsafe_query"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 400,
+      "example": "InvalidContext",
+      "current": {
+        "error": "dataset does not match run snapshot",
+        "code": "invalid_context"
+      },
+      "with_additive_fields": {
+        "error": "dataset does not match run snapshot",
+        "code": "invalid_context",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "invalid_context"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 403,
+      "example": "Forbidden",
+      "current": {
+        "error": "forbidden",
+        "code": "forbidden"
+      },
+      "with_additive_fields": {
+        "error": "forbidden",
+        "code": "forbidden",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "forbidden"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 404,
+      "example": "ArtifactUnavailable",
+      "current": {
+        "error": "query artifact unavailable",
+        "code": "artifact_unavailable"
+      },
+      "with_additive_fields": {
+        "error": "query artifact unavailable",
+        "code": "artifact_unavailable",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "artifact_unavailable"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 429,
+      "example": "QueryBusy",
+      "current": {
+        "error": "query is busy",
+        "code": "query_busy"
+      },
+      "with_additive_fields": {
+        "error": "query is busy",
+        "code": "query_busy",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "query_busy"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 504,
+      "example": "QueryTimeout",
+      "current": {
+        "error": "query timed out",
+        "code": "query_timeout"
+      },
+      "with_additive_fields": {
+        "error": "query timed out",
+        "code": "query_timeout",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "query_timeout"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "saveRevision",
+      "method": "PUT",
+      "path": "/revisions/{kind}/{doc_id}",
+      "status": 409,
+      "example": "RevisionConflict",
+      "current": {
+        "error": "the document is at revision 2",
+        "code": "revision_conflict",
+        "current_revision": 2
+      },
+      "with_additive_fields": {
+        "error": "the document is at revision 2",
+        "code": "revision_conflict",
+        "current_revision": 2,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "revision_conflict",
+        "current_revision": 2
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "revertRevision",
+      "method": "POST",
+      "path": "/revisions/{kind}/{doc_id}/revert",
+      "status": 409,
+      "example": "RevisionConflict",
+      "current": {
+        "error": "the document is at revision 3",
+        "code": "revision_conflict",
+        "current_revision": 3
+      },
+      "with_additive_fields": {
+        "error": "the document is at revision 3",
+        "code": "revision_conflict",
+        "current_revision": 3,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "revision_conflict",
+        "current_revision": 3
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "SignupNotApproved",
+      "status": 403,
+      "example": "SignupPending",
+      "current": {
+        "error": "this account's sign-up is waiting for an administrator's approval",
+        "code": "signup_pending"
+      },
+      "with_additive_fields": {
+        "error": "this account's sign-up is waiting for an administrator's approval",
+        "code": "signup_pending",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "signup_pending"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "SignupNotApproved",
+      "status": 403,
+      "example": "SignupRejected",
+      "current": {
+        "error": "this account's sign-up was rejected",
+        "code": "signup_rejected"
+      },
+      "with_additive_fields": {
+        "error": "this account's sign-up was rejected",
+        "code": "signup_rejected",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "signup_rejected"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "Unauthorized",
+      "status": 401,
+      "example": "MissingOrInvalidApiKey",
+      "current": {
+        "error": "unauthorized"
+      },
+      "with_additive_fields": {
+        "error": "unauthorized",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "PiiDeclarationUnavailable",
+      "status": 503,
+      "example": "PiiDeclarationUnavailable",
+      "current": {
+        "error": "the PII declaration of example.dataset could not be read, so query results cannot leave Builder unmasked; try again, or read Gold",
+        "code": "pii_declaration_unavailable",
+        "dataset": "example.dataset"
+      },
+      "with_additive_fields": {
+        "error": "the PII declaration of example.dataset could not be read, so query results cannot leave Builder unmasked; try again, or read Gold",
+        "code": "pii_declaration_unavailable",
+        "dataset": "example.dataset",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "pii_declaration_unavailable",
+        "dataset": "example.dataset"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "RedistributionForbidden",
+      "status": 403,
+      "example": "RedistributionForbidden",
+      "current": {
+        "error": "the source terms forbid redistribution, so query results cannot leave Builder",
+        "code": "redistribution_forbidden",
+        "redistribution": {
+          "verdict": "forbidden",
+          "sources": [
+            {
+              "source": "example.dataset",
+              "verdict": "forbidden",
+              "reason": "the dataset declares redistribution: forbidden"
+            }
+          ]
+        }
+      },
+      "with_additive_fields": {
+        "error": "the source terms forbid redistribution, so query results cannot leave Builder",
+        "code": "redistribution_forbidden",
+        "redistribution": {
+          "verdict": "forbidden",
+          "sources": [
+            {
+              "source": "example.dataset",
+              "verdict": "forbidden",
+              "reason": "the dataset declares redistribution: forbidden",
+              "future_optional_field": "added by a later minor contract version"
+            }
+          ],
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.redistribution.sources[0]",
+        "$.redistribution",
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "redistribution_forbidden",
+        "redistribution": {
+          "verdict": "forbidden",
+          "sources": [
+            {
+              "source": "example.dataset",
+              "verdict": "forbidden",
+              "reason": "the dataset declares redistribution: forbidden"
+            }
+          ]
+        }
+      },
+      "broken_path": "$.error"
     }
   ]
 }

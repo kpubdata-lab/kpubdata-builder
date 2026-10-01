@@ -259,3 +259,52 @@ def test_prose_on_a_property_is_still_prose() -> None:
     _schema(head)["properties"]["run_id"]["description"] = "new text"
 
     assert gate.check(base, head) == []
+
+
+# ------------------------------------------- a response moved to an extending schema
+
+
+def _point_200_at(head: dict[str, Any], name: str, extends: str | None) -> None:
+    parts: list[Any] = [{"type": "object", "properties": {"extra": {"type": "integer"}}}]
+    if extends is not None:
+        parts.insert(0, {"$ref": f"#/components/schemas/{extends}"})
+    head["components"]["schemas"][name] = {"allOf": parts}
+    _get(head)["responses"]["200"]["content"]["application/json"].update(
+        schema={"$ref": f"#/components/schemas/{name}"}
+    )
+
+
+def test_a_response_may_move_to_a_schema_that_extends_the_old_one() -> None:
+    """#947: `Error` -> `RevisionConflictError` (allOf Error) is still an `Error` body."""
+    head = _head("1.5.0")
+    _point_200_at(head, "RunWithExtra", extends="Run")
+
+    assert gate.check(_BASE, head) == []
+
+
+def test_a_response_moved_to_an_unrelated_schema_still_breaks() -> None:
+    """Negative: an allOf that does not include the old target is a retype."""
+    head = _head("1.5.0")
+    _point_200_at(head, "Unrelated", extends=None)
+
+    (problem,) = gate.check(_BASE, head)
+    assert "$ref #/components/schemas/Run -> #/components/schemas/Unrelated" in problem
+
+
+def test_a_request_moved_to_an_extending_schema_still_breaks() -> None:
+    """Negative: narrowing what a client may send breaks the sender."""
+    base = copy.deepcopy(_BASE)
+    _get(base)["requestBody"] = {
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Run"}}}
+    }
+    head = copy.deepcopy(base)
+    head["info"]["version"] = "1.5.0"
+    head["components"]["schemas"]["RunWithExtra"] = {
+        "allOf": [{"$ref": "#/components/schemas/Run"}, {"required": ["extra"]}]
+    }
+    _get(head)["requestBody"]["content"]["application/json"]["schema"] = {
+        "$ref": "#/components/schemas/RunWithExtra"
+    }
+
+    (problem,) = gate.check(base, head)
+    assert "request: $ref" in problem
