@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 import pytest
 
-from kpubdata_builder.agent.discover import DiscoveryResult, ParamInfo
+from kpubdata_builder.agent import discover as discover_mod
+from kpubdata_builder.agent.discover import (
+    DiscoveryResult,
+    ParamInfo,
+    PortalUnreachable,
+    _fetch_page,
+)
 from kpubdata_builder.agent.monitor import MonitorState
 from kpubdata_builder.cli import build_parser, dispatch
 
@@ -103,6 +110,93 @@ class TestDiscoverCLI:
         )
         assert args.output == "out.yaml"
         assert args.dataset_id == "datago.custom"
+
+
+class TestFetchPage:
+    """The portal refuses some origins; the failure must say where to go."""
+
+    def test_http_refusal_names_the_next_step(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        url = "https://www.data.go.kr/data/12345/openapi.do"
+
+        def refused(_req, timeout: int = 0) -> None:
+            raise HTTPError(url, 403, "Forbidden", None, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(discover_mod, "urlopen", refused)
+
+        with pytest.raises(PortalUnreachable) as exc_info:
+            _fetch_page(url)
+
+        assert exc_info.value.status == 403
+        assert "kr runner" in str(exc_info.value)
+
+    def test_edge_error_is_the_same_diagnosis(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        url = "https://www.data.go.kr/data/12345/openapi.do"
+
+        def edge_error(_req, timeout: int = 0) -> None:
+            raise HTTPError(url, 500, "Server Error", None, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(discover_mod, "urlopen", edge_error)
+
+        with pytest.raises(PortalUnreachable) as exc_info:
+            _fetch_page(url)
+
+        assert exc_info.value.status == 500
+
+    def test_network_failure_is_not_a_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        url = "https://www.data.go.kr/data/12345/openapi.do"
+
+        def unreachable(_req, timeout: int = 0) -> None:
+            raise URLError(TimeoutError("timed out"))
+
+        monkeypatch.setattr(discover_mod, "urlopen", unreachable)
+
+        with pytest.raises(PortalUnreachable) as exc_info:
+            _fetch_page(url)
+
+        assert exc_info.value.status is None
+        assert "network" in str(exc_info.value)
+
+    def test_request_carries_browser_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> FakeResponse:
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b"<html></html>"
+
+        def capture(req: object, timeout: int = 0) -> FakeResponse:
+            captured.update(req.headers)  # type: ignore[attr-defined]
+            return FakeResponse()
+
+        monkeypatch.setattr(discover_mod, "urlopen", capture)
+
+        html = _fetch_page("https://www.data.go.kr/data/12345/openapi.do")
+
+        assert html == "<html></html>"
+        assert "text/html" in str(captured.get("Accept", ""))
+        assert "ko-KR" in str(captured.get("Accept-language", ""))
+
+
+class TestDiscoverUnreachableExit:
+    def test_portal_refusal_exits_two(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def refused(_url: str) -> DiscoveryResult:
+            raise PortalUnreachable("the portal answered HTTP 403 — run from the kr runner")
+
+        monkeypatch.setattr(discover_mod, "discover_from_url", refused)
+        parser = build_parser()
+        args = parser.parse_args(["discover", "https://www.data.go.kr/data/12345/openapi.do"])
+
+        code = dispatch(args)
+
+        assert code == 2
+        assert "kr runner" in capsys.readouterr().err
 
 
 class TestMonitorCLI:

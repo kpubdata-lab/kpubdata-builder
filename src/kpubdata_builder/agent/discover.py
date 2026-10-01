@@ -8,7 +8,24 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+class PortalUnreachable(RuntimeError):
+    """The portal page could not be fetched, with the reason and the next step.
+
+    The portal serves its detail pages selectively: from some origins the
+    main page answers while ``/data/<id>/openapi.do`` refuses (403/404) or
+    errors at the edge (5xx). No amount of parsing helps from a refused
+    origin, so the message names where to run instead. ``status`` carries
+    the HTTP code when there was one.
+    """
+
+    def __init__(self, reason: str, *, status: int | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
 
 
 @dataclass(slots=True)
@@ -124,6 +141,44 @@ class DiscoveryResult:
         return "\n".join(lines) + "\n"
 
 
+def _fetch_page(url: str) -> str:
+    """Fetch the detail page with browser-shaped headers.
+
+    A plain urllib fingerprint is refused by the portal's edge on some
+    origins even where a browser gets through, so the request carries the
+    Accept headers a real one sends. Both an HTTP refusal and a network
+    failure raise PortalUnreachable — from a refused origin the fetch is
+    an environment problem, not a parsing one.
+    """
+    req = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+        },
+    )
+    try:
+        with urlopen(req, timeout=15) as resp:  # noqa: S310
+            body = str(resp.read().decode("utf-8", errors="replace"))
+    except HTTPError as exc:
+        raise PortalUnreachable(
+            f"the portal answered HTTP {exc.code} for {url}. The portal refuses "
+            "some origins on detail pages while its main page answers — run "
+            "discover from the kr runner, or read the cached guide via "
+            "kpubdata's scripts/fetch_guide.py",
+            status=exc.code,
+        ) from exc
+    except URLError as exc:
+        raise PortalUnreachable(
+            f"could not reach {url} ({exc.reason}) — check the network or the URL"
+        ) from exc
+    return body
+
+
 def discover_from_url(url: str) -> DiscoveryResult:
     """Fetch a data.go.kr API detail page and extract metadata.
 
@@ -132,14 +187,15 @@ def discover_from_url(url: str) -> DiscoveryResult:
 
     Returns:
         DiscoveryResult with extracted metadata (best-effort).
+
+    Raises:
+        PortalUnreachable: The page could not be fetched from this origin.
     """
     # Extract the dataset number from the URL for fallback ID
     num_match = re.search(r"/data/(\d+)/", url)
     dataset_num = num_match.group(1) if num_match else "unknown"
 
-    req = Request(url, headers={"User-Agent": "kpubdata-builder/0.1"})
-    with urlopen(req, timeout=15) as resp:  # noqa: S310
-        html = resp.read().decode("utf-8", errors="replace")
+    html = _fetch_page(url)
 
     result = DiscoveryResult(
         dataset_id=f"datago.dataset_{dataset_num}",

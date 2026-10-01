@@ -1076,11 +1076,19 @@ def _run_prune_cancelled(*, output_dir: str, ttl_hours: float | None, apply: boo
 
 
 def _run_discover(url: str, *, dataset_id: str | None, output: str | None) -> int:
-    """Discover API metadata from a data.go.kr URL."""
-    from .agent.discover import discover_from_url
+    """Discover API metadata from a data.go.kr URL.
+
+    Exit 2 means the portal was unreachable from this origin — an
+    environment problem with the next step in the message, not a
+    discovery bug (exit 1).
+    """
+    from .agent.discover import PortalUnreachable, discover_from_url
 
     try:
         result = discover_from_url(url)
+    except PortalUnreachable as exc:
+        print(f"error: discovery unreachable: {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"error: discovery failed: {exc}", file=sys.stderr)
         return 1
