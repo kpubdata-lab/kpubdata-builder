@@ -51,7 +51,7 @@ from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
 from . import publish as publish_service
-from . import request_credentials
+from . import publish_credentials, request_credentials
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
@@ -364,7 +364,11 @@ _BuildListEntry = dict[str, str | None]
 # 1.64.0 -> 1.65.0: redistribution terms (#688) — publish readiness reports and enforces
 #   each source's verdict (option confirm_non_commercial), and data whose terms are
 #   forbidden answers 403 redistribution_forbidden on every way out (additive).
-API_CONTRACT_VERSION = "1.65.0"
+# 1.65.0 -> 1.67.0 (1.66.0 is held by the open #923): publish tokens by the
+#   X-Publish-Credential header for the request only in a multi-user deployment; no
+#   stored publish credential and no server HF_TOKEN/KAGGLE_* fallback there (#925,
+#   behaviour and a header).
+API_CONTRACT_VERSION = "1.67.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -1292,6 +1296,7 @@ def dispatch(
     raw_body: bytes | None = None,
     client_id: str | None = None,
     provider_key_headers: Sequence[str] = (),
+    publish_credential_headers: Sequence[str] = (),
 ) -> ServiceResponse | FileResponse:
     """Call ``_dispatch_impl`` and record processing time as Monitoring latency
     sample (#516).
@@ -1312,7 +1317,19 @@ def dispatch(
             request_keys = request_credentials.parse_provider_key_headers(provider_key_headers)
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc), "code": "invalid_provider_key"})
-        with request_credentials.request_scope(request_keys):
+        # Publish credentials for this request only (#925): the X-Publish-Credential
+        # header, read by publish in a multi-user deployment and forgotten when the
+        # request ends. The error message never carries a value.
+        try:
+            request_publish_values = publish_credentials.parse_publish_credential_headers(
+                publish_credential_headers
+            )
+        except ValueError as exc:
+            return ServiceResponse(400, {"error": str(exc), "code": "invalid_publish_credential"})
+        with (
+            request_credentials.request_scope(request_keys),
+            publish_credentials.request_scope(request_publish_values),
+        ):
             return _dispatch_impl(
                 service,
                 method,

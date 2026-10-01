@@ -63,7 +63,7 @@ ADR 0012 의 개정 절과 이 ADR 이 덧붙인다.
 | 관리자는 메타데이터만 (선택지 a) | #679 (PR #854) |
 | 남의 run 은 404 | #796 (PR #851) |
 | bare `url` source 금지 | #685 (PR #853) |
-| **publish 토큰(HF·Kaggle)의 요청·작업 수명** | **미구현.** publish 경로는 다중 사용자에서도 저장된 publish credential 을 읽는다. 항목 2 가 확인되면 후속 이슈로 옮긴다 |
+| publish 토큰(HF·Kaggle)의 요청 수명, `X-Publish-Credential` 헤더, 저장된 `publish-*` 슬롯 미사용, 서버 `HF_TOKEN`·`KAGGLE_*` 폴백 제거(reconcile probe 포함) | #925. publish 는 요청 안에서 끝나는 동기 경로라 작업 수명 보관(`JobCredentials`)은 필요 없다 |
 | 스케줄 빌드를 다중 사용자에서 막는 장치 | 해당 없음 — Builder 에 스케줄러가 없다. 스케줄 게시는 저장소의 GitHub Actions 레거시 경로(ADR 0018)이고 단일 운영자 환경이다 |
 
 ## 확인 (소유자, 2026-10-01)

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.65.0"
+  version: "1.67.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.67.0 makes publish tokens live only as long as their request in a multi-user deployment (#925, ADR 0020 item 2 as confirmed on 2026-10-01). A Hugging Face or Kaggle publish credential is sent in the `X-Publish-Credential` request header (`<VARIABLE>=<value>` with `HF_TOKEN`, `KAGGLE_USERNAME` or `KAGGLE_KEY`, repeated or comma-separated) — never a URL query — and a malformed header answers 400 `invalid_publish_credential` on any route. In a multi-user deployment `GET /builds/{run_id}/publish/readiness`, `POST /builds/{run_id}/publish` and the reconcile probe use only that header: a stored `publish-*` credential is not read and the server `HF_TOKEN`/`KAGGLE_*` is never used, whatever `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` says, so without the header readiness and publish report the `credential_required` blocker and `GET /admin/config` reports `publish_server_credential_fallback: false`. A Kaggle pair must arrive whole. The value is held in memory for the request only and is never stored, logged or returned. A single-user deployment ignores the header and is unchanged.
     v1.65.0 enforces each source's redistribution terms (#688, additive): kpubdata 0.8 declares per dataset whether its data may be redistributed — `allowed`, `non_commercial`, `forbidden` or `unknown` (a dataset that declares nothing is `unknown`, as is a file or URL source); a build takes its most restricted source's verdict. Publish readiness and a refused publish report it as `redistribution`, and it blocks: `forbidden` any publish, `unknown` a public one (`redistribution_unknown`), `non_commercial` one without the new option `confirm_non_commercial: true` (`non_commercial_unconfirmed`) or a public one without a non-commercial licence marker (`non_commercial_marker_missing`). Data whose terms are `forbidden` does not leave Builder: `POST /query`, `POST /preview`, the warehouse profile, query, rows, aggregate and export endpoints, analyses (create and run), export downloads and artifact file downloads (`GET /artifacts/{run_id}/{file_path}`, now declared) answer 403 `redistribution_forbidden` (declared as the `RedistributionForbidden` response; `Error` documents `code` and `redistribution`), and a Silver stage detail withholds its sample (`sample_withheld: redistribution_forbidden`). A publish the terms allow only privately (`unknown`, or `non_commercial`) first reads the destination's visibility: an existing public destination blocks it (`destination_public`), and so does one whose visibility cannot be read (`destination_visibility_unknown`). A refused publish's 409 carries `redistribution`; a successful one records it (`PublishRedistributionRecord`: the verdict, the kpubdata release and `confirm_non_commercial`) in the response and the receipt.
     v1.64.0 reconciles declared-PII masking with the `pii` scan gate (#902, additive): the Silver scan counts a declared column Gold will mask as handled, so `pii.mode: block` passes without `allow_columns`; a `gold.publish_unmasked` column is still scanned and needs `allow_columns` under `block`. `allow_columns` never unmasks a declared column and `publish_unmasked` never silences the gate. A masked column keeps its dtype: text holds `[masked]`, any other dtype becomes null; each `pii_masking.masked` entry says which (`masked_as`). kpubdata-declared fields the source does not carry are listed in `pii_masking.declared_absent` instead of being skipped silently.
     v1.63.0 tightens warehouse column profiles (#896, #897): profiling has its own 60-second timeout instead of the query timeout, and after a timeout the same snapshot answers 504 `query_timeout` for 5 minutes without profiling again. `ColumnProfile.nan_count` and `infinite_count` gain `minimum: 0`. The value-pattern PII check now reads `Categorical` and `Enum` columns as text and `List`/`Array` columns of text element by element (a row matches when any element does); a column of any other type that can hold text (`Struct`, `Object`, `Binary`, nested lists) is not pattern-checked and is `suspected` with the kind `unchecked_values`. The profile `algorithm_version` becomes 2, so cached profiles are recomputed.
@@ -1792,6 +1793,7 @@ paths:
         이 응답을 신뢰해 blocker 재검증을 건너뛰면 안 된다(TOCTOU).
       parameters:
         - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/PublishCredential"
         - name: target
           in: query
           required: true
@@ -1867,6 +1869,7 @@ paths:
         형태만 허용된다.
       parameters:
         - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/PublishCredential"
       requestBody:
         required: true
         content:
@@ -1914,6 +1917,11 @@ paths:
                   summary: huggingface가 지원하지 않는 option
                   value:
                     error: "unsupported option for target 'huggingface': 'visibility'"
+                InvalidPublishCredential:
+                  summary: X-Publish-Credential is not '<VARIABLE>=<value>' (#925)
+                  value:
+                    error: "X-Publish-Credential must be '<VARIABLE>=<value>'"
+                    code: invalid_publish_credential
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4029,6 +4037,17 @@ components:
                       reason: "the dataset declares redistribution: forbidden"
 
   parameters:
+    PublishCredential:
+      name: X-Publish-Credential
+      in: header
+      required: false
+      description: >-
+        Multi-user deployment only (#925): the requester's own publish credential for this
+        request, `<VARIABLE>=<value>` with `HF_TOKEN`, `KAGGLE_USERNAME` or `KAGGLE_KEY`,
+        repeated or comma-separated. Never stored. A single-user deployment ignores it and
+        keeps its stored and server credentials.
+      schema:
+        type: string
     RunId:
       name: run_id
       in: path
