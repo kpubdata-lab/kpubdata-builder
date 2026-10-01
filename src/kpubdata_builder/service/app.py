@@ -379,7 +379,10 @@ _BuildListEntry = dict[str, str | None]
 #   credentials from (#938, additive).
 # 1.69.0 -> 1.70.0: the manifest's split_algorithm — ratio splits are hash-sort-v2 (#871,
 #   additive; membership differs from shuffle-v1 for the same seed).
-API_CONTRACT_VERSION = "1.70.0"
+# 1.70.0 -> 1.71.0: dataset cards (#694) — card.json
+#   beside README.md, and publish readiness blockers card_missing / card_incomplete
+#   (additive).
+API_CONTRACT_VERSION = "1.71.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

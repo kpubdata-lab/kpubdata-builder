@@ -79,7 +79,7 @@ from ..stages.bronze.models import BronzeArtifact, utc_now
 from ..stages.bronze.persist import persist_bronze_artifact
 from ..stages.bronze.resolve import build_bronze_artifact_for_source, source_identity
 from ..stages.gold.build import build_gold_package
-from ..stages.gold.card import build_dataset_card, render_dataset_card
+from ..stages.gold.card import build_dataset_card
 from ..stages.gold.compose import CompositionError, build_composed_gold_package
 from ..stages.gold.persist import persist_gold_package
 from ..stages.gold.pii import (
@@ -126,6 +126,7 @@ from ..warehouse import (
 from ..warehouse import gc as warehouse_gc
 from ..warehouse.layout import content_digest
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
+from .card_facts import card_source, personal_information, processing_steps, write_card
 from .context import BuildContext
 from .export import export_gold_package
 
@@ -913,10 +914,16 @@ def _run_source_pipeline(
             ),
             license=_dataset_card_license(context.spec),
             version=_dataset_card_version(context.spec),
+            # Where the data comes from and what was done to it (#694).
+            provenance=(
+                card_source(
+                    source, spec=context.spec, provenance=provenance_entry, label=output_key
+                ),
+            ),
+            processing=processing_steps(source, context.spec),
+            personal_information=personal_information(context.spec, pii_masking),
         )
-        card_path = gold_paths.gold_dir / "README.md"
-        _ = card_path.write_text(render_dataset_card(card), encoding="utf-8")
-        _record_output_paths(outputs, card_path)
+        _record_output_paths(outputs, *write_card(gold_paths.gold_dir, card))
 
         # BuildSpec.exports fully executed above by export_gold_package —
         # package.export_plan.targets is spec.exports (#629). Previously,
@@ -1097,6 +1104,7 @@ def _run_composition(
     silver_by_key: Mapping[str, SilverDataset],
     context: BuildContext,
     pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]] | None = None,
+    provenance_by_key: Mapping[str, SourceProvenance] | None = None,
 ) -> _CompositionPipelineResult:
     """Execute composition (join) and persist combined Gold outputs (#506).
 
@@ -1140,6 +1148,7 @@ def _run_composition(
             sides=(sides[0], sides[1]),
             context=context,
             pii_declared=pii_declared,
+            provenance_by_key=provenance_by_key,
         )
 
 
@@ -1151,6 +1160,7 @@ def _compose(
     sides: tuple[TableHandle, TableHandle],
     context: BuildContext,
     pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]] | None,
+    provenance_by_key: Mapping[str, SourceProvenance] | None = None,
 ) -> _CompositionPipelineResult:
     """Join, mask, persist and export one composition whose sides are loaded (#870)."""
     join = composition.join
@@ -1227,6 +1237,13 @@ def _compose(
     export_paths = export_gold_package(package, output_dir=gold_paths.gold_dir)
     _record_output_paths(outputs, *export_paths)
 
+    provenance_by_key = provenance_by_key or {}
+    joined = [
+        (key, source)
+        for key in (join.left, join.right)
+        for source in context.spec.sources
+        if _output_source_key(source) == key
+    ]
     combined_schema = package.table.schema()
     card = build_dataset_card(
         title=context.spec.title,
@@ -1238,10 +1255,24 @@ def _compose(
         ),
         license=_dataset_card_license(context.spec),
         version=_dataset_card_version(context.spec),
+        provenance=tuple(
+            card_source(
+                source,
+                spec=context.spec,
+                provenance=provenance_by_key.get(key),
+                label=key,
+            )
+            for key, source in joined
+        ),
+        processing=[
+            f"{key}: {step}"
+            for key, source in joined
+            for step in processing_steps(source, context.spec)
+        ]
+        + [f"Joined {join.left} and {join.right} ({join.type} join)"],
+        personal_information=personal_information(context.spec, pii_masking),
     )
-    card_path = gold_paths.gold_dir / "README.md"
-    _ = card_path.write_text(render_dataset_card(card), encoding="utf-8")
-    _record_output_paths(outputs, card_path)
+    _record_output_paths(outputs, *write_card(gold_paths.gold_dir, card))
 
     # Single-source path doesn't export again (#629).
 
@@ -1542,6 +1573,7 @@ def run_build(
             silver_by_key=silver_by_key,
             context=context,
             pii_declared=pii_declared,
+            provenance_by_key=provenance_by_key,
         )
         if (
             composition_result.pii_masking is not None

@@ -1055,7 +1055,52 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\nlicense: other\nlicense_link: https://www.data.go.kr/data/15126468/openapi.do\nlicense_name: korea-public-data-unrestricted\npretty_name: 서울시 아파트 매매 실거래\n---\n\n# 서울시 아파트 매매 실거래\n\n국토교통부 아파트 매매 실거래 자료 중 서울시 25개 자치구, 2020-01~2024-12.\n\n## 출처\n\n- datago.apt_trade\n",
+    "README.md": "---\nlanguage:\n- ko\nlicense: other\nlicense_link: https://www.data.go.kr/data/15126468/openapi.do\nlicense_name: korea-public-data-unrestricted\npretty_name: 서울시 아파트 매매 실거래\n---\n\n# 서울시 아파트 매매 실거래\n\n국토교통부 아파트 매매 실거래 자료 중 서울시 25개 자치구, 2020-01~2024-12.\n\n## Sources\n\n- datago.apt_trade\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| district_code | String | no |\n| neighborhood | String | no |\n| apartment_name | String | no |\n| exclusive_area_m2 | Float64 | no |\n| floor | Int64 | no |\n| build_year | Int64 | no |\n| deal_year | Int64 | no |\n| deal_month | Int64 | no |\n| deal_day | Int64 | no |\n| deal_amount_10k_krw | Int64 | no |\n| lot_number | String | no |\n| registration_date | String | yes |\n| apartment_seq | String | no |\n| deal_date | Date | no |\n\n## Sample\n\n| district_code | neighborhood | apartment_name | exclusive_area_m2 | floor | build_year | deal_year | deal_month | deal_day | deal_amount_10k_krw | lot_number | registration_date | apartment_seq | deal_date |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 11110 | 숭인동 | 종로청계힐스테이트 | 84.9478 | 13 | 2009 | 2024 | 1 | 19 | 101300 | 766 | 24.04.30 | 11110-2234 | 2024-01-19 |\n| 11110 | 무악동 | 인왕산아이파크 | 59.993 | 11 | 2008 | 2024 | 1 | 29 | 101000 | 60 | 24.03.20 | 11110-2212 | 2024-01-29 |\n| 11110 | 홍파동 | 경희궁자이(2단지) | 84.614 | 4 | 2017 | 2024 | 1 | 22 | 200000 | 199 | 24.04.19 | 11110-2445 | 2024-01-22 |\n| 11110 | 익선동 | 현대뜨레비앙 | 48.54 | 2 | 2003 | 2024 | 1 | 30 | 42000 | 55 | 24.03.11 | 11110-102 | 2024-01-30 |\n| 11110 | 평창동 | 일성빌라트 | 84.99 | 3 | 1996 | 2024 | 1 | 27 | 70500 | 145-5 | 24.03.28 | 11110-77 | 2024-01-27 |\n\n## Provenance\n\n### datago.apt_trade\n\n- Attribution: _not declared_\n- Source: https://www.data.go.kr\n- Licence: korea-public-data-unrestricted (https://www.data.go.kr/data/15126468/openapi.do); the provider declares: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- Renamed sggCd to district_code\n- Renamed umdNm to neighborhood\n- Renamed aptNm to apartment_name\n- Renamed excluUseAr to exclusive_area_m2\n- Renamed floor to floor\n- Renamed buildYear to build_year\n- Renamed dealYear to deal_year\n- Renamed dealMonth to deal_month\n- Renamed dealDay to deal_day\n- Renamed dealAmount to deal_amount_10k_krw\n- Renamed jibun to lot_number\n- Renamed rgstDate to registration_date\n- Renamed aptSeq to apartment_seq\n- Converted district_code to str\n- Converted neighborhood to str\n- Converted apartment_name to str\n- Converted exclusive_area_m2 to float\n- Converted floor to int\n- Converted build_year to int\n- Converted deal_year to int\n- Converted deal_month to int\n- Converted deal_day to int\n- Converted deal_amount_10k_krw to int_comma\n- Converted lot_number to str\n- Converted registration_date to str\n- Converted apartment_seq to str\n- Derived deal_date (date_parts) from deal_year, deal_month, deal_day\n- Published columns: district_code, neighborhood, apartment_name, exclusive_area_m2, floor, build_year, deal_year, deal_month, deal_day, deal_amount_10k_krw, lot_number, registration_date, apartment_seq, deal_date\n- Rows kept by 1 declared filter(s)\n- Split into train, test (ratio)\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nother\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "Renamed sggCd to district_code",
+      "Renamed umdNm to neighborhood",
+      "Renamed aptNm to apartment_name",
+      "Renamed excluUseAr to exclusive_area_m2",
+      "Renamed floor to floor",
+      "Renamed buildYear to build_year",
+      "Renamed dealYear to deal_year",
+      "Renamed dealMonth to deal_month",
+      "Renamed dealDay to deal_day",
+      "Renamed dealAmount to deal_amount_10k_krw",
+      "Renamed jibun to lot_number",
+      "Renamed rgstDate to registration_date",
+      "Renamed aptSeq to apartment_seq",
+      "Converted district_code to str",
+      "Converted neighborhood to str",
+      "Converted apartment_name to str",
+      "Converted exclusive_area_m2 to float",
+      "Converted floor to int",
+      "Converted build_year to int",
+      "Converted deal_year to int",
+      "Converted deal_month to int",
+      "Converted deal_day to int",
+      "Converted deal_amount_10k_krw to int_comma",
+      "Converted lot_number to str",
+      "Converted registration_date to str",
+      "Converted apartment_seq to str",
+      "Derived deal_date (date_parts) from deal_year, deal_month, deal_day",
+      "Published columns: district_code, neighborhood, apartment_name, exclusive_area_m2, floor, build_year, deal_year, deal_month, deal_day, deal_amount_10k_krw, lot_number, registration_date, apartment_seq, deal_date",
+      "Rows kept by 1 declared filter(s)",
+      "Split into train, test (ratio)"
+     ],
+     "provenance": [
+      {
+       "institution": "",
+       "license": "korea-public-data-unrestricted (https://www.data.go.kr/data/15126468/openapi.do); the provider declares: 공공누리_1유형",
+       "source": "datago.apt_trade",
+       "url": "https://www.data.go.kr"
+      }
+     ],
+     "title": "서울시 아파트 매매 실거래"
+    },
     "data/train-00000-of-00001.jsonl": [
      {
       "apartment_name": "종로청계힐스테이트",

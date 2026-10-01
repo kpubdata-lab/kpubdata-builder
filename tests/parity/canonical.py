@@ -28,6 +28,7 @@ VOLATILE_KEYS = frozenset(
         "started_at",
         "finished_at",
         "fetched_at",
+        "collected_at",
         "created_at",
         "updated_at",
         "generated_at",
@@ -120,6 +121,12 @@ _VOLATILE_TEXT = (
     (re.compile(r"\bsnap_[0-9a-f]{8,}\b"), "snap_<id>"),
     (re.compile(r"\bexp_[0-9a-f]{8,}\b"), "exp_<id>"),
     (re.compile(r"\bupl_[0-9a-f]{8,}\b"), "upl_<id>"),
+    # A dataset card's collection time (#694): when the source was fetched.
+    (re.compile(r"Collected: \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC"), "Collected: <time>"),
+    (
+        re.compile(r'"collected_at": "\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC"'),
+        '"collected_at": "<time>"',
+    ),
 )
 
 
