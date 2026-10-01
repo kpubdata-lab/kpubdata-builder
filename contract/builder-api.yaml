@@ -7418,12 +7418,58 @@ components:
         code:
           type: string
           description: >-
-            run_not_terminal / run_failed / run_cancelled / gold_unavailable /
-            artifact_missing / artifact_invalid / license_missing /
-            pii_allow_with_publish / credential_unavailable 중 하나(#491).
-            artifact_invalid는 canonical
-            manifest.outputs 항목이 gold root를 벗어나거나(symlink escape
-            포함) resolve할 수 없을 때 fail-closed로 반환된다.
+            readiness와 publish가 보고하는 blocker 코드. 가능한 값과 각 값이
+            나오는 조건은 `x-codes`에 전부 있다(#939) — 실행 상태 `run_not_terminal`,
+            `run_failed`, `run_cancelled`; Gold artifact `gold_unavailable`,
+            `artifact_missing`, `artifact_invalid`; spec 정책 `license_missing`,
+            `pii_allow_with_publish`; credential `credential_unavailable`,
+            `credential_required`; local target `local_publish_root_unconfigured`,
+            `destination_outside_publish_root`; Kaggle packaging
+            `kaggle_metadata_missing`, `kaggle_metadata_ambiguous`,
+            `kaggle_metadata_unreadable`, `kaggle_destination_mismatch`; 소스
+            재배포 조건 `redistribution_forbidden`, `redistribution_unknown`,
+            `non_commercial_unconfirmed`, `non_commercial_marker_missing`;
+            목적지 공개 여부(POST만) `destination_public`,
+            `destination_visibility_unknown`. 이 목록은 구현의
+            `PUBLISH_ISSUE_CODES`와 테스트로 맞춰진다. 예외로, 저장된 BuildSpec이
+            현재 검증 규칙을 통과하지 못하면 그 검증 문제 코드(`ValidationProblem.code`,
+            예 `source_key_path_collision`)가 그대로 blocker로 나올 수 있다 —
+            클라이언트는 모르는 코드를 일반 blocker로 표시해야 한다.
+          x-codes:
+            run_not_terminal: run이 아직 끝나지 않았다(queued/running/cancelling) (#491)
+            run_failed: run이 오류로 끝났다 (#491)
+            run_cancelled: run이 취소됐다 (#491)
+            gold_unavailable: >-
+              성공한 Gold 출력이 없거나, 끝난 run에 manifest가 없다 (#491)
+            artifact_missing: manifest.outputs의 Gold artifact가 디스크에 없다 (#491)
+            artifact_invalid: >-
+              canonical manifest.outputs 항목이 run 작업 공간을 벗어나거나(symlink
+              escape 포함) resolve할 수 없다 — fail-closed (#491)
+            license_missing: BuildSpec.license가 선언되지 않았다(공백만 있어도 미선언) (#443, #491)
+            pii_allow_with_publish: pii.mode가 allow인 spec은 게시할 수 없다 (#441)
+            credential_unavailable: 이 target에 쓸 credential이 없다 (#491)
+            credential_required: >-
+              요청자 자신의 credential이 필요하다 — 단일 사용자 배포에서
+              `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL=true`일 때 저장된
+              credential이 없거나(#635), 다중 사용자 배포에서
+              `X-Publish-Credential` 헤더가 없을 때(#925)
+            local_publish_root_unconfigured: >-
+              `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`가 설정되지 않아 local target을 쓸 수 없다 (#550)
+            destination_outside_publish_root: local destination이 publish root를 벗어난다 (#550)
+            kaggle_metadata_missing: run에 Kaggle packaging(dataset-metadata.json)이 없다 (#550)
+            kaggle_metadata_ambiguous: run에 Kaggle packaging이 둘 이상이다 (#550)
+            kaggle_metadata_unreadable: dataset-metadata.json을 읽을 수 없거나 id가 없다 (#550)
+            kaggle_destination_mismatch: packaging의 dataset id가 destination과 다르다 (#550)
+            redistribution_forbidden: 소스 조건이 재배포를 금지한다 (#688)
+            redistribution_unknown: 소스 조건을 알 수 없어 공개 게시할 수 없다 (#688)
+            non_commercial_unconfirmed: >-
+              비상업 조건인데 `options.confirm_non_commercial: true`가 없다 (#688)
+            non_commercial_marker_missing: >-
+              비상업 데이터의 공개 게시에 비상업 라이선스 표시(예 cc-by-nc-4.0)가 없다 (#688)
+            destination_public: >-
+              비공개로만 게시할 수 있는데 목적지가 이미 공개다 — POST에서만 (#688)
+            destination_visibility_unknown: >-
+              비공개로만 게시할 수 있는데 목적지 공개 여부를 읽을 수 없다 — POST에서만 (#688)
         message:
           type: string
 

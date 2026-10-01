@@ -78,6 +78,45 @@ _ALLOWED_OPTIONS: dict[str, dict[str, type]] = {
     "local": {"confirm_non_commercial": bool},
 }
 
+#: Every ``PublishIssue.code`` that readiness (``GET .../publish/readiness``) and publish
+#: (``POST .../publish``) can report as a blocker (#939). The contract lists the same
+#: codes under ``PublishIssue.code`` (``x-codes``), and a test fails when the two lists,
+#: or this list and the codes the source actually emits, disagree. A stored BuildSpec
+#: that no longer validates under today's rules can also surface its validation problem
+#: code here (``effective_publish_policy_blockers``); those are open-ended and not listed.
+PUBLISH_ISSUE_CODES: tuple[str, ...] = (
+    # Run state (#491)
+    "run_not_terminal",
+    "run_failed",
+    "run_cancelled",
+    # Gold artifacts (#491)
+    "gold_unavailable",
+    "artifact_missing",
+    "artifact_invalid",
+    # Spec policy (#443, #441, #491)
+    "license_missing",
+    "pii_allow_with_publish",
+    # Credentials (#491, #635, #925)
+    "credential_unavailable",
+    "credential_required",
+    # Local target (#550)
+    "local_publish_root_unconfigured",
+    "destination_outside_publish_root",
+    # Kaggle packaging (#550)
+    "kaggle_metadata_missing",
+    "kaggle_metadata_ambiguous",
+    "kaggle_metadata_unreadable",
+    "kaggle_destination_mismatch",
+    # Source redistribution terms (#688)
+    "redistribution_forbidden",
+    "redistribution_unknown",
+    "non_commercial_unconfirmed",
+    "non_commercial_marker_missing",
+    # Destination visibility, POST only (#688)
+    "destination_public",
+    "destination_visibility_unknown",
+)
+
 _DEFAULT_OPTIONS: dict[str, dict[str, object]] = {
     "huggingface": {"private": True},
     "kaggle": {"public": False},
@@ -1005,6 +1044,7 @@ def build_readiness(
 
 __all__ = [
     "HTTP_PUBLISH_TARGETS",
+    "PUBLISH_ISSUE_CODES",
     "PublishClaimStatus",
     "PublishIssue",
     "PublishReceipt",
