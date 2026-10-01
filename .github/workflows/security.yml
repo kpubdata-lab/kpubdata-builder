@@ -67,9 +67,46 @@ jobs:
             | grep " ${archive}\$" | sha256sum -c -
           tar xzf "${archive}" gitleaks
 
+      # Without --log-opts, gitleaks runs `git log --all`, which walks every ref
+      # fetch-depth: 0 pulled in — including unmerged PR branches that have nothing
+      # to do with this run (kpubdata-studio#685). Scope it to the commits this run
+      # is actually responsible for.
+      - name: Scope the scan to this run's own commits
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              # Only this PR's commits, base..head, so an unrelated open PR can't
+              # fail this one.
+              log_opts="${BASE_SHA}..${HEAD_SHA}"
+              ;;
+            push)
+              if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+                # A new branch: no prior tip to diff against, so scan what the
+                # branch brought in.
+                log_opts="$PUSH_SHA"
+              else
+                log_opts="${BEFORE_SHA}..${PUSH_SHA}"
+              fi
+              ;;
+            *)
+              # schedule, workflow_dispatch: no run-specific range, so scan the
+              # default branch's full history rather than every branch.
+              log_opts="origin/${DEFAULT_BRANCH}"
+              ;;
+          esac
+          echo "log-opts=${log_opts}" >> "$GITHUB_OUTPUT"
+
       # Findings judged harmless are listed, with the reason, in .gitleaksignore.
       - name: Scan the full history
-        run: ./gitleaks git . --redact --no-banner --log-level warn
+        run: ./gitleaks git . --redact --no-banner --log-level warn --log-opts="${{ steps.scope.outputs.log-opts }}"
 
   codeql:
     name: CodeQL (python)
