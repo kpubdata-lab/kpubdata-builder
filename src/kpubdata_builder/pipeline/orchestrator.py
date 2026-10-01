@@ -38,7 +38,6 @@ from ..artifact import ArtifactDataset
 from ..errors import DatasetValidationError, SpecLoadError, ValidationError
 from ..events import BuildEventRecorder, BuildEventStore
 from ..exporters import get_exporter
-from ..ingestion import IngestionError
 from ..manifest import (
     BuildManifest,
     CompositionProvenance,
@@ -83,7 +82,6 @@ from ..stages.gold.card import build_dataset_card
 from ..stages.gold.compose import CompositionError, build_composed_gold_package
 from ..stages.gold.persist import persist_gold_package
 from ..stages.gold.pii import (
-    PiiDeclarationError,
     PiiMaskResult,
     absent_core_pii_columns,
     apply_pii_masking,
@@ -93,7 +91,7 @@ from ..stages.gold.pii import (
     mask_columns,
     nulled_columns,
 )
-from ..stages.gold.select import GoldSelectionError, GoldSelectionResult, apply_gold_selection
+from ..stages.gold.select import GoldSelectionResult, apply_gold_selection
 from ..stages.gold.split import SPLIT_ALGORITHM
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.drift import (
@@ -129,6 +127,7 @@ from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .card_facts import card_source, personal_information, processing_steps, write_card
 from .context import BuildContext
 from .export import export_gold_package
+from .failures import public_failure_message
 
 logger = logging.getLogger(__name__)
 
@@ -982,32 +981,9 @@ def _run_source_pipeline(
             silver=captured_silver,
         )
     except Exception as exc:  # Convert stage failure to result for manifest
-        # ValidationError/DatasetValidationError include no filesystem paths,
-        # so message passed as-is. IngestionError (#498) also designed to
-        # carry only safe messages (no raw response body/internal stack) —
-        # SSRF block/oversize/corrupt file reasons visible to user immediately.
-        # Other BuildError subclasses (ExportError/ManifestError) may include
-        # internal info like destination paths, so log detailed message to
-        # server warning, return generic message to client (#225).
-        if isinstance(
-            exc,
-            (
-                ValidationError,
-                DatasetValidationError,
-                IngestionError,
-                GoldSelectionError,
-                PiiDeclarationError,
-            ),
-        ):
-            error_msg = str(exc)
-        else:
-            logger.error(
-                "source pipeline failed for %r: %s",
-                output_key,
-                exc,
-                exc_info=exc,
-            )
-            error_msg = f"pipeline failed for source {output_key!r}"
+        # Shared with preview (#954): allow-listed errors keep their message, any
+        # other is logged server-side and replaced with a generic one (#225).
+        error_msg = public_failure_message(exc, output_key)
         # Record failure event per last boundary actually reached (#496) —
         # completed list is authoritative for "how far did each stage get",
         # so next stage is the failed one. Unstarted stages don't record as

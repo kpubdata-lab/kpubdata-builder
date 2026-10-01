@@ -407,7 +407,7 @@ def test_run_build_redacts_path_from_unexpected_exception(
 
     import logging
 
-    with caplog.at_level(logging.ERROR, logger="kpubdata_builder.pipeline.orchestrator"):
+    with caplog.at_level(logging.ERROR, logger="kpubdata_builder.pipeline.failures"):
         result = run_build(spec, client=client, output_root=tmp_path, run_id="run1")
 
     outcome = result.outcomes[0]
