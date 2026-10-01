@@ -15,29 +15,67 @@ Principles (#486):
       that check from results — don't pretend it PASSed.
     - Threshold comparison is deterministic. LLM/AI interpretation doesn't touch
       this module.
-    - range/compare_columns use only Polars vectorized ops (no free-form eval).
+    - range/compare_columns run as DuckDB SQL over the Silver table (#872), the rule's
+      bounds bound as parameters — never free-form eval. Which columns a rule can
+      compare is decided here from their Builder dtypes, never by DuckDB's implicit
+      casts: ``range`` reads numeric columns (``RangeRule`` is a numeric rule), and
+      ``compare_columns`` compares two numeric columns or two of the same dtype. Any
+      other pairing is reported as not comparable — under Polars some were compared
+      silently (a date or boolean column against a number, a decimal against text).
+    - A DuckDB error never reaches the result: the detail is Builder's own sentence.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
-import polars as pl
+import duckdb
 
 from ..spec.models import CompareColumnsRule, JsonValue, QualityPolicy, RangeRule
 from ..stages.silver.models import SilverDataset
-from ..tabular.polars_bridge import to_polars
-from ..tabular.polars_helpers import DtypeSpec, _resolve_dtype
+from ..tabular.duckdb_load import TableHandle, canonical, node_of
 from .models import QualityCheckResult, QualityStatus
 
-_COMPARE_OPERATORS: dict[str, Callable[[pl.Expr, pl.Expr], pl.Expr]] = {
-    "eq": lambda left, right: left == right,
-    "ne": lambda left, right: left != right,
-    "gt": lambda left, right: left > right,
-    "gte": lambda left, right: left >= right,
-    "lt": lambda left, right: left < right,
-    "lte": lambda left, right: left <= right,
+#: A dtype spec: a name (``"int"``, ``"str"``, …) or, from library callers, a Polars dtype.
+DtypeSpec = object
+
+_COMPARE_OPERATORS: dict[str, str] = {
+    "eq": "=",
+    "ne": "<>",
+    "gt": ">",
+    "gte": ">=",
+    "lt": "<",
+    "lte": "<=",
 }
+_NUMERIC = frozenset({"int", "int128", "float", "decimal"})
+#: The dtype names a schema contract may declare, as ``tabular.polars_helpers`` reads them.
+_SCHEMA_DTYPES = (
+    "bool",
+    "boolean",
+    "date",
+    "datetime",
+    "float",
+    "float64",
+    "int",
+    "int64",
+    "str",
+    "string",
+    "utf8",
+)
+
+
+def _expected_dtype(spec: DtypeSpec) -> str:
+    """The Builder canonical dtype a schema contract declares (schema drift's own names)."""
+    if isinstance(spec, str):
+        normalized = spec.strip().lower()
+        if normalized not in _SCHEMA_DTYPES:
+            supported = ", ".join(sorted(_SCHEMA_DTYPES))
+            raise ValueError(f"Unsupported dtype: {spec!r}. Supported: {supported}")
+        return canonical(node_of(normalized))
+    # A Polars dtype from a library caller: its name is the canonical one.
+    from ..tabular.polars_helpers import _resolve_dtype
+
+    return str(_resolve_dtype(spec))  # type: ignore[arg-type]
 
 
 def _severity_status(violated: bool, severity: str) -> QualityStatus:
@@ -57,7 +95,7 @@ def _compare_threshold(rule: CompareColumnsRule) -> dict[str, JsonValue]:
 
 
 def _schema_results(
-    table: pl.DataFrame,
+    table: TableHandle,
     *,
     source_key: str,
     required_columns: Sequence[str],
@@ -83,11 +121,12 @@ def _schema_results(
                 threshold=True,
             )
         )
+    dtypes = dict(zip(table.columns, table.dtypes, strict=True))
     for col, expected_spec in (column_dtypes or {}).items():
         if col not in columns:
             continue  # Column itself does not exist so dtype cannot be checked — no PASS made.
-        expected = _resolve_dtype(expected_spec)
-        actual_dtype = table.schema[col]
+        expected = _expected_dtype(expected_spec)
+        actual_dtype = dtypes[col]
         results.append(
             QualityCheckResult(
                 source_key=source_key,
@@ -172,44 +211,65 @@ def _min_rows_result(
     )
 
 
+def _node(table: TableHandle, column: str) -> tuple[object, ...]:
+    return table.table.nodes[table.table.names.index(column)]
+
+
+def _dtype(table: TableHandle, column: str) -> str:
+    return table.table.dtypes[table.table.names.index(column)]
+
+
+def _counts(
+    table: TableHandle, evaluated: str, passing: str, params: list[object]
+) -> tuple[int, int]:
+    """Rows where ``evaluated`` holds, and of those, rows where ``passing`` holds."""
+    (row,) = table.fetch(
+        f"SELECT count(*) FILTER (WHERE {evaluated}), "
+        f"count(*) FILTER (WHERE {evaluated} AND ({passing})) FROM {table.table.relation.sql}",
+        params,
+    )
+    return int(row[0]), int(row[1])
+
+
 def _range_result(
-    table: pl.DataFrame, rule: RangeRule, *, source_key: str
+    table: TableHandle, rule: RangeRule, *, source_key: str
 ) -> QualityCheckResult | None:
     if rule.column not in table.columns:
         return None
-    non_null = table.filter(pl.col(rule.column).is_not_null())
-    evaluated_rows = non_null.height
-    if evaluated_rows == 0:
-        return None
-    conditions: list[pl.Expr] = []
-    if rule.min is not None:
-        conditions.append(pl.col(rule.column) >= rule.min)
-    if rule.max is not None:
-        conditions.append(pl.col(rule.column) <= rule.max)
-    if not conditions:
+    if rule.min is None and rule.max is None:
         # Both min/max absent — no boundary to check. validate_spec already rejects this config
         # (empty_range_rule), but evaluator doesn't depend on that call.
         return None
-    condition = conditions[0]
-    for extra in conditions[1:]:
-        condition = condition & extra
+    column = table.table.column(rule.column)
+    conditions: list[str] = []
+    params: list[object] = []
+    for op, bound in ((">=", rule.min), ("<=", rule.max)):
+        if bound is not None:
+            conditions.append(f"{column} {op} ?")
+            params.append(bound)
+    not_comparable = QualityCheckResult(
+        source_key=source_key,
+        category="range",
+        rule="range",
+        column=rule.column,
+        status=_severity_status(True, rule.severity),
+        actual=None,
+        threshold=_range_threshold(rule),
+        affected_rows=None,
+        evaluated_rows=None,
+        detail=(f"column dtype {_dtype(table, rule.column)} cannot be compared with numeric range"),
+    )
+    present = f"{column} IS NOT NULL"
     try:
-        passing = non_null.filter(condition).height
-    except pl.exceptions.PolarsError:
-        return QualityCheckResult(
-            source_key=source_key,
-            category="range",
-            rule="range",
-            column=rule.column,
-            status=_severity_status(True, rule.severity),
-            actual=None,
-            threshold=_range_threshold(rule),
-            affected_rows=None,
-            evaluated_rows=None,
-            detail=(
-                f"column dtype {table.schema[rule.column]} cannot be compared with numeric range"
-            ),
-        )
+        if _node(table, rule.column)[0] not in _NUMERIC:
+            evaluated_rows, _ = _counts(table, present, "true", [])
+            # Nothing to compare is not a violation; a value of another kind is.
+            return None if evaluated_rows == 0 else not_comparable
+        evaluated_rows, passing = _counts(table, present, " AND ".join(conditions), params)
+    except duckdb.Error:
+        return not_comparable
+    if evaluated_rows == 0:
+        return None
     affected_rows = evaluated_rows - passing
     return QualityCheckResult(
         source_key=source_key,
@@ -224,34 +284,48 @@ def _range_result(
     )
 
 
+def _comparable(table: TableHandle, left: str, right: str) -> bool:
+    """Two numeric columns, or two of the same dtype."""
+    if _node(table, left)[0] in _NUMERIC and _node(table, right)[0] in _NUMERIC:
+        return True
+    kind = _node(table, left)[0]
+    return _dtype(table, left) == _dtype(table, right) and kind not in ("list", "struct", "null")
+
+
 def _compare_columns_result(
-    table: pl.DataFrame, rule: CompareColumnsRule, *, source_key: str
+    table: TableHandle, rule: CompareColumnsRule, *, source_key: str
 ) -> QualityCheckResult | None:
     if rule.left not in table.columns or rule.right not in table.columns:
         return None
-    both = table.filter(pl.col(rule.left).is_not_null() & pl.col(rule.right).is_not_null())
-    evaluated_rows = both.height
+    left = table.table.column(rule.left)
+    right = table.table.column(rule.right)
+    not_comparable = QualityCheckResult(
+        source_key=source_key,
+        category="compare_columns",
+        rule="compare_columns",
+        column=f"{rule.left},{rule.right}",
+        status=_severity_status(True, rule.severity),
+        actual=None,
+        threshold=_compare_threshold(rule),
+        affected_rows=None,
+        evaluated_rows=None,
+        detail=(
+            f"column dtypes {_dtype(table, rule.left)} and {_dtype(table, rule.right)} "
+            f"cannot be compared with operator {rule.operator}"
+        ),
+    )
+    both = f"{left} IS NOT NULL AND {right} IS NOT NULL"
+    try:
+        if not _comparable(table, rule.left, rule.right):
+            evaluated_rows, _ = _counts(table, both, "true", [])
+            return None if evaluated_rows == 0 else not_comparable
+        evaluated_rows, satisfied = _counts(
+            table, both, f"{left} {_COMPARE_OPERATORS[rule.operator]} {right}", []
+        )
+    except duckdb.Error:
+        return not_comparable
     if evaluated_rows == 0:
         return None
-    comparator = _COMPARE_OPERATORS[rule.operator]
-    try:
-        satisfied = both.filter(comparator(pl.col(rule.left), pl.col(rule.right))).height
-    except pl.exceptions.PolarsError:
-        return QualityCheckResult(
-            source_key=source_key,
-            category="compare_columns",
-            rule="compare_columns",
-            column=f"{rule.left},{rule.right}",
-            status=_severity_status(True, rule.severity),
-            actual=None,
-            threshold=_compare_threshold(rule),
-            affected_rows=None,
-            evaluated_rows=None,
-            detail=(
-                f"column dtypes {table.schema[rule.left]} and {table.schema[rule.right]} "
-                f"cannot be compared with operator {rule.operator}"
-            ),
-        )
     affected_rows = evaluated_rows - satisfied
     return QualityCheckResult(
         source_key=source_key,
@@ -291,8 +365,7 @@ def evaluate_quality(
     Returns:
         Tuple of QualityCheckResult. Contains only actually-evaluated checks (PASS included).
     """
-    # Quality still reads a Polars frame until it runs on DuckDB (#872).
-    table = to_polars(silver.table)
+    table = silver.table
     results: list[QualityCheckResult] = _schema_results(
         table,
         source_key=source_key,

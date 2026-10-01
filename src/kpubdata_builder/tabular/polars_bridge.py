@@ -166,7 +166,19 @@ def _as_stored(column: pl.Expr, node: Node) -> pl.Expr:
         return column.cast(pl.Int32)
     if node[0] == "duration":
         return column.dt.total_microseconds()
+    if node[0] == "int128":
+        # Parquet has no 128-bit integer Polars writes and DuckDB reads as one: carried
+        # as exact text and cast to HUGEINT on load.
+        return column.cast(pl.String)
     return column.dt.convert_time_zone("UTC").dt.replace_time_zone(None)
+
+
+def _loaded(physical: str, node: Node) -> str:
+    """A spilled column as the table holds it (the reverse of :func:`_as_stored`'s text)."""
+    column = quote_identifier(physical)
+    if node[0] == "int128":
+        return f"CAST({column} AS HUGEINT) AS {column}"
+    return column
 
 
 def handle_from_frame(
@@ -197,7 +209,7 @@ def handle_from_frame(
             renamed = renamed.with_columns(
                 _as_stored(pl.col(p), node)
                 for p, node in zip(physical, nodes, strict=True)
-                if node[0] in ("null", "duration")
+                if node[0] in ("null", "duration", "int128")
                 or (node[0] == "datetime" and node[1] is not None)
             )
             renamed.write_parquet(path)
@@ -205,7 +217,7 @@ def handle_from_frame(
             # ordinal (ADR 0021 D8).
             connection.execute(
                 f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT file_row_number AS {seq}, "
-                f"{', '.join(quote_identifier(p) for p in physical)} "
+                f"{', '.join(_loaded(p, node) for p, node in zip(physical, nodes, strict=True))} "
                 "FROM read_parquet(?, file_row_number = true)",
                 [str(path)],
             )
