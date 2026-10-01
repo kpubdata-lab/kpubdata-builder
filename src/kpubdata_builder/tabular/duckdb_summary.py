@@ -1,4 +1,4 @@
-"""Schema, statistics and preview of a DuckDB table, as ``polars_engine`` gives them (#869).
+"""Schema, statistics and preview of a DuckDB table, as the Polars engine gave them (#869).
 
 The meanings are the ones Silver has always recorded:
 

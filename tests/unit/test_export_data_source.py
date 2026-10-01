@@ -17,9 +17,8 @@ from kpubdata_builder.exporters.base import ensure_output_dir
 from kpubdata_builder.pipeline.export import TableSource, export_gold_package
 from kpubdata_builder.spec import ExportTarget
 from kpubdata_builder.stages.gold import ExportPlan, GoldPackage
-from kpubdata_builder.tabular import polars_bridge
 from kpubdata_builder.tabular.duckdb_load import TableHandle
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+from tests.support.polars_bridge import handle_from_frame
 
 _FRAME = pl.DataFrame(
     {"id": [str(i) for i in range(2500)], "v": list(range(2500)), "note": ["=1+1"] * 2500}
@@ -76,7 +75,6 @@ def test_the_canonical_export_path_never_materializes_the_table(
         raise AssertionError("the export read the whole table into a frame")
 
     monkeypatch.setattr(TableHandle, "iter_rows", spy)
-    monkeypatch.setattr(polars_bridge, "to_polars", refuse)
     monkeypatch.setattr(TableHandle, "rows", refuse)
 
     paths = export_gold_package(package, output_dir=tmp_path / "gold", table_path=table_path)

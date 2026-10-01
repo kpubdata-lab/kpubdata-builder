@@ -48,7 +48,7 @@ COPY README.md LICENSE ./
 #
 # EXTRAS: 배포 이미지에 포함할 optional extra 그룹(#373).
 # 기본값 publish — HuggingFace/Kaggle publish 타깃이 런타임 ImportError로 실패하지 않도록.
-# exporter(parquet/huggingface layout)는 polars/표준 라이브러리만 쓰므로 extras 없이 동작하지만,
+# exporter(parquet/huggingface layout)는 duckdb/표준 라이브러리만 쓰므로 extras 없이 동작하지만,
 # publisher(huggingface_hub/kaggle)는 publish extra가 필요하다.
 # 여러 extra는 공백으로(예: --build-arg EXTRAS="publish parquet"), 빈 값(--build-arg EXTRAS=)이면 extra 없음.
 # CUBRID 상태 백엔드(ADR 0016)로 배포하려면 cubrid extra를 포함한다:

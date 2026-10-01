@@ -322,8 +322,8 @@ def _preview_source(
 
         total_rows = silver.statistics.row_count
         # Diff alignment basis is NOT count but Bronze→Silver row-preserving invariant:
-        # normalize_table() calls records_to_dataframe() (construct pl.DataFrame in
-        # original record order) then only column-level operations. null_tokens/coalesce/
+        # normalize_table() loads the records in their original order (duckdb_load, the
+        # row ordinal) then only column-level operations. null_tokens/coalesce/
         # rename/zfill/cast_columns/derived all preserve row count, changing only values/
         # column structure (#620: coalesce removes candidate *columns*, not rows);
         # validate_table() never touches table — no step filters/dedups/reorders rows

@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import polars as pl
 
-from .convert import dataframe_to_records, records_to_dataframe
-from .types import ColumnInfo, PreviewSlice, SchemaInfo, TableStatistics
-from .wire import logical_type, wire_encoding
-
-DEFAULT_PREVIEW_LIMIT = 5
+from kpubdata_builder.tabular.types import (
+    DEFAULT_PREVIEW_LIMIT,
+    ColumnInfo,
+    PreviewSlice,
+    SchemaInfo,
+    TableStatistics,
+)
+from tests.support.polars_convert import dataframe_to_records, records_to_dataframe
+from tests.support.polars_wire import logical_type, wire_encoding
 
 
 def infer_schema(df: pl.DataFrame) -> SchemaInfo:
@@ -88,17 +92,7 @@ def generate_preview(df: pl.DataFrame, limit: int = DEFAULT_PREVIEW_LIMIT) -> Pr
     return PreviewSlice(rows=rows, total_rows=df.height)
 
 
-def artifact_writer() -> dict[str, str]:
-    """The engine that writes Gold tables, for a manifest's ``artifact_writer`` (#867).
-
-    The same rows written by another engine, or another version of this one, can be
-    different bytes; naming the writer next to the digest says why a digest moved.
-    """
-    return {"name": "polars", "version": pl.__version__}
-
-
 __all__ = [
-    "artifact_writer",
     "DEFAULT_PREVIEW_LIMIT",
     "compute_statistics",
     "dataframe_to_records",

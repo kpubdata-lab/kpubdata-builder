@@ -3,8 +3,7 @@
 refined result of Bronze raw records as a DuckDB table (#869), and schema/statistics/
 preview/validation information together. The table is a ``TableHandle`` — a table in the
 source's DuckDB connection with each column's Builder dtype; the connection itself is
-not part of the model. Stages not yet on DuckDB read it through
-``tabular.polars_bridge.to_polars``.
+not part of the model.
 
 main components:
     - ValidationProblem: individual validation violations (structured objects, #261)

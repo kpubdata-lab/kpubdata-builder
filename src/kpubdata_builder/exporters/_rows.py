@@ -67,3 +67,55 @@ def copy_atomically(source: Path, destination: Path) -> None:
 
 
 __all__ = ["BATCH_SIZE", "copy_atomically", "resolve_columns", "write_text_atomically"]
+
+
+#: A declared schema's type names (the spec's and Builder's) → DuckDB, for a source
+#: with a schema but no rows; anything else is text.
+_EMPTY_TYPES = {
+    "str": "VARCHAR",
+    "String": "VARCHAR",
+    "Utf8": "VARCHAR",
+    "int": "BIGINT",
+    "Int64": "BIGINT",
+    "Int32": "INTEGER",
+    "float": "DOUBLE",
+    "Float64": "DOUBLE",
+    "Float32": "FLOAT",
+    "bool": "BOOLEAN",
+    "Boolean": "BOOLEAN",
+}
+
+
+def write_records_parquet(artifact: ArtifactDataset, destination: Path) -> None:
+    """The rows of a data source without a Parquet file, written as Parquet by DuckDB.
+
+    Their dtypes are inferred as the loader infers them (``duckdb_load.load_records``).
+    A source with no rows is written with its declared schema's columns, typed.
+    """
+    import duckdb
+
+    from ..tabular.duckdb_load import TableHandle, load_records
+    from ..tabular.sql import quote_identifier, quote_literal
+
+    with (
+        tempfile.TemporaryDirectory(prefix="kpubdata-export-") as workdir,
+        duckdb.connect(":memory:") as connection,
+    ):
+        connection.execute("SET TimeZone = 'UTC'")
+        loaded = load_records(
+            connection,
+            lambda: artifact.data_source.iter_records(batch_size=BATCH_SIZE),
+            table="export_rows",
+            workdir=Path(workdir),
+        )
+        if loaded.row_count == 0 and artifact.schema:
+            columns = ", ".join(
+                f"CAST(NULL AS {_EMPTY_TYPES.get(dtype, 'VARCHAR')}) AS {quote_identifier(name)}"
+                for name, dtype in artifact.schema.items()
+            )
+            connection.execute(
+                f"COPY (SELECT {columns} WHERE false) TO {quote_literal(str(destination))} "
+                "(FORMAT PARQUET)"
+            )
+            return
+        TableHandle(connection, loaded, Path(workdir)).write_parquet(destination)

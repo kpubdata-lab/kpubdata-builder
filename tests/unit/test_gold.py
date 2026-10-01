@@ -19,7 +19,7 @@ from kpubdata_builder.stages.gold import (
     persist_gold_package,
 )
 from kpubdata_builder.stages.silver import SilverDataset, build_silver_dataset
-from kpubdata_builder.tabular.polars_bridge import to_polars
+from tests.support.polars_bridge import to_polars
 
 
 def _silver(records: tuple[Mapping[str, JsonValue], ...]) -> SilverDataset:

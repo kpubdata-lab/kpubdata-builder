@@ -28,14 +28,13 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
 from ..tabular.sql import quote_identifier
 
 if TYPE_CHECKING:
-    import polars as pl
-
     from .result import WireResult
     from .sandbox import Sandbox
 
@@ -205,28 +204,59 @@ def parse_rows_plan(body: Mapping[str, JsonValue]) -> RowsPlan:
     )
 
 
-def typed_literal(value: JsonValue, dtype: pl.DataType) -> object:
+def table_dtypes(table_path: str | Path) -> dict[str, str]:
+    """Each column of a Builder table file and its Builder dtype, read from the file's
+    metadata only (``duckdb_load.parquet_columns``).
+
+    Raises:
+        OSError: The file cannot be read.
+        ValueError: It is not a Parquet file Builder can read.
+    """
+    import duckdb
+
+    from ..tabular.duckdb_load import parquet_columns
+
+    with duckdb.connect(":memory:") as connection:
+        try:
+            columns = parquet_columns(connection, table_path)
+        except duckdb.IOException as exc:
+            raise OSError(f"cannot read {table_path}") from exc
+        except duckdb.Error as exc:
+            raise ValueError("not a readable table file") from exc
+    return dict(zip(columns.names, columns.dtypes, strict=True))
+
+
+def typed_literal(value: JsonValue, dtype: str) -> object:
     """``value`` as a value of the column's type, or ValueError when it does not fit.
 
     A client sends a Decimal or a large integer as its exact text and a date as ISO 8601
     — the way it received them — so text is cast to the column's type rather than
-    compared as text.
+    compared as text. The cast is the one the query runs (``_sql_predicate``), done
+    here first so a value that cannot fit is the client's error, not a failed query.
     """
-    import polars as pl
+    import duckdb
+
+    from ..tabular.dtypes import scalar_sql_type
 
     if isinstance(value, (dict, list)):
         raise ValueError("a filter value must be a scalar")
-    try:
-        series = pl.Series([value]).cast(dtype, strict=True)
-    except Exception as exc:  # polars raises several unrelated error types here
-        raise ValueError(f"{value!r} is not a valid {dtype}") from exc
-    if series.null_count():
+    storage = scalar_sql_type(dtype)
+    with duckdb.connect(":memory:") as connection:
+        connection.execute("SET TimeZone = 'UTC'")
+        try:
+            row = connection.execute(f"SELECT CAST(? AS {storage})", [value]).fetchone()
+        except duckdb.Error as exc:
+            raise ValueError(f"{value!r} is not a valid {dtype}") from exc
+    if row is None or row[0] is None:
         raise ValueError(f"{value!r} is not a valid {dtype}")
-    return series.item()
+    return row[0]
 
 
-def check_plan(plan: RowsPlan, schema: Mapping[str, pl.DataType]) -> None:
-    """Refuse a plan that names a column the snapshot lacks or a value that cannot fit."""
+def check_plan(plan: RowsPlan, schema: Mapping[str, str]) -> None:
+    """Refuse a plan that names a column the snapshot lacks or a value that cannot fit.
+
+    ``schema`` is each column's Builder dtype (:func:`table_dtypes`).
+    """
     if ROW_ORDER_COLUMN in schema:
         raise ValueError(f"the table has a column named {ROW_ORDER_COLUMN}, which is reserved")
     named = [
@@ -240,47 +270,6 @@ def check_plan(plan: RowsPlan, schema: Mapping[str, pl.DataType]) -> None:
     for f in plan.filters:
         for value in (f.value,) if f.op in _VALUE_OPS else f.values:
             typed_literal(value, schema[f.column])
-
-
-def filter_predicate(
-    filters: Sequence[RowFilter], schema: Mapping[str, pl.DataType]
-) -> pl.Expr | None:
-    import polars as pl
-
-    expressions: list[pl.Expr] = []
-    for f in filters:
-        column = pl.col(f.column)
-        dtype = schema[f.column]
-        if f.op == "is_null":
-            expressions.append(column.is_null())
-        elif f.op == "is_not_null":
-            expressions.append(column.is_not_null())
-        elif f.op == "in":
-            # Equalities rather than `is_in`, whose collection semantics changed across
-            # the Polars 1.x range this package allows. At most MAX_IN_VALUES terms.
-            expressions.append(
-                pl.any_horizontal(
-                    [column == pl.lit(typed_literal(v, dtype), dtype=dtype) for v in f.values]
-                )
-            )
-        else:
-            literal = pl.lit(typed_literal(f.value, dtype), dtype=dtype)
-            expressions.append(
-                {
-                    "eq": column == literal,
-                    "ne": column != literal,
-                    "lt": column < literal,
-                    "lte": column <= literal,
-                    "gt": column > literal,
-                    "gte": column >= literal,
-                }[f.op]
-            )
-    if not expressions:
-        return None
-    combined = expressions[0]
-    for expression in expressions[1:]:
-        combined = combined & expression
-    return combined
 
 
 def _sql_predicate(
@@ -427,7 +416,6 @@ __all__ = [
     "RowsPlan",
     "SortKey",
     "check_plan",
-    "filter_predicate",
     "parse_filters",
     "parse_rows_plan",
     "read_page",

@@ -14,15 +14,14 @@ from decimal import Decimal
 import polars as pl
 import pytest
 
-from kpubdata_builder.tabular.polars_engine import infer_schema
 from kpubdata_builder.tabular.wire import (
     JS_SAFE_INTEGER,
     column_meta,
     encode_rows,
     encode_value,
-    logical_type,
-    wire_encoding,
 )
+from tests.support.polars_engine import infer_schema
+from tests.support.polars_wire import logical_type, wire_encoding
 
 FIRST_UNSAFE = 9007199254740993
 INT64_MAX = 2**63 - 1

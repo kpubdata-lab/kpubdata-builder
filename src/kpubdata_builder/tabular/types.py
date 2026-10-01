@@ -16,6 +16,9 @@ from dataclasses import dataclass
 
 from ..spec import JsonValue
 
+#: Rows a preview holds unless asked for another number.
+DEFAULT_PREVIEW_LIMIT = 5
+
 
 @dataclass(frozen=True)
 class ColumnInfo:
@@ -78,6 +81,7 @@ class PreviewSlice:
 
 
 __all__ = [
+    "DEFAULT_PREVIEW_LIMIT",
     "ColumnInfo",
     "PreviewSlice",
     "SchemaInfo",

@@ -17,8 +17,9 @@ from kpubdata_builder.quality import evaluate_quality
 from kpubdata_builder.quality.models import QualityCheckResult
 from kpubdata_builder.spec.models import CompareColumnsRule, QualityPolicy, RangeRule
 from kpubdata_builder.stages.silver.models import SilverDataset, ValidationResult
-from kpubdata_builder.tabular import PreviewSlice, compute_statistics, infer_schema
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+from kpubdata_builder.tabular import PreviewSlice
+from tests.support.polars_bridge import handle_from_frame
+from tests.support.polars_engine import compute_statistics, infer_schema
 
 
 def _silver(df: pl.DataFrame) -> SilverDataset:

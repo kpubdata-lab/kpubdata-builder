@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-import polars as pl
+import duckdb
 import pytest
 
 from kpubdata_builder.manifest import checksums, compute_data_checksum, compute_inputs_fingerprint
@@ -349,7 +349,8 @@ def test_a_manifest_names_its_algorithms_and_digests_its_artifacts(tmp_path: Pat
     assert manifest["inputs_fingerprint_algorithm"] == FINGERPRINT_ALGORITHM
     artifact = manifest["artifacts"]["t"]  # type: ignore[index]
     assert artifact["artifact_digest"] == content_digest(tmp_path / "r1" / "gold" / "t")
-    assert artifact["artifact_writer"] == {"name": "polars", "version": pl.__version__}
+    # Gold is written by DuckDB (#870); the manifest names it since #876.
+    assert artifact["artifact_writer"] == {"name": "duckdb", "version": duckdb.__version__}
 
 
 def test_bytes_and_data_are_told_apart(tmp_path: Path) -> None:

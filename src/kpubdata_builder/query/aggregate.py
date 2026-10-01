@@ -45,11 +45,10 @@ from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
+from ..tabular.dtypes import is_nested, is_numeric, is_temporal
 from .rows import RowFilter, parse_filters, typed_literal
 
 if TYPE_CHECKING:
-    import polars as pl
-
     from .result import WireResult
     from .sandbox import Sandbox
 
@@ -271,12 +270,11 @@ def parse_aggregate_plan(body: Mapping[str, JsonValue]) -> AggregatePlan:
     return plan
 
 
-def _is_nested(dtype: pl.DataType) -> bool:
-    return bool(dtype.is_nested()) or str(dtype).startswith("Object")
+def check_aggregate_plan(plan: AggregatePlan, schema: Mapping[str, str]) -> None:
+    """Refuse a plan that names a missing column or aggregates a column it cannot.
 
-
-def check_aggregate_plan(plan: AggregatePlan, schema: Mapping[str, pl.DataType]) -> None:
-    """Refuse a plan that names a missing column or aggregates a column it cannot."""
+    ``schema`` is each column's Builder dtype (``rows.table_dtypes``).
+    """
     reserved = sorted({_UNITS_N, _UNITS} & set(schema))
     if reserved:
         raise ValueError(f"the table has reserved column names: {reserved}")
@@ -290,18 +288,18 @@ def check_aggregate_plan(plan: AggregatePlan, schema: Mapping[str, pl.DataType])
     if missing:
         raise ValueError(f"no such columns: {missing}")
     for column in (*plan.group_by, *((plan.unit_column,) if plan.unit_column else ())):
-        if _is_nested(schema[column]):
+        if is_nested(schema[column]):
             raise ValueError(f"cannot group by {column!r}, a {schema[column]} column")
     for m in plan.measures:
         if m.column is None:
             continue
         dtype = schema[m.column]
-        if _is_nested(dtype):
+        if is_nested(dtype):
             raise ValueError(f"cannot aggregate {m.column!r}, a {dtype} column")
-        if m.fn in _NUMERIC_FNS and not dtype.is_numeric():
+        if m.fn in _NUMERIC_FNS and not is_numeric(dtype):
             raise ValueError(f"{m.fn} needs a numeric column; {m.column!r} is {dtype}")
         if m.fn in _ORDERED_FNS and not (
-            dtype.is_numeric() or dtype.is_temporal() or str(dtype) in ("String", "Utf8")
+            is_numeric(dtype) or is_temporal(dtype) or dtype in ("String", "Utf8")
         ):
             raise ValueError(f"{m.fn} needs an ordered column; {m.column!r} is {dtype}")
     for f in plan.filters:

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+import duckdb
 import yaml
 
 from ..artifact import ArtifactDataset
@@ -117,10 +118,13 @@ from ..stages.silver.models import SilverDataset
 from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
 from ..tabular import DEFAULT_PREVIEW_LIMIT
-from ..tabular.duckdb_load import TableHandle
-from ..tabular.duckdb_runtime import build_connection, clear_temp_root, worker_temp_directory
-from ..tabular.polars_bridge import handle_from_frame, to_polars
-from ..tabular.polars_engine import artifact_writer
+from ..tabular.duckdb_load import TableHandle, load_parquet
+from ..tabular.duckdb_runtime import (
+    artifact_writer,
+    build_connection,
+    clear_temp_root,
+    worker_temp_directory,
+)
 from ..tabular.wire import encode_rows
 from ..uploads import UploadRepository
 from ..warehouse import (
@@ -619,6 +623,8 @@ class _SourcePipelineResult:
     # empty schema_drift alone cannot tell "nothing changed" from "no baseline".
     drift_evaluation: tuple[DriftEvaluation, ...] = ()
     silver: SilverDataset | None = None
+    #: The Silver table file, which a composition reads its side from (#876).
+    silver_table_path: Path | None = None
     #: What ``sources[].gold`` did to this source (#659); None when it declares none.
     gold_selection: GoldSelectionResult | None = None
     #: Silver columns declared PII, with where each declaration came from (#689). A
@@ -676,6 +682,7 @@ def _run_source_pipeline(
     provenance_entry: SourceProvenance | None = None
     evaluated_row_count: int | None = None
     captured_silver: SilverDataset | None = None
+    captured_silver_path: Path | None = None
     # Structured Quality/Schema results survive exceptions (schema validation
     # failure, quality FAIL, etc.) and outlive the source failure outcome
     # (#486) — quality_results won't be lost due to exceptions below.
@@ -963,10 +970,10 @@ def _run_source_pipeline(
         # composition (#506) uses this value directly for join, so validated
         # data only.
         if capture_silver:
-            # Composition reads this after the source's connection has closed: take its
-            # frame now, while the table is there (#869).
-            to_polars(silver.table, keep=True)
+            # Composition reads the persisted table file after this source's connection
+            # has closed (#876).
             captured_silver = silver
+            captured_silver_path = silver_paths.table_path
         _record_output_paths(
             outputs,
             silver_paths.table_path,
@@ -1109,6 +1116,7 @@ def _run_source_pipeline(
             schema_drift=schema_drift,
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
+            silver_table_path=captured_silver_path,
             gold_selection=gold_selection,
             pii_declared=pii_declared,
             pii_masking=pii_masking,
@@ -1134,6 +1142,7 @@ def _run_source_pipeline(
             schema_drift=schema_drift,
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
+            silver_table_path=captured_silver_path,
         )
     except Exception as exc:  # Convert stage failure to result for manifest
         # Shared with preview (#954): allow-listed errors keep their message, any
@@ -1168,6 +1177,7 @@ def _run_source_pipeline(
             schema_drift=schema_drift,
             drift_evaluation=drift_evaluation,
             silver=captured_silver,
+            silver_table_path=captured_silver_path,
         )
     finally:
         # The connection first: its tables and temp files go before the staged records.
@@ -1231,6 +1241,25 @@ def _mask_composition_inputs(
     return masked_left, masked_right, key_columns, PiiMaskResult(masked=masked, unmasked={})
 
 
+def _load_side(
+    connection: duckdb.DuckDBPyConnection,
+    silver: SilverDataset,
+    path: Path | None,
+    workdir: Path,
+    side: int,
+) -> TableHandle:
+    """One side of a composition as a table of ``connection``, from its Silver file.
+
+    Without a file (a Silver built in memory, library use), its open table is written
+    to one first.
+    """
+    if path is None:
+        workdir.mkdir(parents=True, exist_ok=True)
+        path = workdir / f"side{side}.parquet"
+        silver.table.write_parquet(path)
+    return TableHandle(connection, load_parquet(connection, path, table=f"side{side}"), workdir)
+
+
 def _run_composition(
     composition: CompositionSpec,
     *,
@@ -1238,6 +1267,7 @@ def _run_composition(
     context: BuildContext,
     pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]] | None = None,
     provenance_by_key: Mapping[str, SourceProvenance] | None = None,
+    silver_paths: Mapping[str, Path] | None = None,
 ) -> _CompositionPipelineResult:
     """Execute composition (join) and persist combined Gold outputs (#506).
 
@@ -1266,13 +1296,15 @@ def _run_composition(
     run_dir = context.output_root / context.run_id
     worker = "composition"
     with build_connection(run_dir, composition.name, worker) as connection:
-        # The sources' connections closed with them; each Silver table's frame was kept
-        # for this (#869) and is loaded into the composition's own connection (#870).
+        # The sources' connections closed with them; each side is read back from its
+        # Silver table file into the composition's own connection (#870, #876).
         workdir = worker_temp_directory(run_dir, composition.name, worker)
         left_silver, right_silver = silver_by_key[join.left], silver_by_key[join.right]
         sides = tuple(
-            handle_from_frame(to_polars(silver.table), connection=connection, workdir=workdir)
-            for silver in (left_silver, right_silver)
+            _load_side(connection, silver, (silver_paths or {}).get(alias), workdir, side)
+            for side, (alias, silver) in enumerate(
+                ((join.left, left_silver), (join.right, right_silver))
+            )
         )
         return _compose(
             composition,
@@ -1643,6 +1675,7 @@ def run_build(
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = {}
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = {}
     silver_by_key: dict[str, SilverDataset] = {}
+    silver_paths: dict[str, Path] = {}
     gold_selection: dict[str, GoldSelectionResult] = {}
     pii_declared: dict[str, Mapping[str, tuple[str, ...]]] = {}
     pii_masking: dict[str, PiiMaskResult] = {}
@@ -1688,6 +1721,8 @@ def run_build(
             drift_evaluation[result.outcome.source_key] = result.drift_evaluation
         if result.silver is not None:
             silver_by_key[result.outcome.source_key] = result.silver
+        if result.silver_table_path is not None:
+            silver_paths[result.outcome.source_key] = result.silver_table_path
 
     # ---- Final safety boundary (#481)-----------------------------------------
     #
@@ -1717,6 +1752,7 @@ def run_build(
             composition_result = _run_composition(
                 spec.composition,
                 silver_by_key=silver_by_key,
+                silver_paths=silver_paths,
                 context=context,
                 pii_declared=pii_declared,
                 provenance_by_key=provenance_by_key,

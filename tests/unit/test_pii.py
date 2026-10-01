@@ -15,7 +15,7 @@ import pytest
 from kpubdata_builder.query.export import _PiiScan
 from kpubdata_builder.stages.silver.pii import PiiFinding, scan_pii_values
 from kpubdata_builder.stages.silver.pii import scan_pii as _scan_table
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+from tests.support.polars_bridge import handle_from_frame
 
 
 def scan_pii(table: pl.DataFrame) -> list[PiiFinding]:

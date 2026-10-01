@@ -144,11 +144,11 @@ def test_the_masked_silver_copy_keeps_every_builder_dtype(tmp_path: Path, name: 
     from kpubdata_builder.query.service import QueryService
     from kpubdata_builder.service.pii_reads import masked_silver_table
     from kpubdata_builder.service.query_service_api import execute_query
-    from kpubdata_builder.tabular.builder_parquet import (
+    from kpubdata_builder.tabular.duckdb_load import TableHandle, load_records
+    from tests.support.builder_parquet import (
         builder_dtypes,
         read_builder_parquet_schema,
     )
-    from kpubdata_builder.tabular.duckdb_load import TableHandle, load_records
 
     from .test_duckdb_load import CASES
 

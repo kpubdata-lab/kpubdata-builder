@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from ..errors import ValidationError
 from ..exporters import EXPORTER_REGISTRY
-from ..tabular.polars_helpers import _FORMATTED_CASTS, _NAMED_DTYPES, TEXT_CASTS
+from ..tabular.cast_names import FORMATTED_CASTS, NAMED_TARGETS, TEXT_CASTS
 from .models import (
     DERIVED_KINDS,
     ON_ABSENT_POLICIES,
@@ -239,18 +239,18 @@ def _split_problems(spec: BuildSpec) -> list[ValidationProblem]:
 def _schema_problems(spec: BuildSpec) -> list[ValidationProblem]:
     """Validate sources[].schema contract itself (#437).
 
-    Check dtypes/casts strings are interpretable as ``_NAMED_DTYPES`` keys.
+    Check dtypes/casts strings are interpretable as ``NAMED_TARGETS`` keys.
     Loader (loader._parse_schema) checks structure only; here checks semantics —
     prevents unknown dtype strings from failing only at runtime (normalize/validate).
     """
     problems: list[ValidationProblem] = []
-    supported = sorted(_NAMED_DTYPES)
-    supported_casts = sorted(set(_NAMED_DTYPES) | set(_FORMATTED_CASTS) | set(TEXT_CASTS))
+    supported = sorted(NAMED_TARGETS)
+    supported_casts = sorted(set(NAMED_TARGETS) | set(FORMATTED_CASTS) | set(TEXT_CASTS))
     for i, source in enumerate(spec.sources):
         if source.schema is None:
             continue
         for col, dtype in source.schema.dtypes.items():
-            if dtype.lower() not in _NAMED_DTYPES:
+            if dtype.lower() not in NAMED_TARGETS:
                 problems.append(
                     _p(
                         "unknown_dtype",

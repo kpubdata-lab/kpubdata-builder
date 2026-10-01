@@ -7,13 +7,9 @@ import pytest
 
 from kpubdata_builder.errors import TabularError
 from kpubdata_builder.spec import JsonValue
-from kpubdata_builder.tabular import (
-    CastReport,
-    CastResult,
-    cast_columns,
-    validate_required_columns,
-)
-from kpubdata_builder.tabular.convert import records_to_dataframe
+from kpubdata_builder.tabular import CastReport
+from tests.support.polars_convert import records_to_dataframe
+from tests.support.polars_helpers import CastResult, cast_columns, validate_required_columns
 
 
 def test_records_to_dataframe_rejects_heterogeneous_column() -> None:

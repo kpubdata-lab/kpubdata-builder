@@ -1,11 +1,10 @@
-"""dict ↔ Polars conversion utilities (#49).
+"""Checks on raw records before they are loaded (#49, #187, #198, #199).
 
-Handle bidirectional conversion between raw JSON-like records and Polars DataFrame.
-Use plain dict on records side to avoid forcing Polars types on public API.
-
-Key functions:
-    - records_to_dataframe: record sequence → pl.DataFrame
-    - dataframe_to_records: pl.DataFrame → plain dict list
+``RecordTypeScan`` refuses a column whose records mix incompatible types, or mix
+integers beyond 2**53 with floats, before any engine silently converts them;
+``apply_read_as`` reads declared columns as text. The loader (``duckdb_load``) runs
+both. The Polars conversion that used them is a test helper since #876
+(``tests/support/polars_convert.py``).
 """
 
 from __future__ import annotations
@@ -13,8 +12,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import cast
-
-import polars as pl
 
 from ..errors import TabularError
 from ..spec import JsonValue
@@ -154,7 +151,7 @@ def _apply_read_as(
 
 
 class RecordTypeScan:
-    """The raw-JSON type checks of :func:`records_to_dataframe`, one record at a time.
+    """The raw-JSON type checks Builder runs before loading records, one at a time.
 
     An engine's own inference sees only the table it settled on; these checks see every
     value first (#187, #198, #199), nested lists and maps included. Fed record by record,
@@ -247,60 +244,8 @@ def apply_read_as(
     return _apply_read_as(record, dict(declared))
 
 
-def records_to_dataframe(
-    records: Sequence[dict[str, JsonValue]],
-    *,
-    read_as: Mapping[str, str] | None = None,
-) -> pl.DataFrame:
-    """Convert raw record mapping to Polars DataFrame.
-
-    Relying only on Polars auto-inference risks silent forced conversion of mixed-type
-    columns before validation, changing raw values. Detect first and fail fast with
-    clear error:
-
-    - Incompatible types mixed in column (and nested list/struct) (#187, #199).
-    - Large integers mixed with float in same column, f64 upcast loses precision (#198).
-
-    Args:
-        records: JSON-compatible record sequence.
-        read_as: Type declaration for source columns (``{column: "str"}``). Public data
-            sometimes gives same column different types per record (e.g., lot number mostly
-            string but some records integer). Read declared columns as their type,
-            reject undeclared mixed types as-is — preserves #187 contract against silent
-            forced conversion.
-
-    Returns:
-        pl.DataFrame: DataFrame reflecting column structure of input records.
-
-    Raises:
-        TabularError: If heterogeneous types mixed or integer precision loss possible.
-    """
-    scan = RecordTypeScan(read_as=read_as)
-    records = [scan.add(record) for record in records]
-    scan.check()
-
-    # infer_schema_length=None: scan all records to infer dtype. With default inference window
-    # (first few rows) only, first float appearing outside window silently truncates to int in
-    # columns inferred as Int64 (#216).
-    return pl.DataFrame(list(records), infer_schema_length=None)
-
-
-def dataframe_to_records(df: pl.DataFrame) -> list[dict[str, JsonValue]]:
-    """Convert Polars DataFrame to list of plain dict records.
-
-    Args:
-        df: DataFrame to convert.
-
-    Returns:
-        list[dict[str, JsonValue]]: Row-by-row dict representation.
-    """
-    return cast(list[dict[str, JsonValue]], df.to_dicts())
-
-
 __all__ = [
     "RecordTypeScan",
     "apply_read_as",
     "check_case_fold_collisions",
-    "dataframe_to_records",
-    "records_to_dataframe",
 ]

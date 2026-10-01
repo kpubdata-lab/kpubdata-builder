@@ -26,11 +26,9 @@ from kpubdata_builder.tabular import (
     PreviewSlice,
     SchemaInfo,
     TableStatistics,
-    compute_statistics,
-    generate_preview,
-    infer_schema,
 )
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+from tests.support.polars_bridge import handle_from_frame, to_polars
+from tests.support.polars_engine import compute_statistics, generate_preview, infer_schema
 
 
 def normalize_table(*args: Any, **kwargs: Any) -> pl.DataFrame:

@@ -17,7 +17,8 @@ the manifest records which algorithm made a run's splits (``split_algorithm``), 
 manifest without it predates this and used ``shuffle-v1`` (:func:`split_algorithm_of`).
 
 **Key splits** group by the key column in DuckDB. A partition is named after the key's
-value as text — formatted exactly as before, by casting only the distinct values —
+value as text — formatted exactly as before (:func:`key_text`), for the distinct values
+only —
 and a row without a value goes to ``"__null__"``; a table without the key column is all
 ``"__missing__"``. A value that is literally ``"__null__"`` shares that partition with
 the nulls, as it always did (#225).
@@ -29,9 +30,13 @@ main functions:
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import itertools
+import math
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
+from typing import cast
 
 from ...spec import JsonValue, SplitSpec
 from ...tabular.duckdb_load import TableHandle
@@ -201,20 +206,67 @@ def _ratio_split_table(
     }
 
 
+def _float_text(value: float) -> str:
+    """A float as the splits have always named it: the shortest round-trip digits, in
+    exponent form from 1e16 up and below 1e-5, the exponent unpadded (``1.5e-7``)."""
+    if math.isnan(value):
+        return "NaN"
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    shortest = Decimal(repr(value))
+    sign, digits, exponent = shortest.as_tuple()
+    assert isinstance(exponent, int)
+    magnitude = len(digits) + exponent - 1
+    if (magnitude >= 16 or magnitude < -5) and value != 0:
+        text = "".join(str(d) for d in digits).rstrip("0") or "0"
+        mantissa = text[0] + (f".{text[1:]}" if len(text) > 1 else "")
+        return f"{'-' if sign else ''}{mantissa}e{'+' if magnitude >= 0 else '-'}{abs(magnitude)}"
+    fixed = format(shortest, "f")
+    return fixed if "." in fixed else f"{fixed}.0"
+
+
+def key_text(value: object, node: tuple[object, ...]) -> str | None:
+    """A key value as the name of its partition — the text the splits have always used
+    (Polars' cast to text before #876), or None for a null.
+
+    Raises:
+        ValueError: The key column is not a scalar a partition can be named after.
+    """
+    kind = node[0]
+    if kind in ("list", "struct", "binary", "duration"):
+        raise ValueError(f"a split key must be a scalar column, not a {kind} column")
+    if value is None:
+        return None
+    if kind == "bool":
+        return "true" if value else "false"
+    if kind == "float":
+        return _float_text(float(cast(float, value)))
+    if kind == "decimal":
+        scale = int(cast(int, node[1]))
+        return format(cast(Decimal, value).quantize(Decimal(1).scaleb(-scale)), "f")
+    if kind == "datetime":
+        moment = cast(dt.datetime, value)
+        text = moment.strftime("%Y-%m-%d %H:%M:%S.%f")
+        if moment.tzinfo is None:
+            return text
+        offset = moment.strftime("%z")
+        return f"{text}{offset[:3]}:{offset[3:]}"
+    if kind == "time":
+        return cast(dt.time, value).strftime("%H:%M:%S")
+    if kind == "date":
+        return cast(dt.date, value).isoformat()
+    return str(value)
+
+
 def _key_names(table: TableHandle, column: str, groups: list[tuple[int, object]]) -> dict[int, str]:
     """Each group's partition name: its key value as text, as the splits always named
-    it — Polars' text cast, applied to the distinct values only (until #876)."""
-    import polars as pl
-
-    from ...tabular.polars_bridge import polars_dtype
-
+    it (:func:`key_text`), read for the distinct values only."""
     node = table.table.nodes[table.table.names.index(column)]
-    values = [table.decode_row([column], [value])[column] for _, value in groups]
-    texts = pl.Series(values, dtype=polars_dtype(node)).cast(pl.Utf8, strict=False).to_list()
-    return {
-        group: _NULL if text is None else str(text)
-        for (group, _), text in zip(groups, texts, strict=True)
-    }
+    names: dict[int, str] = {}
+    for group, value in groups:
+        text = key_text(table.decode_row([column], [value])[column], node)
+        names[group] = _NULL if text is None else text
+    return names
 
 
 def _key_split_table(table: TableHandle, key: str) -> dict[str, TableHandle]:

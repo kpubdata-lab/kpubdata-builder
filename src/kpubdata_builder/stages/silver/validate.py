@@ -18,7 +18,7 @@ class ValidationProblem:
     message: str
 
 
-#: Declared dtype names and the Builder dtype each one means (``polars_helpers``' names).
+#: Declared dtype names and the Builder dtype each one means (``cast_names.NAMED_TARGETS``).
 _EXPECTED: Mapping[str, str] = {
     "bool": "Boolean",
     "boolean": "Boolean",

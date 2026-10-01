@@ -43,8 +43,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from decimal import Decimal
 from typing import Literal, cast
 
-import polars as pl
-
 from ..spec import JsonValue
 from .semantics import ColumnSemantics
 from .types import ColumnInfo
@@ -59,32 +57,6 @@ TEXT_LOGICAL_TYPES: frozenset[str] = frozenset({"string", "categorical", "enum"}
 
 JS_SAFE_INTEGER = 2**53 - 1
 """The largest integer a JavaScript number holds exactly (`Number.MAX_SAFE_INTEGER`)."""
-
-
-def logical_type(dtype: pl.DataType) -> str:
-    """The column's type without parameters: `int64`, `decimal`, `datetime`, `string`…"""
-    return dtype.base_type().__name__.lower()
-
-
-def wire_encoding(series: pl.Series) -> WireEncoding:
-    """How this column's values are sent. Reads the values only for integer columns."""
-    dtype = series.dtype
-    if dtype.is_decimal():
-        return "decimal_string"
-    if dtype.is_integer():
-        low, high = series.min(), series.max()
-        if (isinstance(high, int) and high > JS_SAFE_INTEGER) or (
-            isinstance(low, int) and low < -JS_SAFE_INTEGER
-        ):
-            return "decimal_string"
-        return "number"
-    if dtype.is_float():
-        return "number"
-    if dtype == pl.Boolean:
-        return "boolean"
-    if dtype.is_temporal() or dtype == pl.String or dtype == pl.Categorical or dtype == pl.Enum:
-        return "string"
-    return "json"
 
 
 def encode_value(value: object, encoding: str) -> JsonValue:
@@ -178,7 +150,5 @@ __all__ = [
     "column_meta",
     "encode_rows",
     "encode_value",
-    "logical_type",
     "mark_identifiers",
-    "wire_encoding",
 ]

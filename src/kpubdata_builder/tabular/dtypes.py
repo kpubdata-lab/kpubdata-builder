@@ -89,6 +89,60 @@ def canonical_dtype(duckdb_type: str) -> str:
     )
 
 
+_INTEGERS = frozenset(
+    ("Int8", "Int16", "Int32", "Int64", "Int128", "UInt8", "UInt16", "UInt32", "UInt64")
+)
+_STORED: Mapping[str, str] = {
+    dtype: name
+    for name, dtype in SCALAR_DTYPES.items()
+    if name not in ('"NULL"', "TIMESTAMP WITH TIME ZONE")
+}
+
+
+def is_nested(dtype: str) -> bool:
+    """Whether the dtype holds other values: a list, an array or a struct."""
+    return dtype.startswith(("List(", "Array(", "Struct("))
+
+
+def is_numeric(dtype: str) -> bool:
+    """Whether the dtype is a number: an integer, a float or a decimal."""
+    base = dtype.split("(", 1)[0]
+    return base in _INTEGERS or base in ("Float32", "Float64", "Decimal")
+
+
+def is_temporal(dtype: str) -> bool:
+    """Whether the dtype is a date, a time, a datetime or a duration."""
+    return dtype.split("(", 1)[0] in ("Date", "Time", "Datetime", "Duration")
+
+
+def scalar_sql_type(dtype: str) -> str:
+    """The DuckDB type a value of a scalar dtype is compared as in a query of a Builder
+    table: the stored type, a zoned datetime as an instant and a duration as its
+    microseconds (``query.sandbox``).
+
+    Raises:
+        ValueError: The dtype is nested or Null, which has no value to compare with.
+    """
+    if dtype in _STORED:
+        return _STORED[dtype]
+    base = dtype.split("(", 1)[0]
+    if base == "Datetime":
+        unit = re.search(r"time_unit='(\w+)'", dtype)
+        if "time_zone=None" not in dtype:
+            return "TIMESTAMP WITH TIME ZONE"
+        return {"ms": "TIMESTAMP_MS", "ns": "TIMESTAMP_NS"}.get(
+            unit.group(1) if unit else "us", "TIMESTAMP"
+        )
+    if base == "Duration":
+        return "BIGINT"
+    decimal = re.fullmatch(r"Decimal\(precision=(\d+), scale=(\d+)\)", dtype)
+    if decimal:
+        return f"DECIMAL({decimal.group(1)},{decimal.group(2)})"
+    if base in ("Utf8", "Categorical"):
+        return "VARCHAR"
+    raise ValueError(f"no value can be compared with a {dtype} column")
+
+
 def logical_type(canonical: str) -> str:
     """The canonical dtype without parameters, lower-cased: ``decimal``, ``datetime``…"""
     return canonical.split("(", 1)[0].lower()
@@ -141,5 +195,9 @@ __all__ = [
     "UNSUPPORTED",
     "UnsupportedDtype",
     "canonical_dtype",
+    "is_nested",
+    "is_numeric",
+    "is_temporal",
     "logical_type",
+    "scalar_sql_type",
 ]

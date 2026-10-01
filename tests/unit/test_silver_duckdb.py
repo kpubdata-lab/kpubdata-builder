@@ -14,15 +14,20 @@ from kpubdata_builder.spec import DerivedColumn, JsonValue
 from kpubdata_builder.stages.bronze.models import BronzeArtifact
 from kpubdata_builder.stages.silver.build import build_silver_dataset
 from kpubdata_builder.stages.silver.normalize import normalize_table
-from kpubdata_builder.tabular.builder_parquet import (
+from kpubdata_builder.tabular.duckdb_load import (
+    TableClosedError,
+    TableHandle,
+    load_parquet,
+    load_records,
+)
+from kpubdata_builder.tabular.duckdb_runtime import ReservedColumnError
+from kpubdata_builder.tabular.sql import quote_literal
+from tests.support.builder_parquet import (
     builder_dtypes,
     parse_dtype,
     read_builder_parquet,
 )
-from kpubdata_builder.tabular.convert import records_to_dataframe
-from kpubdata_builder.tabular.duckdb_load import TableClosedError, TableHandle, load_records
-from kpubdata_builder.tabular.duckdb_runtime import ReservedColumnError
-from kpubdata_builder.tabular.sql import quote_literal
+from tests.support.polars_convert import records_to_dataframe
 
 from .test_duckdb_load import CASES, _same
 
@@ -124,7 +129,7 @@ def test_declarations_cannot_name_the_row_ordinal(
 
 def test_year_month_accepts_a_year_in_other_digits_as_polars_did(tmp_path: Path) -> None:
     """Polars' ``\\d`` is Unicode; RE2's is ASCII — the patterns use ``\\p{Nd}``."""
-    from kpubdata_builder.tabular.polars_helpers import cast_columns
+    from tests.support.polars_helpers import cast_columns
 
     records: list[dict[str, JsonValue]] = [{"ym": "２０２４-01"}, {"ym": "２０２４07"}]
     expected = cast_columns(pl.DataFrame(records), {"ym": "year_month"})
@@ -145,19 +150,25 @@ def test_year_month_still_refuses_a_bad_month(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_persisted_parquet_reads_back_as_polars_wrote_it(tmp_path: Path, name: str) -> None:
-    """Every record set, written by DuckDB, read back with its Builder dtypes."""
+    """Every record set, written by DuckDB, read back with its Builder dtypes — by
+    Builder's own reader (``load_parquet``) and by the Polars one the tests keep."""
     records = CASES[name]
     expected = records_to_dataframe([dict(r) for r in records])
-    if not expected.width:
-        pytest.skip("a table without columns is written through the bridge")
     connection = duckdb.connect()
     loaded = load_records(connection, lambda: iter(records), table="raw", workdir=tmp_path)
     handle = TableHandle(connection, loaded, tmp_path)
     path = tmp_path / "table.parquet"
 
     handle.write_parquet(path)
-    frame = read_builder_parquet(path)
+    back = TableHandle(connection, load_parquet(connection, path, table="back"), tmp_path)
 
+    assert (back.table.names, back.table.dtypes) == (loaded.names, loaded.dtypes)
+    assert back.table.row_count == len(records)
+    assert _same(list(back.iter_rows()), list(handle.iter_rows()))
+    if not expected.width:
+        # A table without columns holds a placeholder no Builder reader shows (#876).
+        return
+    frame = read_builder_parquet(path)
     assert frame.schema == expected.schema
     assert _same(frame.to_dicts(), expected.to_dicts())
     assert builder_dtypes(path) == dict(zip(loaded.names, loaded.dtypes, strict=True))
@@ -212,7 +223,7 @@ def test_quote_literal_round_trips_a_copy_target(tmp_path: Path, name: str) -> N
 def test_a_frame_keeps_128_bit_integers_as_numbers(tmp_path: Path) -> None:
     """#872: Polars spills Int128 as binary; the bridge loads it as HUGEINT, exactly, so
     SQL compares it as a number (composition loads its sides this way)."""
-    from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+    from tests.support.polars_bridge import handle_from_frame, to_polars
 
     frame = pl.DataFrame({"v": [2**70, None, -(2**100)]}, schema={"v": pl.Int128})
     table = handle_from_frame(frame, workdir=tmp_path)

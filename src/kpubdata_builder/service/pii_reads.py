@@ -49,9 +49,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import unquote
 
-import polars as pl
-
 from ..pipeline.preview import SourcePreview
+from ..query.rows import table_dtypes
 from ..spec import BuildSpec, JsonValue, SourceRef
 from ..stages._stage_reader import sanitize_source_segment, silver_source_dir
 from ..stages.bronze.build import SourceClient
@@ -66,7 +65,6 @@ from ..stages.gold.pii import (
     source_fields_of,
 )
 from ..tabular import PreviewSlice
-from ..tabular.builder_parquet import read_builder_parquet_schema
 from . import datasets as datasets_service
 from . import stages as stages_service
 from .responses import ServiceResponse
@@ -290,8 +288,8 @@ def _silver_columns(output_root: Path, run_id: str, source_key: str) -> list[str
         table = silver_source_dir(output_root, run_id, source_key) / "table.parquet"
         if not table.is_file() or table.is_symlink():
             return None
-        return list(read_builder_parquet_schema(table))
-    except (OSError, ValueError, pl.exceptions.PolarsError):
+        return list(table_dtypes(table))
+    except (OSError, ValueError):
         return None
 
 
