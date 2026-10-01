@@ -19,7 +19,7 @@ from kpubdata_builder.spec import ExportTarget, JsonValue
 
 def test_each_record_is_one_json_line(tmp_path: Path) -> None:
     # 2 records means file is exactly 2 lines; each line is independent JSON.
-    artifact = ArtifactDataset(records=({"id": "1"}, {"id": "2"}))
+    artifact = ArtifactDataset.from_records(records=({"id": "1"}, {"id": "2"}))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     result = JsonlExporter().export(artifact, target, tmp_path)
@@ -31,7 +31,7 @@ def test_each_record_is_one_json_line(tmp_path: Path) -> None:
 
 def test_unicode_is_preserved_without_ascii_escaping(tmp_path: Path) -> None:
     # Verify Korean is preserved as-is, not escaped as \uXXXX.
-    artifact = ArtifactDataset(records=({"name": "대기오염정보"},))
+    artifact = ArtifactDataset.from_records(records=({"name": "대기오염정보"},))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     result = JsonlExporter().export(artifact, target, tmp_path)
@@ -43,7 +43,7 @@ def test_unicode_is_preserved_without_ascii_escaping(tmp_path: Path) -> None:
 
 def test_keys_are_sorted_for_deterministic_output(tmp_path: Path) -> None:
     # Keys sorted regardless of insertion order for deterministic output.
-    artifact = ArtifactDataset(records=({"b": "2", "a": "1"},))
+    artifact = ArtifactDataset.from_records(records=({"b": "2", "a": "1"},))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     result = JsonlExporter().export(artifact, target, tmp_path)
@@ -53,7 +53,7 @@ def test_keys_are_sorted_for_deterministic_output(tmp_path: Path) -> None:
 
 def test_non_empty_output_ends_with_single_trailing_newline(tmp_path: Path) -> None:
     # non-empty output ends with exactly one newline (no trailing blank line).
-    artifact = ArtifactDataset(records=({"id": "1"},))
+    artifact = ArtifactDataset.from_records(records=({"id": "1"},))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     result = JsonlExporter().export(artifact, target, tmp_path)
@@ -65,7 +65,7 @@ def test_non_empty_output_ends_with_single_trailing_newline(tmp_path: Path) -> N
 
 def test_empty_records_write_empty_file(tmp_path: Path) -> None:
     # empty data policy is recorded as empty file (no content).
-    artifact = ArtifactDataset(records=())
+    artifact = ArtifactDataset.from_records(records=())
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     result = JsonlExporter().export(artifact, target, tmp_path)
@@ -76,7 +76,7 @@ def test_empty_records_write_empty_file(tmp_path: Path) -> None:
 
 def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
     # Verify returned Path actually points to created file and metadata is accurate.
-    artifact = ArtifactDataset(records=({"id": "1"},))
+    artifact = ArtifactDataset.from_records(records=({"id": "1"},))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     result = JsonlExporter().export(artifact, target, tmp_path)
@@ -91,7 +91,7 @@ def test_non_finite_float_is_rejected(tmp_path: Path) -> None:
     # NaN/Infinity become non-standard JSON tokens, so reject silently without recording,
     # fail with ValueError (same contract as bronze guard) (#217).
     bad_record = cast(dict[str, JsonValue], {"v": float("nan")})
-    artifact = ArtifactDataset(records=(bad_record,))
+    artifact = ArtifactDataset.from_records(records=(bad_record,))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     with pytest.raises(ValueError, match="Out of range float values"):
@@ -102,7 +102,7 @@ def test_non_serializable_value_surfaces_type_error(tmp_path: Path) -> None:
     # Non-JsonValue serializable values (e.g., set) surface as TypeError in json.dumps.
     # Explicitly lock boundary where write failure's OSError is not wrapped as ExportError.
     bad_record = cast(dict[str, JsonValue], {"bad": {1, 2}})
-    artifact = ArtifactDataset(records=(bad_record,))
+    artifact = ArtifactDataset.from_records(records=(bad_record,))
     target = ExportTarget(kind="jsonl", output_path="out/data.jsonl")
 
     with pytest.raises(TypeError):

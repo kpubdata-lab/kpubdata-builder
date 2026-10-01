@@ -82,7 +82,9 @@ class TestItReachesThePublishedCard:
     """Front matter license alone does not fulfill attribution obligation."""
 
     def _card(self, metadata: dict[str, object]) -> str:
-        artifact = ArtifactDataset(records=({"a": "1"},), schema={"a": "str"}, metadata=metadata)
+        artifact = ArtifactDataset.from_records(
+            records=({"a": "1"},), schema={"a": "str"}, metadata=metadata
+        )
         target = ExportTarget(kind="huggingface", output_path="out/hf", options={"format": "jsonl"})
         with tempfile.TemporaryDirectory() as tmp:
             result = HuggingFaceExporter().export(artifact, target, Path(tmp))

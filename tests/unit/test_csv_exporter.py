@@ -25,7 +25,9 @@ def _read_rows(path: Path) -> list[list[str]]:
 
 def test_writes_header_and_one_row_per_record(tmp_path: Path) -> None:
     # 2 records should be header 1 line + data 2 lines.
-    artifact = ArtifactDataset(records=({"id": "1", "name": "a"}, {"id": "2", "name": "b"}))
+    artifact = ArtifactDataset.from_records(
+        records=({"id": "1", "name": "a"}, {"id": "2", "name": "b"})
+    )
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -35,7 +37,7 @@ def test_writes_header_and_one_row_per_record(tmp_path: Path) -> None:
 
 def test_column_order_follows_schema_when_present(tmp_path: Path) -> None:
     # If schema present, header order follows schema key order.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"b": "2", "a": "1"},),
         schema={"a": "str", "b": "str"},
     )
@@ -48,7 +50,7 @@ def test_column_order_follows_schema_when_present(tmp_path: Path) -> None:
 
 def test_column_order_is_first_seen_when_no_schema(tmp_path: Path) -> None:
     # Without schema, follow first appearance order in records, fill missing keys with empty cells.
-    artifact = ArtifactDataset(records=({"id": "1"}, {"id": "2", "extra": "x"}))
+    artifact = ArtifactDataset.from_records(records=({"id": "1"}, {"id": "2", "extra": "x"}))
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -58,7 +60,7 @@ def test_column_order_is_first_seen_when_no_schema(tmp_path: Path) -> None:
 
 def test_quotes_values_with_comma_quote_and_newline(tmp_path: Path) -> None:
     # Verify values with comma/quote/newline are quoted and round-trip.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"v": 'a,b "c" \n d'},),
         schema={"v": "str"},
     )
@@ -71,7 +73,7 @@ def test_quotes_values_with_comma_quote_and_newline(tmp_path: Path) -> None:
 
 def test_formats_special_cell_values(tmp_path: Path) -> None:
     # None as empty cell, bool as lowercase, nested list/dict as deterministic JSON string.
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"nullable": None, "flag": True, "nested": {"b": 2, "a": 1}, "items": [1, 2]},),
         schema={"nullable": "str", "flag": "bool", "nested": "json", "items": "json"},
     )
@@ -86,7 +88,9 @@ def test_formats_special_cell_values(tmp_path: Path) -> None:
 
 def test_preserves_unicode(tmp_path: Path) -> None:
     # Confirm Korean text preserved without corruption.
-    artifact = ArtifactDataset(records=({"district": "강남구"},), schema={"district": "str"})
+    artifact = ArtifactDataset.from_records(
+        records=({"district": "강남구"},), schema={"district": "str"}
+    )
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -97,7 +101,7 @@ def test_preserves_unicode(tmp_path: Path) -> None:
 
 def test_empty_records_without_schema_writes_empty_file(tmp_path: Path) -> None:
     # No schema or records means empty file (size 0) recorded.
-    artifact = ArtifactDataset(records=())
+    artifact = ArtifactDataset.from_records(records=())
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -108,7 +112,7 @@ def test_empty_records_without_schema_writes_empty_file(tmp_path: Path) -> None:
 
 def test_schema_without_records_writes_header_only(tmp_path: Path) -> None:
     # Schema without records records header only.
-    artifact = ArtifactDataset(records=(), schema={"id": "str", "name": "str"})
+    artifact = ArtifactDataset.from_records(records=(), schema={"id": "str", "name": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -118,7 +122,7 @@ def test_schema_without_records_writes_header_only(tmp_path: Path) -> None:
 
 def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
     # Confirm returned Path points to actually created file and metadata accurate.
-    artifact = ArtifactDataset(records=({"id": "1"},), schema={"id": "str"})
+    artifact = ArtifactDataset.from_records(records=({"id": "1"},), schema={"id": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -134,7 +138,7 @@ def test_formula_injection_trigger_chars_are_prefixed(tmp_path: Path) -> None:
     # (CWE-1236). Carriage return (\r) CSV round-trip unstable so
     # separate test_formula_injection_cr_prefix verifies with raw file contents.
     trigger_values = ["=CMD", "+SUM()", "-1+1", "@SUM", "\tTAB"]
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=tuple({"v": val} for val in trigger_values),
         schema={"v": "str"},
     )
@@ -151,7 +155,7 @@ def test_formula_injection_trigger_chars_are_prefixed(tmp_path: Path) -> None:
 def test_formula_injection_cr_prefix(tmp_path: Path) -> None:
     # String starting with carriage return (\r) also gets single-quote prefix.
     # csv.reader round-trip handles \r unreliably so verify with raw file contents.
-    artifact = ArtifactDataset(records=({"v": "\rCR"},), schema={"v": "str"})
+    artifact = ArtifactDataset.from_records(records=({"v": "\rCR"},), schema={"v": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     result = CsvExporter().export(artifact, target, tmp_path)
@@ -164,7 +168,7 @@ def test_formula_injection_cr_prefix(tmp_path: Path) -> None:
 def test_formula_injection_normal_strings_unchanged(tmp_path: Path) -> None:
     # Normal string not starting with trigger char must remain unchanged.
     normal_values = ["hello", "world", "1234", "", "한글", "abc=def"]
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=tuple({"v": val} for val in normal_values),
         schema={"v": "str"},
     )
@@ -180,7 +184,7 @@ def test_formula_injection_normal_strings_unchanged(tmp_path: Path) -> None:
 
 def test_formula_injection_numeric_values_unchanged(tmp_path: Path) -> None:
     # numbers (int/float) not checked for trigger chars and converted via str().
-    artifact = ArtifactDataset(
+    artifact = ArtifactDataset.from_records(
         records=({"i": -1, "f": -3.14},),
         schema={"i": "int", "f": "float"},
     )
@@ -201,7 +205,7 @@ def test_wraps_io_failure_in_export_error(tmp_path: Path, monkeypatch: pytest.Mo
     # Confirm file write failure wrapped as ExportError.
     import os
 
-    artifact = ArtifactDataset(records=({"id": "1"},), schema={"id": "str"})
+    artifact = ArtifactDataset.from_records(records=({"id": "1"},), schema={"id": "str"})
     target = ExportTarget(kind="csv", output_path="out/data.csv")
 
     def raise_on_replace(src: str, dst: object) -> None:

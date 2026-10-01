@@ -60,7 +60,7 @@ class TestExportersHandleDeclaredDateCasts:
     RECORDS = ({"id": 1, "deal_date": datetime.date(2026, 9, 24), "amount": Decimal("1200.50")},)
 
     def _artifact(self) -> ArtifactDataset:
-        return ArtifactDataset(records=self.RECORDS, statistics={"row_count": 1})
+        return ArtifactDataset.from_records(records=self.RECORDS, statistics={"row_count": 1})
 
     def test_jsonl_export_serializes_a_date_column(self, tmp_path: Path) -> None:
         result = JsonlExporter().export(

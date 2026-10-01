@@ -1086,7 +1086,7 @@
      "String",
      "String",
      "Int64",
-     "Null",
+     "Int64",
      "String",
      "String",
      "Date"

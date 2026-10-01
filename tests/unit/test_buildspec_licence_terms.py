@@ -112,7 +112,7 @@ class TestTheDigestStaysStable:
 
 class TestTheyReachThePublishedCard:
     def _card(self, spec: BuildSpec) -> str:
-        artifact = ArtifactDataset(
+        artifact = ArtifactDataset.from_records(
             records=({"a": "1"},), schema={"a": "str"}, metadata=_gold_package_metadata(spec)
         )
         target = ExportTarget(kind="huggingface", output_path="out/hf", options={"format": "jsonl"})

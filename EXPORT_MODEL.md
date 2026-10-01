@@ -58,7 +58,7 @@ sequenceDiagram
     participant E as Exporter
     participant FS as FileSystem
 
-    AD->>E: Provide records & metadata
+    AD->>E: Provide data source & metadata
     Note over E: 1. Prepare format<br/>(MD/JSONL/etc)
     E->>FS: 2. Ensure directory exists
     E->>FS: 3. Write file content
@@ -69,11 +69,38 @@ sequenceDiagram
 ## 2. 표준 내보내기 입력(Exporter가 받는 재료)
 
 모든 exporter는 다음을 입력으로 받는다:
-- artifact records (실제 데이터 내용)
+- data source (실제 데이터 내용 — 아래 2.1, #873)
 - metadata (작성자, 생성일 등 부가 정보)
 - provenance (이 데이터가 어디서 왔는지에 대한 정보)
 - schema summary (데이터 항목들의 이름과 타입)
 - optional statistics (건수, 평균 등 통계)
+
+### 2.1 Data source (#873, 0.x breaking)
+
+`ArtifactDataset`은 레코드 tuple(`records`)을 더 이상 들고 있지 않는다. 행은
+`artifact.data_source`(`ArtifactDataSource`)로 읽는다.
+
+```python
+class ArtifactDataSource(Protocol):
+    @property
+    def row_count(self) -> int: ...
+    @property
+    def parquet_path(self) -> Path | None: ...
+    def iter_records(self, *, batch_size: int = 1000) -> Iterator[dict[str, JsonValue]]: ...
+```
+
+- **다시 읽을 수 있다.** `iter_records()`는 부를 때마다 첫 행부터 새로 시작한다(one-shot generator가 아니다).
+  한 exporter가 두 번 읽어도(열 이름을 먼저, 값을 나중에) 되고, 여러 exporter가 같은 source를 읽어도 된다.
+- **전체를 메모리에 두지 않는다.** 정식 경로(BuildSpec Gold)의 source는 Gold DuckDB 테이블을 batch로 읽는
+  `pipeline.export.TableSource`이고, 한 번에 batch 하나만 Python에 올라온다.
+- **Parquet fast-path.** `parquet_path`가 있으면(Gold의 `table.parquet`) Parquet을 쓰는 exporter는 그 파일을
+  복사한다 — 행을 다시 읽어 dataframe을 만들지 않는다. 내장 `parquet`과 `huggingface`(parquet 형식)가 그렇게 한다.
+- **metadata·provenance·schema·statistics는 데이터와 분리**되어 `ArtifactDataset`의 필드로 남는다.
+- 메모리에 이미 있는 레코드로 artifact를 만들 때는 `ArtifactDataset.from_records(records, schema=..., ...)`
+  (`RecordsSource`)를 쓴다 — 테스트, 소규모 산출물, 자체 레코드를 만드는 플러그인용.
+
+내장 exporter는 모두 이 계약으로 옮겼다: CSV·Kaggle(CSV 수식 주입 방어 그대로)과 JSONL은 batch로 스트리밍해 임시
+파일에 쓴 뒤 교체하고, Markdown은 sample 5행만 읽고 건수는 `row_count`에서 가져온다.
 
 ## 3. 내장 Exporter(기본 제공 변환기)
 
@@ -269,7 +296,7 @@ def export(
 ```
 
 #### 입력
-- `artifact`: `ArtifactDataset` — 표준화된 레코드·메타데이터·출처·스키마 요약
+- `artifact`: `ArtifactDataset` — data source(2.1)·메타데이터·출처·스키마 요약
 - `target`: `ExportTarget` — exporter kind, 출력 상대 경로, exporter별 옵션
 - `output_dir`: `Path` — 모든 출력의 기준 디렉터리 (경로 안전 모듈이 보장)
 
