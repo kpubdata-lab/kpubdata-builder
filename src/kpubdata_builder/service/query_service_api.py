@@ -20,6 +20,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
+import polars as pl
+
 from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
 from kpubdata_builder.query.models import QueryRequest, QueryStage
 from kpubdata_builder.query.resolver import (
@@ -33,6 +35,13 @@ from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.column_semantics import describe_columns, spec_semantics
 from kpubdata_builder.service.datasets import read_snapshot_spec
 from kpubdata_builder.service.ownership import hides_foreign_runs
+from kpubdata_builder.service.pii_reads import (
+    PiiDeclarationUnavailable,
+    PiiLookup,
+    masked_silver_table,
+    run_withheld_columns,
+    unavailable_response,
+)
 from kpubdata_builder.service.redistribution import (
     TermsLookup,
     build_verdict,
@@ -93,10 +102,16 @@ class QueryApiService:
         output_root: Path,
         engine: QueryService,
         terms_lookup: TermsLookup = kpubdata_terms,
+        pii_lookup: PiiLookup = lambda _dataset_id: (),
     ) -> None:
+        """Args:
+        pii_lookup: each dataset's declared PII columns (#900); the service binds the
+            build's own client, so both read the same declaration.
+        """
         self._output_root = output_root
         self._engine = engine
         self._terms_lookup = terms_lookup
+        self._pii_lookup = pii_lookup
 
     def query(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal
@@ -126,9 +141,55 @@ class QueryApiService:
         # What the run's kpubdata sources declare about the columns (#702): a code column
         # is reported as an identifier. Metadata only; the rows are sent as they are.
         semantics = spec_semantics(spec, context.source)
-        return execute_query(
-            self._engine, context.table_path, request.sql, limit=request.limit, semantics=semantics
-        )
+        if context.stage != "silver":
+            # Gold is masked where it is built (#689).
+            return execute_query(
+                self._engine,
+                context.table_path,
+                request.sql,
+                limit=request.limit,
+                semantics=semantics,
+            )
+        # Silver keeps declared PII as is (#611): the query runs on a copy with it masked,
+        # so no expression over a declared column sees an original value (#900).
+        # Every declaration is taken as present here; the copy masks those the table has.
+        try:
+            withheld = run_withheld_columns(
+                self._output_root,
+                context.run_id,
+                context.source,
+                self._pii_lookup,
+                silver_columns=None,
+                spec=spec,
+            )
+        except PiiDeclarationUnavailable as exc:
+            return unavailable_response(exc, what="query results")
+        masked = None
+        if withheld:
+            try:
+                masked = masked_silver_table(context.table_path, withheld)
+            except (OSError, pl.exceptions.PolarsError):
+                # Fail closed: an unreadable table is not read unmasked.
+                return ServiceResponse(
+                    400, {"error": "query execution failed", "code": "query_execution_failed"}
+                )
+        if masked is None:
+            return execute_query(
+                self._engine,
+                context.table_path,
+                request.sql,
+                limit=request.limit,
+                semantics=semantics,
+            )
+        try:
+            response = execute_query(
+                self._engine, masked.path, request.sql, limit=request.limit, semantics=semantics
+            )
+        finally:
+            masked.close()
+        if response.status_code == 200:
+            response.body["masked_columns"] = list(masked.columns)
+        return response
 
 
 def execute_query(

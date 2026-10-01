@@ -14,7 +14,7 @@ takes a separate ``catalog_client``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import cast
 from urllib.parse import urlsplit
 
@@ -23,10 +23,12 @@ from kpubdata.core.models import DatasetRef
 
 from ..errors import SpecLoadError, ValidationError
 from ..pipeline import DEFAULT_PREVIEW_SEED, SampleMode, preview_build
+from ..pipeline.preview import SourcePreview
 from ..quality import QualityCheckResult
 from ..spec import BuildSpec, JsonValue, parse_spec
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
+from ..stages.gold.pii import core_pii_columns
 from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..tabular.types import SchemaInfo
 from ..tabular.wire import encode_rows, encode_value
@@ -35,6 +37,7 @@ from . import vocabulary
 from .auth import Principal
 from .build_runs_api import OpenClient
 from .column_semantics import describe_columns, spec_semantics
+from .pii_reads import PiiDeclarationUnavailable, mask_source_preview, unavailable_response
 from .providers import (
     ProviderCredentialConflictError,
     ProviderCredentialRequired,
@@ -44,6 +47,7 @@ from .redaction import redact_secret_text
 from .responses import ServiceResponse
 from .routes.core import MAX_PREVIEW_LIMIT
 from .source_policy import url_source_refusal
+from .stages import match_source_ref
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +373,12 @@ class SpecApiService:
                 # A provider that echoes the request would put the key into the sample.
                 secret_values=tuple(provider_keys.values()),
             )
+            # Declared PII leaves masked as Gold masks it (#900), read through the same
+            # client the preview fetched with, as the build reads it.
+            masked = _mask_previews(result.previews, spec_or_error, client)
+        except PiiDeclarationUnavailable as exc:
+            # Fail closed (#900): which columns are personal is not known.
+            return unavailable_response(exc, what="a preview")
         finally:
             self._close_client(client)
         previews: list[JsonValue] = [
@@ -439,8 +449,11 @@ class SpecApiService:
                 ),
                 "diff_truncated": p.diff_truncated,
             }
-            for p in result.previews
+            for p, _ in masked
         ]
+        for entry, (_, columns) in zip(previews, masked, strict=True):
+            if columns and isinstance(entry, dict):
+                entry["masked_columns"] = list(columns)
         return ServiceResponse(200, {"dataset_id": spec_or_error.dataset_id, "previews": previews})
 
     def load_validated(self, spec_yaml: str) -> BuildSpec | ServiceResponse:
@@ -459,6 +472,29 @@ class SpecApiService:
                 ]
             return ServiceResponse(400, body)
         return spec
+
+
+def _mask_previews(
+    previews: Sequence[SourcePreview], spec: BuildSpec, client: SourceClient
+) -> list[tuple[SourcePreview, tuple[str, ...]]]:
+    """Each preview with its declared PII masked, and the Silver columns that were (#900)."""
+    out: list[tuple[SourcePreview, tuple[str, ...]]] = []
+    for preview in previews:
+        if preview.status != "ok":
+            out.append((preview, ()))
+            continue
+        source = match_source_ref(spec, preview.source_key)
+        if source is None:
+            raise PiiDeclarationUnavailable(preview.source_key)
+        core: tuple[str, ...] = ()
+        if source.kind == "public_api":
+            dataset_id = f"{source.provider}.{source.dataset}"
+            try:
+                core = core_pii_columns(client.dataset(dataset_id))
+            except Exception as exc:
+                raise PiiDeclarationUnavailable(dataset_id) from exc
+        out.append(mask_source_preview(preview, source, core))
+    return out
 
 
 __all__ = ["SpecApiService", "parse_spec_text"]

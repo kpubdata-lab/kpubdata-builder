@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.67.0"
+  version: "1.68.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -83,6 +83,7 @@ info:
     v1.42.0 records how many rows a source's provider reported apart from how many were fetched (#816, additive). Each manifest `provenance` entry gains `fetched_row_count`, `source_reported_total` (`status` reported/unknown/inconsistent/not_summed/not_reported, `value` — `0` is a reported zero, null is not a number — `observed_at` and per-call `calls`) and `coverage` (`complete`/`partial`/`unknown` with `reasons`). Totals are never summed across pages or `param_grid` combinations. `WarehouseSnapshot` gains `coverage`, null when not recorded. A dataset's `status_axes.completeness` is `partial` when a source fetched fewer rows than its provider reported.
     v1.43.0 adds `POST /warehouse/rows` (#815, additive): one page of a pinned warehouse snapshot with a sort, filters, a column selection and a row count that says whether it was computed. `snapshot: current` is resolved once; the next pages pass the returned `snapshot_id` and read the same snapshot whatever is committed meanwhile. Rows that tie on every sort key keep the order they have in the snapshot, so page boundaries neither repeat nor skip them.
     v1.44.0 adds `POST /warehouse/aggregate` (#818, additive): named aggregates (`count_rows`, `count`, `count_null`, `count_distinct`, `sum`, `avg`, `min`, `max`) over a pinned snapshot's columns of a fitting type. `sum` needs `additive: true`; a group whose rows mix units of `unit_column` is refused (422 `mixed_units`) or split by unit. Every filtered row is aggregated before the groups are sorted and the top `limit` taken, and `result.completeness` (`full`/`top_n`) with `group_count` tells a client which it got; `input.sampled` is always false. Too many groups or too large a result is refused (422), never cut short.
+    v1.68.0 keeps declared PII masked on every read of Silver and Bronze (#900, additive): the columns Gold masks (kpubdata `license.pii_columns` and `SourceRef.gold.pii_columns`, less `gold.publish_unmasked`, and whatever the run's manifest recorded as masked) are masked the way Gold masks them — text to the mask token, any other dtype null — wherever Silver or Bronze rows are read. `POST /query` with `stage: silver` runs on a masked copy of the Silver table and names the masked columns in `QueryResponse.masked_columns`; `POST /preview` masks `sample`, `source_sample` and `diffs` and names them in the source's `masked_columns`; a Silver stage detail masks its `sample` and names them in `masked_columns`. `GET /artifacts/{run_id}/{file_path}` refuses every file under `bronze/{source}/` or `silver/{source}/` of a source with such a column: 403 `declared_pii_withheld` (`DeclaredPiiWithheldError`, naming the `columns`); Gold files are served as before. A source whose terms forbid redistribution is refused first (#688). When a public_api source's kpubdata declaration cannot be read, these reads fail closed rather than mask only what the manifest recorded: `/query`, `/preview` and the artifact file answer 503 `pii_declaration_unavailable` (`PiiDeclarationUnavailable`, naming the `dataset`), and a Silver stage detail withholds its sample (`sample_withheld: pii_declaration_unavailable`).
     v1.67.0 makes publish tokens live only as long as their request in a multi-user deployment (#925, ADR 0020 item 2 as confirmed on 2026-10-01). A Hugging Face or Kaggle publish credential is sent in the `X-Publish-Credential` request header (`<VARIABLE>=<value>` with `HF_TOKEN`, `KAGGLE_USERNAME` or `KAGGLE_KEY`, repeated or comma-separated) — never a URL query — and a malformed header answers 400 `invalid_publish_credential` on any route. In a multi-user deployment `GET /builds/{run_id}/publish/readiness`, `POST /builds/{run_id}/publish` and the reconcile probe use only that header: a stored `publish-*` credential is not read and the server `HF_TOKEN`/`KAGGLE_*` is never used, whatever `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` says, so without the header readiness and publish report the `credential_required` blocker and `GET /admin/config` reports `publish_server_credential_fallback: false`. A Kaggle pair must arrive whole. The value is held in memory for the request only and is never stored, logged or returned. A single-user deployment ignores the header and is unchanged.
     v1.65.0 enforces each source's redistribution terms (#688, additive): kpubdata 0.8 declares per dataset whether its data may be redistributed — `allowed`, `non_commercial`, `forbidden` or `unknown` (a dataset that declares nothing is `unknown`, as is a file or URL source); a build takes its most restricted source's verdict. Publish readiness and a refused publish report it as `redistribution`, and it blocks: `forbidden` any publish, `unknown` a public one (`redistribution_unknown`), `non_commercial` one without the new option `confirm_non_commercial: true` (`non_commercial_unconfirmed`) or a public one without a non-commercial licence marker (`non_commercial_marker_missing`). Data whose terms are `forbidden` does not leave Builder: `POST /query`, `POST /preview`, the warehouse profile, query, rows, aggregate and export endpoints, analyses (create and run), export downloads and artifact file downloads (`GET /artifacts/{run_id}/{file_path}`, now declared) answer 403 `redistribution_forbidden` (declared as the `RedistributionForbidden` response; `Error` documents `code` and `redistribution`), and a Silver stage detail withholds its sample (`sample_withheld: redistribution_forbidden`). A publish the terms allow only privately (`unknown`, or `non_commercial`) first reads the destination's visibility: an existing public destination blocks it (`destination_public`), and so does one whose visibility cannot be read (`destination_visibility_unknown`). A refused publish's 409 carries `redistribution`; a successful one records it (`PublishRedistributionRecord`: the verdict, the kpubdata release and `confirm_non_commercial`) in the response and the receipt.
     v1.64.0 reconciles declared-PII masking with the `pii` scan gate (#902, additive): the Silver scan counts a declared column Gold will mask as handled, so `pii.mode: block` passes without `allow_columns`; a `gold.publish_unmasked` column is still scanned and needs `allow_columns` under `block`. `allow_columns` never unmasks a declared column and `publish_unmasked` never silences the gate. A masked column keeps its dtype: text holds `[masked]`, any other dtype becomes null; each `pii_masking.masked` entry says which (`masked_as`). kpubdata-declared fields the source does not carry are listed in `pii_masking.declared_absent` instead of being skipped silently.
@@ -784,6 +785,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "502":
           description: principal credential로 Provider client를 생성할 수 없음
+        "503":
+          $ref: "#/components/responses/PiiDeclarationUnavailable"
 
   /build:
     post:
@@ -968,13 +971,34 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/RedistributionForbidden"
+          description: >-
+            The source terms forbid redistribution (#688, `redistribution_forbidden`),
+            or the file is a Bronze or Silver file of a source with declared PII
+            (#900, `declared_pii_withheld`): raw records and Parquet hold it as is,
+            so they do not leave. Gold files hold it masked and are served.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RedistributionForbiddenError"
+                  - $ref: "#/components/schemas/DeclaredPiiWithheldError"
+              examples:
+                DeclaredPiiWithheld:
+                  summary: 선언된 PII가 평문으로 담긴 Silver 파일
+                  value:
+                    error: >-
+                      silver files hold the declared PII columns siteTel in plain text,
+                      so they cannot be downloaded; Gold holds the table with them masked
+                    code: declared_pii_withheld
+                    columns: [siteTel]
         "404":
           description: run 또는 파일을 찾을 수 없음
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/PiiDeclarationUnavailable"
 
   /builds/{run_id}:
     get:
@@ -2524,6 +2548,8 @@ paths:
                   value:
                     error: query timed out
                     code: query_timeout
+        "503":
+          $ref: "#/components/responses/PiiDeclarationUnavailable"
 
   /warehouse/tables:
     get:
@@ -4015,6 +4041,25 @@ components:
               value:
                 error: unauthorized
 
+    PiiDeclarationUnavailable:
+      description: >-
+        A public_api source's kpubdata PII declaration could not be read (#900), so
+        which of its columns are personal is not known and its Silver or Bronze rows
+        do not leave: unknown is not permission (#688). Gold reads are unaffected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PiiDeclarationUnavailableError"
+          examples:
+            PiiDeclarationUnavailable:
+              summary: PII 선언을 읽을 수 없음
+              value:
+                error: >-
+                  the PII declaration of example.dataset could not be read, so query
+                  results cannot leave Builder unmasked; try again, or read Gold
+                code: pii_declaration_unavailable
+                dataset: example.dataset
+
     RedistributionForbidden:
       description: >-
         The build's source terms forbid redistribution (#688), so its data does not
@@ -4184,6 +4229,10 @@ components:
             클라이언트 분기용 안정적인 오류 코드(새 endpoint에서 사용). 예:
             `redistribution_forbidden`(#688) — build의 source 약관이 재배포를 금지해
             데이터가 Builder 밖으로 나갈 수 없음. 이때 body에 `redistribution`이 함께 온다.
+            `declared_pii_withheld`(#900) — 선언된 PII가 평문으로 담긴 Bronze·Silver
+            산출물 파일이라 내려받을 수 없음. 이때 body에 `columns`가 함께 온다.
+            `pii_declaration_unavailable`(#900, 503) — public_api 소스의 kpubdata PII
+            선언을 읽지 못해 Silver·Bronze 읽기를 거부함. 이때 body에 `dataset`이 온다.
         redistribution:
           description: >-
             `code: redistribution_forbidden`일 때만 온다(#688): 판정과 source별 이유.
@@ -5152,6 +5201,13 @@ components:
           description: >-
             Child에서 scan_parquet 직전부터 SQLContext 생성, execute, collect 완료
             직후까지의 Polars engine monotonic time(ms).
+        masked_columns:
+          allOf:
+            - $ref: "#/components/schemas/MaskedColumns"
+          description: >-
+            `stage: silver` only (#900): the query ran on a copy of the Silver table
+            with these declared PII columns masked, so no expression over them saw an
+            original value. Gold is masked where it is built.
 
     ValidationError:
       type: object
@@ -6344,6 +6400,12 @@ components:
             워크스페이스에 아무것도 쓰지 않으므로 포함하지 않는다.
           items:
             $ref: "#/components/schemas/QualityCheckResult"
+        masked_columns:
+          allOf:
+            - $ref: "#/components/schemas/MaskedColumns"
+          description: >-
+            The declared PII columns masked in `sample`, in the `source_sample` fields
+            that become them, and in their `diffs` (#900).
         source_sample:
           type: array
           description: >-
@@ -7424,6 +7486,46 @@ components:
           enum: [allowed, non_commercial, unknown, forbidden]
         reason: {type: string}
 
+    DeclaredPiiWithheldError:
+      type: object
+      description: >-
+        403 for a Bronze or Silver artifact file of a source with declared PII (#900):
+        the file holds the original values, so it does not leave Builder. The Gold
+        files of the same run hold them masked.
+      required: [error, code, columns]
+      properties:
+        error: {type: string}
+        code:
+          type: string
+          enum: [declared_pii_withheld]
+        columns:
+          type: array
+          description: The declared Silver columns the file holds unmasked. Names only.
+          items: {type: string}
+
+    PiiDeclarationUnavailableError:
+      type: object
+      description: >-
+        503 when a public_api source's kpubdata PII declaration cannot be read (#900):
+        the read fails closed instead of masking only what the manifest recorded.
+      required: [error, code, dataset]
+      properties:
+        error: {type: string}
+        code:
+          type: string
+          enum: [pii_declaration_unavailable]
+        dataset:
+          type: string
+          description: The `provider.dataset` (or source key) whose declaration was unreadable.
+
+    MaskedColumns:
+      type: array
+      description: >-
+        Declared PII columns this read shows masked as Gold masks them (#900): each
+        text value is the mask token, any other dtype null, and nulls stay null.
+        Present only when at least one column was masked.
+      items: {type: string}
+
     RedistributionForbiddenError:
       type: object
       description: >-
@@ -7949,12 +8051,19 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SilverValidationResult"
             - type: "null"
+        masked_columns:
+          allOf:
+            - $ref: "#/components/schemas/MaskedColumns"
+          description: The declared PII columns masked in `sample` (#900).
         sample_withheld:
           type: string
-          enum: [redistribution_forbidden]
+          enum: [redistribution_forbidden, pii_declaration_unavailable]
           description: >-
-            Present when the sample was withheld because the source terms forbid
-            redistribution (#688); ``sample`` is then empty.
+            Present when the sample was withheld; ``sample`` is then empty.
+            ``redistribution_forbidden``: the source terms forbid redistribution
+            (#688). ``pii_declaration_unavailable``: the source's kpubdata PII
+            declaration could not be read, so which columns to mask is not known
+            (#900).
         sample:
           type: array
           items:
