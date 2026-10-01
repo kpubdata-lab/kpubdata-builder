@@ -23,6 +23,7 @@ from kpubdata_builder.spec.models import CompositionSpec, GoldFilter, GoldSelect
 from kpubdata_builder.spec.serializer import canonical_spec_mapping, serialize_spec_bytes
 from kpubdata_builder.spec.validator import validate_spec
 from kpubdata_builder.stages.gold.select import GoldSelectionError, apply_gold_selection
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
 
 _BASE = """\
 dataset_id: gold.table
@@ -152,9 +153,10 @@ def test_the_selection_is_part_of_the_recipe() -> None:
 # ------------------------------------------------------------------------ applying
 
 
-def test_filters_run_before_select_and_nulls_never_pass() -> None:
-    frame = pl.DataFrame(
-        {"id": ["1", "2", "3"], "amount": [5, None, -1], "year": [2021, 2019, 2022]}
+def test_filters_run_before_select_and_nulls_never_pass(tmp_path: Path) -> None:
+    frame = handle_from_frame(
+        pl.DataFrame({"id": ["1", "2", "3"], "amount": [5, None, -1], "year": [2021, 2019, 2022]}),
+        workdir=tmp_path,
     )
     selection = GoldSelection(
         select=("id",),
@@ -163,7 +165,7 @@ def test_filters_run_before_select_and_nulls_never_pass() -> None:
 
     result, stats = apply_gold_selection(frame, selection)
 
-    assert result.to_dicts() == [{"id": "1"}]
+    assert to_polars(result).to_dicts() == [{"id": "1"}]
     assert (stats.input_rows, stats.output_rows) == (3, 1)
 
 
@@ -178,12 +180,12 @@ def test_filters_run_before_select_and_nulls_never_pass() -> None:
         (GoldFilter("v", "not_null"), [1, 2, 3]),
     ],
 )
-def test_every_operator(rule: GoldFilter, kept: list[int]) -> None:
-    frame = pl.DataFrame({"v": [1, 2, 3, None]})
+def test_every_operator(rule: GoldFilter, kept: list[int], tmp_path: Path) -> None:
+    frame = handle_from_frame(pl.DataFrame({"v": [1, 2, 3, None]}), workdir=tmp_path)
 
     result, _ = apply_gold_selection(frame, GoldSelection(filters=(rule,)))
 
-    assert result["v"].to_list() == kept
+    assert to_polars(result)["v"].to_list() == kept
 
 
 @pytest.mark.parametrize(
@@ -195,9 +197,11 @@ def test_every_operator(rule: GoldFilter, kept: list[int]) -> None:
     ],
     ids=["missing-select", "missing-filter", "type-mismatch"],
 )
-def test_a_selection_that_cannot_apply_fails_loudly(selection: GoldSelection) -> None:
+def test_a_selection_that_cannot_apply_fails_loudly(
+    selection: GoldSelection, tmp_path: Path
+) -> None:
     """Negative: never publish a different table than the spec asked for."""
-    frame = pl.DataFrame({"name": ["a"], "v": [1]})
+    frame = handle_from_frame(pl.DataFrame({"name": ["a"], "v": [1]}), workdir=tmp_path)
 
     with pytest.raises(GoldSelectionError):
         apply_gold_selection(frame, selection)

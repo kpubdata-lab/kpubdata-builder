@@ -40,7 +40,7 @@ class TestBuildGoldPackage:
 
         assert isinstance(package, GoldPackage)
         assert package.dataset_name == "apt_trade"
-        assert package.table.to_dicts() == to_polars(silver.table).to_dicts()
+        assert to_polars(package.table).to_dicts() == to_polars(silver.table).to_dicts()
         assert isinstance(package.export_plan, ExportPlan)
         assert package.export_plan.targets == exports
         assert package.source_silver == "datago.apt_trade"
@@ -64,7 +64,7 @@ class TestPersistGoldPackage:
 
         assert result.table_path.exists()
         assert result.package_path.exists()
-        assert pl.read_parquet(result.table_path).to_dicts() == package.table.to_dicts()
+        assert pl.read_parquet(result.table_path).to_dicts() == to_polars(package.table).to_dicts()
 
         meta = cast(
             dict[str, JsonValue], json.loads(result.package_path.read_text(encoding="utf-8"))

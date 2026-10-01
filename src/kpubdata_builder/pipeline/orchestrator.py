@@ -32,7 +32,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
-import polars as pl
 import yaml
 
 from ..artifact import ArtifactDataset
@@ -109,9 +108,10 @@ from ..stages.silver.models import SilverDataset
 from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
 from ..tabular import DEFAULT_PREVIEW_LIMIT
-from ..tabular.duckdb_runtime import build_connection, clear_temp_root
-from ..tabular.polars_bridge import to_polars
-from ..tabular.polars_engine import artifact_writer, infer_schema
+from ..tabular.duckdb_load import TableHandle
+from ..tabular.duckdb_runtime import build_connection, clear_temp_root, worker_temp_directory
+from ..tabular.polars_bridge import handle_from_frame, to_polars
+from ..tabular.polars_engine import artifact_writer
 from ..tabular.wire import encode_rows
 from ..uploads import UploadRepository
 from ..warehouse import (
@@ -787,13 +787,11 @@ def _run_source_pipeline(
 
         recorder.stage_started(output_key, "gold")
         # The published shape is decided here, not in Silver (#659): Silver keeps
-        # every column and row, and quality above was measured on it.
-        # Gold still runs on a Polars frame until #870; Silver's table is read through the
-        # bridge (#869).
-        silver_frame = to_polars(silver.table)
-        gold_table = silver_frame
+        # every column and row, and quality above was measured on it. Gold runs on
+        # DuckDB in the source's connection (#870).
+        gold_table = silver.table
         if source.gold is not None:
-            gold_table, gold_selection = apply_gold_selection(silver_frame, source.gold)
+            gold_table, gold_selection = apply_gold_selection(silver.table, source.gold)
         # Declared PII (read above) is masked in what is published unless the spec opts
         # a column out (#689). kpubdata declarations this source lacks are recorded (#902).
         gold_table, pii_masking = apply_pii_masking(
@@ -832,7 +830,7 @@ def _run_source_pipeline(
         )
         completed.append("gold")
         recorder.stage_completed(
-            output_key, "gold", message="Gold written", metrics={"row_count": len(gold.table)}
+            output_key, "gold", message="Gold written", metrics={"row_count": gold.table.height}
         )
         _record_output_paths(
             outputs,
@@ -860,7 +858,7 @@ def _run_source_pipeline(
             fields=(
                 (column.name, column.dtype, column.nullable)
                 for column in (
-                    silver.schema.columns if not gold_differs else infer_schema(gold.table).columns
+                    silver.schema.columns if not gold_differs else gold.table.schema().columns
                 )
             ),
             # A card describes what is published: with a selection, sample rows come
@@ -868,11 +866,9 @@ def _run_source_pipeline(
             sample_rows=(
                 silver.preview.rows
                 if not gold_differs
-                else tuple(
-                    encode_rows(
-                        gold.table.head(len(silver.preview.rows)).to_dicts(),
-                        infer_schema(gold.table).columns,
-                    )
+                else encode_rows(
+                    gold.table.rows(limit=len(silver.preview.rows)),
+                    gold.table.schema().columns,
                 )
             ),
             license=_dataset_card_license(context.spec),
@@ -1022,10 +1018,10 @@ class _CompositionPipelineResult:
 
 def _mask_composition_inputs(
     join: JoinSpec,
-    left: SilverDataset,
-    right: SilverDataset,
+    left: TableHandle,
+    right: TableHandle,
     pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]],
-) -> tuple[pl.DataFrame, pl.DataFrame, list[str], PiiMaskResult]:
+) -> tuple[TableHandle, TableHandle, list[str], PiiMaskResult]:
     """Mask each side's declared PII before the join, join keys after it (#689).
 
     Masking a key before the join would make every masked key equal. A key column
@@ -1044,7 +1040,7 @@ def _mask_composition_inputs(
         if column in right_keys:
             continue
         # A right column whose name the left side already has is suffixed by the join.
-        name = f"{column}_{join.right}" if column in left.table.columns else column
+        name = f"{column}_{join.right}" if column in left.columns else column
         masked[name] = origins
     key_columns: list[str] = []
     for lk, rk in join.keys:
@@ -1052,13 +1048,8 @@ def _mask_composition_inputs(
         if origins:
             key_columns.append(lk)
             masked[lk] = origins
-    # The sides as frames: composition still joins Polars frames until #870.
-    masked_left = mask_columns(
-        to_polars(left.table), [c for c in left_declared if c not in left_keys]
-    )
-    masked_right = mask_columns(
-        to_polars(right.table), [c for c in right_declared if c not in right_keys]
-    )
+    masked_left = mask_columns(left, [c for c in left_declared if c not in left_keys])
+    masked_right = mask_columns(right, [c for c in right_declared if c not in right_keys])
     return masked_left, masked_right, key_columns, PiiMaskResult(masked=masked, unmasked={})
 
 
@@ -1093,18 +1084,49 @@ def _run_composition(
             )
         )
 
+    run_dir = context.output_root / context.run_id
+    worker = "composition"
+    with build_connection(run_dir, composition.name, worker) as connection:
+        # The sources' connections closed with them; each Silver table's frame was kept
+        # for this (#869) and is loaded into the composition's own connection (#870).
+        workdir = worker_temp_directory(run_dir, composition.name, worker)
+        left_silver, right_silver = silver_by_key[join.left], silver_by_key[join.right]
+        sides = tuple(
+            handle_from_frame(to_polars(silver.table), connection=connection, workdir=workdir)
+            for silver in (left_silver, right_silver)
+        )
+        return _compose(
+            composition,
+            left_silver=left_silver,
+            right_silver=right_silver,
+            sides=(sides[0], sides[1]),
+            context=context,
+            pii_declared=pii_declared,
+        )
+
+
+def _compose(
+    composition: CompositionSpec,
+    *,
+    left_silver: SilverDataset,
+    right_silver: SilverDataset,
+    sides: tuple[TableHandle, TableHandle],
+    context: BuildContext,
+    pii_declared: Mapping[str, Mapping[str, tuple[str, ...]]] | None,
+) -> _CompositionPipelineResult:
+    """Join, mask, persist and export one composition whose sides are loaded (#870)."""
+    join = composition.join
     # Declared PII is masked in the composed Gold too (#689). A composition has no
     # per-source gold, so there is no opt-out here: every declared column is masked.
-    left_silver, right_silver = silver_by_key[join.left], silver_by_key[join.right]
-    left_frame, right_frame, pii_key_columns, pii_masking = _mask_composition_inputs(
-        join, left_silver, right_silver, pii_declared or {}
+    left_side, right_side, pii_key_columns, pii_masking = _mask_composition_inputs(
+        join, sides[0], sides[1], pii_declared or {}
     )
     try:
         package, stats = build_composed_gold_package(
             left_silver=left_silver,
             right_silver=right_silver,
-            left_table=left_frame,
-            right_table=right_frame,
+            left_table=left_side,
+            right_table=right_side,
             join=join,
             dataset_name=composition.name,
             exports=context.spec.exports,
@@ -1167,13 +1189,15 @@ def _run_composition(
     export_paths = export_gold_package(package, output_dir=gold_paths.gold_dir)
     _record_output_paths(outputs, *export_paths)
 
-    combined_schema = infer_schema(package.table)
+    combined_schema = package.table.schema()
     card = build_dataset_card(
         title=context.spec.title,
         description=context.spec.description,
         sources=(join.left, join.right),
         fields=((col.name, col.dtype, col.nullable) for col in combined_schema.columns),
-        sample_rows=package.table.head(DEFAULT_PREVIEW_LIMIT).to_dicts(),
+        sample_rows=cast(
+            tuple[dict[str, JsonValue], ...], package.table.rows(limit=DEFAULT_PREVIEW_LIMIT)
+        ),
         license=_dataset_card_license(context.spec),
         version=_dataset_card_version(context.spec),
     )

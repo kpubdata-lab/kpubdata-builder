@@ -36,13 +36,15 @@ matches the source cannot let the real column through unnoticed (#902).
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-import polars as pl
-
 from ...spec import JsonValue
 from ...spec.models import SchemaContract
+from ...tabular.duckdb_load import TableHandle, storage_type
+from ...tabular.duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation
+from ...tabular.sql import quote_identifier, quote_literal
 
 #: What a masked cell holds. Not a value any PII pattern matches.
 PII_MASK_TOKEN = "[masked]"
@@ -180,60 +182,71 @@ def columns_masked_in_gold(
     return frozenset(declared) - frozenset(publish_unmasked)
 
 
-def _is_text(dtype: pl.DataType) -> bool:
-    return dtype == pl.String
+_names = itertools.count()
 
 
-def nulled_columns(frame: pl.DataFrame, columns: Iterable[str]) -> frozenset[str]:
-    """The ``columns`` of ``frame`` that masking turns null because they are not text."""
-    return frozenset(c for c in columns if c in frame.columns and not _is_text(frame.schema[c]))
+def nulled_columns(table: TableHandle, columns: Iterable[str]) -> frozenset[str]:
+    """The ``columns`` of ``table`` that masking turns null because they are not text."""
+    loaded = table.table
+    return frozenset(
+        c for c in columns if c in loaded.names and loaded.nodes[loaded.names.index(c)] != ("str",)
+    )
 
 
-def mask_columns(frame: pl.DataFrame, columns: Iterable[str]) -> pl.DataFrame:
-    """``frame`` with ``columns`` masked, each keeping its dtype (#902).
+def mask_columns(table: TableHandle, columns: Iterable[str]) -> TableHandle:
+    """``table`` with ``columns`` masked, each keeping its dtype (#902).
 
     A text column has every non-null value replaced by the mask token; any other
-    column becomes all null, since the token is not a value of its dtype.
+    column becomes all null, since the token is not a value of its dtype. The result is
+    a new table in the same connection (#870); ``table`` itself is unchanged.
     """
-    present = [c for c in columns if c in frame.columns]
-    if not present:
-        return frame
-    schema = frame.schema
-    return frame.with_columns(
-        [
-            (
-                pl.when(pl.col(c).is_null()).then(None).otherwise(pl.lit(PII_MASK_TOKEN))
-                if _is_text(schema[c])
-                else pl.lit(None, dtype=schema[c])
-            ).alias(c)
-            for c in present
-        ]
+    loaded = table.table
+    masked = {c for c in columns if c in loaded.names}
+    if not masked:
+        return table
+    token = quote_literal(PII_MASK_TOKEN)
+    parts = [quote_identifier(ROW_SEQ_COLUMN)]
+    for index, (name, physical, node) in enumerate(
+        zip(loaded.names, loaded.physical, loaded.nodes, strict=True)
+    ):
+        column = quote_identifier(physical)
+        if name not in masked:
+            expression = column
+        elif node == ("str",):
+            expression = f"CASE WHEN {column} IS NULL THEN NULL ELSE {token} END"
+        else:
+            expression = f"CAST(NULL AS {storage_type(node)})"
+        parts.append(f"{expression} AS {quote_identifier(f'c{index}')}")
+    return table.derive(
+        f"SELECT {', '.join(parts)} FROM {loaded.relation.sql}",
+        into=TabularRelation(f"{loaded.relation.name}_masked_{next(_names)}"),
+        columns=list(zip(loaded.names, loaded.nodes, strict=True)),
     )
 
 
 def apply_pii_masking(
-    frame: pl.DataFrame,
+    table: TableHandle,
     declared: Mapping[str, tuple[str, ...]],
     *,
     publish_unmasked: Sequence[str] = (),
     declared_absent: Sequence[str] = (),
-) -> tuple[pl.DataFrame, PiiMaskResult]:
-    """Mask every declared column of ``frame`` except those explicitly published unmasked.
+) -> tuple[TableHandle, PiiMaskResult]:
+    """Mask every declared column of ``table`` except those explicitly published unmasked.
 
-    Only columns still in ``frame`` (after ``gold.select``) are reported: a column the
+    Only columns still in ``table`` (after ``gold.select``) are reported: a column the
     selection dropped is not published at all. ``declared_absent`` is carried into the
     result as is.
     """
-    in_gold = {name: origins for name, origins in declared.items() if name in frame.columns}
+    in_gold = {name: origins for name, origins in declared.items() if name in table.columns}
     unmasked = {name: o for name, o in in_gold.items() if name in publish_unmasked}
     masked = {name: o for name, o in in_gold.items() if name not in unmasked}
     result = PiiMaskResult(
         masked=masked,
         unmasked=unmasked,
-        nulled=nulled_columns(frame, masked),
+        nulled=nulled_columns(table, masked),
         declared_absent=tuple(declared_absent),
     )
-    return mask_columns(frame, masked), result
+    return mask_columns(table, masked), result
 
 
 __all__ = [

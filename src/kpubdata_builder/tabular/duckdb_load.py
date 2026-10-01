@@ -288,6 +288,11 @@ class LoadedTable:
         return f"ORDER BY {quote_identifier(ROW_SEQ_COLUMN)}"
 
 
+def storage_type(node: Node) -> str:
+    """The DuckDB type a top-level column of ``node`` is stored as."""
+    return _physical(node, top=True)
+
+
 def derive_table(
     connection: duckdb.DuckDBPyConnection,
     source: LoadedTable,
@@ -474,6 +479,54 @@ class TableHandle:
         while batch := cursor.fetchmany(10_000):
             for value, count in batch:
                 yield str(value), int(count)
+
+    def shares_connection(self, other: TableHandle) -> bool:
+        """Whether ``other`` lives in this table's connection, so SQL can read both."""
+        return self._connection is not None and self._connection is other._connection
+
+    def fetch(self, sql: str, params: Sequence[object] = ()) -> list[tuple[Any, ...]]:
+        """The rows of one read-only query over this connection's tables (#870).
+
+        For statistics a stage computes in SQL — never for rows it hands on, which go
+        through :meth:`rows` so their values are decoded.
+        """
+        return self._open().execute(sql, list(params)).fetchall()
+
+    def derive(
+        self,
+        select: str,
+        params: Sequence[object] = (),
+        *,
+        into: TabularRelation,
+        columns: Sequence[tuple[str, Node]],
+    ) -> TableHandle:
+        """A new table ``into`` in this connection, made by ``select`` (#870).
+
+        ``select`` must produce the row ordinal first, numbered from 0 in the new
+        table's order (ADR 0021 D8), then one column per ``(name, node)`` in
+        ``columns``, named ``c0…``. The new handle shares this connection and does not
+        own it.
+        """
+        connection = self._open()
+        connection.execute(f"CREATE OR REPLACE TABLE {into.sql} AS {select}", list(params))
+        counted = connection.execute(f"SELECT count(*) FROM {into.sql}").fetchone()
+        nodes = tuple(node for _, node in columns)
+        loaded = LoadedTable(
+            relation=into,
+            names=tuple(name for name, _ in columns),
+            physical=tuple(f"c{i}" for i in range(len(columns))),
+            dtypes=tuple(canonical(n) for n in nodes),
+            row_count=int(counted[0]) if counted else 0,
+            nodes=nodes,
+        )
+        return TableHandle(connection, loaded, self.workdir)
+
+    def decode_row(self, names: Sequence[str], values: Sequence[object]) -> dict[str, object]:
+        """``values`` of the named columns as Python values, as :meth:`rows` gives them."""
+        nodes = {name: node for name, node in zip(self.table.names, self.table.nodes, strict=True)}
+        return {
+            name: _decode(nodes[name], value) for name, value in zip(names, values, strict=True)
+        }
 
     def write_parquet(self, path: Path, *, physical_names: bool = False) -> None:
         """The table as Parquet, rows in order.
@@ -684,4 +737,5 @@ __all__ = [
     "fetch_rows",
     "load_records",
     "node_of",
+    "storage_type",
 ]

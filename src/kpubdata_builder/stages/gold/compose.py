@@ -3,27 +3,29 @@
 Join cardinality is judged on the keys that actually intersect (#698): a key that
 repeats on one side but never appears on the other cannot multiply any row, so it
 neither raises a duplicate-key warning nor violates a declared cardinality.
+
+The join and its statistics run in DuckDB SQL (#870), on two tables in one connection.
+The rules are the ones the Polars join followed: key dtypes must be equal; a NaN key
+is a null key (#793); a null key never matches; the right side's key columns are not
+in the output, and a right column whose name the left side has is suffixed with
+``_<right alias>``. Rows come out in the left side's order, and for one left row, in the
+right side's.
 """
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
-
-import polars as pl
 
 from ...spec import ExportTarget, JoinSpec
-from ...tabular.polars_bridge import to_polars
+from ...tabular.duckdb_load import Node, TableHandle
+from ...tabular.duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation
+from ...tabular.sql import quote_identifier
 from ..silver.models import SilverDataset
 from .models import ExportPlan, GoldPackage
 
-_JOIN_HOW: dict[str, Literal["inner", "left"]] = {"inner": "inner", "left": "left"}
-
-# Count columns used while comparing the two sides' key frequencies. They live only
-# in intermediate frames that hold nothing but key columns and these counts.
-_LEFT_COUNT = "__kpubdata_left_n"
-_RIGHT_COUNT = "__kpubdata_right_n"
+_JOIN_SQL: dict[str, str] = {"inner": "INNER JOIN", "left": "LEFT JOIN"}
 
 # Which observed cardinalities each declared cardinality allows (#698). A declared
 # "many" side permits, but does not require, repeated keys.
@@ -33,6 +35,8 @@ _ALLOWED_OBSERVED: dict[str, frozenset[str]] = {
     "many_to_one": frozenset({"one_to_one", "many_to_one"}),
     "many_to_many": frozenset({"one_to_one", "one_to_many", "many_to_one", "many_to_many"}),
 }
+
+_names = itertools.count()
 
 
 class CompositionError(RuntimeError):
@@ -80,11 +84,6 @@ class CompositionStats:
     right_null_key_rows: int
 
 
-def _dtypes_compatible(left: pl.DataType, right: pl.DataType) -> bool:
-    """judges join key dtype compatibility."""
-    return left == right
-
-
 def _key_label(join: JoinSpec, index: int, side: str) -> str:
     """Spec path naming one key column, in the form the author wrote it."""
     if len(join.keys) == 1:
@@ -92,53 +91,52 @@ def _key_label(join: JoinSpec, index: int, side: str) -> str:
     return f"composition.join.keys[{index}].{side}"
 
 
-def _validate_join_keys(
-    left_table: pl.DataFrame, right_table: pl.DataFrame, join: JoinSpec
-) -> None:
+def _validate_join_keys(left: TableHandle, right: TableHandle, join: JoinSpec) -> None:
     """checks join key existence and dtype compatibility. runtime validation gate of build."""
     for index, (left_column, right_column) in enumerate(join.keys):
-        if left_column not in left_table.columns:
+        if left_column not in left.columns:
             raise CompositionError(
                 f"{_key_label(join, index, 'left')} {left_column!r} not found in "
-                f"{join.left!r} columns: {sorted(left_table.columns)}"
+                f"{join.left!r} columns: {sorted(left.columns)}"
             )
-        if right_column not in right_table.columns:
+        if right_column not in right.columns:
             raise CompositionError(
                 f"{_key_label(join, index, 'right')} {right_column!r} not found in "
-                f"{join.right!r} columns: {sorted(right_table.columns)}"
+                f"{join.right!r} columns: {sorted(right.columns)}"
             )
-        left_dtype = left_table.schema[left_column]
-        right_dtype = right_table.schema[right_column]
-        if not _dtypes_compatible(left_dtype, right_dtype):
+        left_dtype = left.dtypes[left.columns.index(left_column)]
+        right_dtype = right.dtypes[right.columns.index(right_column)]
+        if left_dtype != right_dtype:
             raise CompositionError(
                 f"composition join key dtype mismatch: {join.left}.{left_column} "
                 f"({left_dtype}) vs {join.right}.{right_column} ({right_dtype})"
             )
 
 
-def _nan_keys_to_null(table: pl.DataFrame, columns: Sequence[str]) -> pl.DataFrame:
+def _nan_keys_to_null(table: TableHandle, columns: Sequence[str]) -> TableHandle:
     """Float key columns with NaN turned into null (#793).
 
-    Polars joins NaN keys to each other, while the null-key count saw none of them: two
-    NaN keys a side reported zero null keys, an empty intersection and one_to_one, and
-    the join still produced four rows. NaN is not a value that equals anything, so it is
-    treated as the missing key it stands for — counted as a null key, never matched —
-    and the statistics and the join follow the same rule.
+    NaN is not a value that equals anything, so it is treated as the missing key it
+    stands for — counted as a null key, never matched — and the statistics and the
+    join follow the same rule. (DuckDB, like Polars, would otherwise match NaN keys to
+    each other.)
     """
-    floats = [c for c in columns if table.schema[c].is_float()]
+    loaded = table.table
+    floats = {c for c in columns if loaded.nodes[loaded.names.index(c)] == ("float",)}
     if not floats:
         return table
-    return table.with_columns([pl.col(c).fill_nan(None) for c in floats])
-
-
-def _null_key_mask(table: pl.DataFrame, columns: Sequence[str]) -> pl.Series:
-    """True for rows with a null in any key column — such a row never matches."""
-    return table.select(pl.any_horizontal([pl.col(c).is_null() for c in columns])).to_series()
-
-
-def _key_counts(table: pl.DataFrame, columns: Sequence[str], alias: str) -> pl.DataFrame:
-    """Row count per distinct non-null key tuple."""
-    return table.select(columns).group_by(columns).agg(pl.len().alias(alias))
+    parts = [quote_identifier(ROW_SEQ_COLUMN)]
+    for index, (name, physical) in enumerate(zip(loaded.names, loaded.physical, strict=True)):
+        column = quote_identifier(physical)
+        expression = (
+            f"CASE WHEN isnan({column}) THEN NULL ELSE {column} END" if name in floats else column
+        )
+        parts.append(f"{expression} AS {quote_identifier(f'c{index}')}")
+    return table.derive(
+        f"SELECT {', '.join(parts)} FROM {loaded.relation.sql}",
+        into=TabularRelation(f"{loaded.relation.name}_keys_{next(_names)}"),
+        columns=list(zip(loaded.names, loaded.nodes, strict=True)),
+    )
 
 
 def _observed_cardinality(left_many: bool, right_many: bool) -> str:
@@ -147,26 +145,98 @@ def _observed_cardinality(left_many: bool, right_many: bool) -> str:
     return f"{left_part}_to_{right_part}"
 
 
-def _describe_key(row: Mapping[str, object], join: JoinSpec) -> str:
-    """Render one intersecting key and its per-side counts for an error message."""
-    values = ", ".join(f"{lc}={row[lc]!r}" for lc, _ in join.keys)
-    return f"({values}): {row[_LEFT_COUNT]} left rows x {row[_RIGHT_COUNT]} right rows"
-
-
-def _worst_key(frame: pl.DataFrame, join: JoinSpec) -> Mapping[str, object]:
-    """The offending key that multiplies the most rows, ties broken by key order."""
-    left_columns = [lc for lc, _ in join.keys]
-    ordered = frame.with_columns(
-        (pl.col(_LEFT_COUNT) * pl.col(_RIGHT_COUNT)).alias("__kpubdata_product")
-    ).sort(
-        ["__kpubdata_product", *left_columns],
-        descending=[True, *([False] * len(left_columns))],
-    )
-    return ordered.row(0, named=True)
-
-
 def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
+
+
+@dataclass(frozen=True)
+class _KeySql:
+    """The SQL pieces for one join's keys over its two sides."""
+
+    left: TableHandle
+    right: TableHandle
+    join: JoinSpec
+
+    def columns(self, side: str) -> list[str]:
+        table, names = (
+            (self.left, [lc for lc, _ in self.join.keys])
+            if side == "left"
+            else (self.right, [rc for _, rc in self.join.keys])
+        )
+        return [table.table.column(name) for name in names]
+
+    def null_rows(self, side: str) -> str:
+        table = self.left if side == "left" else self.right
+        condition = " OR ".join(f"{c} IS NULL" for c in self.columns(side))
+        return f"SELECT count(*) FROM {table.table.relation.sql} WHERE {condition}"
+
+    def counts(self, side: str) -> str:
+        """Row count per distinct non-null key tuple, keys as ``k0…`` and count ``n``."""
+        table = self.left if side == "left" else self.right
+        keys = self.columns(side)
+        select = ", ".join(f"{c} AS k{i}" for i, c in enumerate(keys))
+        where = " AND ".join(f"{c} IS NOT NULL" for c in keys)
+        group = ", ".join(keys)
+        return (
+            f"SELECT {select}, count(*) AS n FROM {table.table.relation.sql} "
+            f"WHERE {where} GROUP BY {group}"
+        )
+
+    def intersecting(self) -> str:
+        """Keys present on both sides with their per-side counts ``ln`` and ``rn``."""
+        on = " AND ".join(f"lc.k{i} = rc.k{i}" for i in range(len(self.join.keys)))
+        keys = ", ".join(f"lc.k{i}" for i in range(len(self.join.keys)))
+        return (
+            f"WITH lc AS ({self.counts('left')}), rc AS ({self.counts('right')}) "
+            f"SELECT {keys}, lc.n AS ln, rc.n AS rn FROM lc JOIN rc ON {on}"
+        )
+
+
+def _scalar(table: TableHandle, sql: str) -> int:
+    rows = table.fetch(sql)
+    return int(rows[0][0]) if rows and rows[0][0] is not None else 0
+
+
+def _worst_key(keys: _KeySql, condition: str) -> str:
+    """The offending key that multiplies the most rows, ties broken by key order,
+    rendered for an error message."""
+    count = len(keys.join.keys)
+    order = ", ".join(f"k{i}" for i in range(count))
+    (row,) = keys.left.fetch(
+        f"SELECT * FROM ({keys.intersecting()}) WHERE {condition} "
+        f"ORDER BY ln * rn DESC, {order} LIMIT 1"
+    )
+    left_names = [lc for lc, _ in keys.join.keys]
+    values = keys.left.decode_row(left_names, row[:count])
+    rendered = ", ".join(f"{name}={values[name]!r}" for name in left_names)
+    return f"({rendered}): {row[count]} left rows x {row[count + 1]} right rows"
+
+
+def _output_columns(
+    left: TableHandle, right: TableHandle, join: JoinSpec
+) -> list[tuple[str, str, str, Node]]:
+    """``(name, side, physical, node)`` for each output column, in output order."""
+    out: list[tuple[str, str, str, Node]] = [
+        (name, "l", physical, node)
+        for name, physical, node in zip(
+            left.table.names, left.table.physical, left.table.nodes, strict=True
+        )
+    ]
+    right_keys = {rc for _, rc in join.keys}
+    taken = set(left.table.names)
+    for name, physical, node in zip(
+        right.table.names, right.table.physical, right.table.nodes, strict=True
+    ):
+        if name in right_keys:
+            continue
+        output = f"{name}_{join.right}" if name in taken else name
+        if output in taken:
+            raise CompositionError(
+                f"composition join output would have two columns named {output!r}"
+            )
+        taken.add(output)
+        out.append((output, "r", physical, node))
+    return out
 
 
 def build_composed_gold_package(
@@ -177,34 +247,34 @@ def build_composed_gold_package(
     dataset_name: str,
     exports: Sequence[ExportTarget] = (),
     metadata: Mapping[str, str] | None = None,
-    left_table: pl.DataFrame | None = None,
-    right_table: pl.DataFrame | None = None,
+    left_table: TableHandle | None = None,
+    right_table: TableHandle | None = None,
 ) -> tuple[GoldPackage, CompositionStats]:
     """joins two SilverDatasets to create combined GoldPackage and execution statistics.
 
     ``left_table``/``right_table`` are the sides as they are joined, when they differ
-    from Silver's (declared PII masked, #689); Silver's own tables otherwise.
+    from Silver's (declared PII masked, #689); Silver's own tables otherwise. The joined
+    table is created in the left side's connection; a right side from another
+    connection is copied there first.
     """
-    # Composition still joins Polars frames until Gold runs on DuckDB (#870).
-    if left_table is None:
-        left_table = to_polars(left_silver.table)
-    if right_table is None:
-        right_table = to_polars(right_silver.table)
-    _validate_join_keys(left_table, right_table, join)
+    left = left_table if left_table is not None else left_silver.table
+    right = right_table if right_table is not None else right_silver.table
+    if not left.shares_connection(right):
+        from ...tabular.polars_bridge import alongside
 
-    left_columns = [lc for lc, _ in join.keys]
-    right_columns = [rc for _, rc in join.keys]
-    left_table = _nan_keys_to_null(left_table, left_columns)
-    right_table = _nan_keys_to_null(right_table, right_columns)
-    left_row_count = left_table.height
-    right_row_count = right_table.height
+        right = alongside(right, left)
+    _validate_join_keys(left, right, join)
+
+    left = _nan_keys_to_null(left, [lc for lc, _ in join.keys])
+    right = _nan_keys_to_null(right, [rc for _, rc in join.keys])
+    keys = _KeySql(left, right, join)
+    left_row_count = left.height
+    right_row_count = right.height
 
     # Null keys never match in any standard, so an inner join drops those rows
     # silently. Count them per side so the drop is reported, not hidden (#698).
-    left_null_mask = _null_key_mask(left_table, left_columns)
-    right_null_mask = _null_key_mask(right_table, right_columns)
-    left_null_key_rows = int(left_null_mask.sum())
-    right_null_key_rows = int(right_null_mask.sum())
+    left_null_key_rows = _scalar(left, keys.null_rows("left"))
+    right_null_key_rows = _scalar(left, keys.null_rows("right"))
     if join.on_null_key == "fail":
         for side, alias, count in (
             ("left", join.left, left_null_key_rows),
@@ -216,64 +286,78 @@ def build_composed_gold_package(
                     "a null join key and can never match (on_null_key='fail')"
                 )
 
-    left_counts = _key_counts(left_table.filter(~left_null_mask), left_columns, _LEFT_COUNT)
-    right_counts = _key_counts(right_table.filter(~right_null_mask), right_columns, _RIGHT_COUNT)
     # Only the keys present on both sides can multiply rows (#698).
-    intersecting = left_counts.join(
-        right_counts, left_on=left_columns, right_on=right_columns, how="inner"
+    (
+        (
+            left_distinct,
+            right_distinct,
+            left_many,
+            right_many,
+            amplifying,
+            left_matched,
+            right_matched,
+        ),
+    ) = left.fetch(
+        f"WITH lc AS ({keys.counts('left')}), rc AS ({keys.counts('right')}), "
+        f"i AS ({keys.intersecting()}) "
+        "SELECT (SELECT count(*) FROM lc), (SELECT count(*) FROM rc), "
+        "coalesce(bool_or(ln > 1), false), coalesce(bool_or(rn > 1), false), "
+        "count(*) FILTER (WHERE ln > 1 AND rn > 1), coalesce(sum(ln), 0), "
+        "coalesce(sum(rn), 0) FROM i"
     )
-    left_repeats = pl.col(_LEFT_COUNT) > 1
-    right_repeats = pl.col(_RIGHT_COUNT) > 1
-    left_many = intersecting.filter(left_repeats).height > 0
-    right_many = intersecting.filter(right_repeats).height > 0
-    observed = _observed_cardinality(left_many, right_many)
+    observed = _observed_cardinality(bool(left_many), bool(right_many))
 
     if join.cardinality is not None and observed not in _ALLOWED_OBSERVED[join.cardinality]:
-        conditions: list[pl.Expr] = []
+        conditions: list[str] = []
         if join.cardinality.startswith("one_"):
-            conditions.append(left_repeats)
+            conditions.append("ln > 1")
         if join.cardinality.endswith("_one"):
-            conditions.append(right_repeats)
-        offending = intersecting.filter(pl.any_horizontal(conditions))
+            conditions.append("rn > 1")
         raise CompositionError(
             f"composition {dataset_name!r}: declared cardinality {join.cardinality!r} but "
             f"the intersecting keys are {observed!r}; e.g. key "
-            f"{_describe_key(_worst_key(offending, join), join)}"
+            f"{_worst_key(keys, ' OR '.join(conditions))}"
         )
 
-    amplifying = intersecting.filter(left_repeats & right_repeats)
-    duplicate_key_warning = amplifying.height > 0
+    duplicate_key_warning = int(amplifying) > 0
     if duplicate_key_warning and join.on_duplicate_key == "fail":
         raise CompositionError(
-            f"composition {dataset_name!r}: {amplifying.height} join key(s) repeat on both "
+            f"composition {dataset_name!r}: {int(amplifying)} join key(s) repeat on both "
             f"sides and would multiply output rows, e.g. key "
-            f"{_describe_key(_worst_key(amplifying, join), join)} "
+            f"{_worst_key(keys, 'ln > 1 AND rn > 1')} "
             "(on_duplicate_key='fail')"
         )
 
-    left_matched_rows = int(intersecting[_LEFT_COUNT].sum())
-    right_matched_rows = int(intersecting[_RIGHT_COUNT].sum())
-
-    combined = left_table.join(
-        right_table,
-        left_on=left_columns,
-        right_on=right_columns,
-        how=_JOIN_HOW[join.type],
-        suffix=f"_{join.right}",
+    output = _output_columns(left, right, join)
+    seq = quote_identifier(ROW_SEQ_COLUMN)
+    on = " AND ".join(
+        f"l.{lc} = r.{rc}"
+        for lc, rc in zip(keys.columns("left"), keys.columns("right"), strict=True)
+    )
+    select = ", ".join(
+        f"{side}.{quote_identifier(physical)} AS {quote_identifier(f'c{i}')}"
+        for i, (_, side, physical, _) in enumerate(output)
+    )
+    combined = left.derive(
+        f"SELECT row_number() OVER (ORDER BY l.{seq}, r.{seq}) - 1 AS {seq}, {select} "
+        f"FROM {left.table.relation.sql} l {_JOIN_SQL[join.type]} {right.table.relation.sql} r "
+        f"ON {on}",
+        into=TabularRelation(f"composed_{next(_names)}"),
+        columns=[(name, node) for name, _, _, node in output],
     )
 
     stats = CompositionStats(
         left_row_count=left_row_count,
-        left_distinct_key_count=left_counts.height,
+        left_distinct_key_count=int(left_distinct),
         right_row_count=right_row_count,
-        right_distinct_key_count=right_counts.height,
+        right_distinct_key_count=int(right_distinct),
         output_row_count=combined.height,
         duplicate_key_warning=duplicate_key_warning,
         keys=join.keys,
         cardinality=join.cardinality,
         observed_cardinality=observed,
-        left_unmatched_ratio=_ratio(left_row_count - left_matched_rows, left_row_count),
-        right_unmatched_ratio=_ratio(right_row_count - right_matched_rows, right_row_count),
+        left_unmatched_ratio=_ratio(left_row_count - int(left_matched), left_row_count),
+        right_unmatched_ratio=_ratio(right_row_count - int(right_matched), right_row_count),
         expansion_ratio=combined.height / left_row_count if left_row_count else None,
         left_null_key_rows=left_null_key_rows,
         right_null_key_rows=right_null_key_rows,

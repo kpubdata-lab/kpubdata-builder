@@ -104,6 +104,27 @@ def to_polars(handle: TableHandle, *, keep: bool = False) -> pl.DataFrame:
     return frame
 
 
+def alongside(handle: TableHandle, other: TableHandle) -> TableHandle:
+    """``handle``'s table copied into ``other``'s connection, so SQL can read both (#870).
+
+    For library callers that bring tables from separate connections; a build loads both
+    sides of a composition into one connection to begin with.
+    """
+    return handle_from_frame(to_polars(handle), connection=other._open(), workdir=other.workdir)
+
+
+def write_table_parquet(handle: TableHandle, path: Path) -> None:
+    """``handle``'s table as Parquet, written by DuckDB (#869, #870).
+
+    A table with no columns (a source that returned nothing) is written through the
+    Polars frame: DuckDB cannot write a Parquet file without columns.
+    """
+    if handle.table.physical:
+        handle.write_parquet(path)
+    else:
+        to_polars(handle).write_parquet(path)
+
+
 def node_of_polars(dtype: Any) -> Node:
     """The loader node for a Polars dtype — the inverse of :func:`polars_dtype`.
 
@@ -206,4 +227,11 @@ def handle_from_frame(
     )
 
 
-__all__ = ["handle_from_frame", "node_of_polars", "polars_dtype", "to_polars"]
+__all__ = [
+    "alongside",
+    "handle_from_frame",
+    "node_of_polars",
+    "polars_dtype",
+    "to_polars",
+    "write_table_parquet",
+]

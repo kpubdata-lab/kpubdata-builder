@@ -41,6 +41,7 @@ from kpubdata_builder.stages.gold.pii import (
     core_pii_columns,
     declared_pii_columns,
 )
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
 
 # Obviously fake numbers — the shape a licence-and-permit dataset's phone column has.
 _PHONES = ("010-0000-0000", "02-000-0000", "010-0000-0001")
@@ -382,7 +383,9 @@ def test_declarations_name_their_origins_and_skip_absent_kpubdata_fields() -> No
         declared_pii_columns(core=(), build_spec=("nope",), silver_columns=["a"], contract=None)
 
 
-def test_masking_keeps_each_dtype_text_gets_the_token_and_the_rest_null() -> None:
+def test_masking_keeps_each_dtype_text_gets_the_token_and_the_rest_null(
+    tmp_path: Path,
+) -> None:
     """#902: the Gold schema stays Silver's; a non-text column cannot hold the token."""
     frame = pl.DataFrame(
         {
@@ -393,8 +396,8 @@ def test_masking_keeps_each_dtype_text_gets_the_token_and_the_rest_null() -> Non
         }
     )
 
-    masked, result = apply_pii_masking(
-        frame,
+    masked_table, result = apply_pii_masking(
+        handle_from_frame(frame, workdir=tmp_path),
         {
             "tel": ("kpubdata_spec",),
             "code": ("build_spec",),
@@ -403,6 +406,7 @@ def test_masking_keeps_each_dtype_text_gets_the_token_and_the_rest_null() -> Non
         },
     )
 
+    masked = to_polars(masked_table)
     assert masked.schema == frame.schema
     assert masked.to_dicts() == [
         {"tel": PII_MASK_TOKEN, "code": None, "born": None, "keep": "a"},
