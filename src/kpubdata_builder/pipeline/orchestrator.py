@@ -94,6 +94,7 @@ from ..stages.gold.pii import (
     nulled_columns,
 )
 from ..stages.gold.select import GoldSelectionError, GoldSelectionResult, apply_gold_selection
+from ..stages.gold.split import SPLIT_ALGORITHM
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.drift import (
     COVERAGE_MISMATCH,
@@ -1675,6 +1676,11 @@ def run_build(
         build_environment=capture_build_environment(),
         inputs_fingerprint=compute_inputs_fingerprint(provenance),
         inputs_fingerprint_algorithm=FINGERPRINT_ALGORITHM if provenance else None,
+        split_algorithm=(
+            SPLIT_ALGORITHM
+            if context.spec.splits is not None and context.spec.splits.mode == "ratio"
+            else None
+        ),
         created_by=created_by,
         owner_id=effective_manifest_owner_id,
         quality_results=quality_results,

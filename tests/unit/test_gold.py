@@ -124,8 +124,8 @@ class TestBuildGoldPackageWithSplits:
 
         assert package.splits is not None
         assert set(package.splits.keys()) == {"2024", "2025"}
-        assert len(package.splits["2024"]) == 2
-        assert len(package.splits["2025"]) == 1
+        assert package.splits["2024"].height == 2
+        assert package.splits["2025"].height == 1
 
     def test_no_splits_when_spec_none(self) -> None:
         package = build_gold_package(_silver(({"id": "1"},)), dataset_name="d")

@@ -117,6 +117,8 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
     # reads as sources-sha256-v1.
     if manifest.inputs_fingerprint_algorithm is not None:
         payload["inputs_fingerprint_algorithm"] = manifest.inputs_fingerprint_algorithm
+    if manifest.split_algorithm is not None:
+        payload["split_algorithm"] = manifest.split_algorithm
     # additive (#867): each Gold directory's byte digest and the engine that wrote it,
     # apart from the logical data_checksum.
     if manifest.artifacts:

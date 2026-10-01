@@ -101,7 +101,7 @@ def persist_gold_package(
             (tmp_dir / "splits").mkdir(exist_ok=True)
             for split_name, split_df in package.splits.items():
                 validate_path_segment(split_name, field_name="split_name")
-                split_df.write_parquet(tmp_dir / "splits" / f"{split_name}.parquet")
+                write_table_parquet(split_df, tmp_dir / "splits" / f"{split_name}.parquet")
 
         # Atomic swap: replaces existing directory without data loss (#180).
         atomic_replace_dir(tmp_dir, gold_dir)
