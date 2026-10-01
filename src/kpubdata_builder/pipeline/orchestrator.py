@@ -1548,13 +1548,29 @@ def run_build(
     composition_outcome: CompositionOutcome | None = None
     composition_provenance: CompositionProvenance | None = None
     if spec.composition is not None and not cancelled:
-        composition_result = _run_composition(
-            spec.composition,
-            silver_by_key=silver_by_key,
-            context=context,
-            pii_declared=pii_declared,
-            provenance_by_key=provenance_by_key,
-        )
+        try:
+            composition_result = _run_composition(
+                spec.composition,
+                silver_by_key=silver_by_key,
+                context=context,
+                pii_declared=pii_declared,
+                provenance_by_key=provenance_by_key,
+            )
+        except Exception as exc:
+            # Composition catches its own CompositionError inside _compose, but
+            # anything else — ResourceLimitError from the connection's spill
+            # quota (#701), a bug in the join code — used to escape run_build
+            # and crash the request with an opaque 500 instead of a recorded
+            # failed outcome (#958). Same rule as sources: the message goes
+            # through public_failure_message, so allow-listed errors keep
+            # their text and everything else gets the generic one.
+            composition_result = _CompositionPipelineResult(
+                outcome=CompositionOutcome(
+                    name=spec.composition.name,
+                    status="failed",
+                    error=public_failure_message(exc, spec.composition.name),
+                )
+            )
         if (
             composition_result.pii_masking is not None
             and not composition_result.pii_masking.is_empty()
