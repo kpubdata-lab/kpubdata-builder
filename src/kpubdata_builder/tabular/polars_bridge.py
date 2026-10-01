@@ -195,7 +195,7 @@ def handle_from_frame(
 
         temp = workdir / ".duckdb_tmp"
         temp.mkdir(parents=True, exist_ok=True)
-        connection = connect(BuildProfile(), temp)
+        connection = connect(BuildProfile.from_env(), temp)
     nodes = tuple(node_of_polars(dtype) for dtype in frame.dtypes)
     physical = tuple(f"c{i}" for i in range(frame.width))
     workdir.mkdir(parents=True, exist_ok=True)

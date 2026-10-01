@@ -153,7 +153,10 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | query child process | 기본 2 | `KPUBDATA_QUERY_MAX_CONCURRENCY` |
 | query child 하나의 메모리 | **기본 무제한**. 설정하면 child 의 address space 를 제한해 초과한 질의만 실패(`400 query_failed`)하고 서버와 다른 요청은 계속된다 | `KPUBDATA_QUERY_MAX_MEMORY_MB` |
 | 동시에 도는 query child 들의 메모리 합 | **기본 없음**(개수 상한만). 설정하면 질의마다 자기 child 메모리 상한만큼 예산에서 예약하고, 예산이 모자라면 기다리지 않고 `429 query_busy` 로 거부한다. 성공·실패·timeout·취소 어느 경로로 끝나도 예약을 돌려준다. SQL·행 읽기·집계·내보내기·프로파일 모두 같은 예산을 쓴다 | `KPUBDATA_QUERY_MEMORY_BUDGET_MB` |
-| Polars 내부 thread | 프로세스마다 기본 CPU 코어 수 — build worker 와 query child 모두 | `POLARS_MAX_THREADS` |
+| DuckDB thread | **연결 하나당** 기본 2. build 는 실행 중인 source 마다 연결 하나 | `KPUBDATA_DUCKDB_THREADS` |
+| DuckDB buffer memory | **연결 하나당** 기본 `1GB`. 넘으면 spill 한다 | `KPUBDATA_DUCKDB_MEMORY_LIMIT` |
+| DuckDB spill(임시 디스크) | **연결 하나당** 기본 `10GB`. 넘으면 그 질의·source 만 실패하고 디스크를 채우지 않는다 | `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` |
+| Polars 내부 thread | 프로세스마다 기본 CPU 코어 수 — 아직 Polars 를 쓰는 query child 와 bridge(#876 까지) | `POLARS_MAX_THREADS` |
 
 `KPUBDATA_QUERY_MAX_MEMORY_MB` 는 address space 상한(`RLIMIT_AS`)이라 RSS 보다 크게 잡아야
 한다 — Polars 가 import 시점에 가상 메모리를 넉넉히 예약하므로 너무 작으면 모든 질의가
@@ -162,6 +165,42 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 두면 질의 하나가 예산 전체를 예약하므로 한 번에 하나씩 돈다 — 둘을 함께 설정하는 것이 맞다.
 CPU·임시 디스크·프로세스·스레드 수는 위 표의 문서화 항목이고 admission 기준이 아니다. 동시
 실행 개수 상한(`KPUBDATA_QUERY_MAX_CONCURRENCY`)은 보조 상한으로 그대로 남는다.
+
+DuckDB 의 세 설정은 **연결 하나당** 상한이다(ADR 0021 D9, #701). 한 호스트의 합은 동시에 열려 있는
+연결 수를 곱해 구한다 — build 는 실행 중인 source 마다 연결 하나를 연다(build 하나에 최대 4,
+`_MAX_PARALLEL_SOURCES`). spill quota 는 DuckDB 가 실제로 지키도록 연결을 연 뒤 `SET` 으로 건다: connect
+config 로 넘기면 값은 보이지만 지켜지지 않았다(4 MB quota 에서 400 MB 넘게 썼다).
+
+```text
+DuckDB 연결 수   = async_build_workers × 4 (+ preview 1, composition 1)
+DuckDB thread    = DuckDB 연결 수 × KPUBDATA_DUCKDB_THREADS
+DuckDB 메모리    = DuckDB 연결 수 × KPUBDATA_DUCKDB_MEMORY_LIMIT        (RSS 에 더한다)
+임시 디스크      = DuckDB 연결 수 × KPUBDATA_DUCKDB_MAX_TEMP_SIZE       (run 디렉터리의 _duckdb_tmp)
+query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질의마다 MAX_MEMORY_MB 예약)
+프로세스 수      = 1 + KPUBDATA_QUERY_MAX_CONCURRENCY
+```
+
+**1 vCPU / 2 GiB 예시** (`infra/main.bicep` 기본 크기). HTTP worker 와 async build worker 는 같은 설정
+(`KPUBDATA_BUILDER_MAX_WORKERS`)을 받으므로, 그 값을 2 로 낮춰 동시 build 를 둘로 묶고 나머지를 맞춘다.
+
+| 항목 | 설정 | 합 |
+| :--- | :--- | :--- |
+| HTTP worker / async build worker | `KPUBDATA_BUILDER_MAX_WORKERS=2` | 각 2 |
+| DuckDB 연결 (build 2 × source 4 = 8) | `KPUBDATA_DUCKDB_THREADS=1`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=96MB`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE=1GB` | thread 8, 메모리 768 MB, 임시 디스크 8 GB |
+| query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 프로세스 2, query 메모리 768 MB |
+| Polars thread | `POLARS_MAX_THREADS=1` | — |
+| 기본 프로세스·HTTP·여유 | 실측 | 약 400 MB |
+
+메모리 합은 약 1.9 GB 다(DuckDB 768 MB + query 768 MB + 기본 약 400 MB). 2 GiB 에 여유가 거의 없으므로
+실측 RSS 가 크면 DuckDB 메모리나 query 예산을 줄인다. DuckDB 메모리는 넘으면 spill 하므로 작게 잡아도
+build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 넘지만 thread 는 CPU 를 나눠 쓸 뿐
+메모리를 늘리지 않는다. 임시 디스크 8 GB 는 컨테이너의 쓰기 가능한 디스크 안에 있어야 한다.
+
+query worker 의 종료는 네 경로 모두에서 child process 를 남기지 않는다: 성공, 실패(child 가 스스로
+끝나지 않아도 1초 뒤 terminate), timeout(terminate 를 무시하면 kill), 요청 취소(대기 중인 요청 thread 가
+중단되면 child 도 멈춘다). 클라이언트가 연결을 끊은 것은 서버가 따로 감지하지 않는다 — 그 질의는 timeout
+까지 돌고 같은 정리를 거친다. preview(`/query`)는 SQL 결과를 `limit + 1` 행에서 자르므로 전체 결과를 만들지
+않고, 전체 결과 export 는 query 와 다른 timeout(`EXPORT_TIMEOUT_SECONDS`, 60초)으로 같은 메모리 예산을 쓴다.
 
 query timing은 다음 경계를 사용한다.
 

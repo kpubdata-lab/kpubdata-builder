@@ -60,6 +60,16 @@ param builderMaxWorkers int = 4
 @minValue(1)
 param queryMaxConcurrency int = 1
 
+@description('KPUBDATA_DUCKDB_THREADS: DuckDB threads per connection; a build opens one per running source.')
+@minValue(1)
+param duckdbThreads int = 1
+
+@description('KPUBDATA_DUCKDB_MEMORY_LIMIT: DuckDB buffer memory per connection before it spills (docs/deploy.md section 9).')
+param duckdbMemoryLimit string = '96MB'
+
+@description('KPUBDATA_DUCKDB_MAX_TEMP_SIZE: DuckDB spill files per connection; past it the source fails instead of filling the disk.')
+param duckdbMaxTempSize string = '1GB'
+
 @description('Location for all resources.')
 param location string = resourceGroup().location
 
@@ -167,6 +177,18 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'KPUBDATA_QUERY_MAX_CONCURRENCY'
               value: string(queryMaxConcurrency)
+            }
+            {
+              name: 'KPUBDATA_DUCKDB_THREADS'
+              value: string(duckdbThreads)
+            }
+            {
+              name: 'KPUBDATA_DUCKDB_MEMORY_LIMIT'
+              value: duckdbMemoryLimit
+            }
+            {
+              name: 'KPUBDATA_DUCKDB_MAX_TEMP_SIZE'
+              value: duckdbMaxTempSize
             }
           ]
           resources: {

@@ -28,13 +28,18 @@ az deployment group create \
     containerCpu=1.0 \
     containerMemory=2Gi \
     builderMaxWorkers=4 \
-    queryMaxConcurrency=1
+    queryMaxConcurrency=1 \
+    duckdbThreads=1 \
+    duckdbMemoryLimit=96MB \
+    duckdbMaxTempSize=1GB
 ```
 
 `main.bicep`의 보수적 기본값은 단일 replica에 `1.0` vCPU/`2Gi`, HTTP worker 4개,
-query child 1개다. 애플리케이션 자체 기본값(HTTP 10, query 2)보다 작게 명시하여 작은
-ACA 인스턴스의 process/thread 과다 경쟁을 피한다. 비동기 build pool은 현재 코드 기본값
-10개로 고정되어 있으며 이 Bicep parameter의 영향을 받지 않는다. 산정과 튜닝 절차는
+query child 1개, DuckDB 연결마다 thread 1·메모리 `96MB`·spill `1GB`다. 애플리케이션 자체
+기본값(HTTP 10, query 2, DuckDB thread 2·`1GB`·`10GB`)보다 작게 명시하여 작은 ACA 인스턴스의
+process/thread·메모리 과다 경쟁을 피한다. 비동기 build pool은 `serve`가 HTTP worker와 같은
+값(`builderMaxWorkers`)으로 만든다 — 동시 build 하나는 source마다 DuckDB 연결을 하나씩(최대 4)
+연다. 2Gi에서 동시 build를 줄이려면 `builderMaxWorkers`를 낮춘다(1 vCPU / 2 GiB 예시는 2). 산정과 튜닝 절차는
 [`docs/deploy.md`](../docs/deploy.md#9-리소스-예산과-튜닝)를 따른다.
 
 ## 리소스

@@ -63,7 +63,7 @@ def open_connection(workdir: Path) -> duckdb.DuckDBPyConnection:
     from ...tabular.duckdb_runtime import BuildProfile, connect
 
     workdir.mkdir(parents=True, exist_ok=True)
-    return connect(BuildProfile(), workdir)
+    return connect(BuildProfile.from_env(), workdir)
 
 
 def normalize_table(
