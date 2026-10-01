@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +33,10 @@ else:
 # so schema change DROP and recreate table — existing index data lost but
 # rebuilding via rebuild_index() from manifest.json restores it.
 SCHEMA_VERSION = 5
+
+#: Run ids per ``IN (...)`` lookup in ``count_builds`` — under SQLite's 999-variable
+#: floor on old builds, and a size any backend takes.
+_IN_CHUNK = 500
 
 # Build index status vocabulary. ADR 0003 derived cache. manifest.json is canonical.
 BuildStatus = Literal["ok", "failed", "cancelled"]
@@ -89,6 +93,10 @@ class BuildIndex(Protocol):
     def list_between(self, start_iso: str, end_iso: str) -> list[BuildEntry]: ...
 
     def latest_successful_finished_at(self) -> str | None: ...
+
+    def count_builds(self, also: Collection[str] = ()) -> int:
+        """How many distinct runs are indexed or named in ``also`` (#948)."""
+        ...
 
     def get(self, run_id: str) -> BuildEntry | None: ...
 
@@ -452,6 +460,24 @@ class SqliteBuildIndex:
         )
         row = cur.fetchone()
         return cast(str | None, row[0]) if row is not None else None
+
+    def count_builds(self, also: Collection[str] = ()) -> int:
+        """How many distinct runs are indexed or named in ``also`` (#948).
+
+        ``also`` is the run ids known elsewhere — the async registry's queued and running
+        jobs, which the index does not hold until a manifest exists. An id the index
+        holds is counted once. One ``COUNT(*)`` plus a primary-key lookup per chunk of
+        ``also``; no row is read.
+        """
+        (indexed,) = self._conn.execute("SELECT COUNT(*) FROM builds").fetchone()
+        pending = set(also)
+        ids = sorted(pending)
+        for start in range(0, len(ids), _IN_CHUNK):
+            chunk = ids[start : start + _IN_CHUNK]
+            marks = ",".join("?" * len(chunk))
+            cur = self._conn.execute(f"SELECT run_id FROM builds WHERE run_id IN ({marks})", chunk)
+            pending.difference_update(row[0] for row in cur)
+        return int(indexed) + len(pending)
 
     def get(self, run_id: str) -> BuildEntry | None:
         """Query specific build.

@@ -162,4 +162,8 @@ def test_the_admin_view_is_metadata_with_the_reason(
     assert set(row) == {"run_id", "status", "started_at", "finished_at", "owner_id", "error"}
     assert row["status"] == "ok"
     assert row["error"] is None
+    # #948: `count` is this response's runs; `total` the runs before `limit`.
+    runs = cast(list[JsonValue], response.body["runs"])
+    assert response.body["count"] == len(runs)
+    assert response.body["total"] == len(runs)
     _no_bytes(response)

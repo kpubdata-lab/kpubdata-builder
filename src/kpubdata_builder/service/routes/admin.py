@@ -123,8 +123,16 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
     level for admin purposes.
     """
     limit = _parse_limit(query)
+    jobs = service._async_builds.list_all()
     try:
         entries = service._build_index.list_builds(limit=limit)
+        # `total` (#948): every run this listing draws from, before `limit` — the index
+        # counted, plus the registry's jobs it does not hold yet. Counting, not
+        # listing, keeps it one COUNT and a key lookup however many runs there are.
+        listed = {entry.run_id for entry in entries}
+        total = service._build_index.count_builds(
+            also=[job.run_id for job in jobs if job.run_id not in listed]
+        )
     except Exception:
         # Index read failed; do not fall back to filesystem. Fallback has
         # less accurate owner info, and if admin UI shows it as fact, they
@@ -140,7 +148,7 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
     # so queued/running jobs are not in the index at all — but stuck runs are what
     # operators look for. If there's an index entry for the same run_id, it wins
     # (terminal status is newer).
-    for job in service._async_builds.list_all():
+    for job in jobs:
         # BuildJobSnapshot has created_at/updated_at. finished_at is meaningful
         # only for terminal jobs; leave it empty while running — using updated_at
         # as-is would read as "this running run just finished".
@@ -176,7 +184,10 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
     )[:limit]
     runs: list[JsonValue] = [cast(JsonValue, row) for _, (_, row) in ordered]
     record_admin_action(principal, "admin.runs.list", target=f"limit={limit}")
-    return ServiceResponse(200, {"runs": runs, "count": len(runs)})
+    # A build that finishes between the list and the count can leave the count one
+    # short; never report fewer runs than this response already merged.
+    total = max(total, len(rows))
+    return ServiceResponse(200, {"runs": runs, "count": len(runs), "total": total})
 
 
 def _admin_config(principal: Principal) -> ServiceResponse:

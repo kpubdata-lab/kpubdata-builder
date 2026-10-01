@@ -17,7 +17,7 @@ Upsert handled dialect-independently as delete+insert in single transaction with
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import (
@@ -29,6 +29,7 @@ from sqlalchemy import (
     Text,
     and_,
     delete,
+    func,
     insert,
     inspect,
     or_,
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Row
 
 _SCHEMA_VERSION_TABLE = "build_schema_version"
+# Run ids per `IN (...)` lookup in `count_builds`, as in SqliteBuildIndex.
+_IN_CHUNK = 500
 
 
 class CubridBuildIndex:
@@ -206,6 +209,19 @@ class CubridBuildIndex:
         with self._engine.connect() as conn:
             row = conn.execute(stmt).first()
         return str(row[0]) if row is not None else None
+
+    def count_builds(self, also: Collection[str] = ()) -> int:
+        # Distinct runs indexed or named in `also` (#948); see SqliteBuildIndex.
+        b = self._builds.c
+        pending = set(also)
+        ids = sorted(pending)
+        with self._engine.connect() as conn:
+            indexed = conn.execute(select(func.count()).select_from(self._builds)).scalar_one()
+            for start in range(0, len(ids), _IN_CHUNK):
+                chunk = ids[start : start + _IN_CHUNK]
+                rows = conn.execute(select(b.run_id).where(b.run_id.in_(chunk))).all()
+                pending.difference_update(str(row[0]) for row in rows)
+        return int(indexed) + len(pending)
 
     def get(self, run_id: str) -> BuildEntry | None:
         stmt = select(self._builds).where(self._builds.c.run_id == run_id)

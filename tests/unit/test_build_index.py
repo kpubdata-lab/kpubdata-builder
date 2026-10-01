@@ -74,6 +74,18 @@ class TestBuildIndex:
         assert entry.status == "failed"
         assert entry.error == "test error"
 
+    def test_count_builds_counts_indexed_and_extra_runs_once(self, tmp_path: Path) -> None:
+        """#948: the admin total — indexed runs plus ids only the job registry knows."""
+        index = SqliteBuildIndex(tmp_path)
+        for i in range(3):
+            index.insert_or_replace(f"run-{i}", "ok", None, f"2025-01-01T0{i}:00:00Z")
+
+        assert index.count_builds() == 3
+        assert index.count_builds(also=["run-0", "run-2"]) == 3
+        assert index.count_builds(also=["run-0", "live", "live"]) == 4
+        # More ids than one IN (...) lookup takes.
+        assert index.count_builds(also=[f"live-{i}" for i in range(1200)] + ["run-1"]) == 1203
+
     def test_list_builds_orders_by_finished_at_desc(self, tmp_path: Path) -> None:
         """list_builds returns in descending order by finished_at."""
         index = SqliteBuildIndex(tmp_path)
