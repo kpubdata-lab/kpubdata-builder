@@ -11,6 +11,32 @@ from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from kpubdata_builder import __version__
+
+#: Honest identity for the portal's logs — no browser spoofing (#448).
+_USER_AGENT = f"kpubdata-builder/{__version__} (+https://github.com/yeongseon/kpubdata-builder)"
+
+
+def _refusal_message(url: str, code: int) -> str:
+    """What an HTTP refusal means and what to do about it, by code.
+
+    404 is ambiguous: this origin may be refused on detail pages (the
+    portal's main page answers while ``/data/<id>/openapi.do`` does not),
+    or the dataset number in the URL is simply wrong. 403 and 5xx are the
+    edge refusing the origin outright.
+    """
+    route = (
+        "run discover from the kr runner, or read the cached guide via "
+        "kpubdata's scripts/fetch_guide.py"
+    )
+    if code == 404:
+        return (
+            f"the portal answered HTTP 404 for {url} — either this origin is "
+            f"refused on detail pages (the portal's main page answers), or the "
+            f"dataset number is wrong: check the URL, or {route}"
+        )
+    return f"the portal answered HTTP {code} for {url} — {route}"
+
 
 class PortalUnreachable(RuntimeError):
     """The portal page could not be fetched, with the reason and the next step.
@@ -142,21 +168,19 @@ class DiscoveryResult:
 
 
 def _fetch_page(url: str) -> str:
-    """Fetch the detail page with browser-shaped headers.
+    """Fetch the detail page with an honest user agent and Accept headers.
 
-    A plain urllib fingerprint is refused by the portal's edge on some
-    origins even where a browser gets through, so the request carries the
-    Accept headers a real one sends. Both an HTTP refusal and a network
-    failure raise PortalUnreachable — from a refused origin the fetch is
-    an environment problem, not a parsing one.
+    Accept and Accept-Language stay because a content-negotiating edge
+    serves HTML pages to clients that ask for them. The user agent stays
+    honest — this project does not spoof a browser to get past a bot
+    filter on a public portal. An HTTP refusal and a network failure
+    both raise PortalUnreachable naming the next step, because no amount
+    of parsing helps until the page can be fetched.
     """
     req = Request(
         url,
         headers={
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-            ),
+            "User-Agent": _USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
         },
@@ -165,13 +189,7 @@ def _fetch_page(url: str) -> str:
         with urlopen(req, timeout=15) as resp:  # noqa: S310
             body = str(resp.read().decode("utf-8", errors="replace"))
     except HTTPError as exc:
-        raise PortalUnreachable(
-            f"the portal answered HTTP {exc.code} for {url}. The portal refuses "
-            "some origins on detail pages while its main page answers — run "
-            "discover from the kr runner, or read the cached guide via "
-            "kpubdata's scripts/fetch_guide.py",
-            status=exc.code,
-        ) from exc
+        raise PortalUnreachable(_refusal_message(url, exc.code), status=exc.code) from exc
     except URLError as exc:
         raise PortalUnreachable(
             f"could not reach {url} ({exc.reason}) — check the network or the URL"

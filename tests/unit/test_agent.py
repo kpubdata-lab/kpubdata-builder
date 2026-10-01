@@ -128,6 +128,22 @@ class TestFetchPage:
 
         assert exc_info.value.status == 403
         assert "kr runner" in str(exc_info.value)
+        assert "dataset number" not in str(exc_info.value)
+
+    def test_not_found_also_suspects_the_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        url = "https://www.data.go.kr/data/12345/openapi.do"
+
+        def not_found(_req, timeout: int = 0) -> None:
+            raise HTTPError(url, 404, "Not Found", None, None)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(discover_mod, "urlopen", not_found)
+
+        with pytest.raises(PortalUnreachable) as exc_info:
+            _fetch_page(url)
+
+        assert exc_info.value.status == 404
+        assert "dataset number is wrong" in str(exc_info.value)
+        assert "kr runner" in str(exc_info.value)
 
     def test_edge_error_is_the_same_diagnosis(self, monkeypatch: pytest.MonkeyPatch) -> None:
         url = "https://www.data.go.kr/data/12345/openapi.do"
@@ -156,7 +172,7 @@ class TestFetchPage:
         assert exc_info.value.status is None
         assert "network" in str(exc_info.value)
 
-    def test_request_carries_browser_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_request_is_honest_and_asks_for_html(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured: dict[str, object] = {}
 
         class FakeResponse:
@@ -175,15 +191,17 @@ class TestFetchPage:
 
         monkeypatch.setattr(discover_mod, "urlopen", capture)
 
-        html = _fetch_page("https://www.data.go.kr/data/12345/openapi.do")
+        _fetch_page("https://www.data.go.kr/data/12345/openapi.do")
 
-        assert html == "<html></html>"
+        agent = str(captured.get("User-agent", ""))
+        assert "Mozilla" not in agent
+        assert agent.startswith("kpubdata-builder/")
         assert "text/html" in str(captured.get("Accept", ""))
         assert "ko-KR" in str(captured.get("Accept-language", ""))
 
 
 class TestDiscoverUnreachableExit:
-    def test_portal_refusal_exits_two(
+    def test_portal_refusal_exits_three(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         def refused(_url: str) -> DiscoveryResult:
@@ -195,7 +213,7 @@ class TestDiscoverUnreachableExit:
 
         code = dispatch(args)
 
-        assert code == 2
+        assert code == 3
         assert "kr runner" in capsys.readouterr().err
 
 
