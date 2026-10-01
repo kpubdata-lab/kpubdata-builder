@@ -387,7 +387,10 @@ _BuildListEntry = dict[str, str | None]
 #   response (403 signup_pending / signup_rejected, #951) (additive).
 # 1.72.0 -> 1.73.0: GET /admin/runs gains total, the runs before limit; count is the runs in
 #   the response (#948, additive).
-API_CONTRACT_VERSION = "1.73.0"
+# 1.73.0 -> 1.75.0: card.json is the declared DatasetCard, with license_declared,
+#   license_provider, license_mismatch and processing_declared (#955, additive; numbered
+#   past 1.74.0, which open PRs claim).
+API_CONTRACT_VERSION = "1.75.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

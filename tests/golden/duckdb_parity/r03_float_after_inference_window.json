@@ -1241,10 +1241,14 @@
      "processing": [
       "No transformation declared: values are as the source gave them."
      ],
+     "processing_declared": false,
      "provenance": [
       {
        "institution": "",
        "license": "공공누리_1유형",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": "공공누리_1유형",
        "source": "t",
        "url": "https://www.data.go.kr"
       }

@@ -202,10 +202,14 @@
       "Converted exercise_kcal to float",
       "Converted carbon_kg to float"
      ],
+     "processing_declared": true,
      "provenance": [
       {
        "institution": "",
        "license": "kogl-type-1 (https://www.kogl.or.kr/info/licenseType1.do)",
+       "license_declared": "kogl-type-1 (https://www.kogl.or.kr/info/licenseType1.do)",
+       "license_mismatch": false,
+       "license_provider": null,
        "source": "bike",
        "url": "uploaded file"
       }

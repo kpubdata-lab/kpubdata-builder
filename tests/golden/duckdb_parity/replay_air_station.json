@@ -938,10 +938,14 @@
      "processing": [
       "No transformation declared: values are as the source gave them."
      ],
+     "processing_declared": false,
      "provenance": [
       {
        "institution": "",
        "license": "",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": null,
        "source": "datago.air_station",
        "url": "https://www.data.go.kr/data/15000581/openapi.do"
       }

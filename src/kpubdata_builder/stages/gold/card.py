@@ -11,7 +11,11 @@ to it — the facts a reuser needs and #677 found missing on most published data
 
 The same sections are written as ``card.json`` next to the README, so publishing can
 check them without parsing Markdown: a section left empty blocks publishing
-(:func:`missing_sections`).
+(:func:`missing_sections`). ``card.json`` is the contract's ``DatasetCard`` schema
+(#955): besides the sentences the README shows, it states as fields what a client
+would otherwise read out of a sentence — whether the declared licence and the
+provider's differ (``provenance[].license_mismatch``) and whether any transformation
+was declared (``processing_declared``).
 """
 
 from __future__ import annotations
@@ -40,13 +44,25 @@ class CardSource:
     source: str
     institution: str
     url: str
+    #: The licence sentence the README shows: the declared licence, with the
+    #: provider's own terms beside it when they differ.
     license: str
     collected_at: str
+    #: The licence the BuildSpec declares, as written (with its link), or None.
+    license_declared: str | None = None
+    #: The terms the provider declares in the kpubdata catalog, or None.
+    license_provider: str | None = None
+    #: True when both are known and the provider's terms are not the declared licence.
+    license_mismatch: bool = False
 
 
 #: Sections a published card must fill; each is checked per source where it is per source.
 REQUIRED_SOURCE_FIELDS: tuple[str, ...] = ("institution", "url", "license", "collected_at")
 REQUIRED_SECTIONS: tuple[str, ...] = ("provenance", "processing", "personal_information")
+
+#: The processing step stated when nothing was declared — a sentence for the README;
+#: ``card.json`` says the same as ``processing_declared: false`` (#955).
+NO_PROCESSING_STEP = "No transformation declared: values are as the source gave them."
 
 
 @dataclass(frozen=True)
@@ -63,6 +79,9 @@ class DatasetCard:
     provenance: tuple[CardSource, ...] = ()
     processing: tuple[str, ...] = ()
     personal_information: str = ""
+    #: Whether ``processing`` lists a declared transformation, not only
+    #: :data:`NO_PROCESSING_STEP` (#955).
+    processing_declared: bool = False
 
 
 def build_dataset_card(
@@ -77,8 +96,16 @@ def build_dataset_card(
     provenance: Iterable[CardSource] = (),
     processing: Iterable[str] = (),
     personal_information: str = "",
+    processing_declared: bool | None = None,
 ) -> DatasetCard:
-    """assembles DatasetCard from raw input."""
+    """assembles DatasetCard from raw input.
+
+    ``processing_declared`` defaults to whether ``processing`` holds any step other
+    than :data:`NO_PROCESSING_STEP`.
+    """
+    steps = tuple(processing)
+    if processing_declared is None:
+        processing_declared = any(step != NO_PROCESSING_STEP for step in steps)
     return DatasetCard(
         title=title,
         description=description,
@@ -88,13 +115,15 @@ def build_dataset_card(
         license=license,
         version=version,
         provenance=tuple(provenance),
-        processing=tuple(processing),
+        processing=steps,
         personal_information=personal_information,
+        processing_declared=processing_declared,
     )
 
 
 def card_sections(card: DatasetCard) -> dict[str, JsonValue]:
-    """The card's provenance, processing and personal-information sections as data."""
+    """The card's provenance, processing and personal-information sections as data —
+    the contract's ``DatasetCard`` (#955)."""
     return {
         "card_version": 1,
         "title": card.title,
@@ -105,10 +134,14 @@ def card_sections(card: DatasetCard) -> dict[str, JsonValue]:
                 "url": s.url,
                 "license": s.license,
                 "collected_at": s.collected_at,
+                "license_declared": s.license_declared,
+                "license_provider": s.license_provider,
+                "license_mismatch": s.license_mismatch,
             }
             for s in card.provenance
         ],
         "processing": list(card.processing),
+        "processing_declared": card.processing_declared,
         "personal_information": card.personal_information,
     }
 
@@ -228,6 +261,7 @@ def render_dataset_card(card: DatasetCard) -> str:
 
 
 __all__ = [
+    "NO_PROCESSING_STEP",
     "REQUIRED_SECTIONS",
     "REQUIRED_SOURCE_FIELDS",
     "CardField",

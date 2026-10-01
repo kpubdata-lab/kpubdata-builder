@@ -181,6 +181,8 @@ BuildSpec 경로의 Gold 출력마다 카드(`README.md`)와 같은 내용의 `c
 | 가공 | 선언된 read_as·null_tokens·coalesce·rename·zfill·casts·derived·gold selection·splits. 없으면 "없음" 을 적는다 |
 | 개인정보 처리 | Gold 가 선언된 PII 열을 어떻게 했는지(manifest `pii_masking`: 마스킹한 열과 방식, `publish_unmasked` 로 마스킹 없이 게시한 열, kpubdata 가 선언했지만 이 소스에 없는 필드) + `pii` 정책의 스캔 방식(mode 그대로 — `allow` 는 스캔하되 조치하지 않는다는 뜻이다). 정책이 없으면 "스캔하지 않음" 을 적는다 |
 
+`card.json` 은 계약의 `DatasetCard` 스키마다(#955, API contract 1.75.0). 문장 안에만 있던 두 사실은 필드로도 적는다 — 출처별 `license_declared`·`license_provider`(모르면 null)·`license_mismatch`(둘 다 알고 제공기관 조건이 선언 라이선스와 다를 때 true), 그리고 `processing_declared`(선언된 가공이 없어 "No transformation declared" 문장만 있으면 false). 클라이언트는 문장이 아니라 이 필드를 읽는다.
+
 필수 섹션이 비면 게시가 막힌다(`card_incomplete`, 빈 섹션 이름을 알려준다). 카드가 없던 이전 run 은
 `card_missing` 으로 막히며 다시 빌드하면 된다. Kaggle 패키지와 Hugging Face layout 에도 같은 카드가 들어간다 — HF 게시는 layout 의 `README.md` 를 repo 루트에 올리므로, 그 파일도 exporter 의 front matter 아래에 같은 절을 갖는다.
 
