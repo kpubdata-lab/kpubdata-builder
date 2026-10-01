@@ -205,9 +205,9 @@ query worker 의 종료는 네 경로 모두에서 child process 를 남기지 �
 query timing은 다음 경계를 사용한다.
 
 - `execution_ms`: parent의 `QueryEngine.execute` 진입부터 payload 수신·검증과 child join까지.
-- `startup_ms`: 같은 parent 시작점부터 spawned child의 Polars import와 bounded SQL setup 완료,
-  `scan_parquet` 직전까지.
-- `engine_execution_ms`: child의 `scan_parquet` 직전부터 SQL context/execute/collect 완료까지.
+- `startup_ms`: 같은 parent 시작점부터 spawned child의 import와 잠긴 DuckDB 연결(`dataset` view)
+  준비 완료, 질의 직전까지.
+- `engine_execution_ms`: child의 질의 직전부터 DuckDB 실행·결과 fetch 완료까지.
 - 구조화 로그의 `ipc_serialization_ms`: 위 두 child 구간을 end-to-end에서 뺀 nonnegative
   remainder. row 변환, JSON 크기 확인, Pipe 직렬화/전송, scheduling, join과 ms 반올림을
   포함하므로 세 필드가 정확히 합산된다고 가정하지 않는다.

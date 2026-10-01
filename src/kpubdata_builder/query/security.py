@@ -1,4 +1,20 @@
-"""AST-based SQL sandbox for the logical ``dataset`` relation."""
+"""AST-based SQL sandbox for the logical ``dataset`` relation.
+
+The first of three layers (ADR 0021 D6, #874): this validator, the locked DuckDB
+connection (``sandbox``) and the child process (``engine``). It parses and writes the
+DuckDB dialect, admits one SELECT over ``dataset`` and refuses, besides other relations
+and table functions:
+
+- **introspective functions** — settings, variables, the environment, the current
+  query, versions, sequences — whatever DuckDB would answer about itself rather than
+  about the data;
+- **nondeterministic SQL** — random values, UUIDs, the current time, and sampling
+  (``USING SAMPLE`` / ``TABLESAMPLE``): a query's result must be the same for the same
+  snapshot.
+
+The function lists are not the sandbox boundary on their own — the locked connection
+refuses every file, network and configuration access whatever a function asks for.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +24,80 @@ from typing import cast
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 from sqlglot.optimizer.scope import Scope, build_scope
+
+#: Functions about DuckDB itself rather than the data, enumerated from DuckDB 1.2–1.5's
+#: ``duckdb_functions()`` (scalar ones; table functions are refused as relations).
+INTROSPECTIVE_FUNCTIONS = frozenset(
+    {
+        "current_setting",
+        "getenv",
+        "getvariable",
+        "current_query",
+        "write_log",
+        "sleep_ms",
+        "nextval",
+        "currval",
+        "setseed",
+        "stats",
+        "error",
+        "version",
+        "current_version",
+        "current_database",
+        "current_catalog",
+        "current_schema",
+        "current_schemas",
+        "current_user",
+        "session_user",
+        "user",
+        "txid_current",
+        "current_connection_id",
+        "current_query_id",
+        "current_role",
+        "current_transaction_id",
+        "in_search_path",
+        "pg_conf_load_time",
+        "pg_postmaster_start_time",
+        "pg_is_other_temp_schema",
+        "pg_my_temp_schema",
+        "pg_sleep",
+        "pg_backend_pid",
+        "has_any_column_privilege",
+        "has_column_privilege",
+        "has_database_privilege",
+        "has_foreign_data_wrapper_privilege",
+        "has_function_privilege",
+        "has_language_privilege",
+        "has_schema_privilege",
+        "has_sequence_privilege",
+        "has_server_privilege",
+        "has_table_privilege",
+        "has_tablespace_privilege",
+        "pg_has_role",
+    }
+)
+#: Functions whose value changes from one run to the next.
+NONDETERMINISTIC_FUNCTIONS = frozenset(
+    {
+        "random",
+        "rand",
+        "uuid",
+        "gen_random_uuid",
+        "uuidv4",
+        "uuidv7",
+        "now",
+        "today",
+        "current_date",
+        "current_time",
+        "current_timestamp",
+        "current_localtime",
+        "current_localtimestamp",
+        "localtime",
+        "localtimestamp",
+        "get_current_time",
+        "get_current_timestamp",
+        "transaction_timestamp",
+    }
+)
 
 
 class UnsafeQueryError(ValueError):
@@ -26,8 +116,8 @@ def _normalized_identifier(identifier: exp.Identifier) -> str:
 def _reject_unsupported_relations(expression: exp.Expression) -> None:
     """Reject relation-producing nodes other than tables/subqueries/CTEs.
 
-    This is intentionally deny-by-default.  Polars supports file-reading table
-    functions, so a name denylist alone would not be a sufficient sandbox.
+    This is intentionally deny-by-default. DuckDB has many file-reading table functions,
+    so a name denylist alone would not be a sufficient sandbox.
     """
     for node in expression.walk():
         if isinstance(node, (exp.Values, exp.Unnest, exp.Lateral)):
@@ -35,6 +125,23 @@ def _reject_unsupported_relations(expression: exp.Expression) -> None:
 
         if isinstance(node, exp.Table) and not isinstance(node.this, exp.Identifier):
             raise UnsafeQueryError("table functions are not allowed")
+
+
+def _function_name(node: exp.Func) -> str:
+    return (node.name if isinstance(node, exp.Anonymous) else node.sql_name()).casefold()
+
+
+def _reject_unsafe_functions(expression: exp.Expression) -> None:
+    for node in expression.walk():
+        if isinstance(node, exp.TableSample):
+            raise UnsafeQueryError("sampling is not allowed: a query must be reproducible")
+        if not isinstance(node, exp.Func):
+            continue
+        name = _function_name(node)
+        if name in INTROSPECTIVE_FUNCTIONS:
+            raise UnsafeQueryError(f"function {name} is not allowed")
+        if name in NONDETERMINISTIC_FUNCTIONS:
+            raise UnsafeQueryError(f"function {name} is not allowed: a query must be reproducible")
 
 
 def _validate_scope(scope: Scope) -> int:
@@ -108,12 +215,13 @@ def validate_read_only_sql(sql: str) -> ValidatedSql:
     """Parse and validate one SELECT/CTE query, returning canonical SQL.
 
     The returned SQL, rather than the original text, is the only form handed to
-    Polars. This removes comments and reduces parser differential surface.
+    DuckDB — written in the DuckDB dialect it was parsed in. This removes comments and
+    reduces parser differential surface.
     """
     if not sql or len(sql.encode("utf-8")) > 64 * 1024:
         raise UnsafeQueryError("SQL must be a non-empty string up to 64 KiB")
     try:
-        statements = [statement for statement in parse(sql) if statement is not None]
+        statements = [statement for statement in parse(sql, read="duckdb") if statement is not None]
     except ParseError as exc:
         raise UnsafeQueryError("invalid SQL syntax") from exc
     if len(statements) != 1:
@@ -131,6 +239,7 @@ def validate_read_only_sql(sql: str) -> ValidatedSql:
                 raise UnsafeQueryError("CTE alias must not shadow dataset")
 
     _reject_unsupported_relations(cast(exp.Expression, expression))
+    _reject_unsafe_functions(cast(exp.Expression, expression))
     root_scope = build_scope(expression)
     if root_scope is None:
         raise UnsafeQueryError("query scope could not be validated")
@@ -143,7 +252,13 @@ def validate_read_only_sql(sql: str) -> ValidatedSql:
     canonical = expression.copy()
     for node in canonical.walk():
         node.comments = []
-    return ValidatedSql(canonical.sql(pretty=False))
+    return ValidatedSql(canonical.sql(dialect="duckdb", pretty=False))
 
 
-__all__ = ["UnsafeQueryError", "ValidatedSql", "validate_read_only_sql"]
+__all__ = [
+    "INTROSPECTIVE_FUNCTIONS",
+    "NONDETERMINISTIC_FUNCTIONS",
+    "UnsafeQueryError",
+    "ValidatedSql",
+    "validate_read_only_sql",
+]

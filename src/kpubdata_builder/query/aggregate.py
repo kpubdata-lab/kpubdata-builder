@@ -29,7 +29,9 @@ the child-process worker for an aggregate that is checked before it runs:
 - **Same limits as a query.** The worker runs through ``QueryEngine`` — child process,
   timeout, memory cap — and takes a slot from the same concurrency limit. Too many
   groups, or a result too large to send, is refused with its own code instead of being
-  cut short.
+  cut short. It runs in the locked DuckDB connection (#874); a ``sum`` of a BIGINT
+  column is a 128-bit integer there, and its values decide whether it is sent as a
+  number or as exact decimal text.
 """
 
 from __future__ import annotations
@@ -43,11 +45,13 @@ from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
-from ..tabular.builder_parquet import scan_builder_parquet
-from .rows import RowFilter, filter_predicate, parse_filters, typed_literal
+from .rows import RowFilter, parse_filters, typed_literal
 
 if TYPE_CHECKING:
     import polars as pl
+
+    from .result import WireResult
+    from .sandbox import Sandbox
 
 AggregateFn = Literal[
     "count_rows", "count", "count_null", "count_distinct", "sum", "avg", "min", "max"
@@ -305,123 +309,159 @@ def check_aggregate_plan(plan: AggregatePlan, schema: Mapping[str, pl.DataType])
             typed_literal(value, schema[f.column])
 
 
-def _measure_expr(measure: Measure) -> pl.Expr:
-    import polars as pl
-
+def _measure_sql(measure: Measure, sandbox: Sandbox) -> str:
     if measure.fn == "count_rows":
-        return pl.len().cast(pl.Int64).alias(measure.alias)
-    column = pl.col(cast(str, measure.column))
-    if measure.fn == "count":
-        expr = column.count()
-    elif measure.fn == "count_null":
-        expr = column.null_count()
-    elif measure.fn == "count_distinct":
-        expr = column.drop_nulls().n_unique()
-    elif measure.fn == "sum":
-        # Polars sums an all-null group to 0; a sum of nothing is unknown, not zero.
-        expr = pl.when(column.count() > 0).then(column.sum()).otherwise(None)
-    elif measure.fn == "avg":
-        expr = column.mean()
-    elif measure.fn == "min":
-        expr = column.min()
-    else:
-        expr = column.max()
-    if measure.fn.startswith("count"):
-        expr = expr.cast(pl.Int64)
-    return expr.alias(measure.alias)
+        return "CAST(count(*) AS BIGINT)"
+    column = sandbox.alias(cast(str, measure.column))
+    return {
+        "count": f"CAST(count({column}) AS BIGINT)",
+        "count_null": f"CAST(count(*) - count({column}) AS BIGINT)",
+        "count_distinct": f"CAST(count(DISTINCT {column}) AS BIGINT)",
+        # A sum of nothing is unknown, not zero: SQL already says null.
+        "sum": f"sum({column})",
+        "avg": f"avg({column})",
+        "min": f"min({column})",
+        "max": f"max({column})",
+    }[measure.fn]
 
 
 @dataclass(frozen=True)
 class AggregateOutcome:
-    """What the worker computed. ``refusal`` set means ``frame`` is empty."""
+    """What the worker computed. ``refusal`` set means ``result`` is empty."""
 
-    frame: pl.DataFrame
+    result: WireResult
     input_row_count: int
     group_count: int
     refusal: dict[str, JsonValue] | None = None
 
 
 def run_aggregate(table_path: str, plan: AggregatePlan) -> AggregateOutcome:
-    """Filter, aggregate every group, check units, then sort and take the top N."""
-    import polars as pl
+    """Filter, aggregate every group, check units, then sort and take the top N.
 
-    frame = scan_builder_parquet(table_path)
-    schema = dict(frame.collect_schema())
-    check_aggregate_plan(plan, schema)
-    predicate = filter_predicate(plan.filters, schema)
-    if predicate is not None:
-        frame = frame.filter(predicate)
-    input_row_count = int(frame.select(pl.len()).collect().item())
+    In the locked DuckDB connection (#874): every group is computed into a table first,
+    so the group count and the unit check see all of them before the top N is cut. A
+    sum keeps the type DuckDB gives it (a BIGINT sums to a 128-bit integer) and the wire
+    decides from the values how it is sent.
+    """
+    from .result import WireResult, to_wire
+    from .rows import _sql_predicate
+    from .sandbox import ORDERED_DATASET, open_sandbox
 
-    keys = list(plan.key_columns)
-    expressions = [_measure_expr(m) for m in plan.measures]
-    unit = plan.unit_column
-    checks_unit = unit is not None and unit not in keys
-    if checks_unit:
-        unit_col = pl.col(cast(str, unit))
-        units = unit_col.unique().sort(nulls_last=True).head(10)
-        # n_unique counts null as a value: a group with one named unit and a missing one is mixed.
-        expressions += [
-            unit_col.n_unique().alias(_UNITS_N),
-            (units if keys else units.implode()).alias(_UNITS),
-            unit_col.first().alias(cast(str, unit)),
-        ]
-    if keys:
-        result = frame.group_by(keys).agg(expressions).collect()
-    else:
-        # One group over every filtered row, also when there are none.
-        result = frame.select(expressions).collect()
-    group_count = result.height
+    with open_sandbox(table_path) as sandbox:
+        connection = sandbox.connection
+        types = {
+            name: str(row[1])
+            for name, row in zip(
+                sandbox.columns,
+                connection.execute(f"DESCRIBE {ORDERED_DATASET}").fetchall(),
+                strict=False,
+            )
+        }
+        named = {
+            *plan.group_by,
+            *((plan.unit_column,) if plan.unit_column else ()),
+            *(m.column for m in plan.measures if m.column is not None),
+            *(f.column for f in plan.filters),
+        }
+        missing = sorted(name for name in named if name not in types)
+        if missing:
+            raise ValueError(f"no such columns: {missing}")
+        where, params = _sql_predicate(plan.filters, sandbox, types)
+        source = f"{ORDERED_DATASET}{f' WHERE {where}' if where else ''}"
+        counted = connection.execute(f"SELECT count(*) FROM {source}", params).fetchone()
+        input_row_count = int(counted[0]) if counted else 0
 
-    if group_count > MAX_GROUPS:
-        return AggregateOutcome(
-            result.clear(),
-            input_row_count,
-            group_count,
-            {
-                "code": "too_many_groups",
-                "error": f"the aggregate has {group_count} groups; at most {MAX_GROUPS} "
-                "are allowed before the top N is taken",
-                "group_count": group_count,
-                "max_groups": MAX_GROUPS,
-            },
+        keys = list(plan.key_columns)
+        parts = [f"{sandbox.alias(k)} AS g{i}" for i, k in enumerate(keys)]
+        parts += [f"{_measure_sql(m, sandbox)} AS m{i}" for i, m in enumerate(plan.measures)]
+        unit = plan.unit_column
+        checks_unit = unit is not None and unit not in keys
+        if checks_unit:
+            u = sandbox.alias(cast(str, unit))
+            has_null = f"count(*) > count({u})"
+            # A group with one named unit and a missing one is mixed: null is a value.
+            parts += [
+                f"CAST(count(DISTINCT {u}) + CASE WHEN {has_null} THEN 1 ELSE 0 END "
+                f"AS BIGINT) AS units_n",
+                f"list_slice(CASE WHEN {has_null} THEN list_append("
+                f"list_sort(list_distinct(list({u}))), NULL) ELSE "
+                f"list_sort(list_distinct(list({u}))) END, 1, 10) AS units",
+                f"any_value({u}) AS unit",
+            ]
+        group = f" GROUP BY {', '.join(sandbox.alias(k) for k in keys)}" if keys else ""
+        connection.execute(
+            f"CREATE TABLE _kpubdata_groups AS SELECT {', '.join(parts)} FROM {source}{group}",
+            params,
         )
+        counted = connection.execute("SELECT count(*) FROM _kpubdata_groups").fetchone()
+        group_count = int(counted[0]) if counted else 0
+        empty = WireResult(list(plan.output_columns), [], [], [])
 
-    if checks_unit:
-        mixed = result.filter(pl.col(_UNITS_N) > 1)
-        if mixed.height:
-            samples: list[JsonValue] = []
-            for row in mixed.sort(keys, nulls_last=True).head(MIXED_UNIT_SAMPLES).to_dicts():
-                samples.append(
-                    {
-                        "group": {k: _plain(row[k]) for k in keys},
-                        "units": [_plain(u) for u in row[_UNITS]],
-                    }
-                )
+        if group_count > MAX_GROUPS:
             return AggregateOutcome(
-                result.clear(),
+                empty,
                 input_row_count,
                 group_count,
                 {
-                    "code": "mixed_units",
-                    "error": f"{mixed.height} of {group_count} groups mix values counted in "
-                    f"different units of {unit!r}; aggregate them split by unit "
-                    "(unit_policy: split) or filter to one unit",
-                    "unit_column": unit,
-                    "mixed_group_count": mixed.height,
-                    "samples": samples,
+                    "code": "too_many_groups",
+                    "error": f"the aggregate has {group_count} groups; at most {MAX_GROUPS} "
+                    "are allowed before the top N is taken",
+                    "group_count": group_count,
+                    "max_groups": MAX_GROUPS,
                 },
             )
-        result = result.drop([_UNITS_N, _UNITS])
 
-    # Sort every group, then cut: the top N of the whole aggregate, never an aggregate of
-    # the first N rows. Ties are broken by the group keys so a re-run orders them alike.
-    ordered = [k.key for k in plan.order]
-    sort_keys = ordered + [k for k in keys if k not in ordered]
-    descending = [k.descending for k in plan.order] + [False] * (len(sort_keys) - len(plan.order))
-    if sort_keys:
-        result = result.sort(sort_keys, descending=descending, nulls_last=True, maintain_order=True)
-    result = result.select(list(plan.output_columns)).head(plan.limit)
+        key_order = ", ".join(f"g{i} ASC NULLS LAST" for i in range(len(keys)))
+        if checks_unit:
+            mixed_count = connection.execute(
+                "SELECT count(*) FROM _kpubdata_groups WHERE units_n > 1"
+            ).fetchone()
+            mixed = int(mixed_count[0]) if mixed_count else 0
+            if mixed:
+                samples: list[JsonValue] = []
+                rows = connection.execute(
+                    f"SELECT {''.join(f'g{i}, ' for i in range(len(keys)))}units "
+                    f"FROM _kpubdata_groups WHERE units_n > 1"
+                    f"{f' ORDER BY {key_order}' if keys else ''} LIMIT {MIXED_UNIT_SAMPLES}"
+                ).fetchall()
+                for row in rows:
+                    samples.append(
+                        {
+                            "group": {k: _plain(row[i]) for i, k in enumerate(keys)},
+                            "units": [_plain(v) for v in row[len(keys)]],
+                        }
+                    )
+                return AggregateOutcome(
+                    empty,
+                    input_row_count,
+                    group_count,
+                    {
+                        "code": "mixed_units",
+                        "error": f"{mixed} of {group_count} groups mix values counted in "
+                        f"different units of {unit!r}; aggregate them split by unit "
+                        "(unit_policy: split) or filter to one unit",
+                        "unit_column": unit,
+                        "mixed_group_count": mixed,
+                        "samples": samples,
+                    },
+                )
+
+        # Sort every group, then cut: the top N of the whole aggregate, never an aggregate
+        # of the first N rows. Ties are broken by the group keys so a re-run orders alike.
+        position = {k: f"g{i}" for i, k in enumerate(keys)}
+        position.update({m.alias: f"m{i}" for i, m in enumerate(plan.measures)})
+        if checks_unit:
+            position[cast(str, unit)] = "unit"
+        ordered = [k.key for k in plan.order]
+        order = [
+            f"{position[k.key]} {'DESC' if k.descending else 'ASC'} NULLS LAST" for k in plan.order
+        ] + [f"{position[k]} ASC NULLS LAST" for k in keys if k not in ordered]
+        select = ", ".join(position[name] for name in plan.output_columns)
+        relation = connection.sql(
+            f"SELECT {select} FROM _kpubdata_groups"
+            f"{f' ORDER BY {chr(44).join(order)}' if order else ''} LIMIT {plan.limit}"
+        )
+        result = to_wire(relation).renamed(list(plan.output_columns))
     return AggregateOutcome(result, input_row_count, group_count)
 
 
@@ -455,12 +495,9 @@ def aggregate_worker(
         outcome = run_aggregate(table_path, AggregatePlan.from_json(plan_json))
         engine_execution_ms = _elapsed_ms(engine_started_ns)
 
-        from ..tabular.polars_engine import infer_schema
-        from ..tabular.wire import column_meta, encode_rows
         from .engine import MAX_QUERY_RESPONSE_BYTES
 
-        page = outcome.frame
-        columns = infer_schema(page).columns
+        page = outcome.result
         meta: dict[str, JsonValue] = {
             "input_row_count": outcome.input_row_count,
             "group_count": outcome.group_count,
@@ -468,10 +505,10 @@ def aggregate_worker(
         }
         payload = {
             "ok": True,
-            "columns": list(page.columns),
-            "column_meta": column_meta(columns),
-            "rows": list(encode_rows(page.to_dicts(), columns)),
-            "truncated": page.height < outcome.group_count,
+            "columns": page.columns,
+            "column_meta": page.column_meta,
+            "rows": page.rows,
+            "truncated": len(page.rows) < outcome.group_count,
             "startup_ms": startup_ms,
             "engine_execution_ms": engine_execution_ms,
             "meta": meta,

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.73.0"
+  version: "1.74.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -19,6 +19,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.74.0 runs SQL, rows, aggregates, profiles and exports on DuckDB (#874, ADR 0021 step 13): each in a child process over a DuckDB connection that may read only the pinned snapshot file and spill into its own directory, with no other file, network or extension access and its configuration locked. The validator now parses the DuckDB dialect and refuses introspective functions (settings, variables, versions, sequences …) and nondeterministic SQL (random values, UUIDs, the current time, `USING SAMPLE`/`TABLESAMPLE`) with `unsafe_query`. Results keep the types DuckDB gives them, in Builder's spelling, where they differ from the Polars engine: `COUNT(*)` is `int64` (was `uint32`) and an unnamed aggregate is named as DuckDB names it (`count_star()`, `sum(v)` — they were `len` or failed); a `SUM` of an integer column is `int128`, sent as a number or as exact decimal text by its values; `ORDER BY … DESC` puts nulls last (Polars put them first; rows and aggregates always did); `date + INTERVAL` now works and is a datetime; a column that is Null in Builder is `int32` (all null) in SQL results, while a page of rows still reports it Null; a zoned datetime is sent in UTC. A table with a column SQL cannot name (an empty name, or two names one letter case apart) answers `query_execution_failed` to SQL, while rows, aggregates and profiles still read it.
     v1.10.0은 `POST /preview`에 Source↔Silver diff와 sample_mode(first/random)
     옵션을 추가한다(#497, additive — 기존 필드는 유지된다). `limit`의 상한(1000)을
     새로 도입해 그 이상 값을 요청하면 400을 반환한다(behavioral tightening;
@@ -5327,14 +5328,14 @@ components:
           type: integer
           minimum: 0
           description: >-
-            Parent의 QueryEngine.execute 진입부터 spawned child가 Polars import와 bounded
-            SQL setup을 끝내고 scan_parquet를 시작하기 직전까지의 monotonic time(ms).
+            Parent의 QueryEngine.execute 진입부터 spawned child가 import와 잠긴 DuckDB 연결
+            (`dataset` view) 준비를 끝내고 질의를 시작하기 직전까지의 monotonic time(ms).
         engine_execution_ms:
           type: integer
           minimum: 0
           description: >-
-            Child에서 scan_parquet 직전부터 SQLContext 생성, execute, collect 완료
-            직후까지의 Polars engine monotonic time(ms).
+            Child에서 질의 직전부터 DuckDB 실행과 결과 fetch 완료 직후까지의 engine
+            monotonic time(ms) (#874 이전에는 Polars).
         masked_columns:
           allOf:
             - $ref: "#/components/schemas/MaskedColumns"

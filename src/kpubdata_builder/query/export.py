@@ -17,8 +17,11 @@ complete. This module is the worker that writes an export file from one snapshot
   export's manifest. The BOM only tells a spreadsheet the encoding: it does not stop it
   from dropping leading zeros, rounding large integers or turning text into dates.
 - **PII evidence.** The result's text values are scanned with the build's value
-  patterns; the findings (column, kind, count — never a value) go back to the caller,
-  which decides by the source's PII policy whether the file may be kept.
+  patterns as they are written; the findings (column, kind, count — never a value) go
+  back to the caller, which decides by the source's PII policy whether the file may be
+  kept.
+- **Streamed.** The bounded result is held in a temporary table of the locked DuckDB
+  connection, which spills within its quota, and written a batch at a time (#874).
 - **Same limits as a query.** Child process, timeout, memory cap, concurrency slot.
 """
 
@@ -30,7 +33,7 @@ import hashlib
 import json
 import os
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
@@ -38,7 +41,6 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
 from ..spec import JsonValue
-from ..tabular.builder_parquet import scan_builder_parquet
 
 if TYPE_CHECKING:
     from ..stages.silver.pii import PiiFinding
@@ -205,55 +207,55 @@ def export_worker(
     """``QueryEngine`` worker for an export. Writes the file; sends what it wrote."""
     del limit  # the plan carries max_rows
     try:
-        import polars as pl
+        from .result import stream_result
+        from .sandbox import open_sandbox
 
         plan = ExportPlan.from_json(plan_json)
-        startup_ms = _elapsed_ms(parent_started_ns)
-        engine_started_ns = time.monotonic_ns()
-        bounded_sql = (
-            f"SELECT * FROM ({plan.canonical_sql}) AS _kpubdata_result LIMIT {plan.max_rows + 1}"
-        )
-        frame = scan_builder_parquet(table_path)
-        context = pl.SQLContext({"dataset": frame}, eager=False, register_globals=False)
-        result = context.execute(bounded_sql).collect()
-        meta: dict[str, JsonValue] = {"refusal": None}
-        if result.height > plan.max_rows:
-            meta["refusal"] = {"code": "row_limit_exceeded", "limit": plan.max_rows}
-        else:
-            from ..tabular.polars_engine import infer_schema
-            from ..tabular.wire import column_meta, encode_rows
-
-            columns = infer_schema(result).columns
-            wire_meta = column_meta(columns)
-            path = Path(plan.output_path)
-            try:
-                altered = write_rows(
-                    path,
-                    list(result.columns),
-                    wire_meta,
-                    encode_rows(result.to_dicts(), columns),
-                    fmt=plan.format,
-                    profile=plan.profile,
-                    max_bytes=plan.max_bytes,
-                )
-            except ExportLimitExceeded as exc:
-                meta["refusal"] = {"code": exc.code, "limit": exc.limit}
+        with open_sandbox(table_path) as sandbox:
+            startup_ms = _elapsed_ms(parent_started_ns)
+            engine_started_ns = time.monotonic_ns()
+            # Held in a temporary table that spills within the quota, then written a
+            # batch at a time: the full result never sits in Python at once (#874).
+            result = stream_result(sandbox.connection, plan.canonical_sql, limit=plan.max_rows + 1)
+            meta: dict[str, JsonValue] = {"refusal": None}
+            if result.row_count > plan.max_rows:
+                meta["refusal"] = {"code": "row_limit_exceeded", "limit": plan.max_rows}
             else:
-                meta.update(
-                    row_count=result.height,
-                    bytes=path.stat().st_size,
-                    sha256=sha256_file(path),
-                    altered=cast(JsonValue, altered),
-                    pii=[
-                        {"column": f.column, "kind": f.kind, "count": f.count}
-                        for f in _scan_frame_pii(result)
-                    ],
-                    column_meta=cast(JsonValue, wire_meta),
+                wire_meta = result.column_meta
+                scan = _PiiScan(
+                    [i for i, dtype in enumerate(result.dtypes) if dtype == "String"],
+                    result.columns,
                 )
+                path = Path(plan.output_path)
+                try:
+                    altered = write_rows(
+                        path,
+                        result.columns,
+                        wire_meta,
+                        scan.rows(result.rows()),
+                        fmt=plan.format,
+                        profile=plan.profile,
+                        max_bytes=plan.max_bytes,
+                    )
+                except ExportLimitExceeded as exc:
+                    meta["refusal"] = {"code": exc.code, "limit": exc.limit}
+                else:
+                    meta.update(
+                        row_count=result.row_count,
+                        bytes=path.stat().st_size,
+                        sha256=sha256_file(path),
+                        altered=cast(JsonValue, altered),
+                        pii=[
+                            {"column": f.column, "kind": f.kind, "count": f.count}
+                            for f in scan.findings()
+                        ],
+                        column_meta=cast(JsonValue, wire_meta),
+                    )
+            columns = result.columns
         connection.send(
             {
                 "ok": True,
-                "columns": list(result.columns),
+                "columns": columns,
                 "column_meta": [],
                 "rows": [],
                 "truncated": False,
@@ -270,29 +272,44 @@ def export_worker(
         connection.close()
 
 
-def _scan_frame_pii(frame: Any) -> list[PiiFinding]:
-    """Value-pattern PII findings in a query result frame (#819).
+class _PiiScan:
+    """Value-pattern PII findings over the rows as they are written (#819).
 
-    The query worker still runs on Polars (#874), so its result is scanned here as a
-    frame, with the same patterns Silver's scan uses.
+    The text columns' values are matched with the patterns Silver's scan uses — Python
+    regular expressions, read as Unicode — while the rows stream past, so nothing is
+    held. A finding is a column, a kind and a count, never a value.
     """
-    import polars as pl
 
-    from ..stages.silver.pii import VALUE_PATTERNS, PiiFinding
+    def __init__(self, text_columns: Sequence[int], names: Sequence[str]) -> None:
+        self._text = list(text_columns)
+        self._names = list(names)
+        self._counts: dict[tuple[int, str], int] = {}
 
-    findings: list[PiiFinding] = []
-    for column_name in frame.columns:
-        series = frame.get_column(column_name)
-        if series.dtype != pl.Utf8:
-            continue
-        non_null = series.drop_nulls()
-        if non_null.len() == 0:
-            continue
-        for kind, pattern in VALUE_PATTERNS.items():
-            count = int(non_null.str.contains(pattern.pattern).sum())
-            if count > 0:
-                findings.append(PiiFinding(column=column_name, kind=kind, count=count))
-    return findings
+    def rows(
+        self, rows: Iterable[tuple[tuple[Any, ...], dict[str, JsonValue]]]
+    ) -> Iterator[dict[str, JsonValue]]:
+        from ..stages.silver.pii import VALUE_PATTERNS
+
+        for raw, encoded in rows:
+            for index in self._text:
+                value = raw[index]
+                if not isinstance(value, str):
+                    continue
+                for kind, pattern in VALUE_PATTERNS.items():
+                    if pattern.search(value):
+                        key = (index, kind)
+                        self._counts[key] = self._counts.get(key, 0) + 1
+            yield encoded
+
+    def findings(self) -> list[PiiFinding]:
+        from ..stages.silver.pii import VALUE_PATTERNS, PiiFinding
+
+        return [
+            PiiFinding(column=self._names[index], kind=kind, count=self._counts[(index, kind)])
+            for index in self._text
+            for kind in VALUE_PATTERNS
+            if (index, kind) in self._counts
+        ]
 
 
 __all__ = [

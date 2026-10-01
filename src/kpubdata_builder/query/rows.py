@@ -31,10 +31,13 @@ from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
-from ..tabular.builder_parquet import scan_builder_parquet
+from ..tabular.sql import quote_identifier
 
 if TYPE_CHECKING:
     import polars as pl
+
+    from .result import WireResult
+    from .sandbox import Sandbox
 
 #: The column the tie-breaker is kept in while a page is read. Refused as a table column
 #: name so it can never shadow real data.
@@ -280,35 +283,98 @@ def filter_predicate(
     return combined
 
 
-def read_page(table_path: str, plan: RowsPlan) -> tuple[pl.DataFrame, int | None, bool]:
-    """Read one page: the rows, the filtered count (None when not asked for), more rows?"""
-    import polars as pl
+def _sql_predicate(
+    filters: Sequence[RowFilter], sandbox: Sandbox, types: Mapping[str, str]
+) -> tuple[str, list[object]]:
+    """The filters as one SQL condition over the internal view, values bound.
 
-    frame = scan_builder_parquet(table_path)
-    schema = dict(frame.collect_schema())
-    check_plan(plan, schema)
-    frame = frame.with_row_index(ROW_ORDER_COLUMN)
-    predicate = filter_predicate(plan.filters, schema)
-    if predicate is not None:
-        frame = frame.filter(predicate)
+    A value is cast to the column's type in SQL. The parent has already checked that
+    it fits (``check_plan``), so the cast is the comparison's typing, not a validation.
+    """
+    conditions: list[str] = []
+    params: list[object] = []
+    for f in filters:
+        column = sandbox.alias(f.column)
+        storage = types[f.column]
+        if f.op == "is_null":
+            conditions.append(f"{column} IS NULL")
+        elif f.op == "is_not_null":
+            conditions.append(f"{column} IS NOT NULL")
+        elif f.op == "in":
+            conditions.append(
+                f"{column} IN ({', '.join(f'CAST(? AS {storage})' for _ in f.values)})"
+            )
+            params.extend(f.values)
+        else:
+            op = {"eq": "=", "ne": "<>", "lt": "<", "lte": "<=", "gt": ">", "gte": ">="}[f.op]
+            conditions.append(f"{column} {op} CAST(? AS {storage})")
+            params.append(f.value)
+    return " AND ".join(conditions), params
 
-    count: int | None = None
-    if plan.count == "exact":
-        count = int(frame.select(pl.len()).collect().item())
 
-    if plan.sort:
-        frame = frame.sort(
-            [k.column for k in plan.sort] + [ROW_ORDER_COLUMN],
-            descending=[k.descending for k in plan.sort] + [False],
-            nulls_last=True,
-            maintain_order=True,
+def read_page(table_path: str, plan: RowsPlan) -> tuple[WireResult, int | None, bool]:
+    """Read one page: the rows, the filtered count (None when not asked for), more rows?
+
+    In the locked DuckDB connection (#874), over the internal view that names every
+    column ``_c<i>`` and carries the row's position in the file, so any column — an
+    empty name included — is read, and ties keep one order on every page.
+    """
+    from .result import to_wire
+    from .sandbox import ORDERED_DATASET, ROW_ORDER, open_sandbox
+
+    with open_sandbox(table_path) as sandbox:
+        connection = sandbox.connection
+        types = {
+            name: str(row[1])
+            for name, row in zip(
+                sandbox.columns,
+                connection.execute(f"DESCRIBE {ORDERED_DATASET}").fetchall(),
+                strict=False,
+            )
+        }
+        missing = sorted(
+            {
+                name
+                for name in (
+                    *(plan.columns or ()),
+                    *(k.column for k in plan.sort),
+                    *(f.column for f in plan.filters),
+                )
+                if name not in types
+            }
         )
-    # Without a sort the scan keeps file order, which is the row order itself.
-    frame = frame.slice(plan.offset, plan.page_size + 1)
-    columns = list(plan.columns) if plan.columns is not None else list(schema)
-    page = frame.select(columns).collect()
-    has_more = page.height > plan.page_size
-    return page.head(plan.page_size), count, has_more
+        if missing:
+            raise ValueError(f"no such columns: {missing}")
+        where, params = _sql_predicate(plan.filters, sandbox, types)
+        source = f"{ORDERED_DATASET}{f' WHERE {where}' if where else ''}"
+
+        count: int | None = None
+        if plan.count == "exact":
+            counted = connection.execute(f"SELECT count(*) FROM {source}", params).fetchone()
+            count = int(counted[0]) if counted else 0
+
+        # Nulls last in either direction; the file position breaks every tie.
+        order = ", ".join(
+            [
+                f"{sandbox.alias(k.column)} {'DESC' if k.descending else 'ASC'} NULLS LAST"
+                for k in plan.sort
+            ]
+            + [quote_identifier(ROW_ORDER)]
+        )
+        names = list(plan.columns) if plan.columns is not None else list(sandbox.columns)
+        select = ", ".join(sandbox.alias(name) for name in names)
+        # The page, encoded from its own rows only (as the client receives them), and
+        # whether one more row exists after it.
+        relation = connection.sql(
+            f"SELECT {select} FROM {source} ORDER BY {order} "
+            f"LIMIT {plan.page_size} OFFSET {plan.offset}",
+            params=params,
+        )
+        page = to_wire(relation, stored=[sandbox.dtypes.get(n) for n in names]).renamed(names)
+        beyond = connection.execute(
+            f"SELECT 1 FROM {source} LIMIT 1 OFFSET {plan.offset + plan.page_size}", params
+        ).fetchone()
+    return page, count, beyond is not None
 
 
 def _elapsed_ms(started_ns: int) -> int:
@@ -330,16 +396,13 @@ def rows_worker(
         page, count, has_more = read_page(table_path, RowsPlan.from_json(plan_json))
         engine_execution_ms = _elapsed_ms(engine_started_ns)
 
-        from ..tabular.polars_engine import infer_schema
-        from ..tabular.wire import column_meta, encode_rows
         from .engine import MAX_QUERY_RESPONSE_BYTES
 
-        columns = infer_schema(page).columns
         payload = {
             "ok": True,
-            "columns": list(page.columns),
-            "column_meta": column_meta(columns),
-            "rows": list(encode_rows(page.to_dicts(), columns)),
+            "columns": page.columns,
+            "column_meta": page.column_meta,
+            "rows": page.rows,
             "truncated": has_more,
             "startup_ms": startup_ms,
             "engine_execution_ms": engine_execution_ms,

@@ -1,16 +1,54 @@
 {
  "SELECT CAST(d AS DATE) + INTERVAL '1' DAY AS next_day FROM dataset": {
   "body": {
-   "code": "query_execution_failed",
-   "error": "query execution failed"
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "datetime",
+      "name": "next_day",
+      "wire_encoding": "string"
+     }
+    ],
+    "columns": [
+     "next_day"
+    ],
+    "rows": [
+     {
+      "next_day": "2024-02-01T00:00:00"
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
   },
-  "status_code": 400
+  "status_code": 200
  },
  "SELECT CAST(d AS DATE) + INTERVAL '1' MONTH AS next_month FROM dataset": {
   "body": {
-   "code": "query_execution_failed",
-   "error": "query execution failed"
+   "result": {
+    "column_meta": [
+     {
+      "logical_type": "datetime",
+      "name": "next_month",
+      "wire_encoding": "string"
+     }
+    ],
+    "columns": [
+     "next_month"
+    ],
+    "rows": [
+     {
+      "next_month": "2024-02-29T00:00:00"
+     }
+    ],
+    "truncated": false
+   },
+   "snapshot": {
+    "logical_name": "parity.tiny.t"
+   }
   },
-  "status_code": 400
+  "status_code": 200
  }
 }
