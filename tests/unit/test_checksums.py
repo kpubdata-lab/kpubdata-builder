@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 import polars as pl
 import pytest
 
-from kpubdata_builder.manifest import compute_data_checksum, compute_inputs_fingerprint
+from kpubdata_builder.manifest import checksums, compute_data_checksum, compute_inputs_fingerprint
 from kpubdata_builder.manifest.checksums import (
+    _DOMAIN,
     _MODULUS,
     CURRENT_ALGORITHM,
     FINGERPRINT_ALGORITHM,
@@ -22,6 +25,7 @@ from kpubdata_builder.manifest.checksums import (
     fingerprint_algorithm_of,
     multiset_checksum,
     multiset_checksum_of_jsonl,
+    record_line,
     same_data,
 )
 from kpubdata_builder.manifest.provenance import SourceProvenance, build_source_provenance
@@ -88,6 +92,124 @@ def test_the_accumulator_is_constant_size() -> None:
         checksum.add({"n": n})
 
     assert checksum.count == 2000
+    assert checksum._product.bit_length() <= 3072
+
+
+# ------------------------------------------------------------------ v2 is unchanged (#917)
+
+#: v2 checksums computed by the implementation before #917 (origin/main 5d93249). The
+#: faster reduction must reproduce them exactly, or existing manifests stop verifying.
+_V2_GOLDEN: dict[str, tuple[list[dict[str, JsonValue]], str]] = {
+    "empty": (
+        [],
+        "sha256:e1da2cb49d3147237c621d2ccd91e6c9222ec68fca48d9255680c1f174762abc",
+    ),
+    "one empty record": (
+        [{}],
+        "sha256:7a5e4b2dfc215c3f3165dd9528878859480b4406d640958077affda9a3adc034",
+    ),
+    "korean, null, nested": (
+        _RECORDS,
+        "sha256:cba558f24829ed796ce883731a9804b4c93c803ee23400034e27c0ddd19127c1",
+    ),
+    "duplicates": (
+        [{"a": 1}, {"a": 1}, {"a": 2}],
+        "sha256:c9fcd265f9039ab5321496ef1428189dbde31779f7aefc9314cb3ca6a3f61ff9",
+    ),
+    "numbers": (
+        [{"i": 0, "f": 1.5, "neg": -7, "big": 10**30, "b": True}],
+        "sha256:ee77c199a42bd7e8dc7a5352e2ba2a2c94a89a99e5247e7c7949f305b8c60800",
+    ),
+    "issue 917 shape, 1000 records": (
+        [{"id": i, "name": f"서울-{i % 57}", "value": i % 137} for i in range(1000)],
+        "sha256:df12fb9c36a1ebf70f4acc199ccea32fe45458b2506a6bd1a3bd2b3be8d4a5a4",
+    ),
+}
+
+
+def _reference_v2(
+    lines: list[str],
+    digest: Callable[[bytes], bytes] = lambda data: hashlib.shake_256(data).digest(384),
+) -> str:
+    """v2 as specified: a general ``% modulus`` after every multiplication."""
+    product = 1
+    for line in lines:
+        element = digest(_DOMAIN + line.encode("utf-8"))
+        product = product * (int.from_bytes(element, "big") % _MODULUS or 1) % _MODULUS
+    final = hashlib.sha256(_DOMAIN)
+    final.update(len(lines).to_bytes(8, "big"))
+    final.update(product.to_bytes(384, "big"))
+    return f"sha256:{final.hexdigest()}"
+
+
+@pytest.mark.parametrize("name", sorted(_V2_GOLDEN))
+def test_v2_checksums_are_the_ones_existing_manifests_hold(name: str, tmp_path: Path) -> None:
+    records, expected = _V2_GOLDEN[name]
+
+    assert multiset_checksum(records) == expected
+    assert multiset_checksum(list(reversed(records))) == expected
+    assert _reference_v2([record_line(r) for r in records]) == expected
+    path = tmp_path / "raw_records.jsonl"
+    path.write_text("".join(record_line(r) + "\n" for r in records), encoding="utf-8")
+    assert multiset_checksum_of_jsonl(path) == expected
+
+
+def test_v2_matches_the_reference_on_varied_inputs() -> None:
+    rng = random.Random(917)
+    alphabet = 'az09 ,:{}"\\강남서초😀\u0000\n'
+    for size in (0, 1, 2, 3, 7, 64, 257):
+        records: list[dict[str, JsonValue]] = [
+            {
+                "k": "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 12))),
+                "n": rng.choice([None, 0, -1, 2**70, 0.1, rng.randrange(5)]),
+            }
+            for _ in range(size)
+        ]
+        records += records[: size // 3]  # duplicates
+        rng.shuffle(records)
+        lines = [record_line(r) for r in records]
+
+        assert multiset_checksum(records) == _reference_v2(lines)
+
+
+@pytest.mark.parametrize(
+    "elements",
+    [
+        pytest.param([0, 0], id="zero maps to one"),
+        pytest.param([_MODULUS, 5], id="the modulus reduces to zero, then one"),
+        pytest.param([_MODULUS - 1] * 3, id="minus one"),
+        pytest.param([_MODULUS + 1, _MODULUS + 2], id="just above the modulus"),
+        pytest.param([2**3072 - 1] * 4, id="the largest digest"),
+        pytest.param([2**3071, 2**3071, 3], id="powers of two"),
+        # 2 * ((P + 1) // 2 + 1) == P + 3: the running product lands in
+        # [P, 2**3072), so only the final reduction brings it below the modulus.
+        pytest.param([2, (_MODULUS + 1) // 2 + 1], id="product between modulus and 2**3072"),
+    ],
+)
+def test_the_reduction_matches_modulo_at_the_edges(
+    elements: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Digest values the real hash practically never yields: the ones where reducing
+    below 2**3072, and below the modulus, could differ from ``% modulus``."""
+    lines = [f"edge-{n}" for n in range(len(elements))]
+    by_input = {
+        _DOMAIN + line.encode("utf-8"): value for line, value in zip(lines, elements, strict=True)
+    }
+
+    class _Fixed:
+        def __init__(self, data: bytes) -> None:
+            self._value = by_input[data]
+
+        def digest(self, length: int) -> bytes:
+            return self._value.to_bytes(length, "big")
+
+    expected = _reference_v2(lines, lambda data: _Fixed(data).digest(384))
+    monkeypatch.setattr(checksums.hashlib, "shake_256", _Fixed)
+    checksum = MultisetChecksum()
+    for line in lines:
+        checksum.add_line(line)
+
+    assert checksum.hexdigest() == expected
     assert checksum._product.bit_length() <= 3072
 
 
