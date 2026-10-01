@@ -53,6 +53,12 @@ unreleased code.
   of storage: an operator holding the master key can decrypt. That is by
   decision (#682, ADR 0020) — the operator is the user there. A multi-user
   deployment does not store them.
+- The owner confirmed on 2026-10-01 that a publish token (HF, Kaggle) is a key
+  under the same multi-user rule (ADR 0020). The publish path does not follow
+  it yet: in a multi-user deployment it still reads a stored publish token and,
+  unless `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL=true`, falls back to the
+  server's `HF_TOKEN` / `KAGGLE_*` (#925). Set that variable in a multi-user
+  deployment until #925 lands.
 - `ENFORCE_OWNERSHIP` defaults off only for a single-user deployment. When
   `OIDC_ISSUER` is set it is forced on whatever its value (#635), and another
   user's run answers 404, not 403 (#796).
