@@ -87,6 +87,11 @@ ADR 0006). 설정은 환경변수로 주입합니다 — `docker-entrypoint.sh`�
 | `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS` | `retry_of` 로 재시도하는 build 가 원본 run 의 `param_grid` checkpoint 를 이어받을 수 있는 최대 나이(초, #1103). checkpoint 의 나이는 그 안의 가장 오래된 기록이 수집된 때부터 세며, 이어받아도 새로워지지 않는다. 넘으면 그 source 를 처음부터 다시 수집하고 manifest 의 `checkpoints_not_reused` 에 `expired` 로 남긴다. `0` 이면 재시도가 checkpoint 를 이어받지 않는다. 읽을 수 없는 값은 기본값으로 읽는다 | `86400` | 선택 |
 | `KPUBDATA_BUILDER_WAREHOUSE` | 테이블 카탈로그 루트(`serve --warehouse` 와 같다). 설정하면 `POST /build` 가 source 별 Gold 를 커밋된 table snapshot 으로 남기고 응답 `materialized` 에 보고한다 — publish 자격증명이 필요 없다(#703). 미설정이면 카탈로그를 쓰지 않고 응답에 `materialized` 키가 없다 | 미설정 | 선택 |
 | `KPUBDATA_QUERY_MAX_CONCURRENCY` | 동시 query child process 상한 | `2` | 선택 |
+| `KPUBDATA_QUERY_MAX_MEMORY_MB` | query child 하나의 address space 상한(MB). 넘은 질의만 실패한다 | 무제한 | 선택 |
+| `KPUBDATA_QUERY_MEMORY_BUDGET_MB` | 동시에 도는 query child 들의 메모리 합(MB). 질의마다 `MAX_MEMORY_MB` 만큼 예약하고 모자라면 `429 query_busy` | 없음 | 선택 |
+| `KPUBDATA_DUCKDB_THREADS` | DuckDB 연결 하나의 thread 수(build 는 실행 중인 source 마다, query child 는 하나) | `2` | 선택 |
+| `KPUBDATA_DUCKDB_MEMORY_LIMIT` | DuckDB 연결 하나의 buffer 메모리(`1GB`, `512MB` …). 넘으면 임시 디스크로 spill 한다 | `1GB` | 선택 |
+| `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` | DuckDB 연결 하나의 spill(임시 디스크) 상한. 넘은 source·질의만 실패한다. build 의 spill 은 run 디렉터리의 `_duckdb_tmp`, query 의 spill 은 질의마다 새로 만들고 지우는 임시 디렉터리에 쓴다 | `10GB` | 선택 |
 | `KPUBDATA_BUILDER_ALLOWED_ORIGINS` | CORS 허용 오리진 (콤마 구분, default-deny). 응답에는 항상 `Vary: Origin`이 붙는다 | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` | 사용자별 Provider credential AES-GCM master key (URL-safe base64 32 bytes) | 미설정 | credential CRUD 사용 시 필수 |
 | `KPUBDATA_BUILDER_ADMIN_SUBJECTS` | 관리자로 대우할 `<issuer>\|<sub>` 목록(쉼표 구분, #679). 관리 엔드포인트(`GET /admin/runs`, `GET /admin/config`)를 열지만 남의 run 산출물은 열지 않는다. **issuer 를 반드시 함께 적는다** — `sub` 는 issuer 안에서만 유일하고 `OIDC_ISSUER` 는 복수를 허용한다. issuer 없는 항목은 경고와 함께 무시된다. OIDC 배포에서는 이 변수를 컨테이너까지 전달해야 한다 | 미설정 | 다중 사용자 배포 시 선택 |
@@ -144,8 +149,10 @@ docker build --build-arg EXTRAS="publish parquet" -t kpubdata-builder:full .
 docker build --build-arg EXTRAS= -t kpubdata-builder:minimal .
 ```
 
-> 참고: exporter(parquet/Hugging Face 레이아웃)는 polars·표준 라이브러리만 쓰므로
+> 참고: exporter(parquet/Hugging Face 레이아웃)는 duckdb·표준 라이브러리만 쓰므로
 > extras 없이도 동작합니다. extras가 필요한 것은 **publisher**(huggingface_hub/kaggle)입니다.
+> Polars 는 이미지에 들어가지 않습니다 — 레거시 publish 스크립트(`scripts/pipeline`)만 쓰며
+> `legacy-publish` extra 로 설치합니다(#876).
 
 ---
 

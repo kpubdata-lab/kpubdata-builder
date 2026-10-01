@@ -58,7 +58,7 @@ EX --> M["Manifest<br/>(결과 기록)"]
 
 1. **BuildSpec**: [YAML](https://ko.wikipedia.org/wiki/YAML)(들여쓰기로 구조를 표현하는 설정 파일) 형태로 "어떤 데이터를 가져와서 어떤 형식으로 내보낼지" 기획합니다.
 2. **Bronze**: `kpubdata`를 통해 실제 공공데이터 [API](https://ko.wikipedia.org/wiki/API)에서 원시 데이터를 수집하고 소스 스냅샷·provenance를 남깁니다.
-3. **Silver**: Bronze 산출물을 단일 tabular 엔진으로 표(table) 형태로 변환하고, 스키마 검증·통계 계산·미리보기를 생성합니다. 엔진은 지금 [Polars](https://pola.rs/)이고 [DuckDB](https://duckdb.org/)로 전환 중입니다([ADR 0021](adrs/0021-duckdb-tabular-engine.md)).
+3. **Silver**: Bronze 산출물을 단일 tabular 엔진으로 표(table) 형태로 변환하고, 스키마 검증·통계 계산·미리보기를 생성합니다. 엔진은 [DuckDB](https://duckdb.org/)입니다([ADR 0021](adrs/0021-duckdb-tabular-engine.md)).
 4. **Gold**: Silver 결과를 분할·내보내기 준비가 된 패키지로 조립합니다.
 5. **Export**: Gold 패키지를 Markdown, JSONL, Parquet, CSV 등 원하는 형식으로 변환합니다.
 6. **Manifest**: 빌드 결과에 대한 상세 기록(버전, 생성일, 포함 항목 수 등)을 자동으로 생성합니다.
@@ -163,7 +163,7 @@ graph TD
     ST --> BR[bronze/]
     ST --> SI[silver/]
     ST --> GO[gold/]
-    TB --> PO[duckdb_runtime.py · polars_engine.py]
+    TB --> PO[duckdb_runtime.py · duckdb_load.py]
     E --> ME[markdown.py]
     E --> JE[jsonl.py]
     E --> PE[parquet.py]
@@ -174,7 +174,7 @@ graph TD
 src/kpubdata_builder/
 ├── pipeline/        # 메달리온 단계 흐름 제어 (orchestrator)
 ├── stages/          # bronze/silver/gold 단계 구현
-├── tabular/         # 표 처리 엔진 — Polars, DuckDB 로 전환 중 (ADR 0021)
+├── tabular/         # 표 처리 엔진 — DuckDB (ADR 0021)
 ├── exporters/       # 데이터 형식 변환 (Markdown, JSONL 등)
 ├── publishers/      # 결과물 업로드 (Hugging Face, Kaggle 등)
 ├── spec/            # 빌드 기획서(BuildSpec) 모델·검증

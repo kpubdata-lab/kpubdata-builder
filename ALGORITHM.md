@@ -121,7 +121,7 @@ flowchart LR
    - 실제 수집·정규화 로직은 `kpubdata`가 소유하며 Builder는 이를 중복 구현하지 않습니다.
 
 2. **Silver — 표 변환 + 검증 게이트 (#189/#261)**
-   - `build_silver_dataset(bronze)`가 단일 tabular 엔진(지금 Polars, DuckDB 로 전환 중 — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))으로 tabularize하고, 통계·preview·`validation` 결과를 산출합니다.
+   - `build_silver_dataset(bronze)`가 단일 tabular 엔진(DuckDB — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))으로 tabularize하고, 통계·preview·`validation` 결과를 산출합니다.
    - **게이트**: `silver.validation.ok`가 아니면 `DatasetValidationError`로 즉시 중단합니다. 검증은 필수 컬럼 존재(`missing_column`)와 선언된 dtype 일치(`dtype_mismatch`)를 구조화된 `ValidationProblem`으로 검사합니다(`validate_table`).
    - 통과 시 `persist_silver_dataset`로 기록합니다.
 
