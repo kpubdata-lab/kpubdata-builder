@@ -280,6 +280,12 @@ sources:
   `pii_masking` 의 각 `masked` 항목이 어느 쪽인지(`masked_as`: `token`/`null`) 적는다.
 - kpubdata 가 선언했지만 이 소스에 없는 필드(표기가 달라진 경우 등)는 건너뛰되 manifest
   `pii_masking.declared_absent` 에 kpubdata 표기 그대로 남는다(#902).
+- 같은 선언은 Silver·Bronze 를 읽는 서비스 경로에도 적용된다(#900): `/query`(`stage: silver`),
+  `/preview`, Silver stage sample 은 같은 컬럼을 같은 방식으로 가리고, 그런 소스의 Bronze·Silver
+  artifact 파일 다운로드는 403 `declared_pii_withheld` 로 거부한다. `publish_unmasked` 로 뺀
+  컬럼만 평문이다. kpubdata 선언을 읽지 못하면 그 소스의 읽기는 503
+  `pii_declaration_unavailable` 로 거부한다(fail closed). 자세한 것은 [API_CONTRACT.md](./API_CONTRACT.md) 의 "Silver·Bronze 읽기의
+  선언된 PII".
 
 ### 4.5 `exports` (배열)
 

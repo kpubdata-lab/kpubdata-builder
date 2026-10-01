@@ -50,8 +50,8 @@ from ..warehouse import TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
+from . import pii_reads, publish_credentials, request_credentials
 from . import publish as publish_service
-from . import publish_credentials, request_credentials
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
@@ -61,6 +61,7 @@ from .datasets_api import DatasetsApiService
 from .exports_api import ExportsApiService
 from .jobs import AsyncBuildExecutor
 from .monitoring_api import MonitoringApiService
+from .pii_reads import PiiLookup, client_pii_lookup
 from .profiles_api import ProfilesApiService
 from .provider_tests import ProviderTestLog
 from .providers import (
@@ -368,7 +369,12 @@ _BuildListEntry = dict[str, str | None]
 #   X-Publish-Credential header for the request only in a multi-user deployment; no
 #   stored publish credential and no server HF_TOKEN/KAGGLE_* fallback there (#925,
 #   behaviour and a header).
-API_CONTRACT_VERSION = "1.67.0"
+# 1.67.0 -> 1.68.0: declared PII stays masked on Silver and Bronze reads (#900) — /query on
+#   Silver, /preview and the Silver stage sample mask it (masked_columns), and a Bronze or
+#   Silver artifact file of a source with declared PII answers 403 declared_pii_withheld;
+#   an unreadable declaration fails closed with 503 pii_declaration_unavailable and
+#   sample_withheld: pii_declaration_unavailable (additive).
+API_CONTRACT_VERSION = "1.68.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -399,12 +405,18 @@ class BuilderService:
         warehouse_root: Path | None = None,
         terms_lookup: TermsLookup | None = None,
         publish_visibility_probe: VisibilityProbe | None = None,
+        pii_lookup: PiiLookup | None = None,
     ) -> None:
         # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
         logging_redaction.install()
         self._output_root = output_root
         # Each dataset's redistribution terms (#688): the kpubdata catalog, or a stand-in.
         self._terms_lookup: TermsLookup = terms_lookup or kpubdata_terms
+        # Each dataset's declared PII columns (#900), read through a client from the
+        # build's own factory so a read and Gold masking see the same declaration.
+        self._pii_lookup: PiiLookup = pii_lookup or client_pii_lookup(
+            lambda: self._create_client(), _close_request_client
+        )
         # Configured, never taken from a request: a per-request path would let a
         # caller write a catalog anywhere the process can reach (#703).
         self._warehouse_root = warehouse_root
@@ -468,6 +480,7 @@ class BuilderService:
             output_root=self._output_root,
             engine=self._query_service,
             terms_lookup=self._terms_lookup,
+            pii_lookup=self._pii_lookup,
         )
         self._warehouse_api = WarehouseApiService(
             table_catalog=lambda: self._table_catalog(),
@@ -1081,6 +1094,12 @@ class BuilderService:
             refusal = forbidden_response(self._run_verdict(run_id), what="an artifact")
             if refusal is not None:
                 return refusal
+            # A Bronze or Silver file holds declared PII as is; it does not leave (#900).
+            pii_refusal = pii_reads.artifact_refusal(
+                self._output_root, run_id, file_path, self._pii_lookup
+            )
+            if pii_refusal is not None:
+                return pii_refusal
         return response
 
     def list_builds(
@@ -1203,6 +1222,14 @@ class BuilderService:
             body["sample"] = []
             body["sample_withheld"] = "redistribution_forbidden"
             return ServiceResponse(response.status_code, body)
+        if response.status_code == 200 and stage == "silver" and response.body.get("sample"):
+            # Declared PII in the sample is masked as Gold masks it (#900).
+            return ServiceResponse(
+                200,
+                pii_reads.mask_stage_sample(
+                    self._output_root, run_id, source_key, response.body, self._pii_lookup
+                ),
+            )
         return response
 
     def monitoring_summary(self) -> ServiceResponse:

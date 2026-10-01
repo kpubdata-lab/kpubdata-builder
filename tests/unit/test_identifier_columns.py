@@ -262,6 +262,7 @@ def test_query_reports_the_runs_code_columns_as_identifiers(
     @dataclass
     class _Context:
         run_id: str = "run-1"
+        stage: str = "gold"
         source: str = "trade"
         table_path: Path = tmp_path / "table.parquet"
 

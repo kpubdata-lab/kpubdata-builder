@@ -13,7 +13,11 @@ instead of wondering whether it existed.
 
 Silver keeps every value (#611); quality is measured there. Gold is what exports,
 the dataset card, publishing, Gold ``/query`` and the warehouse read, so masking it
-once covers all of them.
+once covers all of them. The service's reads of Silver and Bronze (``/query`` on
+Silver, ``/preview``, stage samples, artifact downloads) show the same columns masked
+the same way, or refuse a raw file outright (#900, ``service/pii_reads.py``); which
+columns those are is :func:`columns_withheld_from_silver`, resolved here and nowhere
+else.
 
 Publishing a declared column unmasked takes an explicit ``sources[].gold.
 publish_unmasked`` entry, and every such column is recorded as a warning in the
@@ -182,6 +186,82 @@ def columns_masked_in_gold(
     return frozenset(declared) - frozenset(publish_unmasked)
 
 
+def columns_withheld_from_silver(
+    *,
+    core: Iterable[str],
+    build_spec: Sequence[str],
+    publish_unmasked: Sequence[str],
+    silver_columns: Sequence[str] | None,
+    contract: SchemaContract | None,
+) -> frozenset[str]:
+    """Declared Silver columns a read of Silver or Bronze must not show as is (#900).
+
+    The same declaration Gold masks (:func:`declared_pii_columns`) less the
+    ``publish_unmasked`` opt-outs, so a read shows in plain text exactly what Gold
+    publishes in plain text. Unlike Gold, a column ``gold.select`` drops is still
+    withheld: it is in Silver whatever Gold keeps.
+
+    ``silver_columns`` is None when the Silver columns are not known (a Bronze file
+    whose Silver was never written): every declaration is then taken as present. A
+    BuildSpec declaration naming a column Silver lacks fails the build; a read masks
+    the declared columns that are there.
+    """
+    assumed = (
+        list(silver_columns)
+        if silver_columns is not None
+        else sorted(builder_column_names(core, contract) | set(build_spec))
+    )
+    declared = declared_pii_columns(
+        core=core,
+        build_spec=[c for c in build_spec if c in assumed],
+        silver_columns=assumed,
+        contract=contract,
+    )
+    return columns_masked_in_gold(declared, publish_unmasked)
+
+
+def source_fields_of(
+    fields: Iterable[str], columns: Iterable[str], contract: SchemaContract | None
+) -> frozenset[str]:
+    """The source (Bronze) field names that become one of the Silver ``columns``.
+
+    The inverse of :func:`builder_column_names`, for a raw record read before Silver
+    renamed or coalesced its fields.
+    """
+    wanted = set(columns)
+    return frozenset(f for f in fields if builder_column_names((f,), contract) & wanted)
+
+
+def is_text_dtype_name(dtype: str | None) -> bool:
+    """Whether a Builder dtype as a schema sidecar names it (``String``) is text."""
+    return dtype in ("String", "Utf8")
+
+
+def mask_value(value: object, *, text: bool) -> str | None:
+    """One cell masked as :func:`mask_columns` masks a column: token for text, else null."""
+    if value is None or not text:
+        return None
+    return PII_MASK_TOKEN
+
+
+def mask_records(
+    rows: Iterable[Mapping[str, JsonValue]],
+    columns: Iterable[str],
+    *,
+    text_columns: Iterable[str],
+) -> list[dict[str, JsonValue]]:
+    """Plain rows (a sample, a raw record) with ``columns`` masked as Gold masks them."""
+    masked = frozenset(columns)
+    text = frozenset(text_columns)
+    return [
+        {
+            key: (mask_value(value, text=key in text) if key in masked else value)
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
+
+
 _names = itertools.count()
 
 
@@ -261,8 +341,13 @@ __all__ = [
     "apply_pii_masking",
     "builder_column_names",
     "columns_masked_in_gold",
+    "columns_withheld_from_silver",
     "core_pii_columns",
     "declared_pii_columns",
+    "is_text_dtype_name",
     "mask_columns",
+    "mask_records",
+    "mask_value",
     "nulled_columns",
+    "source_fields_of",
 ]

@@ -232,6 +232,51 @@ v0.4 Builder service는 동기식 실행 모델을 유지합니다.
 - query는 HTTP worker pool과 별도인 bounded capacity를 사용합니다. Query timeout은 child
   process를 실제 종료하며 429/504 오류는 안정적인 `code`로 구분됩니다.
 
+### Silver·Bronze 읽기의 선언된 PII (#900)
+
+Gold 는 선언된 PII(kpubdata `license.pii_columns` + BuildSpec `sources[].gold.pii_columns`)를
+마스킹하지만(#689) Silver·Bronze 는 원래 값을 보존한다(#611). 그래서 서비스가 Silver·Bronze 를
+읽는 경로는 모두 Gold 와 **같은 컬럼을 같은 방식으로** 가리거나 거부한다(계약 1.68.0).
+
+| 경로 | 동작 |
+| :--- | :--- |
+| `POST /query` `stage: silver` | 선언 컬럼을 마스킹한 Silver 사본 위에서 질의한다. `upper(col)`·`substr`·`WHERE col = '…'` 같은 식도 원래 값을 보지 못한다. 사본은 질의 엔진과 같은 `scan_builder_parquet` 로 읽어 DuckDB 가 파일 metadata 에 남긴 Builder dtype·실제 컬럼 이름(#891)을 되살린 뒤 쓰므로, 응답의 `columns`·`column_meta` 는 마스킹하지 않은 질의와 같다(all-null·Duration·Int128·zone 포함). 응답의 `masked_columns` 가 가린 컬럼을 적는다. `stage: gold` 는 빌드 때 이미 마스킹되어 변하지 않는다 |
+| `POST /preview` | 소스별 `sample`, `source_sample`(원본 필드명 — `schema.coalesce`·`rename` 을 거꾸로 따라간다), 그 컬럼의 `diffs` 를 가리고 `masked_columns` 를 적는다 |
+| `GET /builds/{run_id}/stages/silver/{source}` | `sample` 을 가리고 `masked_columns` 를 적는다. Bronze stage 상세에는 행이 없다 |
+| `GET /artifacts/{run_id}/{file_path}` | 선언 컬럼이 있는 소스의 `bronze/{source}/…`·`silver/{source}/…` 파일은 **전부 403 `declared_pii_withheld`**(`columns` 에 컬럼 이름만). Gold 파일과 manifest 는 그대로 내려간다 |
+
+- **마스킹 방식**은 Gold 와 같다(#902): 텍스트 값은 `[masked]`, 텍스트가 아닌 dtype 은 null,
+  null 은 null. `masked_columns` 는 실제로 가린 컬럼이 있을 때만 온다.
+- **어떤 컬럼을 가리는가**는 `stages/gold/pii.py` 의 `columns_withheld_from_silver` 하나가
+  정한다. Gold 가 쓰는 `declared_pii_columns` 선언 해석에서 `gold.publish_unmasked` 를 뺀 것이라,
+  Gold 에 평문으로 게시되는 컬럼만 읽기에서도 평문이다. `gold.select` 가 뺀 컬럼은 Gold 에는
+  없지만 Silver 에는 있으므로 가린다. `pii.allow_columns` 는 스캔 게이트의 스위치라 선언 컬럼을
+  풀지 않는다. 선언은 빌드와 같은 client factory 로 읽고, run manifest 의 `pii_masking.masked`
+  에 기록된 컬럼도 더한다 — 카탈로그가 나중에 선언을 빼도 그때 빌드한 run 이 풀리지 않는다.
+- **선언을 읽지 못하면 거부한다(fail closed)**: public_api 소스의 kpubdata 선언 조회가 실패하면
+  어느 컬럼이 개인정보인지 모른다(#688 "모르는 것은 허가가 아니다"). manifest 기록은 대신할 수
+  없다 — Gold 가 가린 것만 적혀 있어 `gold.select` 가 뺀 컬럼이나 Gold 까지 가지 못한 run 의
+  컬럼은 빠진다. 그래서 그 소스의 `/query`(`stage: silver`)·`/preview`·Bronze·Silver 파일
+  다운로드는 **503 `pii_declaration_unavailable`**(`dataset` 에 읽지 못한 데이터셋)로 거부하고,
+  Silver stage 상세는 메타데이터는 주되 `sample: []`, `sample_withheld:
+  pii_declaration_unavailable` 로 행을 뺀다(#892 의 `redistribution_forbidden` 과 같은 모양).
+  503 인 이유: 요청이 아니라 서버 쪽 조회가 일시적으로 실패한 것이라 다시 시도할 수 있다.
+  file·url 소스와 BuildSpec 만의 `gold.pii_columns` 는 조회가 필요 없어 영향이 없고, Gold 읽기도
+  그대로다. 조회가 성공했지만 결과가 달라진 경우에는 manifest 기록과의 합집합을 그대로 쓴다.
+- **원본 파일은 왜 거부인가**: `raw_records.jsonl`·`table.parquet`·`preview.json` 을 전송 중에
+  고쳐 쓰면 산출물이 아닌 파일을 산출물 이름으로 내보내게 된다. 가려진 표가 필요하면 Gold 를
+  받는다. Silver 가 없는 소스(Bronze 만 있는 경우)는 선언이 모두 있다고 보고 판단하고, 어느
+  소스인지 알 수 없는 stage 디렉터리는 run 의 모든 소스로 판단한다 — 모르는 것은 허가가 아니다.
+- **#892(재배포 게이트)와 같은 지점을 쓴다**: artifact 다운로드와 stage 상세는
+  `BuilderService.serve_artifact_file`·`get_run_stage_detail`, `/query` 는
+  `QueryApiService.query` — #892 가 약관 판정을 넣은 바로 그 자리에서, 약관 판정 **다음에**
+  돈다. `forbidden` 이면 아무것도 나가지 않으니 가릴 것도 없다. `/preview` 는 약관 판정이
+  fetch 전(스펙만으로)이고 PII 는 fetch 한 결과와 그 client 가 읽은 선언이 필요해서, 같은
+  `SpecApiService.preview` 안의 fetch 직후에 가린다. 정책 모듈은 합치지 않았다
+  (`service/redistribution.py` 와 `service/pii_reads.py`): 약관은 읽기를 **거부**하고, 선언은
+  읽기를 **가린다** — 답이 다르다.
+- warehouse 읽기·export·프로파일은 Gold 스냅샷을 읽으므로 이 변경의 대상이 아니다.
+
 ### Composition/Join (#506)
 
 - `BuildSpec.composition`은 두 source의 검증된 Silver를 join해 별도 결합 Gold
