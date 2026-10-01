@@ -920,7 +920,7 @@ def _run_source_pipeline(
                 ),
             ),
             processing=processing_steps(source, context.spec),
-            personal_information=personal_information(context.spec),
+            personal_information=personal_information(context.spec, pii_masking),
         )
         _record_output_paths(outputs, *write_card(gold_paths.gold_dir, card))
 
@@ -1269,7 +1269,7 @@ def _compose(
             for step in processing_steps(source, context.spec)
         ]
         + [f"Joined {join.left} and {join.right} ({join.type} join)"],
-        personal_information=personal_information(context.spec),
+        personal_information=personal_information(context.spec, pii_masking),
     )
     _record_output_paths(outputs, *write_card(gold_paths.gold_dir, card))
 

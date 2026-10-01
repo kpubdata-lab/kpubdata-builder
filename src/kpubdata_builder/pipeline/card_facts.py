@@ -19,11 +19,21 @@ from ..manifest.provenance import SourceProvenance
 from ..spec import BuildSpec, SourceRef
 from ..stages.bronze.resolve import sanitize_endpoint_identity
 from ..stages.gold.card import CardSource, DatasetCard, card_sections, render_dataset_card
+from ..stages.gold.pii import PII_MASK_TOKEN, PiiMaskResult
 
 CatalogLookup = Callable[[str], DatasetCatalogInfo | None]
 
 CARD_JSON = "card.json"
 _KAGGLE_METADATA = "dataset-metadata.json"
+_HF_INFOS = "dataset_infos.json"
+
+
+def _front_matter(text: str) -> str:
+    """The YAML front matter block at the top of a card, with its fences, or ""."""
+    if not text.startswith("---\n"):
+        return ""
+    end = text.find("\n---\n", 4)
+    return text[: end + 5] + "\n" if end != -1 else ""
 
 
 def card_source(
@@ -44,7 +54,8 @@ def card_source(
     if source.kind == "url":
         url = sanitize_endpoint_identity(source.endpoint)
     elif source.kind == "file":
-        url = f"uploaded file ({source.upload_id})"
+        # The upload id is internal; a public card does not carry it.
+        url = "uploaded file"
     else:
         url = (info.source_url if info else "") or ""
     return CardSource(
@@ -111,22 +122,48 @@ def processing_steps(source: SourceRef, spec: BuildSpec) -> list[str]:
     return steps or ["No transformation declared: values are as the source gave them."]
 
 
-def personal_information(spec: BuildSpec) -> str:
-    """How personal information was handled — stated even when it was not."""
+def personal_information(spec: BuildSpec, masking: PiiMaskResult | None = None) -> str:
+    """How personal information was handled, from what the build recorded — stated even
+    when nothing was done.
+
+    Two separate facts (#689, #902): what Gold did with the columns declared personal
+    information (``masking``, the manifest's ``pii_masking``), and how the BuildSpec
+    ``pii`` policy scanned Silver's values.
+    """
+    parts: list[str] = []
+    if masking is not None and masking.masked:
+        columns = ", ".join(
+            f"{name} ({'emptied' if name in masking.nulled else f'replaced by {PII_MASK_TOKEN}'})"
+            for name in sorted(masking.masked)
+        )
+        parts.append(f"Columns declared personal information were masked: {columns}.")
+    if masking is not None and masking.unmasked:
+        parts.append(
+            "Columns declared personal information published unmasked, as the BuildSpec's "
+            f"gold.publish_unmasked asks: {', '.join(sorted(masking.unmasked))}."
+        )
+    if masking is not None and masking.declared_absent:
+        parts.append(
+            "Declared personal information by kpubdata but not in this source: "
+            f"{', '.join(masking.declared_absent)}."
+        )
+    if not parts:
+        parts.append("No column was declared personal information.")
     policy = spec.pii
     if policy is None:
-        return "No personal-information policy was declared; values were not scanned."
-    allowed = (
-        f" Accepted columns: {', '.join(policy.allow_columns)}." if policy.allow_columns else ""
-    )
-    if policy.mode == "block":
-        return "Scanned; a column that looked like personal information failed the build." + allowed
-    if policy.mode == "warn":
-        return (
-            "Scanned; columns that looked like personal information were reported, "
-            "not removed." + allowed
-        )
-    return "Declared as containing no personal information to scan for (allow)." + allowed
+        parts.append("Values were not scanned for personal information (no pii policy).")
+    else:
+        outcome = {
+            "block": "a column that looked like personal information failed the build",
+            "warn": "columns that looked like personal information were reported, not removed",
+            "allow": "what the scan found was not acted on",
+        }[policy.mode]
+        parts.append(f"Values were scanned (pii mode: {policy.mode}); {outcome}.")
+        if policy.allow_columns:
+            parts.append(
+                f"Accepted as publishable despite the scan: {', '.join(policy.allow_columns)}."
+            )
+    return " ".join(parts)
 
 
 def write_card(gold_dir: Path, card: DatasetCard) -> list[Path]:
@@ -141,6 +178,16 @@ def write_card(gold_dir: Path, card: DatasetCard) -> list[Path]:
         encoding="utf-8",
     )
     written = [readme, sections]
+    # A Hugging Face layout uploads its own README.md to the repository root, after the
+    # Gold directory's (#694): its card gets the same sections, under the exporter's
+    # front matter, so whichever lands last is complete.
+    for infos in sorted(gold_dir.rglob(_HF_INFOS)):
+        layout = infos.parent
+        hf_readme = layout / "README.md"
+        front = _front_matter(hf_readme.read_text(encoding="utf-8")) if hf_readme.is_file() else ""
+        hf_readme.write_text(front + render_dataset_card(card), encoding="utf-8")
+        shutil.copyfile(sections, layout / CARD_JSON)
+        written += [hf_readme, layout / CARD_JSON]
     for metadata in sorted(gold_dir.rglob(_KAGGLE_METADATA)):
         package = metadata.parent
         if package == gold_dir:

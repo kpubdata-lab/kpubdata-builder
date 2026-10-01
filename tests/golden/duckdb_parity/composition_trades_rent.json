@@ -1400,7 +1400,31 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity composition\n---\n\n# Parity composition\n\ntrades joined to rents by apartment\n\n## 출처\n\n- trades\n- rents\n",
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity composition\n---\n\n# Parity composition\n\ntrades joined to rents by apartment\n\n## Sources\n\n- trades\n- rents\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| aptDong | String | yes |\n| aptNm | String | no |\n| aptSeq | String | no |\n| bonbun | String | no |\n| bubun | String | no |\n| buildYear | String | no |\n| buyerGbn | String | no |\n| cdealDay | String | yes |\n| cdealType | String | yes |\n| dealAmount | String | no |\n| dealDay | String | no |\n| dealMonth | String | no |\n| dealYear | String | no |\n| dealingGbn | String | no |\n| estateAgentSggNm | String | no |\n| excluUseAr | String | no |\n| floor | String | no |\n| jibun | String | no |\n| landCd | String | no |\n| landLeaseholdGbn | String | no |\n| rgstDate | String | yes |\n| roadNm | String | no |\n| roadNmBonbun | String | no |\n| roadNmBubun | String | no |\n| roadNmCd | String | no |\n| roadNmSeq | String | no |\n| roadNmSggCd | String | no |\n| roadNmbCd | String | no |\n| sggCd | String | no |\n| slerGbn | String | no |\n| umdCd | String | no |\n| umdNm | String | no |\n| aptSeq_rents | String | no |\n| buildYear_rents | String | no |\n| contractTerm | String | yes |\n| contractType | String | yes |\n| dealDay_rents | String | no |\n| dealMonth_rents | String | no |\n| dealYear_rents | String | no |\n| deposit | String | no |\n| excluUseAr_rents | String | no |\n| floor_rents | String | no |\n| jibun_rents | String | no |\n| monthlyRent | String | no |\n| preDeposit | String | yes |\n| preMonthlyRent | Null | yes |\n| roadnm | String | no |\n| roadnmbcd | String | no |\n| roadnmbonbun | String | no |\n| roadnmbubun | String | no |\n| roadnmcd | String | no |\n| roadnmseq | String | no |\n| roadnmsggcd | String | no |\n| sggCd_rents | String | no |\n| umdNm_rents | String | no |\n| useRRRight | String | yes |\n\n## Sample\n\n| aptDong | aptNm | aptSeq | bonbun | bubun | buildYear | buyerGbn | cdealDay | cdealType | dealAmount | dealDay | dealMonth | dealYear | dealingGbn | estateAgentSggNm | excluUseAr | floor | jibun | landCd | landLeaseholdGbn | rgstDate | roadNm | roadNmBonbun | roadNmBubun | roadNmCd | roadNmSeq | roadNmSggCd | roadNmbCd | sggCd | slerGbn | umdCd | umdNm | aptSeq_rents | buildYear_rents | contractTerm | contractType | dealDay_rents | dealMonth_rents | dealYear_rents | deposit | excluUseAr_rents | floor_rents | jibun_rents | monthlyRent | preDeposit | preMonthlyRent | roadnm | roadnmbcd | roadnmbonbun | roadnmbubun | roadnmcd | roadnmseq | roadnmsggcd | sggCd_rents | umdNm_rents | useRRRight |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 105 | 종로청계힐스테이트 | 11110-2234 | 0766 | 0000 | 2009 | 개인 |  |  | 101,300 | 19 | 1 | 2024 | 중개거래 | 서울 종로구 | 84.9478 | 13 | 766 | 1 | N | 24.04.30 | 숭인동길 | 00021 | 00000 | 4100204 | 01 | 11110 | 0 | 11110 | 개인 | 17500 | 숭인동 | 11110-2234 | 2009 |  |  | 16 | 1 | 2024 | 5,000 | 59.9426 | 15 | 766 | 150 |  |  | 숭인동길 21 | 0 | 00021 | 00000 | 4100204 | 1 | 11110 | 11110 | 숭인동 |  |\n| 116 | 인왕산아이파크 | 11110-2212 | 0060 | 0000 | 2008 | 개인 |  |  | 101,000 | 29 | 1 | 2024 | 중개거래 | 서울 종로구 | 59.993 | 11 | 60 | 1 | N | 24.03.20 | 통일로18길 | 00009 | 00000 | 4100482 | 01 | 11110 | 0 | 11110 | 개인 | 18700 | 무악동 | 11110-2212 | 2008 |  |  | 23 | 1 | 2024 | 68,000 | 84.858 | 1 | 60 | 0 |  |  | 통일로18길 9 | 0 | 00009 | 00000 | 4100482 | 1 | 11110 | 11110 | 무악동 |  |\n| 현대뜨레비앙 | 현대뜨레비앙 | 11110-102 | 0055 | 0000 | 2003 | 개인 |  |  | 42,000 | 30 | 1 | 2024 | 중개거래 | 서울 종로구 | 48.54 | 2 | 55 | 1 | N | 24.03.11 | 돈화문로11가길 | 00059 | 00000 | 4100050 | 03 | 11110 | 0 | 11110 | 개인 | 13300 | 익선동 | 11110-102 | 2003 | 24.02~26.02 | 신규 | 24 | 1 | 2024 | 1,000 | 48.54 | 2 | 55 | 110 |  |  | 돈화문로11가길 59 | 0 | 00059 | 00000 | 4100050 | 3 | 11110 | 11110 | 익선동 |  |\n| 104 | 종로청계힐스테이트 | 11110-2234 | 0766 | 0000 | 2009 | 개인 |  |  | 80,000 | 27 | 1 | 2024 | 중개거래 | 서울 종로구 | 59.9426 | 11 | 766 | 1 | N | 24.02.27 | 숭인동길 | 00021 | 00000 | 4100204 | 01 | 11110 | 0 | 11110 | 개인 | 17500 | 숭인동 | 11110-2234 | 2009 |  |  | 16 | 1 | 2024 | 5,000 | 59.9426 | 15 | 766 | 150 |  |  | 숭인동길 21 | 0 | 00021 | 00000 | 4100204 | 1 | 11110 | 11110 | 숭인동 |  |\n|  | 종로청계힐스테이트 | 11110-2234 | 0766 | 0000 | 2009 | 개인 | 24.04.30 | O | 101,300 | 19 | 1 | 2024 | 중개거래 | 서울 종로구 | 84.9478 | 13 | 766 | 1 | N |  | 숭인동길 | 00021 | 00000 | 4100204 | 01 | 11110 | 0 | 11110 | 개인 | 17500 | 숭인동 | 11110-2234 | 2009 |  |  | 16 | 1 | 2024 | 5,000 | 59.9426 | 15 | 766 | 150 |  |  | 숭인동길 21 | 0 | 00021 | 00000 | 4100204 | 1 | 11110 | 11110 | 숭인동 |  |\n\n## Provenance\n\n### trades\n\n- Provided by: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n### rents\n\n- Provided by: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- trades: No transformation declared: values are as the source gave them.\n- rents: No transformation declared: values are as the source gave them.\n- Joined trades and rents (inner join)\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "trades: No transformation declared: values are as the source gave them.",
+      "rents: No transformation declared: values are as the source gave them.",
+      "Joined trades and rents (inner join)"
+     ],
+     "provenance": [
+      {
+       "institution": "",
+       "license": "공공누리_1유형",
+       "source": "trades",
+       "url": "https://www.data.go.kr"
+      },
+      {
+       "institution": "",
+       "license": "공공누리_1유형",
+       "source": "rents",
+       "url": "https://www.data.go.kr"
+      }
+     ],
+     "title": "Parity composition"
+    },
     "data/train-00000-of-00001.jsonl": [
      {
       "aptDong": "105",
@@ -3527,7 +3551,23 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity composition\n---\n\n# Parity composition\n\ntrades joined to rents by apartment\n\n## 출처\n\n- rents\n",
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity composition\n---\n\n# Parity composition\n\ntrades joined to rents by apartment\n\n## Sources\n\n- rents\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| aptNm | String | no |\n| aptSeq | String | no |\n| buildYear | String | no |\n| contractTerm | String | yes |\n| contractType | String | yes |\n| dealDay | String | no |\n| dealMonth | String | no |\n| dealYear | String | no |\n| deposit | String | no |\n| excluUseAr | String | no |\n| floor | String | no |\n| jibun | String | no |\n| monthlyRent | String | no |\n| preDeposit | String | yes |\n| preMonthlyRent | Null | yes |\n| roadnm | String | no |\n| roadnmbcd | String | no |\n| roadnmbonbun | String | no |\n| roadnmbubun | String | no |\n| roadnmcd | String | no |\n| roadnmseq | String | no |\n| roadnmsggcd | String | no |\n| sggCd | String | no |\n| umdNm | String | no |\n| useRRRight | String | yes |\n\n## Sample\n\n| aptNm | aptSeq | buildYear | contractTerm | contractType | dealDay | dealMonth | dealYear | deposit | excluUseAr | floor | jibun | monthlyRent | preDeposit | preMonthlyRent | roadnm | roadnmbcd | roadnmbonbun | roadnmbubun | roadnmcd | roadnmseq | roadnmsggcd | sggCd | umdNm | useRRRight |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 아남1 | 11110-25 | 1995 |  |  | 3 | 1 | 2024 | 75,000 | 84.9 | 17 | 4 | 0 |  |  | 창경궁로 265 | 0 | 00265 | 00000 | 3005008 | 7 | 11110 | 11110 | 명륜2가 |  |\n| 종로청계힐스테이트 | 11110-2234 | 2009 |  |  | 16 | 1 | 2024 | 5,000 | 59.9426 | 15 | 766 | 150 |  |  | 숭인동길 21 | 0 | 00021 | 00000 | 4100204 | 1 | 11110 | 11110 | 숭인동 |  |\n| 인왕산2차아이파크 | 11110-2417 | 2015 |  |  | 14 | 1 | 2024 | 70,000 | 84.4541 | 5 | 88 | 0 |  |  | 통일로18길 34 | 0 | 00034 | 00000 | 4100482 | 1 | 11110 | 11110 | 무악동 |  |\n| 인왕산아이파크 | 11110-2212 | 2008 |  |  | 23 | 1 | 2024 | 68,000 | 84.858 | 1 | 60 | 0 |  |  | 통일로18길 9 | 0 | 00009 | 00000 | 4100482 | 1 | 11110 | 11110 | 무악동 |  |\n| 종로센트레빌 | 11110-2224 | 2008 |  |  | 10 | 1 | 2024 | 25,000 | 59.92 | 5 | 2-1 | 65 |  |  | 동망산길 47 | 0 | 00047 | 00000 | 4100065 | 2 | 11110 | 11110 | 숭인동 |  |\n\n## Provenance\n\n### rents\n\n- Provided by: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- No transformation declared: values are as the source gave them.\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "No transformation declared: values are as the source gave them."
+     ],
+     "provenance": [
+      {
+       "institution": "",
+       "license": "공공누리_1유형",
+       "source": "rents",
+       "url": "https://www.data.go.kr"
+      }
+     ],
+     "title": "Parity composition"
+    },
     "data/train-00000-of-00001.jsonl": [
      {
       "aptNm": "아남1",
@@ -5541,7 +5581,23 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity composition\n---\n\n# Parity composition\n\ntrades joined to rents by apartment\n\n## 출처\n\n- trades\n",
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity composition\n---\n\n# Parity composition\n\ntrades joined to rents by apartment\n\n## Sources\n\n- trades\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| aptDong | String | yes |\n| aptNm | String | no |\n| aptSeq | String | no |\n| bonbun | String | no |\n| bubun | String | no |\n| buildYear | String | no |\n| buyerGbn | String | no |\n| cdealDay | String | yes |\n| cdealType | String | yes |\n| dealAmount | String | no |\n| dealDay | String | no |\n| dealMonth | String | no |\n| dealYear | String | no |\n| dealingGbn | String | no |\n| estateAgentSggNm | String | yes |\n| excluUseAr | String | no |\n| floor | String | no |\n| jibun | String | no |\n| landCd | String | no |\n| landLeaseholdGbn | String | no |\n| rgstDate | String | yes |\n| roadNm | String | no |\n| roadNmBonbun | String | no |\n| roadNmBubun | String | no |\n| roadNmCd | String | no |\n| roadNmSeq | String | no |\n| roadNmSggCd | String | no |\n| roadNmbCd | String | yes |\n| sggCd | String | no |\n| slerGbn | String | no |\n| umdCd | String | no |\n| umdNm | String | no |\n\n## Sample\n\n| aptDong | aptNm | aptSeq | bonbun | bubun | buildYear | buyerGbn | cdealDay | cdealType | dealAmount | dealDay | dealMonth | dealYear | dealingGbn | estateAgentSggNm | excluUseAr | floor | jibun | landCd | landLeaseholdGbn | rgstDate | roadNm | roadNmBonbun | roadNmBubun | roadNmCd | roadNmSeq | roadNmSggCd | roadNmbCd | sggCd | slerGbn | umdCd | umdNm |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 105 | 종로청계힐스테이트 | 11110-2234 | 0766 | 0000 | 2009 | 개인 |  |  | 101,300 | 19 | 1 | 2024 | 중개거래 | 서울 종로구 | 84.9478 | 13 | 766 | 1 | N | 24.04.30 | 숭인동길 | 00021 | 00000 | 4100204 | 01 | 11110 | 0 | 11110 | 개인 | 17500 | 숭인동 |\n| 116 | 인왕산아이파크 | 11110-2212 | 0060 | 0000 | 2008 | 개인 |  |  | 101,000 | 29 | 1 | 2024 | 중개거래 | 서울 종로구 | 59.993 | 11 | 60 | 1 | N | 24.03.20 | 통일로18길 | 00009 | 00000 | 4100482 | 01 | 11110 | 0 | 11110 | 개인 | 18700 | 무악동 |\n| 209 | 경희궁자이(2단지) | 11110-2445 | 0199 | 0000 | 2017 | 개인 |  |  | 200,000 | 22 | 1 | 2024 | 중개거래 | 서울 종로구 | 84.614 | 4 | 199 | 1 | N | 24.04.19 | 송월길 | 00099 | 00000 | 4100192 | 01 | 11110 |  | 11110 | 개인 | 17900 | 홍파동 |\n| 현대뜨레비앙 | 현대뜨레비앙 | 11110-102 | 0055 | 0000 | 2003 | 개인 |  |  | 42,000 | 30 | 1 | 2024 | 중개거래 | 서울 종로구 | 48.54 | 2 | 55 | 1 | N | 24.03.11 | 돈화문로11가길 | 00059 | 00000 | 4100050 | 03 | 11110 | 0 | 11110 | 개인 | 13300 | 익선동 |\n| 가 | 일성빌라트 | 11110-77 | 0145 | 0005 | 1996 | 개인 |  |  | 70,500 | 27 | 1 | 2024 | 중개거래 | 서울 종로구 | 84.99 | 3 | 145-5 | 1 | N | 24.03.28 | 평창문화로 | 00119 | 00000 | 3100023 | 01 | 11110 | 0 | 11110 | 개인 | 18300 | 평창동 |\n\n## Provenance\n\n### trades\n\n- Provided by: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- No transformation declared: values are as the source gave them.\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "No transformation declared: values are as the source gave them."
+     ],
+     "provenance": [
+      {
+       "institution": "",
+       "license": "공공누리_1유형",
+       "source": "trades",
+       "url": "https://www.data.go.kr"
+      }
+     ],
+     "title": "Parity composition"
+    },
     "data/train-00000-of-00001.jsonl": [
      {
       "aptDong": "105",

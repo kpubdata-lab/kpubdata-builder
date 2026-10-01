@@ -377,7 +377,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.68.0 -> 1.69.0: GET /version reports publish_credential — request, stored or
 #   stored_or_server — so a client knows where this deployment takes publish
 #   credentials from (#938, additive).
-API_CONTRACT_VERSION = "1.69.0"
+# 1.69.0 -> 1.71.0 (1.70.0 is held by the open #940): dataset cards (#694) — card.json
+#   beside README.md, and publish readiness blockers card_missing / card_incomplete
+#   (additive).
+API_CONTRACT_VERSION = "1.71.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

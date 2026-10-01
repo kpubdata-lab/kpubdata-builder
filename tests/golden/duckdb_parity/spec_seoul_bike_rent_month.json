@@ -176,7 +176,42 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\nlicense: other\nlicense_link: https://www.kogl.or.kr/info/licenseType1.do\nlicense_name: kogl-type-1\npretty_name: 서울 공공자전거 월별 이용정보\n---\n\n# 서울 공공자전거 월별 이용정보\n\n서울 열린데이터광장 공공자전거 월별 이용정보. G1+G2+I1+G3 통합 스냅샷, 2020-01~2023-12.\n\n## 출처\n\n- bike\n",
+    "README.md": "---\nlanguage:\n- ko\nlicense: other\nlicense_link: https://www.kogl.or.kr/info/licenseType1.do\nlicense_name: kogl-type-1\npretty_name: 서울 공공자전거 월별 이용정보\n---\n\n# 서울 공공자전거 월별 이용정보\n\n서울 열린데이터광장 공공자전거 월별 이용정보. G1+G2+I1+G3 통합 스냅샷, 2020-01~2023-12.\n\n## Sources\n\n- bike\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| station_code | String | no |\n| station_name | String | no |\n| pass_type | String | no |\n| gender | String | yes |\n| age_band | String | no |\n| use_count | Int64 | no |\n| exercise_kcal | Float64 | yes |\n| carbon_kg | Float64 | yes |\n| distance_m | Float64 | no |\n| duration_min | Float64 | no |\n| ym_raw | String | no |\n\n## Sample\n\n| station_code | station_name | pass_type | gender | age_band | use_count | exercise_kcal | carbon_kg | distance_m | duration_min | ym_raw |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 00003 | 망원역 1번출구 | 정기권 | M | 20대 | 12 | 301.5 | 2.1 | 9051.2 | 41.0 | 2020-01 |\n| 00003 | 망원역 1번출구 | 일일권 |  | 30대 | 4 |  |  | 1200.0 | 12.0 | 2020-01 |\n| 00102 | 신촌역 | 정기권 | F | ~10대 | 7 | 88.25 | 0.6 | 2500.5 | 20.0 | 2021-06 |\n| 00102 | 신촌역 | 단체권 |  | 기타 | 1 | 0.0 | 0.0 | 0.0 | 1.0 | 2021-06 |\n| 01001 | 여의도 | 정기권 | f | 40대 | 25 | 1004.75 | 7.9 | 33000.0 | 180.0 | 2023-12 |\n\n## Provenance\n\n### bike\n\n- Provided by: _not declared_\n- Source: uploaded file\n- Licence: kogl-type-1 (https://www.kogl.or.kr/info/licenseType1.do)\n- Collected: <time>\n\n## Processing\n\n- Treated as missing: '\\\\N'\n- Treated as missing in 성별: ''\n- Merged 이동거리, 이동거리(M), 이용거리(M) into distance_m\n- Merged 이용시간, 이용시간(분), 이용시간(본) into duration_min\n- Merged 대여일자, 대여년월 into ym_raw\n- Renamed 대여소번호 to station_code\n- Renamed 대여소명 to station_name\n- Renamed 대여구분코드 to pass_type\n- Renamed 성별 to gender\n- Renamed 연령대코드 to age_band\n- Renamed 이용건수 to use_count\n- Renamed 운동량 to exercise_kcal\n- Renamed 탄소량 to carbon_kg\n- Zero-padded station_code to 5 characters\n- Converted ym_raw to year_month\n- Converted use_count to int\n- Converted distance_m to float\n- Converted duration_min to float\n- Converted exercise_kcal to float\n- Converted carbon_kg to float\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nother\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "Treated as missing: '\\\\N'",
+      "Treated as missing in 성별: ''",
+      "Merged 이동거리, 이동거리(M), 이용거리(M) into distance_m",
+      "Merged 이용시간, 이용시간(분), 이용시간(본) into duration_min",
+      "Merged 대여일자, 대여년월 into ym_raw",
+      "Renamed 대여소번호 to station_code",
+      "Renamed 대여소명 to station_name",
+      "Renamed 대여구분코드 to pass_type",
+      "Renamed 성별 to gender",
+      "Renamed 연령대코드 to age_band",
+      "Renamed 이용건수 to use_count",
+      "Renamed 운동량 to exercise_kcal",
+      "Renamed 탄소량 to carbon_kg",
+      "Zero-padded station_code to 5 characters",
+      "Converted ym_raw to year_month",
+      "Converted use_count to int",
+      "Converted distance_m to float",
+      "Converted duration_min to float",
+      "Converted exercise_kcal to float",
+      "Converted carbon_kg to float"
+     ],
+     "provenance": [
+      {
+       "institution": "",
+       "license": "kogl-type-1 (https://www.kogl.or.kr/info/licenseType1.do)",
+       "source": "bike",
+       "url": "uploaded file"
+      }
+     ],
+     "title": "서울 공공자전거 월별 이용정보"
+    },
     "data/train-00000-of-00001.jsonl": [
      {
       "age_band": "20대",

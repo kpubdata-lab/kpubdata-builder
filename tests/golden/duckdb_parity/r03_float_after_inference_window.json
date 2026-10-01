@@ -1234,7 +1234,23 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## 출처\n\n- t\n",
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## Sources\n\n- t\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| v | Float64 | no |\n\n## Sample\n\n| v |\n| --- |\n| 0.0 |\n| 1.0 |\n| 2.0 |\n| 3.0 |\n| 4.0 |\n\n## Provenance\n\n### t\n\n- Provided by: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- No transformation declared: values are as the source gave them.\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "No transformation declared: values are as the source gave them."
+     ],
+     "provenance": [
+      {
+       "institution": "",
+       "license": "공공누리_1유형",
+       "source": "t",
+       "url": "https://www.data.go.kr"
+      }
+     ],
+     "title": "Parity"
+    },
     "data/train-00000-of-00001.jsonl": [
      {
       "v": 0.0

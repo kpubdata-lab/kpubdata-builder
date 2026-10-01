@@ -175,14 +175,14 @@ BuildSpec 경로의 Gold 출력마다 카드(`README.md`)와 같은 내용의 `c
 | 섹션 | 출처 |
 | :--- | :--- |
 | 제공 기관 | BuildSpec `attribution` (kpubdata 가 출처표시를 선언하면 그것) |
-| 출처 URL | kpubdata 카탈로그의 `source_url` / url 소스의 endpoint(query 제거) / file 소스는 업로드 id |
+| 출처 URL | kpubdata 카탈로그의 `source_url` / url 소스의 endpoint(query 제거) / file 소스는 "uploaded file" (내부 업로드 id 는 적지 않는다) |
 | 라이선스 | BuildSpec `license_name`·`license`(`license_link`) **원래 이름 그대로**. kpubdata 가 제공기관 조건을 선언했으면 옆에 적는다 |
 | 수집 일시 | provenance 의 `fetched_at` |
 | 가공 | 선언된 read_as·null_tokens·coalesce·rename·zfill·casts·derived·gold selection·splits. 없으면 "없음" 을 적는다 |
-| 개인정보 처리 | `pii` 정책. 없으면 "스캔하지 않음" 을 적는다 |
+| 개인정보 처리 | Gold 가 선언된 PII 열을 어떻게 했는지(manifest `pii_masking`: 마스킹한 열과 방식, `publish_unmasked` 로 마스킹 없이 게시한 열, kpubdata 가 선언했지만 이 소스에 없는 필드) + `pii` 정책의 스캔 방식(mode 그대로 — `allow` 는 스캔하되 조치하지 않는다는 뜻이다). 정책이 없으면 "스캔하지 않음" 을 적는다 |
 
 필수 섹션이 비면 게시가 막힌다(`card_incomplete`, 빈 섹션 이름을 알려준다). 카드가 없던 이전 run 은
-`card_missing` 으로 막히며 다시 빌드하면 된다. Kaggle 패키지에도 같은 카드가 복사된다.
+`card_missing` 으로 막히며 다시 빌드하면 된다. Kaggle 패키지와 Hugging Face layout 에도 같은 카드가 들어간다 — HF 게시는 layout 의 `README.md` 를 repo 루트에 올리므로, 그 파일도 exporter 의 front matter 아래에 같은 절을 갖는다.
 
 ---
 

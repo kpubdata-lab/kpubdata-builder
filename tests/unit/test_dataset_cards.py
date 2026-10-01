@@ -15,6 +15,7 @@ from kpubdata_builder.service import BuilderService, dispatch
 from kpubdata_builder.spec import BuildSpec, ExportTarget, JsonValue, SourceRef
 from kpubdata_builder.spec.models import PiiPolicy, SchemaContract
 from kpubdata_builder.stages.gold.card import missing_sections
+from kpubdata_builder.stages.gold.pii import PiiMaskResult
 
 from .test_service import _FakeClient
 from .test_service_publish import LICENSED_SPEC_YAML, _blocker_codes, _readiness
@@ -100,9 +101,8 @@ def test_file_and_url_sources_are_described() -> None:
     upload = SourceRef(kind="file", upload_id="upl_" + "a" * 32, format="csv")
     url = SourceRef(kind="url", endpoint="https://example.org/data.json?serviceKey=secret")
 
-    assert card_source(upload, spec=spec, provenance=None, label="u").url.startswith(
-        "uploaded file (upl_"
-    )
+    # The upload id is internal: a public card does not carry it.
+    assert card_source(upload, spec=spec, provenance=None, label="u").url == "uploaded file"
     described = card_source(url, spec=spec, provenance=None, label="w").url
     assert described == "https://example.org/data.json"
     assert "secret" not in described
@@ -131,11 +131,46 @@ def test_processing_and_personal_information_are_always_stated() -> None:
         "Zero-padded code to 5 characters",
         "Converted v to int",
     ]
-    for mode in ("block", "warn", "allow"):
-        policy = PiiPolicy(mode=mode, allow_columns=("contact",))
-        from dataclasses import replace
+    from dataclasses import replace
 
-        assert personal_information(replace(spec, pii=policy))
+    assert personal_information(spec) == (
+        "No column was declared personal information. Values were not scanned for "
+        "personal information (no pii policy)."
+    )
+    stated = {
+        mode: personal_information(
+            replace(spec, pii=PiiPolicy(mode=mode, allow_columns=("contact",)))
+        )
+        for mode in ("block", "warn", "allow")
+    }
+    assert "failed the build" in stated["block"]
+    assert "reported, not removed" in stated["warn"]
+    # allow scans too; it does not say the data has no personal information.
+    assert "Values were scanned (pii mode: allow)" in stated["allow"]
+    assert "no personal information" not in stated["allow"]
+    assert all("Accepted as publishable despite the scan: contact." in t for t in stated.values())
+
+
+def test_personal_information_says_what_gold_masked_and_what_it_did_not() -> None:
+    spec = BuildSpec(
+        dataset_id="d",
+        title="t",
+        description="d",
+        sources=(),
+        exports=(ExportTarget(kind="jsonl", output_path="d.jsonl"),),
+    )
+    masking = PiiMaskResult(
+        masked={"tel": ("kpubdata_spec",), "born": ("build_spec",)},
+        unmasked={"name": ("build_spec",)},
+        nulled=frozenset({"born"}),
+        declared_absent=("siteTel",),
+    )
+
+    stated = personal_information(spec, masking)
+
+    assert "masked: born (emptied), tel (replaced by [masked])" in stated
+    assert "published unmasked, as the BuildSpec's gold.publish_unmasked asks: name" in stated
+    assert "Declared personal information by kpubdata but not in this source: siteTel" in stated
 
 
 def test_missing_sections() -> None:
@@ -257,3 +292,65 @@ attribution: 여러 기관
         "apt",
     ]
     assert any("Joined air and apt" in step for step in cast(list[str], card["processing"]))
+
+
+def test_a_card_tells_a_column_published_unmasked(tmp_path: Path) -> None:
+    """The manifest's pii_masking reaches the card: masked and unmasked columns both."""
+    service = _service(tmp_path)
+    spec = LICENSED_SPEC_YAML.replace(
+        "    dataset: air_quality\n",
+        "    dataset: air_quality\n    gold:\n      pii_columns: [id, v]\n"
+        "      publish_unmasked: [v]\n",
+    )
+
+    assert service.build(spec, run_id="r1").status_code == 200
+
+    stated = cast(str, _card(tmp_path, "r1")["personal_information"])
+    assert "masked: id (replaced by [masked])" in stated
+    assert "published unmasked, as the BuildSpec's gold.publish_unmasked asks: v" in stated
+
+
+def test_a_hugging_face_layout_carries_the_whole_card(tmp_path: Path) -> None:
+    """The layout's README is what lands at the repository root, after the Gold
+    directory's: it has the same sections, under the exporter's front matter."""
+    service = _service(tmp_path)
+    spec = LICENSED_SPEC_YAML.replace(
+        "  - kind: jsonl\n    output_path: out/data.jsonl\n",
+        "  - kind: jsonl\n    output_path: out/data.jsonl\n"
+        "  - kind: huggingface\n    output_path: hf\n",
+    )
+
+    assert service.build(spec, run_id="r1").status_code == 200
+
+    layouts = [p.parent for p in (tmp_path / "r1" / "gold").rglob("dataset_infos.json")]
+    assert layouts
+    for layout in layouts:
+        readme = (layout / "README.md").read_text(encoding="utf-8")
+        assert readme.startswith("---\n") and "license:" in readme.split("---")[1]
+        for heading in ("## Provenance", "## Processing", "## Personal information"):
+            assert heading in readme
+        assert (layout / "card.json").is_file()
+
+
+def test_card_and_terms_blockers_come_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#688 and #694 both block in readiness, and neither hides the other."""
+    monkeypatch.setattr(
+        card_facts,
+        "catalog_info",
+        lambda _id: DatasetCatalogInfo(source_url="u", license_type="l", attribution=None),
+    )
+    client = _FakeClient({"datago.air_quality": _ROWS})
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=lambda **_: client,
+        terms_lookup=lambda _id: "forbidden",
+    )
+    no_attribution = LICENSED_SPEC_YAML.replace("attribution: 한국환경공단 에어코리아\n", "")
+    service.build(no_attribution, run_id="r1")
+
+    codes = _blocker_codes(_readiness(service, "r1"))
+
+    assert "redistribution_forbidden" in codes
+    assert "card_incomplete" in codes
