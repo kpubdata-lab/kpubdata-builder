@@ -56,3 +56,10 @@ Gold runs on DuckDB too, checked against the same baseline, unchanged. `gold/*/t
 is written the way Silver's is, with the Builder dtypes in its metadata. A composition's
 rows are in the left side's order and then the right side's (ADR 0021 D8); the
 `composition_trades_rent` rows came out in that order under Polars as well.
+
+## After the split cutover (#871)
+
+Ratio splits are `hash-sort-v2` (ADR 0021 D7), so `spec_seoul_apartment_trades` was
+regenerated for its seeded split: only `splits/train/rows` and `splits/test/rows`
+changed — which rows went where. The sizes (16 and 4), the rows of the two splits
+together, the Gold table and every export are what they were. Key splits are unchanged.
