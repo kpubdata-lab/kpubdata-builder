@@ -58,19 +58,12 @@ def _write_json(path: Path, payload: object) -> None:
 
 
 def _write_table(dataset: SilverDataset, path: Path) -> None:
-    """The table as Parquet, written by DuckDB (#869).
+    """The table as Parquet (``polars_bridge.write_table_parquet``). Where DuckDB has no
+    Parquet form for a Builder dtype (a Null column is written as INTEGER), the dtype is
+    the one in schema.json and in the file's metadata."""
+    from ...tabular.polars_bridge import write_table_parquet
 
-    A table with no columns (a source that returned nothing) is written through the
-    Polars bridge: DuckDB cannot write a Parquet file without columns. Where DuckDB has
-    no Parquet form for a Builder dtype (a Null column is written as INTEGER), the dtype
-    is the one in schema.json.
-    """
-    if dataset.table.table.physical:
-        dataset.table.write_parquet(path)
-        return
-    from ...tabular.polars_bridge import to_polars
-
-    to_polars(dataset.table).write_parquet(path)
+    write_table_parquet(dataset.table, path)
 
 
 def persist_silver_dataset(
