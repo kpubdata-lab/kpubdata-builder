@@ -14,6 +14,7 @@ honest from this side:
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import re
@@ -188,3 +189,80 @@ def test_the_silver_column_case_from_735_is_in_the_set() -> None:
     assert "$.schema[0]" in silver["additive_paths"]
     strict = validate(silver["with_additive_fields"], _governing(silver), _CONTRACT)
     assert "$.schema[0].future_optional_field: extra property not allowed" in strict
+
+
+# ----------------------------------------------------------- error responses (#947, #951)
+
+
+def _errors() -> list[dict[str, Any]]:
+    return cast(list[dict[str, Any]], _fixtures()["error_fixtures"])
+
+
+def _error_id(entry: dict[str, Any]) -> str:
+    owner = entry.get("operation_id") or f"shared:{entry['response']}"
+    return f"{owner}:{entry['status']}:{entry['example']}"
+
+
+def _error_schema(entry: dict[str, Any]) -> dict[str, Any]:
+    if "response" in entry:
+        response = _CONTRACT["components"]["responses"][entry["response"]]
+        return cast(dict[str, Any], response["content"]["application/json"]["schema"])
+    return _schema(entry)
+
+
+def test_error_fixtures_cover_the_declared_error_bodies() -> None:
+    covered = {
+        (e.get("operation_id") or e["response"], e["status"], e["example"]) for e in _errors()
+    }
+
+    assert {
+        ("saveRevision", 409, "RevisionConflict"),
+        ("revertRevision", 409, "RevisionConflict"),
+        ("SignupNotApproved", 403, "SignupPending"),
+        ("SignupNotApproved", 403, "SignupRejected"),
+        ("Unauthorized", 401, "MissingOrInvalidApiKey"),
+    } <= covered
+    assert all(not str(e["status"]).startswith("2") for e in _errors())
+    # A 2xx fixture is never an error body: a client maps `fixtures` to success parsers.
+    assert all(str(e["status"]).startswith("2") for e in _entries())
+
+
+def test_a_shared_error_response_is_one_fixture_not_one_per_operation() -> None:
+    unauthorized = [e for e in _errors() if e.get("response") == "Unauthorized"]
+
+    assert len(unauthorized) == 1
+    assert not any(e.get("operation_id") and e["status"] == 401 for e in _errors())
+
+
+def test_a_shared_response_without_one_status_is_refused() -> None:
+    document = copy.deepcopy(_CONTRACT)
+    del document["components"]["responses"]["SignupNotApproved"]["x-status"]
+
+    with pytest.raises(ValueError, match="SignupNotApproved"):
+        _generator().build_error_fixtures(document)
+
+
+@pytest.mark.parametrize("entry", _errors(), ids=_error_id)
+def test_an_error_fixture_conforms_and_tolerates_additions(entry: dict[str, Any]) -> None:
+    schema = _error_schema(entry)
+    governing = cast(dict[str, Any], _generator()._branch(_CONTRACT, schema, entry["current"]))
+
+    assert validate(entry["current"], schema, _CONTRACT) == []
+    assert entry["additive_paths"], "every error body must gain at least one field"
+    assert (
+        validate(entry["with_additive_fields"], governing, _CONTRACT, allow_additional=True) == []
+    )
+
+
+@pytest.mark.parametrize(
+    "entry", [e for e in _errors() if "required_type_broken" in e], ids=_error_id
+)
+def test_an_error_fixture_with_a_retyped_required_field_is_rejected(entry: dict[str, Any]) -> None:
+    field = entry["broken_path"].removeprefix("$.")
+    broken = entry["required_type_broken"]
+    schema = _error_schema(entry)
+    governing = cast(dict[str, Any], _generator()._branch(_CONTRACT, schema, entry["current"]))
+
+    assert validate(broken, schema, _CONTRACT, allow_additional=True)
+    errors = validate(broken, governing, _CONTRACT, allow_additional=True)
+    assert any(e.startswith(f"$.{field}") for e in errors), errors

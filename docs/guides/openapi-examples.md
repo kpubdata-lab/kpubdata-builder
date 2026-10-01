@@ -20,6 +20,7 @@ OpenAPI 문서 순서와 같고 local `$ref` response/example도 해석한다. �
 클라이언트가 "모르는 선택 필드는 받아들이고, 필수 필드 타입 오류는 거부하는지"를 검사할 수
 있도록, 2xx response example 로부터 `contract/fixtures/responses.json` 을 생성해 커밋한다.
 위 추출 결과와 달리 이 파일은 저장소에 두며, 테스트가 계약과의 drift 를 막는다.
+non-2xx named example 은 `error_fixtures` 에 따로 담긴다(#947, #951) — 공유 응답은 한 번만.
 
 ```bash
 uv run python scripts/generate_response_fixtures.py          # 다시 생성

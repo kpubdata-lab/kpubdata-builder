@@ -16,6 +16,14 @@ So every named 2xx response example in `contract/builder-api.yaml` becomes three
     required_type_broken  the same body with one required top-level field retyped.
                           A client must still reject it.
 
+Error responses get the same three bodies under `error_fixtures` (#947, #951), kept apart
+from `fixtures` so a client that maps each 2xx fixture to its success parser is not handed
+an error body. Every named example of a non-2xx response is there once: an operation's
+own response under its `operation_id`, `method`, `path` and `status`; a shared
+`components.responses` entry (`Unauthorized`, `SignupNotApproved`, ...) under `response`
+and `status` — the status the operations reference it with, or its `x-status` when no
+operation references it.
+
 The output is `contract/fixtures/responses.json`. It is generated, not written by hand:
 the unit tests regenerate it and fail when the committed file differs, so it cannot
 drift from the contract.
@@ -114,6 +122,10 @@ def _branch(document: dict[str, Any], schema: dict[str, Any], value: Any) -> dic
         resolved = _branch(document, part, value)
         merged.setdefault("properties", {})
         merged["properties"] = {**resolved.get("properties", {}), **merged["properties"]}
+        required = list(merged.get("required", []))
+        required += [key for key in resolved.get("required", []) if key not in required]
+        if required:
+            merged["required"] = required
     return merged
 
 
@@ -185,6 +197,90 @@ def _response_schema(document: dict[str, Any], path: str, method: str, status: s
     return operation.get("operationId"), response["content"]["application/json"]["schema"]
 
 
+def _variants(document: dict[str, Any], schema: Any, current: Any) -> dict[str, Any]:
+    added: list[str] = []
+    additive = add_probes(document, schema, current, "$", added)
+    broken = break_required(document, schema, current)
+    entry: dict[str, Any] = {
+        "current": current,
+        "with_additive_fields": additive,
+        "additive_paths": added,
+    }
+    if broken is not None:
+        entry["required_type_broken"] = broken[0]
+        entry["broken_path"] = broken[1]
+    return entry
+
+
+def _json_examples(document: dict[str, Any], response: Any) -> list[tuple[str, Any, Any]]:
+    """``(name, value, schema)`` for each named application/json example of a response."""
+    extractor = _load_extractor()
+    media = ((response or {}).get("content") or {}).get("application/json") or {}
+    found: list[tuple[str, Any, Any]] = []
+    for name, raw in (media.get("examples") or {}).items():
+        example = extractor.resolve_local_ref(document, raw)
+        found.append((name, example["value"], media.get("schema", {})))
+    return found
+
+
+_SHARED_RESPONSE = "#/components/responses/"
+
+
+def build_error_fixtures(document: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every named non-2xx example: per operation, and each shared response once."""
+    fixtures: list[dict[str, Any]] = []
+    shared_statuses: dict[str, set[str]] = {}
+    for path, item in (document.get("paths") or {}).items():
+        for method, operation in item.items():
+            if method not in _HTTP_METHODS or not isinstance(operation, dict):
+                continue
+            for status, response in (operation.get("responses") or {}).items():
+                status = str(status)
+                if status.startswith("2"):
+                    continue
+                ref = response.get("$ref") if isinstance(response, dict) else None
+                if isinstance(ref, str) and ref.startswith(_SHARED_RESPONSE):
+                    shared_statuses.setdefault(ref[len(_SHARED_RESPONSE) :], set()).add(status)
+                    continue
+                for name, value, schema in _json_examples(document, response):
+                    fixtures.append(
+                        {
+                            "operation_id": operation.get("operationId"),
+                            "method": method.upper(),
+                            "path": path,
+                            "status": int(status),
+                            "example": name,
+                            **_variants(document, schema, value),
+                        }
+                    )
+    for name, response in ((document.get("components") or {}).get("responses") or {}).items():
+        examples = _json_examples(document, response)
+        if not examples:
+            continue
+        statuses = shared_statuses.get(name, set())
+        if "x-status" in response:
+            statuses = statuses | {str(response["x-status"])}
+        if len(statuses) != 1:
+            raise ValueError(
+                f"shared response {name} is used with status codes {sorted(statuses)}; "
+                "give it exactly one, or an x-status when no operation references it"
+            )
+        (status,) = statuses
+        for example, value, schema in examples:
+            fixtures.append(
+                {
+                    "response": name,
+                    "status": int(status),
+                    "example": example,
+                    **_variants(document, schema, value),
+                }
+            )
+    return fixtures
+
+
+_HTTP_METHODS = frozenset({"delete", "get", "head", "options", "patch", "post", "put", "trace"})
+
+
 def build_fixtures(document: dict[str, Any]) -> dict[str, Any]:
     extractor = _load_extractor()
     fixtures: list[dict[str, Any]] = []
@@ -220,6 +316,7 @@ def build_fixtures(document: dict[str, Any]) -> dict[str, Any]:
         "probe_field": PROBE_FIELD,
         "rules": RULES,
         "fixtures": fixtures,
+        "error_fixtures": build_error_fixtures(document),
     }
 
 

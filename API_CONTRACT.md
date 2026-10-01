@@ -58,6 +58,15 @@ KPubData Builder(패키지 `kpubdata-builder`) HTTP wire 계약의 단일 소스
 관대한 파서도 거부하는지 확인합니다. 계약 example 을 바꾸면 스크립트를 다시 실행해 함께
 커밋합니다. Studio 계약 테스트는 이 파일을 읽어 자기 응답 스키마를 검사합니다(짝 이슈).
 
+오류 응답은 같은 세 본문을 `error_fixtures` 에 따로 담습니다(1.72.0, #947, #951). 2xx 를 성공
+파서에 대응시키는 클라이언트가 오류 본문을 받지 않도록 `fixtures` 와 나눴습니다. 모든 non-2xx
+named example 이 한 번씩 들어갑니다 — operation 자체 응답은 `operation_id`/`method`/`path`/`status`
+로, 공유 응답(`components.responses`: `Unauthorized`, `SignupNotApproved` 등)은 `response`/`status`
+로 한 번만. 예: `saveRevision`·`revertRevision` 409 `RevisionConflict`(`current_revision` 포함),
+`SignupNotApproved` 403 `SignupPending`/`SignupRejected`. `SignupNotApproved` 는 operation 마다
+붙이지 않고(이미 자기 403 을 선언한 operation 이 많다) 모든 인증된 operation 이 낼 수 있다고
+`bearerAuth` 와 `Error.code` 에 적었으며, 상태 코드는 `x-status` 로 둡니다.
+
 이 문서는 사람이 읽는 운영 가이드입니다. wire 형태를 옮겨 적지 않습니다.
 
 ### Builder 가 소유하는 어휘 (#831)

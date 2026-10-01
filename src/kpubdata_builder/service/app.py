@@ -382,7 +382,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.70.0 -> 1.71.0: dataset cards (#694) — card.json
 #   beside README.md, and publish readiness blockers card_missing / card_incomplete
 #   (additive).
-API_CONTRACT_VERSION = "1.71.0"
+# 1.71.0 -> 1.72.0: declared error bodies — RevisionConflictError (409 revision_conflict
+#   with current_revision, #947) and SignupNotApprovedError / the SignupNotApproved
+#   response (403 signup_pending / signup_rejected, #951) (additive).
+API_CONTRACT_VERSION = "1.72.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

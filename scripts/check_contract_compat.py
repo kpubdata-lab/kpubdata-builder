@@ -24,7 +24,11 @@ the base branch and asks two things:
    consumer the same thing the check found.
 
 Additive changes — new operations, codes, optional properties, enum values — need only
-a minor or patch raise.
+a minor or patch raise. So does pointing a **response** at a schema that extends the old
+one: ``$ref: Error`` -> ``$ref: RevisionConflictError`` where ``RevisionConflictError`` is
+``allOf: [{$ref: Error}, ...]`` (#947). Every body it describes is still the old schema's,
+so a client reading the old one reads it unchanged. A request schema gets no such pass:
+narrowing what may be sent breaks a sender.
 
 Known limits, stated rather than hidden: ``allOf``/``oneOf``/``anyOf`` branches are not
 compared member by member, and a property newly added to ``required`` is not flagged,
@@ -74,11 +78,42 @@ def _types(schema: Mapping[str, Any]) -> frozenset[str] | None:
     return frozenset(str(t) for t in types)
 
 
-def _compare_schema(base: Any, head: Any, where: str, breaks: list[str]) -> None:
+def _extends(document: Document, ref: Any, base_ref: Any) -> bool:
+    """Whether the local schema ``ref`` names is ``allOf`` the schema ``base_ref`` names."""
+    if not isinstance(ref, str) or not isinstance(base_ref, str) or not ref.startswith("#/"):
+        return False
+    node: Any = document
+    for part in ref[2:].split("/"):
+        if not isinstance(node, Mapping) or part not in node:
+            return False
+        node = node[part]
+    if not isinstance(node, Mapping):
+        return False
+    return any(
+        isinstance(branch, Mapping) and branch.get("$ref") == base_ref
+        for branch in node.get("allOf") or []
+    )
+
+
+def _compare_schema(
+    base: Any,
+    head: Any,
+    where: str,
+    breaks: list[str],
+    *,
+    response_of: Document | None = None,
+) -> None:
+    """Record each break from ``base`` to ``head``.
+
+    ``response_of`` is the head document when the schemas describe a response: a
+    ``$ref`` may then move to a schema that extends the old target.
+    """
     if not isinstance(base, Mapping) or not isinstance(head, Mapping):
         return
     if "$ref" in base or "$ref" in head:
-        if base.get("$ref") != head.get("$ref"):
+        if base.get("$ref") != head.get("$ref") and not (
+            response_of is not None and _extends(response_of, head.get("$ref"), base.get("$ref"))
+        ):
             breaks.append(f"{where}: $ref {base.get('$ref')} -> {head.get('$ref')}")
         return
     base_types, head_types = _types(base), _types(head)
@@ -94,9 +129,15 @@ def _compare_schema(base: Any, head: Any, where: str, breaks: list[str]) -> None
         if name not in head_props:
             breaks.append(f"{where}.{name}: property removed")
         else:
-            _compare_schema(base_props[name], head_props[name], f"{where}.{name}", breaks)
+            _compare_schema(
+                base_props[name],
+                head_props[name],
+                f"{where}.{name}",
+                breaks,
+                response_of=response_of,
+            )
     if "items" in base and "items" in head:
-        _compare_schema(base["items"], head["items"], f"{where}[]", breaks)
+        _compare_schema(base["items"], head["items"], f"{where}[]", breaks, response_of=response_of)
 
 
 def _operations(document: Document) -> dict[tuple[str, str], Mapping[str, Any]]:
@@ -144,6 +185,7 @@ def breaking_changes(base: Document, head: Document) -> list[str]:
                         new_content[media].get("schema"),
                         f"{where} {code}",
                         breaks,
+                        response_of=head,
                     )
         old_body = ((old.get("requestBody") or {}).get("content")) or {}
         new_body = ((new.get("requestBody") or {}).get("content")) or {}
