@@ -13,13 +13,17 @@ import duckdb
 import pytest
 
 from kpubdata_builder.query.engine import QueryEngine, QueryExecutionError, QueryTimeoutError
+from kpubdata_builder.spec import SourceRef
 from kpubdata_builder.tabular.duckdb_runtime import (
     MAX_TEMP_SIZE_ENV,
     MEMORY_LIMIT_ENV,
+    RESOURCE_LIMIT_MESSAGE,
     THREADS_ENV,
     BuildProfile,
+    ResourceLimitError,
     build_connection,
     connect,
+    within_limits,
 )
 
 from .conftest import spawn_timeout_multiplier
@@ -89,7 +93,8 @@ def test_spilling_stops_at_the_quota(tmp_path: Path) -> None:
     """Negative: past max_temp_directory_size a query fails; it never fills the disk.
 
     Given in the connect config the quota was reported but not enforced (#701) — a
-    spilling query wrote over 400 MB past a 4 MB quota.
+    spilling query wrote over 400 MB past a 4 MB quota. The failure is Builder's
+    ``ResourceLimitError``, not DuckDB's text.
     """
     spill = tmp_path / "spill"
     spill.mkdir()
@@ -97,11 +102,49 @@ def test_spilling_stops_at_the_quota(tmp_path: Path) -> None:
         BuildProfile(memory_limit="64MB", threads=1, max_temp_directory_size="4MB"), spill
     )
     try:
-        with pytest.raises(duckdb.OutOfMemoryException, match="failed to offload"):
+        with pytest.raises(ResourceLimitError) as caught, within_limits():
             connection.execute(_SPILLING).fetchall()
+        assert str(caught.value) == RESOURCE_LIMIT_MESSAGE
+        assert str(spill) not in str(caught.value)
         assert _spill_bytes(spill) <= 8 * 2**20
     finally:
         connection.close()
+
+
+def test_a_build_connection_reports_the_limit_as_builders_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(MEMORY_LIMIT_ENV, "64MB")
+    monkeypatch.setenv(MAX_TEMP_SIZE_ENV, "4MB")
+    monkeypatch.setenv(THREADS_ENV, "1")
+
+    with pytest.raises(ResourceLimitError), build_connection(tmp_path, "src") as connection:
+        connection.execute(_SPILLING).fetchall()
+
+
+def test_a_preview_past_the_limit_shows_no_engine_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Negative (#701 review): a preview that hits a limit says Builder's sentence; the
+    engine's message, with its sizes and spill path, never reaches the response."""
+    import kpubdata_builder.pipeline.preview as preview_module
+    from kpubdata_builder.pipeline import preview_build
+
+    from .test_preview import _FakeClient, _spec
+
+    def out_of_memory(*_: object, **__: object) -> object:
+        raise duckdb.OutOfMemoryException(
+            "Out of Memory Error: failed to offload data block (3.7 MiB/3.8 MiB used) "
+            "in /var/lib/builder/run/_duckdb_tmp/secret"
+        )
+
+    monkeypatch.setattr(preview_module, "build_silver_dataset", out_of_memory)
+    spec = _spec(SourceRef(provider="datago", dataset="apt_trade"))
+    client = _FakeClient({"datago.apt_trade": [{"id": "1", "v": 1}]})
+
+    (preview,) = preview_build(spec, client=client, limit=3).previews
+
+    assert preview.status == "failed"
+    assert preview.error == RESOURCE_LIMIT_MESSAGE
+    assert "secret" not in (preview.error or "") and "MiB" not in (preview.error or "")
 
 
 def test_a_query_within_the_quota_spills_and_finishes(tmp_path: Path) -> None:

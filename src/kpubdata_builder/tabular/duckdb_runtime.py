@@ -33,6 +33,7 @@ from pathlib import Path
 
 import duckdb
 
+from ..errors import TabularError
 from .sql import quote_identifier, quote_literal
 
 #: The oldest DuckDB with every setting Builder's sandbox needs (see REQUIRED_SETTINGS).
@@ -61,15 +62,39 @@ TEMP_DIRECTORY_NAME = "_duckdb_tmp"
 _SAFE_PART = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-class ReservedColumnError(ValueError):
-    """A source has a column with a name Builder reserves for itself."""
-
-
 #: Environment variables for every Builder DuckDB connection's limits (#701, ADR 0021
 #: D9). Each applies per connection: a build opens one per running source.
 THREADS_ENV = "KPUBDATA_DUCKDB_THREADS"
 MEMORY_LIMIT_ENV = "KPUBDATA_DUCKDB_MEMORY_LIMIT"
 MAX_TEMP_SIZE_ENV = "KPUBDATA_DUCKDB_MAX_TEMP_SIZE"
+
+
+class ResourceLimitError(TabularError):
+    """A DuckDB connection needed more memory or spill disk than the deployment allows.
+
+    Builder's own error, raised in place of DuckDB's ``OutOfMemoryException`` so its
+    text — sizes and possibly the spill directory — never reaches a client (#701).
+    """
+
+
+RESOURCE_LIMIT_MESSAGE = (
+    "the table needs more memory or temporary disk than this deployment allows "
+    f"({MEMORY_LIMIT_ENV}, {MAX_TEMP_SIZE_ENV})"
+)
+
+
+@contextmanager
+def within_limits() -> Iterator[None]:
+    """Turn DuckDB's out-of-memory or spill-quota failure into :class:`ResourceLimitError`."""
+    try:
+        yield
+    except duckdb.OutOfMemoryException as exc:
+        raise ResourceLimitError(RESOURCE_LIMIT_MESSAGE) from exc
+
+
+class ReservedColumnError(ValueError):
+    """A source has a column with a name Builder reserves for itself."""
+
 
 _SIZE = re.compile(r"^\s*\d+(\.\d+)?\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)\s*$", re.IGNORECASE)
 
@@ -242,7 +267,8 @@ def build_connection(
     try:
         connection = connect(profile or BuildProfile.from_env(), temp_directory)
         try:
-            yield connection
+            with within_limits():
+                yield connection
         finally:
             connection.close()
     finally:
@@ -262,12 +288,15 @@ __all__ = [
     "TEMP_DIRECTORY_NAME",
     "THREADS_ENV",
     "BuildProfile",
+    "RESOURCE_LIMIT_MESSAGE",
     "ReservedColumnError",
+    "ResourceLimitError",
     "TabularRelation",
     "build_connection",
     "check_duckdb",
     "connect",
     "duckdb_version",
     "reserve_row_seq",
+    "within_limits",
     "worker_temp_directory",
 ]
