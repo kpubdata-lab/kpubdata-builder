@@ -901,6 +901,61 @@ def test_run_build_composition_failure_marks_build_failed_but_keeps_source_outpu
     assert not (gold_dir / "combined").exists()
 
 
+def test_run_build_composition_resource_limit_records_failed_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#958: a non-CompositionError composition failure is a recorded outcome,
+    not an opaque 500 from escaping run_build."""
+    from kpubdata_builder.pipeline import orchestrator as orch
+    from kpubdata_builder.tabular.duckdb_runtime import (
+        RESOURCE_LIMIT_MESSAGE,
+        ResourceLimitError,
+    )
+
+    def resource_limit(*_args: object, **_kwargs: object) -> object:
+        raise ResourceLimitError(RESOURCE_LIMIT_MESSAGE)
+
+    monkeypatch.setattr(orch, "_run_composition", resource_limit)
+    spec = _spec(
+        CompositionSpec(
+            name="combined",
+            join=JoinSpec(left="sales", right="region", left_key="id", right_key="id"),
+        )
+    )
+
+    result = run_build(spec, client=_combined_data(), output_root=tmp_path, run_id="run1")
+
+    assert result.composition_outcome is not None
+    assert result.composition_outcome.status == "failed"
+    # ResourceLimitError is allow-listed — its safe message survives.
+    assert result.composition_outcome.error == RESOURCE_LIMIT_MESSAGE
+
+
+def test_run_build_composition_unexpected_error_records_generic_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#958: an unexpected bug in composition is a generic failed outcome."""
+    from kpubdata_builder.pipeline import orchestrator as orch
+
+    def bug(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("internal path /secret/config.yaml leaked")
+
+    monkeypatch.setattr(orch, "_run_composition", bug)
+    spec = _spec(
+        CompositionSpec(
+            name="combined",
+            join=JoinSpec(left="sales", right="region", left_key="id", right_key="id"),
+        )
+    )
+
+    result = run_build(spec, client=_combined_data(), output_root=tmp_path, run_id="run1")
+
+    assert result.composition_outcome is not None
+    assert result.composition_outcome.status == "failed"
+    # The raw text with the filesystem path is replaced.
+    assert "secret" not in (result.composition_outcome.error or "")
+
+
 def test_run_build_without_composition_is_unaffected(tmp_path: Path) -> None:
     # Existing multi-source BuildSpec without composition has no regression (completion condition).
     spec = _spec(None)
