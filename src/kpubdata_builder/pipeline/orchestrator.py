@@ -73,7 +73,7 @@ from ..spec import (
 )
 from ..spec.fingerprints import SourceFingerprints, fingerprint_source
 from ..spec.validator import validate_spec
-from ..stages._path_safety import contained_child, ensure_within
+from ..stages._path_safety import LEGACY_CHECKPOINT_SUFFIX, contained_child, ensure_within
 from ..stages.bronze.build import SourceClient
 from ..stages.bronze.models import BronzeArtifact, utc_now
 from ..stages.bronze.persist import persist_bronze_artifact
@@ -567,11 +567,14 @@ def _run_source_pipeline(
         # is proven to stay inside this run before anything is touched (#916).
         checkpoint_path = _source_work_path(run_dir, _CHECKPOINT_DIRNAME, output_key)
         legacy_checkpoint = _source_work_path(
-            run_dir, _CHECKPOINT_DIRNAME, output_key, suffix=".jsonl"
+            run_dir, _CHECKPOINT_DIRNAME, output_key, suffix=LEGACY_CHECKPOINT_SUFFIX
         )
         staging_dir = _source_work_path(run_dir, _STAGING_DIRNAME, output_key)
         # The single-file checkpoint of earlier versions cannot be resumed from (#622).
-        legacy_checkpoint.unlink(missing_ok=True)
+        # Only a regular file is that checkpoint: a directory at the same path is
+        # another source's checkpoint and is never touched here (#930).
+        if legacy_checkpoint.is_file() and not legacy_checkpoint.is_symlink():
+            legacy_checkpoint.unlink()
         # Records are written here as they arrive (#622), and read from here by Silver.
         # Anything a crashed attempt left is removed first.
         shutil.rmtree(staging_dir, ignore_errors=True)

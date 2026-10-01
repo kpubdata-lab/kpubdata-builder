@@ -1,4 +1,7 @@
-"""Source output keys never reach paths outside the run directory (#916)."""
+"""Source output keys never reach paths outside the run directory (#916).
+
+Two keys never name the same directory inside the run either (#930).
+"""
 
 from __future__ import annotations
 
@@ -14,9 +17,20 @@ from kpubdata_builder.pipeline import orchestrator
 from kpubdata_builder.pipeline.cancellation import BuildCancelled
 from kpubdata_builder.pipeline.orchestrator import run_build
 from kpubdata_builder.service import BuilderService
-from kpubdata_builder.spec import BuildSpec, ExportTarget, JsonValue, SourceRef
+from kpubdata_builder.spec import (
+    BuildSpec,
+    CompositionSpec,
+    ExportTarget,
+    JoinSpec,
+    JsonValue,
+    SourceRef,
+)
 from kpubdata_builder.spec.validator import _source_key_problems, validate_spec
-from kpubdata_builder.stages._path_safety import contained_child
+from kpubdata_builder.stages._path_safety import (
+    LEGACY_CHECKPOINT_SUFFIX,
+    contained_child,
+    path_collision_key,
+)
 
 _REPRO_SPEC = """\
 dataset_id: demo
@@ -213,6 +227,233 @@ def test_every_kpubdata_catalogue_id_is_a_safe_key() -> None:
     )
 
     assert _source_key_problems(spec) == []
+    # No two catalogue ids share a directory on a case-insensitive filesystem, and
+    # none is another id plus the legacy checkpoint suffix (#930).
+    keys = [f"{source.provider}.{source.dataset}" for source in sources]
+    folded = [path_collision_key(key) for key in keys]
+    assert len(set(folded)) == len(folded)
+    legacy = {path_collision_key(f"{key}{LEGACY_CHECKPOINT_SUFFIX}") for key in keys}
+    assert not legacy & set(folded)
+
+
+# ------------------------------------------------------------------ path collisions (#930)
+
+
+def _two_sources(first: SourceRef, second: SourceRef) -> BuildSpec:
+    return BuildSpec(
+        dataset_id="demo",
+        title="t",
+        description="d",
+        sources=(first, second),
+        exports=(ExportTarget(kind="jsonl", output_path="out.jsonl"),),
+    )
+
+
+def _problem_codes(spec: BuildSpec) -> set[tuple[str, str]]:
+    with pytest.raises(ValidationError) as caught:
+        validate_spec(spec)
+    return {(p.code, p.path) for p in caught.value.structured_problems}
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        # Case only: one directory on macOS APFS (default) and Windows.
+        (
+            SourceRef(provider="datago", dataset="a", alias="Trades"),
+            SourceRef(provider="datago", dataset="b", alias="trades"),
+        ),
+        # Case only, without aliases.
+        (
+            SourceRef(provider="datago", dataset="Sales"),
+            SourceRef(provider="datago", dataset="sales"),
+        ),
+        # An alias against another source's provider.dataset key.
+        (
+            SourceRef(provider="datago", dataset="sales"),
+            SourceRef(provider="bok", dataset="x", alias="DATAGO.sales"),
+        ),
+        # Trailing dot: Windows drops it, so ``trades.`` is ``trades``.
+        (
+            SourceRef(provider="datago", dataset="a", alias="trades"),
+            SourceRef(provider="datago", dataset="b", alias="trades."),
+        ),
+    ],
+    ids=["alias-case", "provider-dataset-case", "alias-vs-provider-dataset", "trailing-dot"],
+)
+def test_keys_naming_one_directory_are_rejected(first: SourceRef, second: SourceRef) -> None:
+    assert ("source_key_path_collision", "sources[1]") in _problem_codes(
+        _two_sources(first, second)
+    )
+
+
+@pytest.mark.parametrize("order", ["owner-first", "suffixed-first"])
+def test_a_key_equal_to_another_plus_the_legacy_suffix_is_rejected(order: str) -> None:
+    owner = SourceRef(provider="datago", dataset="a", alias="foo")
+    suffixed = SourceRef(provider="datago", dataset="b", alias="FOO.jsonl")
+    pair = (owner, suffixed) if order == "owner-first" else (suffixed, owner)
+
+    codes = _problem_codes(_two_sources(*pair))
+
+    assert ("source_key_path_collision", "sources[1]") in codes
+
+
+def test_exact_duplicate_keeps_its_own_code() -> None:
+    source = SourceRef(provider="datago", dataset="sales")
+
+    codes = _problem_codes(_two_sources(source, source))
+
+    assert ("duplicate_source_key", "sources[1]") in codes
+    assert all(code != "source_key_path_collision" for code, _ in codes)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (
+            SourceRef(provider="datago", dataset="sales"),
+            SourceRef(provider="datago", dataset="sale"),
+        ),
+        (
+            SourceRef(provider="datago", dataset="a", alias="trades"),
+            SourceRef(provider="datago", dataset="b", alias="trades_2"),
+        ),
+        (
+            SourceRef(provider="datago", dataset="a", alias="foo"),
+            SourceRef(provider="datago", dataset="b", alias="foo.json"),
+        ),
+        (
+            SourceRef(provider="datago", dataset="a", alias="foo"),
+            SourceRef(provider="datago", dataset="b", alias="foo.jsonl.v2"),
+        ),
+        (
+            SourceRef(provider="kosis", dataset="DT_1"),
+            SourceRef(provider="kosis", dataset="DT_1.v2"),
+        ),
+    ],
+)
+def test_distinct_keys_still_validate(first: SourceRef, second: SourceRef) -> None:
+    validate_spec(_two_sources(first, second))
+
+
+def _composed(name: str) -> BuildSpec:
+    return BuildSpec(
+        dataset_id="demo",
+        title="t",
+        description="d",
+        sources=(
+            SourceRef(provider="datago", dataset="sales", alias="sales"),
+            SourceRef(provider="datago", dataset="region", alias="region"),
+        ),
+        exports=(ExportTarget(kind="jsonl", output_path="out.jsonl"),),
+        composition=CompositionSpec(
+            name=name,
+            join=JoinSpec(left="sales", right="region", left_key="region_id", right_key="id"),
+        ),
+    )
+
+
+@pytest.mark.parametrize("name", ["../victim-run", "a/b", ".", "..", "has space", " combined"])
+def test_unsafe_composition_name_is_rejected_at_validate_time(name: str) -> None:
+    assert ("unsafe_source_key", "composition.name") in _problem_codes(_composed(name))
+
+
+@pytest.mark.parametrize("name", ["Sales", "REGION", "sales."])
+def test_composition_name_colliding_as_a_path_is_rejected(name: str) -> None:
+    assert ("composition_name_collision", "composition.name") in _problem_codes(_composed(name))
+
+
+_UPLOAD_ID = "upl_" + "0" * 31 + "1"
+
+
+@pytest.mark.parametrize("name", [f"file.{_UPLOAD_ID}", f"FILE.{_UPLOAD_ID}"])
+def test_composition_name_colliding_with_a_file_source_key_is_rejected(name: str) -> None:
+    """A file source without an alias is stored under ``file.<upload_id>`` (#930 review)."""
+    spec = BuildSpec(
+        dataset_id="demo",
+        title="t",
+        description="d",
+        sources=(
+            SourceRef(provider="datago", dataset="sales", alias="sales"),
+            SourceRef(kind="file", upload_id=_UPLOAD_ID, format="csv"),
+        ),
+        exports=(ExportTarget(kind="jsonl", output_path="out.jsonl"),),
+        composition=CompositionSpec(
+            name=name,
+            join=JoinSpec(
+                left="sales", right=f"file.{_UPLOAD_ID}", left_key="region_id", right_key="id"
+            ),
+        ),
+    )
+    assert ("composition_name_collision", "composition.name") in _problem_codes(spec)
+
+
+def test_safe_distinct_composition_name_still_validates() -> None:
+    validate_spec(_composed("sales_by_region"))
+
+
+@pytest.mark.parametrize(
+    ("key", "folded"),
+    [
+        ("Trades", "trades"),
+        ("trades.", "trades"),
+        ("trades. .", "trades"),
+        ("datago.Air_Quality", "datago.air_quality"),
+        ("Stra\u00dfe", "strasse"),
+        ("e\u0301", "\u00e9"),
+    ],
+)
+def test_path_collision_key_folds_what_filesystems_fold(key: str, folded: str) -> None:
+    assert path_collision_key(key) == folded
+
+
+# ------------------------------------------------------------------ legacy checkpoint (#930)
+
+
+def test_legacy_checkpoint_cleanup_leaves_a_directory_of_that_name(tmp_path: Path) -> None:
+    """A spec that bypassed validation still cannot remove another source's checkpoint."""
+    run_dir = tmp_path / "runs" / "r1"
+    other = run_dir / orchestrator._CHECKPOINT_DIRNAME / "datago.slow.jsonl"
+    other.mkdir(parents=True)
+    (other / "part-0.jsonl").write_text("{}\n", encoding="utf-8")
+
+    result = run_build(
+        BuildSpec(
+            dataset_id="demo",
+            title="t",
+            description="d",
+            sources=(SourceRef(provider="datago", dataset="slow"),),
+            exports=(ExportTarget(kind="jsonl", output_path="out.jsonl"),),
+        ),
+        client=_Client(),
+        output_root=tmp_path / "runs",
+        run_id="r1",
+    )
+
+    assert [o.status for o in result.outcomes] == ["ok"]
+    assert (other / "part-0.jsonl").read_text(encoding="utf-8") == "{}\n"
+
+
+def test_a_legacy_checkpoint_file_is_still_removed(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "r1"
+    legacy = run_dir / orchestrator._CHECKPOINT_DIRNAME / f"datago.slow{LEGACY_CHECKPOINT_SUFFIX}"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("{}\n", encoding="utf-8")
+
+    run_build(
+        BuildSpec(
+            dataset_id="demo",
+            title="t",
+            description="d",
+            sources=(SourceRef(provider="datago", dataset="slow"),),
+            exports=(ExportTarget(kind="jsonl", output_path="out.jsonl"),),
+        ),
+        client=_Client(),
+        output_root=tmp_path / "runs",
+        run_id="r1",
+    )
+
+    assert not legacy.exists()
 
 
 # ------------------------------------------------------------------ path layer
