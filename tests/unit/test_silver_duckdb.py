@@ -207,3 +207,22 @@ def test_quote_literal_round_trips_a_copy_target(tmp_path: Path, name: str) -> N
     assert pl.read_parquet(target).get_column("v").to_list() == [1]
     with pytest.raises(ValueError):
         quote_literal("a\x00b")
+
+
+def test_a_frame_keeps_128_bit_integers_as_numbers(tmp_path: Path) -> None:
+    """#872: Polars spills Int128 as binary; the bridge loads it as HUGEINT, exactly, so
+    SQL compares it as a number (composition loads its sides this way)."""
+    from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+
+    frame = pl.DataFrame({"v": [2**70, None, -(2**100)]}, schema={"v": pl.Int128})
+    table = handle_from_frame(frame, workdir=tmp_path)
+
+    (row,) = table.fetch(
+        f"SELECT typeof(c0), count(*) FILTER (WHERE c0 > ?) FROM {table.table.relation.sql} "
+        "GROUP BY 1",
+        [0],
+    )
+    assert row == ("HUGEINT", 1)
+    assert table.rows(limit=3) == ({"v": 2**70}, {"v": None}, {"v": -(2**100)})
+    table.cache.clear()
+    assert to_polars(table).equals(frame)
