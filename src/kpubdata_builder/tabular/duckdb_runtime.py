@@ -33,7 +33,8 @@ from pathlib import Path
 
 import duckdb
 
-from .sql import quote_identifier
+from ..errors import TabularError
+from .sql import quote_identifier, quote_literal
 
 #: The oldest DuckDB with every setting Builder's sandbox needs (see REQUIRED_SETTINGS).
 #: Checked against the release wheels: 1.1.3 lacks allowed_paths and
@@ -61,16 +62,58 @@ TEMP_DIRECTORY_NAME = "_duckdb_tmp"
 _SAFE_PART = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+#: Environment variables for every Builder DuckDB connection's limits (#701, ADR 0021
+#: D9). Each applies per connection: a build opens one per running source.
+THREADS_ENV = "KPUBDATA_DUCKDB_THREADS"
+MEMORY_LIMIT_ENV = "KPUBDATA_DUCKDB_MEMORY_LIMIT"
+MAX_TEMP_SIZE_ENV = "KPUBDATA_DUCKDB_MAX_TEMP_SIZE"
+
+
+class ResourceLimitError(TabularError):
+    """A DuckDB connection needed more memory or spill disk than the deployment allows.
+
+    Builder's own error, raised in place of DuckDB's ``OutOfMemoryException`` so its
+    text — sizes and possibly the spill directory — never reaches a client (#701).
+    """
+
+
+RESOURCE_LIMIT_MESSAGE = (
+    "the table needs more memory or temporary disk than this deployment allows "
+    f"({MEMORY_LIMIT_ENV}, {MAX_TEMP_SIZE_ENV})"
+)
+
+
+@contextmanager
+def within_limits() -> Iterator[None]:
+    """Turn DuckDB's out-of-memory or spill-quota failure into :class:`ResourceLimitError`."""
+    try:
+        yield
+    except duckdb.OutOfMemoryException as exc:
+        raise ResourceLimitError(RESOURCE_LIMIT_MESSAGE) from exc
+
+
 class ReservedColumnError(ValueError):
     """A source has a column with a name Builder reserves for itself."""
 
 
+_SIZE = re.compile(r"^\s*\d+(\.\d+)?\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)\s*$", re.IGNORECASE)
+
+
+def _size(value: str, *, name: str) -> str:
+    if not _SIZE.match(value):
+        raise ValueError(f"{name} must be a size such as 512MB or 2GiB, got {value!r}")
+    return value.strip()
+
+
 @dataclass(frozen=True)
 class BuildProfile:
-    """Resource settings for a build connection.
+    """Resource settings for a build connection (ADR 0021 D9, #701).
 
-    The defaults are modest on purpose; the layered limits of ADR 0021 D9 replace them
-    with deployment and per-build values in a later step.
+    Per connection: ``threads`` DuckDB threads, ``memory_limit`` of buffer memory before
+    it spills, and at most ``max_temp_directory_size`` of spill files — past that a
+    query fails instead of filling the disk. A deployment sets them with
+    :data:`THREADS_ENV`, :data:`MEMORY_LIMIT_ENV` and :data:`MAX_TEMP_SIZE_ENV`
+    (:meth:`from_env`); ``docs/deploy.md`` adds them up for a host.
     """
 
     memory_limit: str = "1GB"
@@ -80,6 +123,32 @@ class BuildProfile:
     def __post_init__(self) -> None:
         if self.threads < 1:
             raise ValueError("threads must be at least 1")
+        _size(self.memory_limit, name="memory_limit")
+        _size(self.max_temp_directory_size, name="max_temp_directory_size")
+
+    @classmethod
+    def from_env(cls) -> BuildProfile:
+        """The defaults, overridden by whichever of the three variables are set.
+
+        Raises:
+            ValueError: A variable holds something other than a positive integer
+                (threads) or a size; its name is in the message.
+        """
+        defaults = cls()
+        raw_threads = os.environ.get(THREADS_ENV, "").strip()
+        try:
+            threads = int(raw_threads) if raw_threads else defaults.threads
+        except ValueError:
+            raise ValueError(f"{THREADS_ENV} must be a positive integer") from None
+        if threads < 1:
+            raise ValueError(f"{THREADS_ENV} must be a positive integer")
+        memory = os.environ.get(MEMORY_LIMIT_ENV, "").strip() or defaults.memory_limit
+        temp = os.environ.get(MAX_TEMP_SIZE_ENV, "").strip() or defaults.max_temp_directory_size
+        return cls(
+            memory_limit=_size(memory, name=MEMORY_LIMIT_ENV),
+            threads=threads,
+            max_temp_directory_size=_size(temp, name=MAX_TEMP_SIZE_ENV),
+        )
 
 
 @dataclass(frozen=True)
@@ -162,13 +231,18 @@ def connect(profile: BuildProfile, temp_directory: Path) -> duckdb.DuckDBPyConne
         config={
             "memory_limit": profile.memory_limit,
             "threads": profile.threads,
-            "temp_directory": os.fspath(temp_directory),
-            "max_temp_directory_size": profile.max_temp_directory_size,
             "autoinstall_known_extensions": False,
             "autoload_known_extensions": False,
         },
     )
     try:
+        # The spill directory and its quota are set after open, in this order: given in
+        # the connect config, DuckDB reports the quota but does not enforce it (#701) —
+        # a spilling query filled hundreds of MB past a 4 MB quota.
+        connection.execute(f"SET temp_directory = {quote_literal(os.fspath(temp_directory))}")
+        connection.execute(
+            f"SET max_temp_directory_size = {quote_literal(profile.max_temp_directory_size)}"
+        )
         # TimeZone belongs to the ICU extension, so it is set after open, not in config.
         connection.execute("SET TimeZone = 'UTC'")
     except BaseException:
@@ -191,9 +265,10 @@ def build_connection(
     # never silently taken over.
     temp_directory.mkdir(parents=True, exist_ok=False)
     try:
-        connection = connect(profile or BuildProfile(), temp_directory)
+        connection = connect(profile or BuildProfile.from_env(), temp_directory)
         try:
-            yield connection
+            with within_limits():
+                yield connection
         finally:
             connection.close()
     finally:
@@ -205,17 +280,23 @@ def build_connection(
 
 __all__ = [
     "clear_temp_root",
+    "MAX_TEMP_SIZE_ENV",
+    "MEMORY_LIMIT_ENV",
     "MINIMUM_DUCKDB_VERSION",
     "REQUIRED_SETTINGS",
     "ROW_SEQ_COLUMN",
     "TEMP_DIRECTORY_NAME",
+    "THREADS_ENV",
     "BuildProfile",
+    "RESOURCE_LIMIT_MESSAGE",
     "ReservedColumnError",
+    "ResourceLimitError",
     "TabularRelation",
     "build_connection",
     "check_duckdb",
     "connect",
     "duckdb_version",
     "reserve_row_seq",
+    "within_limits",
     "worker_temp_directory",
 ]
