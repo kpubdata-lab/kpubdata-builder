@@ -39,6 +39,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+import duckdb
+
 from ..quality import QualityCheckResult, evaluate_quality
 from ..spec import BuildSpec, JsonValue, SourceRef
 from ..spec.models import QualityPolicy
@@ -49,7 +51,7 @@ from ..stages.bronze.writer import new_staging_dir
 from ..stages.silver.build import build_silver_dataset
 from ..stages.silver.preview import select_preview_rows
 from ..tabular import DEFAULT_PREVIEW_LIMIT, PreviewSlice, SchemaInfo, TableStatistics
-from ..tabular.duckdb_runtime import build_connection
+from ..tabular.duckdb_runtime import RESOURCE_LIMIT_MESSAGE, ResourceLimitError, build_connection
 from ..uploads import UploadRepository
 
 SampleMode = Literal["first", "random"]
@@ -374,6 +376,9 @@ def _preview_source(
             diff_truncated=diff_truncated,
         )
     except Exception as exc:  # Convert preview failure to result
+        if isinstance(exc, duckdb.OutOfMemoryException):
+            # A memory or spill limit: Builder's sentence, never DuckDB's (#701).
+            exc = ResourceLimitError(RESOURCE_LIMIT_MESSAGE)
         return SourcePreview(
             source_key=out_key,
             status="failed",
