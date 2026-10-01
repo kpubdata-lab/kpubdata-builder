@@ -18,7 +18,13 @@ from ..catalog_info import DatasetCatalogInfo, catalog_info
 from ..manifest.provenance import SourceProvenance
 from ..spec import BuildSpec, SourceRef
 from ..stages.bronze.resolve import sanitize_endpoint_identity
-from ..stages.gold.card import CardSource, DatasetCard, card_sections, render_dataset_card
+from ..stages.gold.card import (
+    NO_PROCESSING_STEP,
+    CardSource,
+    DatasetCard,
+    card_sections,
+    render_dataset_card,
+)
 from ..stages.gold.pii import PII_MASK_TOKEN, PiiMaskResult
 
 CatalogLookup = Callable[[str], DatasetCatalogInfo | None]
@@ -58,22 +64,33 @@ def card_source(
         url = "uploaded file"
     else:
         url = (info.source_url if info else "") or ""
+    declared, provider, mismatch = _licence_facts(spec, info)
     return CardSource(
         source=label,
         institution=institution,
         url=url,
-        license=_original_licence(spec, info),
+        license=_original_licence(declared, provider, mismatch),
         collected_at=_collected_at(provenance),
+        license_declared=declared or None,
+        license_provider=provider or None,
+        license_mismatch=mismatch,
     )
 
 
-def _original_licence(spec: BuildSpec, info: DatasetCatalogInfo | None) -> str:
-    """The licence under the name it was declared with — never restated as another."""
+def _licence_facts(spec: BuildSpec, info: DatasetCatalogInfo | None) -> tuple[str, str, bool]:
+    """``(declared, provider, mismatch)``: the BuildSpec's licence as written (with its
+    link), the provider's declared terms, and whether both are known and differ (#955)."""
     declared = (spec.license_name or spec.license or "").strip()
     if spec.license_link and declared:
         declared = f"{declared} ({spec.license_link})"
     provider = (info.license_type or "").strip() if info else ""
-    if provider and declared and provider.lower() not in declared.lower():
+    mismatch = bool(provider and declared and provider.lower() not in declared.lower())
+    return declared, provider, mismatch
+
+
+def _original_licence(declared: str, provider: str, mismatch: bool) -> str:
+    """The licence under the name it was declared with — never restated as another."""
+    if mismatch:
         return f"{declared}; the provider declares: {provider}"
     return declared or provider
 
@@ -89,7 +106,9 @@ def _collected_at(provenance: SourceProvenance | None) -> str:
 
 
 def processing_steps(source: SourceRef, spec: BuildSpec) -> list[str]:
-    """Every transformation declared for ``source``, in the order they run."""
+    """Every transformation declared for ``source``, in the order they run, or
+    :data:`NO_PROCESSING_STEP` alone when there is none (``card.json`` then says
+    ``processing_declared: false``, #955)."""
     steps: list[str] = []
     schema = source.schema
     if schema is not None:
@@ -119,7 +138,7 @@ def processing_steps(source: SourceRef, spec: BuildSpec) -> list[str]:
             steps.append(f"Rows kept by {len(gold.filters)} declared filter(s)")
     if spec.splits is not None:
         steps.append(f"Split into {', '.join(spec.splits.ratios)} ({spec.splits.mode})")
-    return steps or ["No transformation declared: values are as the source gave them."]
+    return steps or [NO_PROCESSING_STEP]
 
 
 def personal_information(spec: BuildSpec, masking: PiiMaskResult | None = None) -> str:

@@ -577,10 +577,14 @@
       "Published columns: apartment_name, build_year, deal_year, deal_month, deal_day, deposit, monthly_rent, exclusive_area, floor, jibun, district, region_code, contract_type, contract_term, previous_deposit, previous_monthly_rent, use_request_right, road_name, deal_date",
       "Rows kept by 1 declared filter(s)"
      ],
+     "processing_declared": true,
      "provenance": [
       {
        "institution": "",
        "license": "korea-public-data-unrestricted (https://www.data.go.kr/data/15126474/openapi.do); the provider declares: 공공누리_1유형",
+       "license_declared": "korea-public-data-unrestricted (https://www.data.go.kr/data/15126474/openapi.do)",
+       "license_mismatch": true,
+       "license_provider": "공공누리_1유형",
        "source": "datago.apt_rent",
        "url": "https://www.data.go.kr"
       }

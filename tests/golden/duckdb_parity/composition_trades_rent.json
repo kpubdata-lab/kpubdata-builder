@@ -1409,16 +1409,23 @@
       "rents: No transformation declared: values are as the source gave them.",
       "Joined trades and rents (inner join)"
      ],
+     "processing_declared": true,
      "provenance": [
       {
        "institution": "",
        "license": "공공누리_1유형",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": "공공누리_1유형",
        "source": "trades",
        "url": "https://www.data.go.kr"
       },
       {
        "institution": "",
        "license": "공공누리_1유형",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": "공공누리_1유형",
        "source": "rents",
        "url": "https://www.data.go.kr"
       }
@@ -3558,10 +3565,14 @@
      "processing": [
       "No transformation declared: values are as the source gave them."
      ],
+     "processing_declared": false,
      "provenance": [
       {
        "institution": "",
        "license": "공공누리_1유형",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": "공공누리_1유형",
        "source": "rents",
        "url": "https://www.data.go.kr"
       }
@@ -5588,10 +5599,14 @@
      "processing": [
       "No transformation declared: values are as the source gave them."
      ],
+     "processing_declared": false,
      "provenance": [
       {
        "institution": "",
        "license": "공공누리_1유형",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": "공공누리_1유형",
        "source": "trades",
        "url": "https://www.data.go.kr"
       }

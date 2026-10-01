@@ -1091,10 +1091,14 @@
       "Rows kept by 1 declared filter(s)",
       "Split into train, test (ratio)"
      ],
+     "processing_declared": true,
      "provenance": [
       {
        "institution": "",
        "license": "korea-public-data-unrestricted (https://www.data.go.kr/data/15126468/openapi.do); the provider declares: 공공누리_1유형",
+       "license_declared": "korea-public-data-unrestricted (https://www.data.go.kr/data/15126468/openapi.do)",
+       "license_mismatch": true,
+       "license_provider": "공공누리_1유형",
        "source": "datago.apt_trade",
        "url": "https://www.data.go.kr"
       }

@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.74.0",
+  "contract_version": "1.75.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -951,6 +951,163 @@
         ]
       },
       "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getBuildArtifactFile",
+      "method": "GET",
+      "path": "/artifacts/{run_id}/{file_path}",
+      "status": 200,
+      "example": "DatasetCard",
+      "current": {
+        "card_version": 1,
+        "title": "Seoul Air Quality",
+        "provenance": [
+          {
+            "source": "datago.air_quality",
+            "institution": "한국환경공단 에어코리아",
+            "url": "https://www.data.go.kr/data/15073861/openapi.do",
+            "license": "CC-BY-4.0; the provider declares: KOGL-1",
+            "collected_at": "2026-09-30 01:23 UTC",
+            "license_declared": "CC-BY-4.0",
+            "license_provider": "KOGL-1",
+            "license_mismatch": true
+          }
+        ],
+        "processing": [
+          "Renamed v to value",
+          "Converted value to int"
+        ],
+        "processing_declared": true,
+        "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy)."
+      },
+      "with_additive_fields": {
+        "card_version": 1,
+        "title": "Seoul Air Quality",
+        "provenance": [
+          {
+            "source": "datago.air_quality",
+            "institution": "한국환경공단 에어코리아",
+            "url": "https://www.data.go.kr/data/15073861/openapi.do",
+            "license": "CC-BY-4.0; the provider declares: KOGL-1",
+            "collected_at": "2026-09-30 01:23 UTC",
+            "license_declared": "CC-BY-4.0",
+            "license_provider": "KOGL-1",
+            "license_mismatch": true,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "processing": [
+          "Renamed v to value",
+          "Converted value to int"
+        ],
+        "processing_declared": true,
+        "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.provenance[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "card_version": "not a number",
+        "title": "Seoul Air Quality",
+        "provenance": [
+          {
+            "source": "datago.air_quality",
+            "institution": "한국환경공단 에어코리아",
+            "url": "https://www.data.go.kr/data/15073861/openapi.do",
+            "license": "CC-BY-4.0; the provider declares: KOGL-1",
+            "collected_at": "2026-09-30 01:23 UTC",
+            "license_declared": "CC-BY-4.0",
+            "license_provider": "KOGL-1",
+            "license_mismatch": true
+          }
+        ],
+        "processing": [
+          "Renamed v to value",
+          "Converted value to int"
+        ],
+        "processing_declared": true,
+        "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy)."
+      },
+      "broken_path": "$.card_version"
+    },
+    {
+      "operation_id": "getBuildArtifactFile",
+      "method": "GET",
+      "path": "/artifacts/{run_id}/{file_path}",
+      "status": 200,
+      "example": "DatasetCardNoProcessing",
+      "current": {
+        "card_version": 1,
+        "title": "Uploaded Survey",
+        "provenance": [
+          {
+            "source": "survey",
+            "institution": "Example Institute",
+            "url": "uploaded file",
+            "license": "CC-BY-4.0",
+            "collected_at": "2026-09-30 01:23 UTC",
+            "license_declared": "CC-BY-4.0",
+            "license_provider": null,
+            "license_mismatch": false
+          }
+        ],
+        "processing": [
+          "No transformation declared: values are as the source gave them."
+        ],
+        "processing_declared": false,
+        "personal_information": "No column was declared personal information. Values were scanned (pii mode: warn); columns that looked like personal information were reported, not removed."
+      },
+      "with_additive_fields": {
+        "card_version": 1,
+        "title": "Uploaded Survey",
+        "provenance": [
+          {
+            "source": "survey",
+            "institution": "Example Institute",
+            "url": "uploaded file",
+            "license": "CC-BY-4.0",
+            "collected_at": "2026-09-30 01:23 UTC",
+            "license_declared": "CC-BY-4.0",
+            "license_provider": null,
+            "license_mismatch": false,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "processing": [
+          "No transformation declared: values are as the source gave them."
+        ],
+        "processing_declared": false,
+        "personal_information": "No column was declared personal information. Values were scanned (pii mode: warn); columns that looked like personal information were reported, not removed.",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.provenance[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "card_version": "not a number",
+        "title": "Uploaded Survey",
+        "provenance": [
+          {
+            "source": "survey",
+            "institution": "Example Institute",
+            "url": "uploaded file",
+            "license": "CC-BY-4.0",
+            "collected_at": "2026-09-30 01:23 UTC",
+            "license_declared": "CC-BY-4.0",
+            "license_provider": null,
+            "license_mismatch": false
+          }
+        ],
+        "processing": [
+          "No transformation declared: values are as the source gave them."
+        ],
+        "processing_declared": false,
+        "personal_information": "No column was declared personal information. Values were scanned (pii mode: warn); columns that looked like personal information were reported, not removed."
+      },
+      "broken_path": "$.card_version"
     },
     {
       "operation_id": "getBuildJob",
