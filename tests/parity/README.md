@@ -42,8 +42,10 @@ users.
 
 ## After the Silver cutover (#869)
 
-Silver now runs on DuckDB and this baseline is what it was checked against. One class of
-difference was accepted when regenerating: DuckDB cannot write Parquet's null logical
-type, so a column whose values are all null is stored in `silver/table.parquet` as
-INTEGER and reads back as `Int32`. Its Builder dtype is still `Null` in `schema.json`,
-and every other Silver, Gold, export and query output is unchanged.
+Silver now runs on DuckDB and this baseline is what it was checked against, unchanged.
+DuckDB cannot write Parquet's null logical type, so a column whose values are all null
+is stored in `silver/table.parquet` with the physical type INTEGER. The file records
+every column's Builder dtype in its key-value metadata (`kpubdata_builder.dtypes`), and
+Builder's readers (`tabular/builder_parquet.py`) give that dtype back, so Builder reads
+the column as `Null` — the baseline included. A reader outside Builder (pyarrow,
+pandas, Polars on its own) sees the physical type and reads the column as `Int32`.
