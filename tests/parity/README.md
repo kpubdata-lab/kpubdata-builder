@@ -47,3 +47,10 @@ difference was accepted when regenerating: DuckDB cannot write Parquet's null lo
 type, so a column whose values are all null is stored in `silver/table.parquet` as
 INTEGER and reads back as `Int32`. Its Builder dtype is still `Null` in `schema.json`,
 and every other Silver, Gold, export and query output is unchanged.
+
+## After the Gold cutover (#870)
+
+Gold runs on DuckDB too, checked against the same baseline, unchanged. `gold/*/table.parquet`
+is written the way Silver's is, with the Builder dtypes in its metadata. A composition's
+rows are in the left side's order and then the right side's (ADR 0021 D8); the
+`composition_trades_rent` rows came out in that order under Polars as well.
