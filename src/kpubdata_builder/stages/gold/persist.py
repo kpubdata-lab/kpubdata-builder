@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 from ...spec import JsonValue
+from ...tabular.polars_bridge import write_table_parquet
 from .._path_safety import ensure_within, validate_path_segment
 from .models import GoldPackage
 
@@ -79,7 +80,8 @@ def persist_gold_package(
     # Atomic write: write to temp dir then rename
     tmp_dir = Path(tempfile.mkdtemp(dir=gold_dir.parent, prefix=".gold_tmp_"))
     try:
-        package.table.write_parquet(tmp_dir / "table.parquet")
+        # DuckDB COPY, with the Builder dtypes in the file's metadata (#870).
+        write_table_parquet(package.table, tmp_dir / "table.parquet")
         # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail with
         # ValueError (#217).
         (tmp_dir / "package.json").write_text(

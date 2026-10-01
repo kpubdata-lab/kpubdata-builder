@@ -49,3 +49,10 @@ every column's Builder dtype in its key-value metadata (`kpubdata_builder.dtypes
 Builder's readers (`tabular/builder_parquet.py`) give that dtype back, so Builder reads
 the column as `Null` — the baseline included. A reader outside Builder (pyarrow,
 pandas, Polars on its own) sees the physical type and reads the column as `Int32`.
+
+## After the Gold cutover (#870)
+
+Gold runs on DuckDB too, checked against the same baseline, unchanged. `gold/*/table.parquet`
+is written the way Silver's is, with the Builder dtypes in its metadata. A composition's
+rows are in the left side's order and then the right side's (ADR 0021 D8); the
+`composition_trades_rent` rows came out in that order under Polars as well.

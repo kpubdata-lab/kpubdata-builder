@@ -7,12 +7,13 @@ import polars as pl
 from kpubdata_builder.pipeline.export import export_gold_package
 from kpubdata_builder.spec import ExportTarget
 from kpubdata_builder.stages.gold import ExportPlan, GoldPackage
+from kpubdata_builder.tabular.polars_bridge import handle_from_frame
 
 
 def test_export_gold_package_executes_registered_targets(tmp_path: Path) -> None:
     package = GoldPackage(
         dataset_name="apt_trade",
-        table=pl.DataFrame([{"id": "1", "amount": 1000}]),
+        table=handle_from_frame(pl.DataFrame([{"id": "1", "amount": 1000}]), workdir=tmp_path),
         export_plan=ExportPlan(
             targets=(ExportTarget(kind="jsonl", output_path="exports/data.jsonl"),)
         ),
