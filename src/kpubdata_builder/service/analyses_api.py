@@ -146,8 +146,12 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analyses_workspace"
                 " ON analyses(workspace_id, created_at DESC)"
             )
+        with self._connect() as conn:
             # The dialect columns (#875): an existing store gains them, and its rows are
-            # the legacy analyses they describe.
+            # the legacy analyses they describe. The write lock is taken before the
+            # columns are read, so two processes opening one old store add each column
+            # once — the second waits, then finds them present.
+            conn.execute("BEGIN IMMEDIATE")
             present = {row[1] for row in conn.execute("PRAGMA table_info(analyses)")}
             for name, definition in _ADDED_COLUMNS:
                 if name not in present:

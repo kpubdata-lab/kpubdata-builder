@@ -292,3 +292,37 @@ def test_a_legacy_analysis_is_not_rerun_silently(tmp_path: Path) -> None:
     # Deleting it still releases the snapshot it held.
     assert service.delete_analysis("ana_legacy", principal=_DEV).status_code == 200
     assert hold not in {h.hold_id for h in catalog.live_holds(snapshot)}
+
+
+def test_stores_opening_one_old_store_at_once_add_each_column_once(tmp_path: Path) -> None:
+    """The migration takes the write lock before reading the columns (#960 review): a
+    second store opening the same old file waits and finds them, instead of adding a
+    column again ("duplicate column name")."""
+    import threading
+
+    from kpubdata_builder.service.analyses_api import AnalysisStore
+
+    for round_ in range(10):
+        root = tmp_path / f"r{round_}"
+        _legacy_store(root, "snap", "hold")
+        path = root / ".service" / "analyses.sqlite3"
+        barrier = threading.Barrier(6)
+        errors: list[BaseException] = []
+
+        def open_store(
+            path: Path = path,
+            barrier: threading.Barrier = barrier,
+            errors: list[BaseException] = errors,
+        ) -> None:
+            barrier.wait()
+            try:
+                AnalysisStore(path)
+            except BaseException as exc:  # recorded for the assertion below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=open_store) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert errors == []
