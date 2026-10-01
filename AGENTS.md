@@ -108,6 +108,10 @@ What is specific to agents:
   evidence is a wrong rating.
 - Do not prefix a title with `GOV-01:` or `WH-03:`. Those are serial numbers from
   a backlog document, not the issue's name. The type is the only prefix.
+- A pull request labelled `review:R3` cannot merge until someone other than its
+  author, with write access, approves it: the required `R3 review` check fails until
+  then (kpubdata POLICY 14.1). The author's own approval, a bot's, and one followed by
+  a request for changes do not count. Ask for the review; do not remove the label.
 
 What an agent does not do:
 
