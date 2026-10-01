@@ -174,7 +174,7 @@ BuildSpec 경로의 Gold 출력마다 카드(`README.md`)와 같은 내용의 `c
 
 | 섹션 | 출처 |
 | :--- | :--- |
-| 제공 기관 | BuildSpec `attribution` (kpubdata 가 출처표시를 선언하면 그것) |
+| 출처표시 (`Attribution:`) | BuildSpec `attribution`, 없으면 kpubdata 가 선언한 출처표시 문구(kpubdata#617). 기관명이 아니라 라이선스의 출처표시 문장일 수 있어 "Attribution" 으로 적는다 |
 | 출처 URL | kpubdata 카탈로그의 `source_url` / url 소스의 endpoint(query 제거) / file 소스는 "uploaded file" (내부 업로드 id 는 적지 않는다) |
 | 라이선스 | BuildSpec `license_name`·`license`(`license_link`) **원래 이름 그대로**. kpubdata 가 제공기관 조건을 선언했으면 옆에 적는다 |
 | 수집 일시 | provenance 의 `fetched_at` |

@@ -56,7 +56,7 @@ def test_a_built_card_says_where_the_data_comes_from(tmp_path: Path) -> None:
     readme = (tmp_path / "r1" / "gold" / "datago.air_quality" / "README.md").read_text("utf-8")
     for heading in ("## Provenance", "## Processing", "## Personal information"):
         assert heading in readme
-    assert "Provided by: 한국환경공단 에어코리아" in readme
+    assert "Attribution: 한국환경공단 에어코리아" in readme
 
 
 def test_a_licence_keeps_its_original_name() -> None:

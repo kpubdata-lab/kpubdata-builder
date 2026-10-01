@@ -17,7 +17,7 @@
     ]
    ],
    "export_huggingface": {
-    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## Sources\n\n- t\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| a | Int64 | no |\n| b | String | yes |\n\n## Sample\n\n| a | b |\n| --- | --- |\n| 1 | x |\n| 2 |  |\n\n## Provenance\n\n### t\n\n- Provided by: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- No transformation declared: values are as the source gave them.\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## Sources\n\n- t\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| a | Int64 | no |\n| b | String | yes |\n\n## Sample\n\n| a | b |\n| --- | --- |\n| 1 | x |\n| 2 |  |\n\n## Provenance\n\n### t\n\n- Attribution: _not declared_\n- Source: https://www.data.go.kr\n- Licence: 공공누리_1유형\n- Collected: <time>\n\n## Processing\n\n- No transformation declared: values are as the source gave them.\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
     "card.json": {
      "card_version": 1,
      "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",

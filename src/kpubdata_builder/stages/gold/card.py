@@ -187,7 +187,9 @@ def _render_provenance(provenance: Sequence[CardSource]) -> list[str]:
         lines += [
             f"### {source.source}",
             "",
-            f"- Provided by: {source.institution or '_not declared_'}",
+            # The BuildSpec's attribution, or the attribution text kpubdata declares
+            # (kpubdata#617) — a statement to show, not always an institution's name.
+            f"- Attribution: {source.institution or '_not declared_'}",
             f"- Source: {source.url or '_not known_'}",
             f"- Licence: {source.license or '_not declared_'}",
             f"- Collected: {source.collected_at or '_not known_'}",

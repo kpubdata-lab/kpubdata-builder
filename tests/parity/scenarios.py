@@ -12,6 +12,7 @@ Nothing here changes production code, and no scenario needs a network or a key.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import json
 import os
@@ -24,6 +25,8 @@ from typing import Any
 
 import yaml
 
+from kpubdata_builder.catalog_info import DatasetCatalogInfo
+from kpubdata_builder.pipeline import card_facts
 from kpubdata_builder.query.security import UnsafeQueryError, validate_read_only_sql
 from kpubdata_builder.service import BuilderService
 from kpubdata_builder.service.auth import Principal
@@ -564,8 +567,49 @@ def query_workers() -> dict[str, Any]:
         }
 
 
+#: What the kpubdata catalog said about the scenarios' datasets when the baseline was
+#: made (kpubdata 0.8). Dataset cards read the catalog (#694), and a later kpubdata that
+#: declares more (kpubdata#617 adds attributions) must not change the baseline: the
+#: scenarios pin the catalog to this. A dataset not listed is not in the catalog.
+FROZEN_CATALOG: dict[str, DatasetCatalogInfo] = {
+    "datago.air_quality": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr", license_type="공공누리_1유형", attribution=None
+    ),
+    "datago.air_station": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr/data/15000581/openapi.do",
+        license_type=None,
+        attribution=None,
+    ),
+    "datago.apt_rent": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr", license_type="공공누리_1유형", attribution=None
+    ),
+    "datago.apt_trade": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr", license_type="공공누리_1유형", attribution=None
+    ),
+}
+
+
+@contextmanager
+def _frozen_catalog() -> Iterator[None]:
+    original = card_facts.catalog_info
+    card_facts.catalog_info = FROZEN_CATALOG.get
+    try:
+        yield
+    finally:
+        card_facts.catalog_info = original
+
+
+def _pinned(scenario: Callable[[], dict[str, Any]]) -> Callable[[], dict[str, Any]]:
+    @functools.wraps(scenario)
+    def run() -> dict[str, Any]:
+        with _frozen_catalog():
+            return scenario()
+
+    return run
+
+
 #: Name → scenario. The name is the golden file's stem.
-SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
+_SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "spec_seoul_apartment_trades": spec_trades,
     "spec_seoul_apartment_rent": spec_rent,
     "spec_seoul_bike_rent_month": spec_bike,
@@ -588,6 +632,9 @@ SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "r15_sqlglot_dialect": r15_sqlglot_dialect,
     "query_workers": query_workers,
 }
+SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
+    name: _pinned(scenario) for name, scenario in _SCENARIOS.items()
+}
 
 
-__all__ = ["FIXTURES", "GOLDEN", "SCENARIOS"]
+__all__ = ["FIXTURES", "FROZEN_CATALOG", "GOLDEN", "SCENARIOS"]
