@@ -28,16 +28,19 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import Literal
 
 from kpubdata_builder.credentials.store import CredentialRepository
 
 __all__ = [
     "PUBLISH_CREDENTIAL_HEADER",
+    "PublishCredentialSource",
     "PUBLISH_CREDENTIAL_SLOTS",
     "PublishCredentialResolution",
     "current_publish_credential",
     "parse_publish_credential_headers",
     "request_scope",
+    "publish_credential_source",
     "resolve_publish_credentials",
     "server_fallback_allowed",
 ]
@@ -244,3 +247,25 @@ def server_fallback_allowed() -> bool:
     if _multi_user_mode():
         return False
     return os.environ.get(_REQUIRE_OWN_CREDENTIAL_ENV, "").lower() not in ("true", "1")
+
+
+#: Where this deployment takes a publish credential from (#938), as ``GET /version``
+#: tells a client: ``request`` — only the request's ``X-Publish-Credential`` header
+#: (multi-user, #925); ``stored`` — only the requester's stored ``publish-*`` credential
+#: (single-user with ``REQUIRE_OWN_PUBLISH_CREDENTIAL``, #635); ``stored_or_server`` —
+#: the stored credential, else the server's ``HF_TOKEN`` / ``KAGGLE_*`` (single-user
+#: default).
+PublishCredentialSource = Literal["request", "stored", "stored_or_server"]
+
+
+def publish_credential_source() -> PublishCredentialSource:
+    """Where a publish credential comes from in this deployment (#938).
+
+    This is the policy :func:`resolve_publish_credentials` follows, and nothing more:
+    it does not say whether the server has a token configured, or whether anyone has
+    stored one. So it is safe to tell any authenticated caller, where
+    ``GET /admin/config`` stays the administrator's view.
+    """
+    if _multi_user_mode():
+        return "request"
+    return "stored_or_server" if server_fallback_allowed() else "stored"

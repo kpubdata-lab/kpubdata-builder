@@ -993,9 +993,13 @@ class TestResponseConformance:
     def test_version_reports_the_application_version_apart_from_the_contract(
         self, tmp_path: Path
     ) -> None:
-        """#777: Studio compares `version` with its own build; `api_version` is the wire."""
+        """#777: Studio compares `version` with its own build; `api_version` is the wire.
+
+        #938 adds `publish_credential`, the deployment's publish credential policy.
+        """
         from kpubdata_builder import __version__
         from kpubdata_builder.service import API_CONTRACT_VERSION
+        from kpubdata_builder.service.publish_credentials import publish_credential_source
 
         resp = dispatch(_conform_service(tmp_path), "GET", "/version", None)
 
@@ -1003,7 +1007,9 @@ class TestResponseConformance:
             "service": "kpubdata-builder",
             "api_version": API_CONTRACT_VERSION,
             "version": __version__,
+            "publish_credential": publish_credential_source(),
         }
+        _assert_conforms(resp, "/version", "GET")
 
     def test_validate_200(self, tmp_path: Path) -> None:
         resp = dispatch(
