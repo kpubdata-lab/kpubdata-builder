@@ -29,6 +29,14 @@ The algorithms:
     logarithm in that group; the additive variant (a sum modulo ``2**256``) is not used,
     because k-sum attacks break it. The product and the record count are then hashed
     with SHA-256 so the checksum keeps its ``sha256:`` shape.
+
+    How the product is computed does not change what it is (#917): the modulus is
+    ``2**3072 - c`` with a small ``c``, so a product is reduced by folding its high
+    bits back in (``2**3072`` is congruent to ``c``) instead of a general division,
+    and the running value is kept below ``2**3072`` rather than below the modulus
+    until the end. ``tests/unit/test_checksums.py`` checks the result against the
+    straightforward ``(product * value) % modulus`` on varied inputs, and
+    ``scripts/bench_checksums.py`` measures the cost.
 """
 
 from __future__ import annotations
@@ -54,6 +62,10 @@ FINGERPRINT_ALGORITHM = "sources-sha256-v2"
 #: The MuHash3072 modulus (a prime; tests/unit/test_checksums.py checks it).
 _MODULUS = 2**3072 - 1103717
 _ELEMENT_BYTES = 384
+_ELEMENT_BITS = _ELEMENT_BYTES * 8
+#: ``2**3072`` modulo :data:`_MODULUS`; small, so folding by it is a cheap multiply.
+_FOLD = 2**_ELEMENT_BITS - _MODULUS
+_LOW_MASK = 2**_ELEMENT_BITS - 1
 _DOMAIN = MULTISET_ALGORITHM.encode("ascii") + b"\x00"
 
 
@@ -66,15 +78,25 @@ class MultisetChecksum:
     """Folds records into a ``canonical-multiset-v2`` checksum one at a time."""
 
     def __init__(self) -> None:
+        # Congruent to the product modulo _MODULUS and below 2**3072, but not
+        # necessarily below _MODULUS; hexdigest() reduces it the rest of the way.
         self._product = 1
         self._count = 0
 
     def add_line(self, line: str) -> None:
         """Fold in one serialised record (:func:`record_line`, or a canonical Bronze line)."""
         element = hashlib.shake_256(_DOMAIN + line.encode("utf-8")).digest(_ELEMENT_BYTES)
+        value = int.from_bytes(element, "big")
+        # value < 2**3072 < 2 * _MODULUS, so one subtraction is ``value % _MODULUS``.
+        if value >= _MODULUS:
+            value -= _MODULUS
         # A zero would erase the product; its probability is 2**-3072, but map it anyway.
-        value = int.from_bytes(element, "big") % _MODULUS or 1
-        self._product = (self._product * value) % _MODULUS
+        product = self._product * (value or 1)
+        # Reduce modulo 2**3072 - _FOLD without dividing: high * 2**3072 + low is
+        # congruent to high * _FOLD + low. Each pass removes about 3051 bits.
+        while product > _LOW_MASK:
+            product = (product >> _ELEMENT_BITS) * _FOLD + (product & _LOW_MASK)
+        self._product = product
         self._count += 1
 
     def add(self, record: Mapping[str, JsonValue]) -> None:
@@ -87,7 +109,10 @@ class MultisetChecksum:
     def hexdigest(self) -> str:
         final = hashlib.sha256(_DOMAIN)
         final.update(self._count.to_bytes(8, "big"))
-        final.update(self._product.to_bytes(_ELEMENT_BYTES, "big"))
+        product = self._product
+        if product >= _MODULUS:
+            product -= _MODULUS
+        final.update(product.to_bytes(_ELEMENT_BYTES, "big"))
         return f"sha256:{final.hexdigest()}"
 
 
