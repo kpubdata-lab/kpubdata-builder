@@ -1107,7 +1107,7 @@ class TestHttpAdapter:
             )
             assert (
                 response.headers["Access-Control-Allow-Headers"]
-                == "Content-Type, X-API-Key, Authorization, X-Provider-Key"
+                == "Content-Type, X-API-Key, Authorization, X-Provider-Key, X-Publish-Credential"
             )
             assert response.headers["Access-Control-Max-Age"] == "86400"
 

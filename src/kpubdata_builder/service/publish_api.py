@@ -31,8 +31,8 @@ from kpubdata_builder.credentials.store import CredentialRepository
 from kpubdata_builder.manifest import status_from_manifest
 from kpubdata_builder.publishers import PUBLISHER_REGISTRY
 from kpubdata_builder.service import datasets as datasets_service
+from kpubdata_builder.service import ownership, publish_credentials
 from kpubdata_builder.service import publish as publish_service
-from kpubdata_builder.service import publish_credentials
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.jobs import AsyncBuildExecutor
 from kpubdata_builder.service.publish_credentials import resolve_publish_credentials
@@ -100,6 +100,19 @@ def _publisher_visibility(
     publisher = PUBLISHER_REGISTRY[target]
     values = None if credentials.not_required else dict(credentials.values)
     return publisher.destination_visibility(destination, credentials=values)
+
+
+def _probe_token() -> str:
+    """The Hugging Face token the reconcile probe reads the remote with.
+
+    A single-user deployment keeps reading the server's ``HF_TOKEN``, as before. In a
+    multi-user deployment (#925) the server token belongs to the operator, not the
+    requester, so only the token this request carries in ``X-Publish-Credential`` is
+    used; without one the probe cannot tell and reconcile changes nothing.
+    """
+    if ownership.multi_user_mode():
+        return (publish_credentials.current_publish_credential("HF_TOKEN") or "").strip()
+    return os.environ.get("HF_TOKEN", "").strip()
 
 
 class PublishApiService:
@@ -693,9 +706,12 @@ class PublishApiService:
         Returns: True (exists)/False (absent)/None (cannot determine —
         credential/network issue). Probe is read-only; does not consume credentials
         or mutate remote state.
+
+        The token is the one ``_probe_token`` gives: in a multi-user deployment only
+        the request's ``X-Publish-Credential`` value, never the server's (#925).
         """
         if target == "huggingface":
-            token = os.environ.get("HF_TOKEN", "").strip()
+            token = _probe_token()
             if not token:
                 return None
             try:

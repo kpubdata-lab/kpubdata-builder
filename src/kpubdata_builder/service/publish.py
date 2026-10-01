@@ -720,6 +720,15 @@ def credential_blocker(
         )
 
     if resolution is not None:
+        if resolution.refused and resolution.request_only:
+            # Multi-user deployment (#925): nothing stored or on the server is used, so
+            # the only remedy is to send the credential with this request.
+            return PublishIssue(
+                "credential_required",
+                f"target {target!r} requires the requester's own credential, sent with "
+                "this request in the X-Publish-Credential header; this deployment neither "
+                "stores publish credentials nor lends out the server credential",
+            )
         if resolution.refused:
             return PublishIssue(
                 "credential_required",

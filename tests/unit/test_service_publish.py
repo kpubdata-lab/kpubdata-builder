@@ -156,11 +156,18 @@ def _publish(
     target: str = "huggingface",
     destination: str = "kpubdata/air-quality",
     options: dict[str, object] | None = None,
+    publish_credential_headers: tuple[str, ...] = (),
 ) -> ServiceResponse:
     body: dict[str, JsonValue] = {"target": target, "destination": destination}
     if options is not None:
         body["options"] = cast(JsonValue, options)
-    return dispatch(service, "POST", f"/builds/{run_id}/publish", body)
+    return dispatch(
+        service,
+        "POST",
+        f"/builds/{run_id}/publish",
+        body,
+        publish_credential_headers=publish_credential_headers,
+    )
 
 
 def _blocker_codes(resp: ServiceResponse) -> list[str]:
@@ -1193,7 +1200,9 @@ class TestReceiptReconcile:
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
         service = _service(tmp_path)
         _build(service, run_id, LICENSED_SPEC_YAML)
-        resp = _publish(service, run_id)
+        # The header is ignored in a single-user deployment and is the only token a
+        # multi-user one accepts (#925), so the same helper serves both.
+        resp = _publish(service, run_id, publish_credential_headers=("HF_TOKEN=hf_test_token",))
         assert resp.status_code == 502
         return service
 
@@ -1371,7 +1380,15 @@ class TestReceiptReconcile:
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
         service = _service(tmp_path)
         _build(service, "run-owned-reconcile", LICENSED_SPEC_YAML)
-        assert _publish(service, "run-owned-reconcile").status_code == 502
+        # Multi-user: the server HF_TOKEN no longer serves anyone (#925).
+        assert (
+            _publish(
+                service,
+                "run-owned-reconcile",
+                publish_credential_headers=("HF_TOKEN=hf_test_token",),
+            ).status_code
+            == 502
+        )
 
         other = Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b")
         monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: other)

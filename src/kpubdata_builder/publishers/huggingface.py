@@ -98,7 +98,14 @@ class HuggingFacePublisher(BasePublisher):
         """
         from huggingface_hub import HfApi
 
-        token = os.environ.get("HF_TOKEN") if credentials is None else credentials.get("HF_TOKEN")
+        token: str | bool | None = (
+            os.environ.get("HF_TOKEN") if credentials is None else credentials.get("HF_TOKEN")
+        )
+        if credentials is not None and not token:
+            # A caller that passed credentials without a token gets an anonymous lookup.
+            # ``token=None`` would let huggingface_hub pick up the server's HF_TOKEN or
+            # cached login, which is the operator's account (#925); ``False`` forbids it.
+            token = False
         return _repo_visibility(HfApi(token=token), destination)
 
     def publish(

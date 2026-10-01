@@ -36,7 +36,7 @@
 | 3 | encryption master key | **남는다(운영자 보유)** | `service/app.py:93` `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` |
 | 4 | HF token | **남는다** | `publish_credentials.py:39` `publish-huggingface-hf-token` slot, 동일 저장소 |
 | 5 | environment fallback (조회) | **남는다, 차단 불가** | `service/providers.py:108` — 아래 참조 |
-| 5b | environment fallback (게시) | 남지만 **차단 가능** | `publish_credentials.py:117` `REQUIRE_OWN_PUBLISH_CREDENTIAL` |
+| 5b | environment fallback (게시) | 단일 사용자에서만 남고 **차단 가능**, 다중 사용자에서는 없다 (#925) | `publish_credentials.py` `REQUIRE_OWN_PUBLISH_CREDENTIAL`, `multi_user_mode()` |
 | 6 | queue payload | 남지 않는다 | `service/jobs.py` 에 credential·token·secret 참조 0건 |
 | 7 | response cache | 멀티유저 배포에선 꺼짐 (#684, 심층 방어) | 아래 참조 |
 | 8 | manifest | 남지 않는다 | `spec/serializer.py:18` 이 명시 키를 `<redacted>` 로 치환. 디스크 확인함 |
@@ -263,6 +263,8 @@ dev mode 만 깨진다. 그 문을 닫는 것은 `ENFORCE_OWNERSHIP`(`#635`)이�
 - 이미 저장된 credential 은 읽지 않고, ADR 0020 의 "기존 저장 credential" 절차로 지운다
   (항목 9)
 
-publish 경로는 아직 이를 따르지 않는다 — 저장된 publish 토큰을 읽고, 스위치를 켜지
-않으면 서버 `HF_TOKEN` 으로 내려간다. #925 가 고친다.
+publish 경로도 이를 따른다(#925) — 다중 사용자 모드에서 publish 토큰은 요청의
+`X-Publish-Credential` 헤더로만 받고, 저장된 `publish-*` 슬롯은 읽지 않으며, 서버
+`HF_TOKEN`·`KAGGLE_*` 로는 `REQUIRE_OWN_PUBLISH_CREDENTIAL` 값과 무관하게 내려가지 않는다.
+reconcile 의 원격 확인도 요청의 토큰만 쓴다.
 

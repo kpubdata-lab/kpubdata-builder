@@ -30,6 +30,7 @@ from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
 from .app import BuilderService, FileResponse, dispatch
 from .auth import validate_dev_mode, validate_oidc_config
+from .publish_credentials import PUBLISH_CREDENTIAL_HEADER
 from .request_credentials import PROVIDER_KEY_HEADER
 
 # Limit body size to prevent single request from exhausting memory or stopping
@@ -87,7 +88,9 @@ _OVERLOADED_RESPONSE = _overloaded_response()
 _ALLOWED_ORIGINS_ENV = "KPUBDATA_BUILDER_ALLOWED_ORIGINS"
 
 # Preflight request headers to allow. Include Authorization for Bearer auth (ADR 0009) (#382).
-_CORS_ALLOWED_HEADERS = f"Content-Type, X-API-Key, Authorization, {PROVIDER_KEY_HEADER}"
+_CORS_ALLOWED_HEADERS = (
+    f"Content-Type, X-API-Key, Authorization, {PROVIDER_KEY_HEADER}, {PUBLISH_CREDENTIAL_HEADER}"
+)
 
 # Default MIME type (#323). Used when mimetypes.guess_type returns None.
 _DEFAULT_MIME_TYPE = "application/octet-stream"
@@ -265,6 +268,10 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                     # Provider keys for this request only (#683) — a header, never a
                     # URL query that proxies and access logs would keep.
                     provider_key_headers=self.headers.get_all(PROVIDER_KEY_HEADER) or [],
+                    # Publish credentials for this request only (#925), on the same terms.
+                    publish_credential_headers=(
+                        self.headers.get_all(PUBLISH_CREDENTIAL_HEADER) or []
+                    ),
                     # Client ID for auth failure throttling. Use TCP peer address only;
                     # don't read X-Forwarded-For — headers can be forged.
                     client_id=self.client_address[0] if self.client_address else None,
