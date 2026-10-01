@@ -176,8 +176,10 @@ flowchart TD
 - `type: description` 또는 `type(scope): description`, 영어, 끝에 마침표 없음
   (예: `feat: add support for parquet export`, `fix(query): keep Decimal precision`)
 - 허용 type: `feat` `fix` `docs` `test` `perf` `refactor` `ci` `build` `chore` `style` `revert`
-- 병합은 squash 뿐이라 PR 제목이 그대로 `main` 의 커밋 제목이 됩니다. 브랜치 안의 개별 커밋
-  메시지는 자유지만 '무엇을 왜 바꿨는지' 쓰기를 권합니다.
+- 병합은 squash 뿐이라 PR 제목이 그대로 `main` 의 커밋 제목이, **PR 본문이 커밋 본문**이
+  됩니다. PR 제목은 영어·100자 이하이고, 제목 어디에도 이슈 번호를 쓰지 않습니다 — `PR title`
+  체크가 병합을 막습니다. 브랜치 안의 개별 커밋 메시지는 `main` 에 남지 않으므로 자유지만
+  '무엇을 왜 바꿨는지' 쓰기를 권합니다. 공동 작성자는 PR 본문에 `Co-authored-by:` 로.
 - 이슈 번호는 제목이 아니라 PR 본문에 `Closes #123` 으로 적습니다.
 
 ### 3-6. 절대 금지 사항

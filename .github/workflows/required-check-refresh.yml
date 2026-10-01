@@ -1,0 +1,58 @@
+# A required check that failed must not keep blocking a pull request once a later run of
+# the same check passes (kpubdata#759).
+#
+# Each event starts its own workflow run, and each run is its own check suite. Branch
+# protection reads a check that failed in one suite as failing even when another suite
+# of the same check, on the same head, has since passed — so `R3 review` stayed BLOCKED
+# after an approval until someone re-ran the run that the label had failed, and `PR
+# title` would do the same after a title fix. This workflow re-runs those runs. Both
+# checks read the pull request live (labels, reviews, title), so a re-run judges what is
+# true now, never the old payload.
+#
+# workflow_run runs in this repository's context with this file from the default
+# branch, so it works for fork pull requests and never checks out their code. A re-run
+# that fails again does not start this workflow's job, so there is no loop.
+name: Required check refresh
+
+on:
+  workflow_run:
+    workflows: ["R3 review", "Titles"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  refresh:
+    name: Re-run stale failed runs
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'pull_request_review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run the failed runs of the same check on the same head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          PASSED: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          stale=$(gh api --paginate \
+            "repos/${REPO}/actions/workflows/${WORKFLOW_ID}/runs?head_sha=${SHA}&status=completed&per_page=100" \
+            --jq ".workflow_runs[]
+                  | select(.id != ${PASSED})
+                  | select(.event == \"pull_request\" or .event == \"pull_request_review\")
+                  | select(.conclusion == \"failure\" or .conclusion == \"cancelled\" or .conclusion == \"timed_out\")
+                  | .id")
+          if [ -z "${stale}" ]; then
+            echo "no stale failed run on ${SHA}"
+            exit 0
+          fi
+          for id in ${stale}; do
+            echo "re-running ${id}"
+            gh run rerun "${id}" --repo "${REPO}"
+          done

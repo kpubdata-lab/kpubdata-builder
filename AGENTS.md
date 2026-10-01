@@ -32,7 +32,8 @@ release notes.
 | Area | Language |
 |---|---|
 | Code identifiers, comments, docstrings | English |
-| Commit messages | English |
+| Commit titles (= PR titles) | English — a squash merge makes the PR title the commit title |
+| Commit bodies (= PR bodies) | Korean or English — the squash body is the PR body ([POLICY 2.1.3](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md), kpubdata#743) |
 | **PR titles** | English (Conventional Commits) — a squash merge turns it into a commit |
 | CHANGELOG and release notes | English |
 | **Governance documents** (`AGENTS.md`, `CONTRIBUTING.md`) | English |

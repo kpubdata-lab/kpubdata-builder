@@ -1,6 +1,9 @@
 # Titles carry the change type; the `type:*` label follows (POLICY 2.1.3).
 #
-#   pull_request   the title must be `type(scope): description`, or this check fails.
+#   pull_request   the title must be `type(scope): description`, English, without an
+#                  issue reference or URL and at most 100 characters, or this check
+#                  fails. It is a required check (kpubdata#741), so a bad title blocks
+#                  the merge.
 #                  A squash merge turns the title into the commit, and the commit into
 #                  the CHANGELOG entry someone writes from it.
 #   issues         a valid title sets the matching `type:*` label and removes every other
@@ -28,12 +31,36 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      # The title is read live, not from the event payload: a re-run replays the old
+      # payload, and required-check-refresh.yml re-runs a failed check once the title is
+      # fixed (kpubdata#759). A failed lookup fails the step — it never reads as valid.
+      - name: Read the current title
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          title=$(gh api "repos/${REPO}/pulls/${NUMBER}" -q .title)
+          # A random delimiter, so no title can close the heredoc early.
+          delimiter="TITLE_$(openssl rand -hex 16)"
+          {
+            echo "title<<${delimiter}"
+            printf '%s\n' "${title}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Parse the title
         id: title
         uses: yeongseon/kpubdata/.github/actions/conventional-title@main
         with:
-          title: ${{ github.event.pull_request.title }}
+          title: ${{ steps.current.outputs.title }}
+          pull-request: "true"
 
       - name: The title must follow the convention
         env:

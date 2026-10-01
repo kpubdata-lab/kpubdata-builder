@@ -25,7 +25,7 @@ type: feat fix docs test perf refactor ci build chore style revert — 규칙 �
 
 ## 체크리스트
 - [ ] 기능 브랜치에서 작업했으며 `main`에 직접 push하지 않았다
-- [ ] 커밋 메시지를 영어로 작성했다
+- [ ] PR 제목이 POLICY 2.1.3 을 따른다 (영어, 100자 이하, 제목에 이슈 번호 없음 — 본문에 `Closes #N`)
 - [ ] `kpubdata` provider 로직을 중복 구현하지 않았다
 - [ ] 필요한 단위/단계 인지형 테스트를 추가했다
 - [ ] 사용자 노출 기능 변경 시 문서를 분류해 갱신했다: 제품 계약→PRD, 향후 의도→ROADMAP, 릴리스 변경→CHANGELOG (해당 시)
