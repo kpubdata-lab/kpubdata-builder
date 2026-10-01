@@ -1,10 +1,17 @@
-"""Polars SQL execution isolated in a cancellable child process."""
+"""SQL execution in a locked DuckDB connection, isolated in a cancellable child process.
+
+The child opens ``query.sandbox`` — one file, its own spill directory, no external
+access, configuration locked (#874) — so the three layers of ADR 0021 D6 are the
+validator (``security``), the locked connection and this process boundary.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 import multiprocessing
+import shutil
+import tempfile
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -14,7 +21,6 @@ from pathlib import Path
 from typing import cast
 
 from ..spec import JsonValue
-from ..tabular.builder_parquet import scan_builder_parquet
 from .models import QueryResult
 
 logger = logging.getLogger(__name__)
@@ -35,6 +41,7 @@ WorkerFn = Callable[[Connection, str, str, int, int], None]
 
 def _bounded_worker(
     memory_limit_bytes: int | None,
+    temp_dir: str,
     worker: WorkerFn,
     connection: Connection,
     table_path: str,
@@ -50,6 +57,12 @@ def _bounded_worker(
     request carries on. Where the platform has no ``resource`` module the cap is not
     applied, and nothing else changes.
     """
+    import os
+
+    from .sandbox import TEMP_DIR_ENV
+
+    # The parent made this directory and removes it, also after a kill.
+    os.environ[TEMP_DIR_ENV] = temp_dir
     if memory_limit_bytes is not None:
         try:
             import resource
@@ -80,27 +93,23 @@ def _query_worker(
     parent_started_ns: int,
 ) -> None:
     try:
-        import polars as pl
+        from .result import to_wire
+        from .sandbox import open_sandbox
 
         bounded_sql = f"SELECT * FROM ({canonical_sql}) AS _kpubdata_result LIMIT {limit + 1}"
-        # Startup ends after spawn, Polars import, and query setup, immediately before scanning.
-        startup_ms = _elapsed_ms(parent_started_ns)
-        engine_started_ns = time.monotonic_ns()
-        frame = scan_builder_parquet(table_path)
-        context = pl.SQLContext({"dataset": frame}, eager=False, register_globals=False)
-        result = context.execute(bounded_sql).collect()
-        engine_execution_ms = _elapsed_ms(engine_started_ns)
-        from ..tabular.polars_engine import infer_schema
-        from ..tabular.wire import column_meta, encode_rows
-
+        with open_sandbox(table_path) as sandbox:
+            # Startup ends after spawn, imports and the locked connection, before the query.
+            startup_ms = _elapsed_ms(parent_started_ns)
+            engine_started_ns = time.monotonic_ns()
+            result = to_wire(sandbox.connection.sql(bounded_sql))
+            engine_execution_ms = _elapsed_ms(engine_started_ns)
         # Wire-encoded by column (#735): a Decimal or an out-of-range integer arrives as
         # its exact decimal text, and `column_meta` says which columns that applies to.
-        columns = infer_schema(result).columns
-        rows = list(encode_rows(result.to_dicts(), columns))
+        rows = result.rows
         payload = {
             "ok": True,
-            "columns": list(result.columns),
-            "column_meta": column_meta(columns),
+            "columns": result.columns,
+            "column_meta": result.column_meta,
             "rows": rows[:limit],
             "truncated": len(rows) > limit,
             "startup_ms": startup_ms,
@@ -140,12 +149,14 @@ class QueryEngine:
 
     def execute(self, table_path: Path, canonical_sql: str, *, limit: int) -> QueryResult:
         started_ns = time.monotonic_ns()
+        temp_dir = tempfile.mkdtemp(prefix="kpubdata-query-")
         context = multiprocessing.get_context("spawn")
         parent, child = context.Pipe(duplex=False)
         process = context.Process(
             target=_bounded_worker,
             args=(
                 self._memory_limit_bytes,
+                temp_dir,
                 self._worker,
                 child,
                 str(table_path),
@@ -222,6 +233,8 @@ class QueryEngine:
             else:
                 with suppress(ValueError):
                     process.close()
+            # The child's spill files go with it, however it ended.
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     @staticmethod
     def _stop_process(process: BaseProcess) -> None:

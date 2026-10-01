@@ -27,7 +27,9 @@ first, bounded step of that:
   a value the profile did not look at is not evidence of absence. The BuildSpec's
   ``pii`` policy accepts such a column like any other.
 - **Same limits as a query.** The worker runs through ``QueryEngine`` — child process,
-  timeout, memory cap — and takes a slot from the same concurrency limit.
+  timeout, memory cap — and takes a slot from the same concurrency limit. The counts and
+  ranges are one SQL pass in the locked DuckDB connection (#874); a column's type is the
+  Builder dtype the file records, else its DuckDB type in Builder's spelling.
 
 The result is tied to the snapshot id, the snapshot's content digest and
 ``PROFILE_ALGORITHM_VERSION``; a profile computed for other bytes or by another
@@ -36,19 +38,18 @@ algorithm is never reused.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import re
 import time
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
-from typing import cast
-
-import polars as pl
-from polars.datatypes import DataTypeClass
+from typing import Any, cast
 
 from ..spec import JsonValue
-from ..tabular.builder_parquet import scan_builder_parquet
-from ..tabular.wire import JS_SAFE_INTEGER, encode_value, logical_type
+from ..tabular.wire import JS_SAFE_INTEGER, encode_value
+from .sandbox import ORDERED_DATASET
 
 #: Raised whenever what is computed, or how, changes; cached profiles of another
 #: version are recomputed.
@@ -77,137 +78,228 @@ class ProfilePlan:
         return cls(bool(data["allow_all_pii"]), tuple(str(c) for c in data["allow_columns"]))
 
 
-#: A dtype as a schema gives it, or as a nested type's ``inner`` or field may.
-_DType = pl.DataType | DataTypeClass
+_NUMERIC = ("Int8", "Int16", "Int32", "Int64", "Int128", "UInt8", "UInt16", "UInt32", "UInt64")
+_FLOAT = ("Float32", "Float64")
+_TEMPORAL = ("Date", "Datetime", "Time", "Duration")
+_TEXT = ("String", "Categorical", "Enum", "Utf8")
 
 
-def _is_text(dtype: _DType) -> bool:
+def _base(dtype: str) -> str:
+    return dtype.split("(", 1)[0]
+
+
+def _inner(dtype: str) -> str:
+    """The element dtype of ``List(x)`` or ``Array(x, …)``."""
+    body = dtype[dtype.index("(") + 1 : -1]
+    depth = 0
+    for index, char in enumerate(body):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            return body[:index].strip()
+    return body.strip()
+
+
+def _struct_fields(dtype: str) -> list[str]:
+    """The field dtypes of ``Struct({'a': x, 'b': y})``."""
+    body = dtype[len("Struct({") : -2]
+    fields: list[str] = []
+    depth = 0
+    quoted: str | None = None
+    start = 0
+    for index, char in enumerate(body):
+        if quoted:
+            if char == quoted:
+                quoted = None
+            continue
+        if char in "'\"":
+            quoted = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            fields.append(body[start:index])
+            start = index + 1
+    if body.strip():
+        fields.append(body[start:])
+    return [field.split(":", 1)[1].strip() for field in fields if ":" in field]
+
+
+def _is_numeric(dtype: str) -> bool:
+    return _base(dtype) in (*_NUMERIC, *_FLOAT, "Decimal")
+
+
+def _is_text(dtype: str) -> bool:
     """A scalar type whose values the patterns read as text."""
-    return dtype == pl.String or isinstance(dtype, (pl.Categorical, pl.Enum))
+    return _base(dtype) in _TEXT
 
 
-def _text_element(dtype: _DType) -> bool:
+def _text_element(dtype: str) -> bool:
     """A ``List`` or ``Array`` whose elements are scalar text."""
-    return isinstance(dtype, (pl.List, pl.Array)) and _is_text(dtype.inner)
+    return _base(dtype) in ("List", "Array") and _is_text(_inner(dtype))
 
 
-def _can_hold_text(dtype: _DType) -> bool:
+def _can_hold_text(dtype: str) -> bool:
     """Whether some value of ``dtype`` could be, or contain, text."""
+    base = _base(dtype)
     if _is_text(dtype):
         return True
-    if isinstance(dtype, (pl.List, pl.Array)):
-        return _can_hold_text(dtype.inner)
-    if isinstance(dtype, pl.Struct):
-        return any(_can_hold_text(field.dtype) for field in dtype.fields)
-    return not (
-        dtype.is_numeric() or dtype.is_temporal() or dtype == pl.Boolean or dtype == pl.Null
-    )
+    if base in ("List", "Array"):
+        return _can_hold_text(_inner(dtype))
+    if base == "Struct":
+        return any(_can_hold_text(field) for field in _struct_fields(dtype))
+    return not (_is_numeric(dtype) or base in _TEMPORAL or base in ("Boolean", "Null"))
 
 
-def _pattern_hits(col: pl.Expr, dtype: pl.DataType, pattern: str) -> pl.Expr | None:
-    """Rows of ``col`` whose text matches ``pattern``; None when ``dtype`` is not checked."""
-    if _is_text(dtype):
-        return col.cast(pl.String).str.contains(pattern).sum()
-    if _text_element(dtype):
-        as_list = col.cast(pl.List(pl.String))
-        return as_list.list.eval(pl.element().str.contains(pattern)).list.any().sum()
-    return None
+def _has_range(dtype: str) -> bool:
+    return _is_numeric(dtype) or _base(dtype) in _TEMPORAL
 
 
-def _has_range(dtype: pl.DataType) -> bool:
-    return dtype.is_numeric() or dtype.is_temporal()
-
-
-def _range_encoding(dtype: pl.DataType, low: object, high: object) -> str:
-    if dtype.is_decimal():
+def _range_encoding(dtype: str, low: object, high: object) -> str:
+    base = _base(dtype)
+    if base == "Decimal":
         return "decimal_string"
-    if dtype.is_integer():
+    if base in _NUMERIC:
         beyond = any(isinstance(v, int) and abs(v) > JS_SAFE_INTEGER for v in (low, high))
         return "decimal_string" if beyond else "number"
-    if dtype.is_float():
+    if base in _FLOAT:
         return "number"
     return "string"
 
 
-def _time_zone(dtype: pl.DataType) -> JsonValue:
+def _time_zone(dtype: str) -> JsonValue:
     """A datetime column's time zone; None when naive or not a datetime."""
-    zone = getattr(dtype, "time_zone", None)
-    return zone if isinstance(zone, str) else None
+    match = re.search(r"time_zone='([^']*)'", dtype)
+    return match.group(1) if _base(dtype) == "Datetime" and match else None
+
+
+def _pattern_kinds(connection: Any, column: str, element: bool) -> list[str]:
+    """The PII kinds some value of ``column`` matches, read over its distinct values.
+
+    The patterns are Python's (Unicode digits and word boundaries), as Silver's scan
+    reads them, not DuckDB's RE2. For a list column a row matches when any element does.
+    """
+    from ..stages.silver.pii import VALUE_PATTERNS
+
+    found: set[str] = set()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"SELECT DISTINCT {column} FROM {ORDERED_DATASET} WHERE {column} IS NOT NULL"
+        )
+        while batch := cursor.fetchmany(10_000):
+            for (value,) in batch:
+                texts = [v for v in value if isinstance(v, str)] if element else [str(value)]
+                for kind, pattern in VALUE_PATTERNS.items():
+                    if kind not in found and any(pattern.search(t) for t in texts):
+                        found.add(kind)
+    finally:
+        cursor.close()
+    return [kind for kind in VALUE_PATTERNS if kind in found]
 
 
 def profile_table(table_path: str, plan: ProfilePlan) -> dict[str, JsonValue]:
-    """Compute the profile body in one lazy pass over the table."""
-    from ..stages.silver.pii import VALUE_PATTERNS, suspect_column_kind
+    """Compute the profile body: one SQL pass for the counts and ranges, and a pass over
+    each text column's distinct values for the PII patterns (#874)."""
+    from ..stages.silver.pii import suspect_column_kind
+    from ..tabular.dtypes import logical_type
+    from .result import result_dtype
+    from .sandbox import open_sandbox
 
-    frame = scan_builder_parquet(table_path)
-    schema = frame.collect_schema()
-    exprs: list[pl.Expr] = [pl.len().alias("__rows")]
-    for index, (name, dtype) in enumerate(schema.items()):
-        col = pl.col(name)
-        exprs.append(col.null_count().alias(f"n{index}"))
-        if dtype.is_float():
-            exprs.append(col.is_nan().sum().alias(f"nan{index}"))
-            exprs.append(col.is_infinite().sum().alias(f"inf{index}"))
-            finite = col.filter(col.is_finite())
-        else:
-            finite = col.drop_nulls()
-        if _has_range(dtype):
-            exprs.append(finite.min().alias(f"min{index}"))
-            exprs.append(finite.max().alias(f"max{index}"))
-            exprs.append(finite.count().alias(f"cnt{index}"))
-        for kind, pattern in VALUE_PATTERNS.items():
-            hits = _pattern_hits(col, dtype, pattern.pattern)
-            if hits is not None:
-                exprs.append(hits.alias(f"pii{index}_{kind}"))
-    stats = frame.select(exprs).collect().row(0, named=True)
+    with open_sandbox(table_path) as sandbox:
+        connection = sandbox.connection
+        stored = connection.execute(f"DESCRIBE {ORDERED_DATASET}").fetchall()
+        dtypes = [
+            sandbox.dtypes.get(name) or result_dtype(str(row[1]))
+            for name, row in zip(sandbox.columns, stored, strict=False)
+        ]
+        exprs: list[str] = ["count(*)"]
+        slots: dict[str, int] = {}
 
-    row_count = int(stats["__rows"])
-    allowed = set(plan.allow_columns)
-    columns: list[JsonValue] = []
-    for index, (name, dtype) in enumerate(schema.items()):
-        kinds = [kind for kind in VALUE_PATTERNS if int(stats.get(f"pii{index}_{kind}") or 0) > 0]
-        checked = _is_text(dtype) or _text_element(dtype)
-        if not checked and _can_hold_text(dtype):
-            kinds.append(UNCHECKED_VALUES_KIND)
-        name_kind = suspect_column_kind(name)
-        if name_kind is not None and name_kind not in kinds:
-            kinds.append(name_kind)
-        if not kinds:
-            sensitivity = "not_detected"
-        elif plan.allow_all_pii or name in allowed:
-            sensitivity = "allowed_by_spec"
-        else:
-            sensitivity = "suspected"
-        column: dict[str, JsonValue] = {
-            "name": name,
-            "storage_type": str(dtype),
-            "logical_type": logical_type(dtype),
-            "time_zone": _time_zone(dtype),
-            "sensitivity": {"status": sensitivity, "kinds": cast(JsonValue, kinds)},
-        }
-        if sensitivity == "suspected":
+        def slot(key: str, sql: str) -> None:
+            slots[key] = len(exprs)
+            exprs.append(sql)
+
+        for index, (name, dtype) in enumerate(zip(sandbox.columns, dtypes, strict=True)):
+            col = sandbox.alias(name)
+            slot(f"n{index}", f"count(*) - count({col})")
+            finite = f"{col} IS NOT NULL"
+            if _base(dtype) in _FLOAT:
+                slot(f"nan{index}", f"count(*) FILTER (WHERE isnan({col}))")
+                slot(f"inf{index}", f"count(*) FILTER (WHERE isinf({col}))")
+                finite = f"isfinite({col})"
+            if _has_range(dtype):
+                value = f"CAST({col} AS TIMESTAMP)" if _time_zone(dtype) is not None else col
+                slot(f"min{index}", f"min({value}) FILTER (WHERE {finite})")
+                slot(f"max{index}", f"max({value}) FILTER (WHERE {finite})")
+                slot(f"cnt{index}", f"count(*) FILTER (WHERE {finite})")
+        row = connection.execute(f"SELECT {', '.join(exprs)} FROM {ORDERED_DATASET}").fetchone()
+        assert row is not None
+        stats: dict[str, object] = {key: row[position] for key, position in slots.items()}
+        for index, dtype in enumerate(dtypes):
+            if _time_zone(dtype) is None:
+                continue
+            # A zoned datetime is read as UTC wall time (no pytz) and marked UTC.
+            for key in (f"min{index}", f"max{index}"):
+                found = stats.get(key)
+                if isinstance(found, dt.datetime):
+                    stats[key] = found.replace(tzinfo=dt.timezone.utc)
+
+        row_count = int(row[0])
+        allowed = set(plan.allow_columns)
+        columns: list[JsonValue] = []
+        for index, (name, dtype) in enumerate(zip(sandbox.columns, dtypes, strict=True)):
+            checked = _is_text(dtype) or _text_element(dtype)
+            kinds = (
+                _pattern_kinds(connection, sandbox.alias(name), _text_element(dtype))
+                if checked
+                else []
+            )
+            if not checked and _can_hold_text(dtype):
+                kinds.append(UNCHECKED_VALUES_KIND)
+            name_kind = suspect_column_kind(name)
+            if name_kind is not None and name_kind not in kinds:
+                kinds.append(name_kind)
+            if not kinds:
+                sensitivity = "not_detected"
+            elif plan.allow_all_pii or name in allowed:
+                sensitivity = "allowed_by_spec"
+            else:
+                sensitivity = "suspected"
+            column: dict[str, JsonValue] = {
+                "name": name,
+                "storage_type": dtype,
+                "logical_type": logical_type(dtype),
+                "time_zone": _time_zone(dtype),
+                "sensitivity": {"status": sensitivity, "kinds": cast(JsonValue, kinds)},
+            }
+            if sensitivity == "suspected":
+                column.update(
+                    status="withheld",
+                    null_count=None,
+                    null_ratio=None,
+                    nan_count=None,
+                    infinite_count=None,
+                    range=None,
+                )
+                columns.append(column)
+                continue
+            nulls = int(cast(int, stats[f"n{index}"]))
+            is_float = _base(dtype) in _FLOAT
+            nan = int(cast(int, stats[f"nan{index}"])) if is_float else None
+            infinite = int(cast(int, stats[f"inf{index}"])) if is_float else None
             column.update(
-                status="withheld",
-                null_count=None,
-                null_ratio=None,
-                nan_count=None,
-                infinite_count=None,
-                range=None,
+                status="profiled",
+                null_count=nulls,
+                null_ratio=None if row_count == 0 else nulls / row_count,
+                nan_count=nan,
+                infinite_count=infinite,
+                range=_range_body(dtype, stats, index, nan, infinite),
             )
             columns.append(column)
-            continue
-        nulls = int(stats[f"n{index}"])
-        nan = int(stats[f"nan{index}"]) if dtype.is_float() else None
-        infinite = int(stats[f"inf{index}"]) if dtype.is_float() else None
-        column.update(
-            status="profiled",
-            null_count=nulls,
-            null_ratio=None if row_count == 0 else nulls / row_count,
-            nan_count=nan,
-            infinite_count=infinite,
-            range=_range_body(dtype, stats, index, nan, infinite),
-        )
-        columns.append(column)
     return {
         "algorithm_version": PROFILE_ALGORITHM_VERSION,
         "scope": {"mode": "full", "sampled": False, "sample_size": None},
@@ -219,7 +311,7 @@ def profile_table(table_path: str, plan: ProfilePlan) -> dict[str, JsonValue]:
 
 
 def _range_body(
-    dtype: pl.DataType,
+    dtype: str,
     stats: dict[str, object],
     index: int,
     nan: int | None,

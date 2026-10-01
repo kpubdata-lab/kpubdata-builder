@@ -104,7 +104,7 @@
     ],
     [
      "경희궁자이(2단지)",
-     "200,000"
+     "156,000"
     ],
     [
      "경희궁자이(2단지)",
@@ -112,7 +112,7 @@
     ],
     [
      "경희궁자이(2단지)",
-     "156,000"
+     "200,000"
     ],
     [
      "경희궁자이(3단지)",
@@ -182,7 +182,7 @@
      "policy": null
     },
     "query": {
-     "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm",
+     "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm, dealAmount",
      "user_derived": true
     },
     "snapshot": {
@@ -283,7 +283,7 @@
       "policy": null
      },
      "query": {
-      "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm",
+      "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm, dealAmount",
       "user_derived": true
      },
      "snapshot": {
@@ -345,7 +345,7 @@
      "max_rows": 100000,
      "profile": "machine",
      "snapshot": "current",
-     "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm",
+     "sql": "SELECT aptNm, dealAmount FROM dataset ORDER BY aptNm, dealAmount",
      "table": "parity.tiny.t"
     },
     "status": "completed"
@@ -1353,7 +1353,7 @@
       "wire_encoding": "string"
      },
      {
-      "logical_type": "uint32",
+      "logical_type": "int64",
       "name": "n",
       "wire_encoding": "number"
      }

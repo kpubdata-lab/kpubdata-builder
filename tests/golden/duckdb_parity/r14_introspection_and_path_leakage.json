@@ -37,7 +37,7 @@
  "SELECT current_setting('home_directory')": {
   "body": {
    "code": "unsafe_query",
-   "error": "query must reference the logical dataset table"
+   "error": "function current_setting is not allowed"
   },
   "status_code": 400
  }

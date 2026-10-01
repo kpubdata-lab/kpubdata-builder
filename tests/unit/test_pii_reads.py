@@ -170,6 +170,11 @@ def test_the_masked_silver_copy_keeps_every_builder_dtype(tmp_path: Path, name: 
     finally:
         masked.close()
 
+    if name == "odd names":
+        # A column with an empty name cannot be named in SQL (#874): the query is
+        # refused on the original and on the copy alike.
+        assert plain.status_code == hidden.status_code == 400
+        return
     assert plain.status_code == hidden.status_code == 200, (plain.body, hidden.body)
     assert hidden.body["columns"] == plain.body["columns"]
     assert hidden.body["column_meta"] == plain.body["column_meta"]
@@ -218,7 +223,9 @@ def test_a_silver_query_reports_the_same_dtypes_with_and_without_declared_pii(
     assert masked.body["columns"] == unmasked.body["columns"]
     assert masked.body["column_meta"] == unmasked.body["column_meta"]
     meta = {m["name"]: m for m in cast(list[dict[str, JsonValue]], masked.body["column_meta"])}
-    assert meta["memo"]["logical_type"] == "null"
+    # DuckDB types a Null column INTEGER in any projection (#874); the point is that
+    # masking does not change it.
+    assert meta["memo"]["logical_type"] == "int32"
     _no_phone(masked.body)
 
 
