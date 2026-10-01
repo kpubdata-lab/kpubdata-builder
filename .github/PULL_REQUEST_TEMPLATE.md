@@ -5,27 +5,14 @@ type: feat fix docs test perf refactor ci build chore style revert — 규칙 �
 예) docs: add feature process flow diagrams
 -->
 
-## 요약
-<!-- 이 PR이 무엇을, 왜 바꾸는지 1~3문장으로 설명하세요. -->
+Closes #<이슈 번호>
+<!-- 이슈 없는 PR(의존성 갱신 등)은 이 줄을 지우고, 참조만 남길 땐 Refs #N. -->
+
+## 문제
+<!-- 무엇이 잘못됐거나 무엇이 필요한지 — 대부분의 PR은 한두 문장이면 충분하다. -->
 
 ## 변경 내용
-<!-- 주요 변경 사항을 항목으로 나열하세요. -->
--
-
-## 관련 이슈
-<!-- 예) Closes #123, Refs #456 -->
+<!-- 무엇을 어떻게 바꿨는지 -->
 
 ## 검증
-<!-- 어떻게 검증했는지 구체적으로 적으세요. -->
-- [ ] `uv run ruff check .` 통과
-- [ ] `uv run mypy` 통과 (해당 시)
-- [ ] 테스트 통과 (`uv run pytest`)
-- [ ] 문서 변경 시 `mkdocs build --strict` 통과
-- [ ] manifest/골든 테스트 영향 확인 (해당 시)
-
-## 체크리스트
-- [ ] 기능 브랜치에서 작업했으며 `main`에 직접 push하지 않았다
-- [ ] PR 제목이 POLICY 2.1.3 을 따른다 (영어, 100자 이하, 제목에 이슈 번호 없음 — 본문에 `Closes #N`)
-- [ ] `kpubdata` provider 로직을 중복 구현하지 않았다
-- [ ] 필요한 단위/단계 인지형 테스트를 추가했다
-- [ ] 사용자 노출 기능 변경 시 문서를 분류해 갱신했다: 제품 계약→PRD, 향후 의도→ROADMAP, 릴리스 변경→CHANGELOG (해당 시)
+<!-- 돌린 게이트·테스트와 결과. ruff·mypy·pytest·docs strict 는 CI가 같은 걸 다시 돌리므로, 여기에는 로컬에서만 볼 수 있는 것(실측·재현·골든 비교)을 적는다. -->
