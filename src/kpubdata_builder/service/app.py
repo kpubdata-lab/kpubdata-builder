@@ -385,7 +385,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.71.0 -> 1.72.0: declared error bodies — RevisionConflictError (409 revision_conflict
 #   with current_revision, #947) and SignupNotApprovedError / the SignupNotApproved
 #   response (403 signup_pending / signup_rejected, #951) (additive).
-API_CONTRACT_VERSION = "1.72.0"
+# 1.72.0 -> 1.73.0: GET /admin/runs gains total, the runs before limit; count is the runs in
+#   the response (#948, additive).
+API_CONTRACT_VERSION = "1.73.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary

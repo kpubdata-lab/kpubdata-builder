@@ -8,6 +8,7 @@ access user data is still undecided.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -42,6 +43,12 @@ class _FakeIndex:
             raise RuntimeError("index unavailable")
         self.requested_limit = limit
         return self._entries[:limit]
+
+    def count_builds(self, also: Collection[str] = ()) -> int:
+        """Distinct runs indexed or in ``also`` — the real index's contract (#948)."""
+        if self._fail:
+            raise RuntimeError("index unavailable")
+        return len({entry.run_id for entry in self._entries} | set(also))
 
 
 @dataclass(frozen=True)
@@ -327,6 +334,59 @@ class TestInFlightRuns:
             "finished-new",
             "started-new",
         ]
+
+
+class TestTotal:
+    """``count`` is the runs in the response; ``total`` the runs before ``limit`` (#948)."""
+
+    @staticmethod
+    def _entries(n: int) -> list[_Entry]:
+        return [
+            _Entry(
+                f"run-{i:03d}",
+                "succeeded",
+                f"2026-09-27T00:{i % 60:02d}:00Z",
+                f"2026-09-28T{i // 60:02d}:{i % 60:02d}:00Z",
+                None,
+                None,
+            )
+            for i in range(n)
+        ]
+
+    def test_total_counts_past_the_limit_and_count_does_not(self) -> None:
+        response = _call(_service(self._entries(120)), "/admin/runs", _ADMIN, "limit=50")
+
+        assert response.body["count"] == len(response.body["runs"]) == 50
+        assert response.body["total"] == 120
+
+    def test_total_equals_count_when_everything_fits(self) -> None:
+        response = _call(_service(self._entries(7)), "/admin/runs", _ADMIN, "limit=50")
+
+        assert response.body["count"] == response.body["total"] == 7
+
+    def test_jobs_the_index_does_not_hold_are_counted_once(self) -> None:
+        jobs = [
+            _Job("run-live", "running", "2026-09-29T00:00:00Z", "2026-09-29T00:00:01Z", None),
+            # Indexed but past the limit: the index already counts it.
+            _Job("run-000", "succeeded", "2026-09-27T00:00:00Z", "2026-09-28T00:00:00Z", None),
+            # Indexed and listed: counted once.
+            _Job("run-119", "running", "2026-09-27T00:00:00Z", "2026-09-27T00:00:01Z", None),
+        ]
+        service = _service(self._entries(120), jobs=jobs)
+
+        response = _call(service, "/admin/runs", _ADMIN, "limit=10")
+
+        assert response.body["count"] == len(response.body["runs"]) == 10
+        assert response.body["total"] == 121
+
+    def test_total_is_never_below_what_the_response_merged(self) -> None:
+        """A count that ran before a build reached the index cannot undercount."""
+        service = _service(self._entries(3))
+        service._build_index.count_builds = lambda also=(): 0
+
+        response = _call(service, "/admin/runs", _ADMIN)
+
+        assert response.body["total"] == response.body["count"] == 3
 
 
 class TestIndexFailure:

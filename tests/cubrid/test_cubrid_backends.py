@@ -122,6 +122,9 @@ def test_build_index_rebuild(engine) -> None:  # type: ignore[no-untyped-def]
     assert got is not None and got.dataset_id == "cbx-ds2"
     # rebuild truncates, so previous runs are gone (rebuilt from canonical manifest).
     assert idx.get("cbx-1") is None
+    # #948: distinct runs indexed or named, each counted once.
+    assert idx.count_builds() == 2
+    assert idx.count_builds(also=["cbx-r1", "cbx-live"]) == 3
 
 
 def test_build_index_monitoring_queries(engine) -> None:  # type: ignore[no-untyped-def]

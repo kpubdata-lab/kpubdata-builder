@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.72.0",
+  "contract_version": "1.73.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -4619,6 +4619,73 @@
         "deleted": true
       },
       "broken_path": "$.export_id"
+    },
+    {
+      "operation_id": "adminListRuns",
+      "method": "GET",
+      "path": "/admin/runs",
+      "status": 200,
+      "example": "LatestOfMore",
+      "current": {
+        "runs": [
+          {
+            "run_id": "run-20261001-0002",
+            "status": "running",
+            "started_at": null,
+            "finished_at": null,
+            "owner_id": "oidc:68d2bc4134cb5db7c9be4d6132d6e25999d4610c7effd5af4b850e729ee1c401",
+            "error": null
+          },
+          {
+            "run_id": "run-20261001-0001",
+            "status": "failed",
+            "started_at": "2026-10-01T09:00:00Z",
+            "finished_at": "2026-10-01T09:01:12Z",
+            "owner_id": "oidc:e1ee853cca59178c909b0e6b1dc13d6d2acad701b5c7dcb92ca9575ae8a913d6",
+            "error": "provider answered 429: too many requests"
+          }
+        ],
+        "count": 2,
+        "total": 137
+      },
+      "with_additive_fields": {
+        "runs": [
+          {
+            "run_id": "run-20261001-0002",
+            "status": "running",
+            "started_at": null,
+            "finished_at": null,
+            "owner_id": "oidc:68d2bc4134cb5db7c9be4d6132d6e25999d4610c7effd5af4b850e729ee1c401",
+            "error": null,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "run_id": "run-20261001-0001",
+            "status": "failed",
+            "started_at": "2026-10-01T09:00:00Z",
+            "finished_at": "2026-10-01T09:01:12Z",
+            "owner_id": "oidc:e1ee853cca59178c909b0e6b1dc13d6d2acad701b5c7dcb92ca9575ae8a913d6",
+            "error": "provider answered 429: too many requests",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "count": 2,
+        "total": 137,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.runs[0]",
+        "$.runs[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "runs": {
+          "not": "an array"
+        },
+        "count": 2,
+        "total": 137
+      },
+      "broken_path": "$.runs"
     }
   ],
   "error_fixtures": [

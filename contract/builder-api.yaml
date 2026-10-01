@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.72.0"
+  version: "1.73.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -86,6 +86,7 @@ info:
     v1.70.0 records the Gold split algorithm (#871, additive): ratio splits are now `hash-sort-v2` — each row is ordered by `md5("<seed>:<row ordinal>")` and then its ordinal, and the order is cut into exactly the counts the ratios give, in DuckDB without a list of row indices in memory — and the manifest gains `split_algorithm`. Membership differs from the earlier `shuffle-v1` for the same seed; a manifest without the field used `shuffle-v1`. Key splits are unchanged.
     v1.71.0 requires a complete dataset card to publish (#694, additive): every Gold output carries `README.md` and `card.json` — the same sections: provenance (providing institution, source URL, licence under its declared name, collection time), processing (each declared transformation) and personal information (what Gold masked or published unmasked, and how the `pii` policy scanned) — copied into a Kaggle package and a Hugging Face layout. Publish readiness and a refused publish add `PublishIssue.code` `card_missing` (a run from before cards; rebuild it) and `card_incomplete` (a required section is empty; the message names it).
     v1.72.0 declares two error bodies clients already read (#947, #951, additive — the wire is unchanged). The 409 `revision_conflict` of `PUT /revisions/{kind}/{doc_id}` and `POST /revisions/{kind}/{doc_id}/revert` is `RevisionConflictError`: `Error` with `current_revision`, the revision to reload and retry from. The 403 `signup_pending` / `signup_rejected` an OIDC user the sign-up ledger does not admit gets from every authenticated operation (#785) is `components.responses.SignupNotApproved` (`SignupNotApprovedError`), declared once and named in `bearerAuth` and `Error.code` rather than on each operation, since many operations already declare their own 403. `contract/fixtures/responses.json` gains `error_fixtures`: every named non-2xx example, a shared response once.
+    v1.73.0 gives `GET /admin/runs` a `total` (#948, additive): how many runs there are before `limit`, the build index's runs plus the queued and running jobs it does not hold yet. `AdminRunsResponse.count` is documented as what it always was — the runs in this response, after `limit` — not a total; `count < total` means older runs were left out.
     v1.69.0 tells a client where this deployment takes publish credentials from (#938, additive): `GET /version` gains `publish_credential` — `request` (multi-user: only the request's `X-Publish-Credential` header, #925), `stored` (single-user with `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL=true`: only the requester's stored credential, #635) or `stored_or_server` (single-user default: the stored credential, else the server's `HF_TOKEN` / `KAGGLE_*`). It is the policy readiness and publish apply, not whether a server or stored credential exists, so it is given to every authenticated caller; `GET /admin/config` is unchanged.
     v1.68.0 keeps declared PII masked on every read of Silver and Bronze (#900, additive): the columns Gold masks (kpubdata `license.pii_columns` and `SourceRef.gold.pii_columns`, less `gold.publish_unmasked`, and whatever the run's manifest recorded as masked) are masked the way Gold masks them — text to the mask token, any other dtype null — wherever Silver or Bronze rows are read. `POST /query` with `stage: silver` runs on a masked copy of the Silver table and names the masked columns in `QueryResponse.masked_columns`; `POST /preview` masks `sample`, `source_sample` and `diffs` and names them in the source's `masked_columns`; a Silver stage detail masks its `sample` and names them in `masked_columns`. `GET /artifacts/{run_id}/{file_path}` refuses every file under `bronze/{source}/` or `silver/{source}/` of a source with such a column: 403 `declared_pii_withheld` (`DeclaredPiiWithheldError`, naming the `columns`); Gold files are served as before. A source whose terms forbid redistribution is refused first (#688). When a public_api source's kpubdata declaration cannot be read, these reads fail closed rather than mask only what the manifest recorded: `/query`, `/preview` and the artifact file answer 503 `pii_declaration_unavailable` (`PiiDeclarationUnavailable`, naming the `dataset`), and a Silver stage detail withholds its sample (`sample_withheld: pii_declaration_unavailable`).
     v1.67.0 makes publish tokens live only as long as their request in a multi-user deployment (#925, ADR 0020 item 2 as confirmed on 2026-10-01). A Hugging Face or Kaggle publish credential is sent in the `X-Publish-Credential` request header (`<VARIABLE>=<value>` with `HF_TOKEN`, `KAGGLE_USERNAME` or `KAGGLE_KEY`, repeated or comma-separated) — never a URL query — and a malformed header answers 400 `invalid_publish_credential` on any route. In a multi-user deployment `GET /builds/{run_id}/publish/readiness`, `POST /builds/{run_id}/publish` and the reconcile probe use only that header: a stored `publish-*` credential is not read and the server `HF_TOKEN`/`KAGGLE_*` is never used, whatever `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` says, so without the header readiness and publish report the `credential_required` blocker and `GET /admin/config` reports `publish_server_credential_fallback: false`. A Kaggle pair must arrive whole. The value is held in memory for the request only and is never stored, logged or returned. A single-user deployment ignores the header and is unchanged.
@@ -3878,7 +3879,10 @@ paths:
         산출물 바이트·credential·응답 본문은 어떤 경우에도 포함하지 않는다 —
         이 제품은 BYOK이고, 관리자가 사용자 데이터를 열 수 있는지는 아직
         결정되지 않았다(#679). 소유자는 되돌릴 수 없는 `owner_id` 해시로만
-        구분된다. 관리자가 아니면 403이다.
+        구분된다. 관리자가 아니면 403이다. The listing is the newest `limit` runs —
+        in-progress jobs and indexed runs merged, newest first. `count` is how many
+        this response carries; `total` is how many there are before `limit` (#948), so
+        a client can say "N of M" and offer more only when `count < total`.
       parameters:
         - name: limit
           in: query
@@ -3895,6 +3899,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminRunsResponse"
+              examples:
+                LatestOfMore:
+                  summary: "`?limit=2` — the newest 2 of 137 runs"
+                  value:
+                    runs:
+                      - run_id: run-20261001-0002
+                        status: running
+                        started_at: null
+                        finished_at: null
+                        owner_id: oidc:68d2bc4134cb5db7c9be4d6132d6e25999d4610c7effd5af4b850e729ee1c401
+                        error: null
+                      - run_id: run-20261001-0001
+                        status: failed
+                        started_at: "2026-10-01T09:00:00Z"
+                        finished_at: "2026-10-01T09:01:12Z"
+                        owner_id: oidc:e1ee853cca59178c909b0e6b1dc13d6d2acad701b5c7dcb92ca9575ae8a913d6
+                        error: "provider answered 429: too many requests"
+                    count: 2
+                    total: 137
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4241,6 +4264,22 @@ components:
       properties:
         count:
           type: integer
+          minimum: 0
+          description: >-
+            How many runs **this response** carries — `len(runs)`, after `limit` — not
+            how many there are (#948). Unlike `AdminUsersResponse.count`, which is the
+            whole ledger, it stops at `limit`; `total` is the number before it.
+        total:
+          type: integer
+          minimum: 0
+          description: >-
+            How many runs this listing draws from before `limit` is applied (#948):
+            every run the build index holds plus the queued and running jobs it does not
+            hold yet, each counted once. `count < total` means older runs were left
+            out. Sent from contract 1.73.0; a client talking to an older Builder finds
+            it absent and knows only `count`. Counted in the same request as the
+            listing, so a build finishing meanwhile can move it by one; it is never
+            less than `count`.
         runs:
           type: array
           items:
