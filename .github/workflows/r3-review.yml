@@ -1,0 +1,41 @@
+# A `review:R3` pull request needs an approval from someone other than its author
+# (#905, kpubdata#722, POLICY 14.1). Branch protection's approval count stays at
+# 0, so ordinary pull requests are unaffected; this check is what enforces R3.
+#
+# The rule lives in kpubdata (`scripts/r3_review.py`, `.github/actions/r3-review`) so
+# the four repositories run one implementation, called here at `@main`.
+#
+# The job runs on every pull request and passes when it is not R3. It is a required
+# check, and a required check that some pull requests never produce leaves them
+# BLOCKED for ever — so it must never be skipped by a condition.
+#
+#   pull_request          the label can be added or removed, and a push changes the head
+#   pull_request_review   an approval can be given, withdrawn or dismissed
+#
+# Not pull_request_target: that runs with the base branch's code and a token that can
+# write, and there is no review counterpart to it anyway. Both events here get a
+# read-only token on fork pull requests, which is all this check needs.
+name: R3 review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  pull-requests: read
+
+# One result per pull request: a label and a review arriving together must not let an
+# older run, finishing last, leave a stale verdict as the latest check.
+concurrency:
+  group: r3-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  r3-review:
+    name: R3 review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: yeongseon/kpubdata/.github/actions/r3-review@main
