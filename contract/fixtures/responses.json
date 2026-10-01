@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.68.0",
+  "contract_version": "1.69.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -12,13 +12,15 @@
       "example": "CurrentVersion",
       "current": {
         "service": "kpubdata-builder",
-        "api_version": "1.40.0",
-        "version": "0.4.0"
+        "api_version": "1.69.0",
+        "version": "0.4.0",
+        "publish_credential": "request"
       },
       "with_additive_fields": {
         "service": "kpubdata-builder",
-        "api_version": "1.40.0",
+        "api_version": "1.69.0",
         "version": "0.4.0",
+        "publish_credential": "request",
         "future_optional_field": "added by a later minor contract version"
       },
       "additive_paths": [
@@ -26,8 +28,9 @@
       ],
       "required_type_broken": {
         "service": 12345,
-        "api_version": "1.40.0",
-        "version": "0.4.0"
+        "api_version": "1.69.0",
+        "version": "0.4.0",
+        "publish_credential": "request"
       },
       "broken_path": "$.service"
     },

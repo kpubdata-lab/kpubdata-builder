@@ -374,7 +374,10 @@ _BuildListEntry = dict[str, str | None]
 #   Silver artifact file of a source with declared PII answers 403 declared_pii_withheld;
 #   an unreadable declaration fails closed with 503 pii_declaration_unavailable and
 #   sample_withheld: pii_declaration_unavailable (additive).
-API_CONTRACT_VERSION = "1.68.0"
+# 1.68.0 -> 1.69.0: GET /version reports publish_credential — request, stored or
+#   stored_or_server — so a client knows where this deployment takes publish
+#   credentials from (#938, additive).
+API_CONTRACT_VERSION = "1.69.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -876,6 +879,10 @@ class BuilderService:
         contract a client checks before calling, ``version`` the installed application
         Studio compares with its own build to tell a mismatched pair. ``version`` is
         read from the installed distribution's metadata — the single source #592 set.
+
+        ``publish_credential`` says where a publish credential comes from (#938), so a
+        client can ask for a token before readiness reports ``credential_required``.
+        It is the deployment's policy, not whether any credential exists.
         """
         return ServiceResponse(
             200,
@@ -883,6 +890,7 @@ class BuilderService:
                 "service": "kpubdata-builder",
                 "api_version": API_CONTRACT_VERSION,
                 "version": __version__,
+                "publish_credential": publish_credentials.publish_credential_source(),
             },
         )
 
