@@ -238,3 +238,34 @@ def test_persist_bronze_artifact_rejects_unsafe_run_id(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must not be empty"):
         persist_bronze_artifact(artifact, output_root=tmp_path, run_id="")
+
+
+def test_canonical_line_writes_native_types_as_text() -> None:
+    """#979: a Parquet upload's Decimal/date/datetime arrives as native Python
+    objects; the persisted Bronze file is plain JSON, so they become text."""
+    import datetime as dt
+    from decimal import Decimal
+
+    from kpubdata_builder.stages.bronze.writer import canonical_line
+
+    record = {
+        "v": Decimal("2.50"),
+        "d": dt.date(2024, 1, 1),
+        "ts": dt.datetime(2024, 1, 1, 12, 30),
+        "s": "text",
+        "n": 42,
+        "ok": True,
+        "nil": None,
+    }
+
+    line = canonical_line(record)
+    parsed = json.loads(line)
+
+    assert parsed["v"] == "2.50"
+    assert parsed["d"] == "2024-01-01"
+    assert "2024-01-01" in parsed["ts"]
+    # JSON-native types are unaffected by the default handler.
+    assert parsed["s"] == "text"
+    assert parsed["n"] == 42
+    assert parsed["ok"] is True
+    assert parsed["nil"] is None
