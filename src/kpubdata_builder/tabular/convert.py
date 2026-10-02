@@ -11,6 +11,7 @@ Key functions:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import cast
 
 import polars as pl
@@ -23,6 +24,12 @@ from ..spec import JsonValue
 # upcasts to f64 and silently rounds.
 _SAFE_INTEGER = 2**53
 
+# Same limits the DuckDB loader states (#919, #974): Polars Int128 stops at ±2^127,
+# Decimal128 at 38 significant digits. Checking here keeps the Polars path's
+# TabularError contract identical to the DuckDB path's.
+_INT128_MIN, _INT128_MAX = -(2**127), 2**127 - 1
+_DECIMAL_MAX_DIGITS = 38
+
 # Sentinel for type shape unification.
 _NULL = object()  # Unknown/absent (null) — compatible with any type.
 _CONFLICT = object()  # Incompatible heterogeneous types.
@@ -34,15 +41,34 @@ def _shape(value: object) -> object:
     Group int/float as "num" to allow normal numeric mixing like [1, 2.5], but recurse
     into list/struct internals to distinguish nested heterogeneous types like
     list[int] vs list[str], struct{x:int} vs struct{x:str} (#199).
+
+    Raises:
+        TabularError: A value Polars cannot hold — an integer past Int128 or a
+            Decimal past 38 digits (#974). The same limits the DuckDB loader states.
     """
     if value is None:
         return _NULL
     if isinstance(value, bool):
         return "bool"
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
+        if not _INT128_MIN <= value <= _INT128_MAX:
+            raise TabularError(
+                "an integer value exceeds the supported range (±2^127); "
+                "read the column as a string instead"
+            )
+        return "num"
+    if isinstance(value, float):
         return "num"
     if isinstance(value, str):
         return "str"
+    if isinstance(value, Decimal):
+        digits = len(value.as_tuple().digits)
+        if digits > _DECIMAL_MAX_DIGITS:
+            raise TabularError(
+                f"a decimal value has {digits} significant digits; "
+                f"the supported maximum is {_DECIMAL_MAX_DIGITS}"
+            )
+        return ("scalar", "Decimal")
     if isinstance(value, Mapping):
         return ("map", {str(k): _shape(v) for k, v in value.items()})
     if isinstance(value, (list, tuple)):

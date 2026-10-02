@@ -292,3 +292,35 @@ def test_cast_report_nulls_introduced() -> None:
     # null_count_increase property returns simple difference.
     report = CastReport(column="x", nulls_before=1, nulls_after=3)
     assert report.nulls_introduced == 2
+
+
+class TestOutOfRangeValues:
+    """#974: values Polars cannot hold raise TabularError, not raw Polars exceptions."""
+
+    def test_int_beyond_128_bits(self) -> None:
+        records: list[dict[str, JsonValue]] = [{"v": 2**130}]  # type: ignore[dict-item]
+        with pytest.raises(TabularError, match="supported range"):
+            _ = records_to_dataframe(records)
+
+    def test_negative_int_beyond_128_bits(self) -> None:
+        records: list[dict[str, JsonValue]] = [{"v": -(2**130)}]  # type: ignore[dict-item]
+        with pytest.raises(TabularError, match="supported range"):
+            _ = records_to_dataframe(records)
+
+    def test_decimal_beyond_38_digits(self) -> None:
+        from decimal import Decimal
+
+        records: list[dict[str, JsonValue]] = [{"v": Decimal("1" + "0" * 38)}]  # type: ignore[dict-item]
+        with pytest.raises(TabularError, match="significant digits"):
+            _ = records_to_dataframe(records)
+
+    def test_out_of_range_inside_a_nested_list(self) -> None:
+        records: list[dict[str, JsonValue]] = [{"v": [1, 2**130]}]  # type: ignore[dict-item]
+        with pytest.raises(TabularError, match="supported range"):
+            _ = records_to_dataframe(records)
+
+    def test_int128_boundary_values_load(self) -> None:
+        boundary = 2**127 - 1
+        records: list[dict[str, JsonValue]] = [{"v": boundary}, {"v": -boundary - 1}]
+        df = records_to_dataframe(records)
+        assert len(df) == 2
