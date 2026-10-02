@@ -392,7 +392,9 @@ _BuildListEntry = dict[str, str | None]
 #   SUM of integers int128, unnamed aggregates named by DuckDB, DESC nulls last).
 # 1.74.0 -> 1.75.0: card.json is the declared DatasetCard, with license_declared,
 #   license_provider, license_mismatch and processing_declared (#955, additive).
-API_CONTRACT_VERSION = "1.75.0"
+# 1.75.0 -> 1.76.0: saved analyses record their SQL dialect and engine; a legacy-polars
+#   analysis answers 409 analysis_migration_required to run (#875, additive).
+API_CONTRACT_VERSION = "1.76.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
