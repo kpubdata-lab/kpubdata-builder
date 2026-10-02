@@ -133,6 +133,11 @@ class TestOutOfRangeValues:
         with pytest.raises(TabularError, match="supported range"):
             _load(tmp_path, [{"v": {"inner": 2**130}}])
 
+    def test_error_names_the_column(self, tmp_path: Path) -> None:
+        """#977: the scan loop wraps the range check with the column key."""
+        with pytest.raises(TabularError, match="column 'v'"):
+            _load(tmp_path, [{"other": 1, "v": 2**130}])
+
     def test_int128_boundary_values_load(self, tmp_path: Path) -> None:
         boundary = 2**127 - 1
         loaded, rows = _load(tmp_path, [{"v": boundary}, {"v": -boundary - 1}, {"v": 0}])
