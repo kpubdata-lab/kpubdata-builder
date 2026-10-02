@@ -299,19 +299,19 @@ class TestOutOfRangeValues:
 
     def test_int_beyond_128_bits(self) -> None:
         records: list[dict[str, JsonValue]] = [{"v": 2**130}]  # type: ignore[dict-item]
-        with pytest.raises(TabularError, match="supported range"):
+        with pytest.raises(TabularError, match="column 'v'.*supported range"):
             _ = records_to_dataframe(records)
 
     def test_negative_int_beyond_128_bits(self) -> None:
         records: list[dict[str, JsonValue]] = [{"v": -(2**130)}]  # type: ignore[dict-item]
-        with pytest.raises(TabularError, match="supported range"):
+        with pytest.raises(TabularError, match="column 'v'.*supported range"):
             _ = records_to_dataframe(records)
 
     def test_decimal_beyond_38_digits(self) -> None:
         from decimal import Decimal
 
         records: list[dict[str, JsonValue]] = [{"v": Decimal("1" + "0" * 38)}]  # type: ignore[dict-item]
-        with pytest.raises(TabularError, match="significant digits"):
+        with pytest.raises(TabularError, match="column 'v'.*significant digits"):
             _ = records_to_dataframe(records)
 
     def test_out_of_range_inside_a_nested_list(self) -> None:
