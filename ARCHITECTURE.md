@@ -46,7 +46,7 @@ Builder는 다음을 하지 않습니다.
 ### 3.3 Silver 단계
 
 - Bronze snapshot을 표 형태로 정렬
-- **단일 내부 tabular 엔진**으로 tabularize 수행 — 지금은 Polars, DuckDB 로 전환 중이다([ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 전환이 끝나면 `src/` 의 엔진은 DuckDB 하나다
+- **단일 내부 tabular 엔진**으로 tabularize 수행 — 지금은 Polars, DuckDB 로 전환 중이다([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 전환이 끝나면 `src/` 의 엔진은 DuckDB 하나다
 - schema validation, statistics, preview generation 수행
 
 ### 3.4 Gold 단계
@@ -155,7 +155,7 @@ build/{run_id}/
 
 - stage 구현은 `stages/bronze`, `stages/silver`, `stages/gold`에 분리합니다.
 - stage 흐름 제어는 `pipeline/orchestrator.py`가 담당합니다.
-- tabular 처리는 **단일 엔진**만 사용하며 dual-engine 전략은 두지 않습니다. 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중이고([ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md)), 전환 중의 비교는 `tests/parity/` 기준선으로만 하며 production 에 두 엔진을 남기지 않습니다.
+- tabular 처리는 **단일 엔진**만 사용하며 dual-engine 전략은 두지 않습니다. 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중이고([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md)), 전환 중의 비교는 `tests/parity/` 기준선으로만 하며 production 에 두 엔진을 남기지 않습니다.
 - run workspace는 `build/{run_id}/bronze/`, `silver/`, `gold/`로 고정해 재현성과 디버깅 가능성을 높입니다.
 
 ## 8. Builder-Studio 연결 원칙
@@ -195,12 +195,12 @@ scripts/publish_to_hf.py  →  scripts/pipeline/{fetch,transform,package,publish
 - GitHub Actions `publish-dataset.yml` 및 스케줄 워크플로에 연결된 **프로덕션 경로**다.
 - 해당 모듈에는 `DEPRECATED` 표시가 붙어 있으며, 프로덕션 호환을 위해서만 유지한다.
 - 이 경로는 DuckDB 전환 뒤에도 마지막 config 가 옮겨질 때까지 Polars 를 쓴다
-  ([ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md) D1). 대기오염정보 게시는 멈춰 있다
+  ([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md) D1). 대기오염정보 게시는 멈춰 있다
   (`scheduled-air-quality.yml` disabled, #759).
 
 ### 9.3 통합 계획
 
-**결정: [ADR 0018](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0018-legacy-publish-pipeline.md) 선택지 C** (소유자, 2026-09-30) — BuildSpec
+**결정: [ADR 0018](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0018-legacy-publish-pipeline.md) 선택지 C** (소유자, 2026-09-30) — BuildSpec
 의 빈 곳을 채우고 config 를 하나씩 옮긴다. 레거시 코드는 마지막 config 가 옮겨질 때까지
 남고, 두 경로가 공존하는 동안 #688 의 게이트가 둘 다를 덮는다. 컬럼 선택과 행 필터는
 Gold 에서 선언한다(#659 선택지 a) — Silver 는 컬럼을 모두 보존한다.

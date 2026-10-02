@@ -11,10 +11,10 @@
 3. **Manifest schema는 Builder가 소유합니다.**
 4. **Publish workflow는 Builder가 실행하고 Studio는 요청합니다.**
 5. **Studio는 BuildSpec 계약이나 파이프라인 로직을 재정의할 수 없습니다.**
-6. **Builder는 Medallion stage(Bronze/Silver/Gold), staging layout, stage promotion rules, canonical tabular engine(지금 Polars, DuckDB 로 전환 중 — [ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))을 소유합니다. Studio는 stage-specific preview 요청과 stage artifact 표시를 할 수 있지만, stage transform을 구현하거나 promotion rule을 재정의해서는 안 됩니다.**
+6. **Builder는 Medallion stage(Bronze/Silver/Gold), staging layout, stage promotion rules, canonical tabular engine(지금 Polars, DuckDB 로 전환 중 — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))을 소유합니다. Studio는 stage-specific preview 요청과 stage artifact 표시를 할 수 있지만, stage transform을 구현하거나 promotion rule을 재정의해서는 안 됩니다.**
 7. **Builder는 Silver/Gold artifact에 대한 read-only SQL sandbox를 소유합니다. Studio는 명시적인 query 요청과 결과 표시를 담당합니다.**
-8. **Builder는 Provider credential의 해석·연결 테스트와 수명 규칙을 소유합니다.** 단일 사용자 배포에서는 stable principal별로 암호화 저장하고, 다중 사용자 배포(`multi_user_mode()`)에서는 요청·작업이 도는 동안만 두고 영속 저장하지 않습니다([ADR 0012 개정](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0012-provider-credential-boundary.md), [ADR 0020](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0020-credential-lifetime-by-deployment.md)). **Studio는 raw credential을 저장하지 않고 Builder API에 입력한 뒤 metadata만 표시합니다.**
-9. **Builder는 wire 어휘를 소유합니다.** 상태 축(`AccessStatus` 등)과 카탈로그 어휘는 Builder 가 정의하고 kpubdata 값을 명시적으로 매핑합니다(`service/vocabulary.py`, #831). **Studio는 Builder HTTP/OpenAPI 계약만 소비하며 kpubdata 의 구현 세부(모듈·상수·저장소 경로)를 참조하지 않습니다** (kpubdata [ADR 0007](https://github.com/yeongseon/kpubdata/blob/main/docs/adrs/0007-independence-rules.md) Rule 8·9).
+8. **Builder는 Provider credential의 해석·연결 테스트와 수명 규칙을 소유합니다.** 단일 사용자 배포에서는 stable principal별로 암호화 저장하고, 다중 사용자 배포(`multi_user_mode()`)에서는 요청·작업이 도는 동안만 두고 영속 저장하지 않습니다([ADR 0012 개정](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0012-provider-credential-boundary.md), [ADR 0020](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0020-credential-lifetime-by-deployment.md)). **Studio는 raw credential을 저장하지 않고 Builder API에 입력한 뒤 metadata만 표시합니다.**
+9. **Builder는 wire 어휘를 소유합니다.** 상태 축(`AccessStatus` 등)과 카탈로그 어휘는 Builder 가 정의하고 kpubdata 값을 명시적으로 매핑합니다(`service/vocabulary.py`, #831). **Studio는 Builder HTTP/OpenAPI 계약만 소비하며 kpubdata 의 구현 세부(모듈·상수·저장소 경로)를 참조하지 않습니다** (kpubdata [ADR 0007](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/adrs/0007-independence-rules.md) Rule 8·9).
 
 ## 3. 책임 분리표
 

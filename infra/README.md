@@ -22,7 +22,7 @@ az deployment group create \
   --resource-group kpubdata-builder-rg \
   --template-file infra/main.bicep \
   --parameters \
-    imageName=ghcr.io/yeongseon/kpubdata-builder:latest \
+    imageName=ghcr.io/kpubdata-lab/kpubdata-builder:latest \
     apiKey=$(az keyvault secret show --vault-name <kv> --name builder-api-key --query value -o tsv) \
     allowedOrigins=https://studio.example.com \
     containerCpu=1.0 \

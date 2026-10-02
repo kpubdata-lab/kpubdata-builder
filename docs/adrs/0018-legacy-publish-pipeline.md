@@ -2,7 +2,7 @@
 
 - 상태: 승인됨(Accepted) — 2026-09-30 소유자 결정, **선택지 C 채택**
 - 관련 이슈: #636, #659, #688
-- 관련 문서: [ADR 0003 — persistent build store](./0003-persistent-build-store.md), [BUILD_SPEC.md](../BUILD_SPEC.md), [DATA_FRESHNESS.md](https://github.com/yeongseon/kpubdata-builder/blob/main/DATA_FRESHNESS.md)
+- 관련 문서: [ADR 0003 — persistent build store](./0003-persistent-build-store.md), [BUILD_SPEC.md](../BUILD_SPEC.md), [DATA_FRESHNESS.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/DATA_FRESHNESS.md)
 
 ## 맥락
 

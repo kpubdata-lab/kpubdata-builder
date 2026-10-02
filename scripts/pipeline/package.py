@@ -136,7 +136,7 @@ print(df.head())
 
 ## Source
 
-This dataset was generated using [kpubdata](https://github.com/yeongseon/kpubdata)
+This dataset was generated using [kpubdata](https://github.com/kpubdata-lab/kpubdata)
 from public data APIs on data.go.kr.
 {attribution_block}"""
 

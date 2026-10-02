@@ -2,9 +2,9 @@
 
 **KPubData Builder is a reproducible dataset build and warehouse layer built on KPubData.**
 
-> The KPubData family: [KPubData](https://github.com/yeongseon/kpubdata) is a standalone public-data access SDK, **KPubData Builder** is a downstream consumer of its public API, and [KPubData Studio](https://github.com/yeongseon/kpubdata-studio) is a visual workspace for Builder. Dependencies run one way: Studio → Builder → KPubData. The repository, the Python package and the CLI are named `kpubdata-builder`.
+> The KPubData family: [KPubData](https://github.com/kpubdata-lab/kpubdata) is a standalone public-data access SDK, **KPubData Builder** is a downstream consumer of its public API, and [KPubData Studio](https://github.com/kpubdata-lab/kpubdata-studio) is a visual workspace for Builder. Dependencies run one way: Studio → Builder → KPubData. The repository, the Python package and the CLI are named `kpubdata-builder`.
 
-It sits atop [kpubdata](https://github.com/yeongseon/kpubdata) and runs a Medallion pipeline: Bronze (raw) → Silver (typed/normalized) → Gold (exportable). BuildSpec is the declarative contract that ensures reproducibility — the same spec produces the same output.
+It sits atop [kpubdata](https://github.com/kpubdata-lab/kpubdata) and runs a Medallion pipeline: Bronze (raw) → Silver (typed/normalized) → Gold (exportable). BuildSpec is the declarative contract that ensures reproducibility — the same spec produces the same output.
 
 [**📘 한국어**](./README.md)
 
@@ -76,7 +76,7 @@ kpubdata-builder serve --host 0.0.0.0 --port 8000
 The pipeline runs through three stages:
 
 - **Bronze**: fetch raw data via kpubdata; preserve source snapshots byte-for-byte
-- **Silver**: normalize and validate; compute statistics (the tabular engine is Polars today and moving to DuckDB — [ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))
+- **Silver**: normalize and validate; compute statistics (the tabular engine is Polars today and moving to DuckDB — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md))
 - **Gold**: compose Silver output into split-ready, export-ready packages
 
 Execution artifacts are organized as:
@@ -100,15 +100,15 @@ build/{run_id}/
 
 ## Supported data
 
-KPubData Builder uses all Providers and Datasets that kpubdata supports. See [kpubdata's SUPPORTED_DATA.md](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md) for coverage.
+KPubData Builder uses all Providers and Datasets that kpubdata supports. See [kpubdata's SUPPORTED_DATA.md](https://github.com/kpubdata-lab/kpubdata/blob/main/SUPPORTED_DATA.md) for coverage.
 
 ## KPubData Product Family
 
 | Package | Role |
 |---|---|
-| [kpubdata](https://github.com/yeongseon/kpubdata) | Public data access and normalization SDK (usable on its own) |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | Public data access and normalization SDK (usable on its own) |
 | **kpubdata-builder** (KPubData Builder) | Builds reproducible datasets and table snapshots with KPubData |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | Visual workspace for Builder |
+| [kpubdata-studio](https://github.com/kpubdata-lab/kpubdata-studio) | Visual workspace for Builder |
 
 ---
 

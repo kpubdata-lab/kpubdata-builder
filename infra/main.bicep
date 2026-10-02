@@ -11,12 +11,12 @@
 //     --resource-group <rg> \
 //     --template-file infra/main.bicep \
 //     --parameters \
-//       imageName=ghcr.io/yeongseon/kpubdata-builder:latest \
+//       imageName=ghcr.io/kpubdata-lab/kpubdata-builder:latest \
 //       apiKey=<secret> \
 //       azureFilesShareName=builder-data
 
 @description('Container image to deploy.')
-param imageName string = 'ghcr.io/yeongseon/kpubdata-builder:latest'
+param imageName string = 'ghcr.io/kpubdata-lab/kpubdata-builder:latest'
 
 @description('Builder API key (X-API-Key). Required — fail-closed if empty.')
 @secure()

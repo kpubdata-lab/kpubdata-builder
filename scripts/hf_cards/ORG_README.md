@@ -39,16 +39,16 @@ No feature engineering, no opinions. Just honest, well-documented government dat
 [data.go.kr API] → [kpubdata SDK] → [kpubdata-builder pipeline] → [HuggingFace Dataset]
 ```
 
-1. **[kpubdata](https://github.com/yeongseon/kpubdata)** — Python SDK that handles API auth, pagination, and response parsing for Korean public data portals
-2. **[kpubdata-builder](https://github.com/yeongseon/kpubdata-builder)** — Pipeline that fetches, transforms, validates, and publishes datasets to HuggingFace
+1. **[kpubdata](https://github.com/kpubdata-lab/kpubdata)** — Python SDK that handles API auth, pagination, and response parsing for Korean public data portals
+2. **[kpubdata-builder](https://github.com/kpubdata-lab/kpubdata-builder)** — Pipeline that fetches, transforms, validates, and publishes datasets to HuggingFace
 
 ## Contributing
 
 We welcome contributions! If there's a Korean public dataset you'd like to see on HuggingFace:
 
 1. Check if the source API is available on [data.go.kr](https://www.data.go.kr)
-2. Open an issue on [kpubdata-builder](https://github.com/yeongseon/kpubdata-builder/issues)
-3. Or submit a PR with a new dataset config (see [publishing standards](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/hf-publishing-standards.md))
+2. Open an issue on [kpubdata-builder](https://github.com/kpubdata-lab/kpubdata-builder/issues)
+3. Or submit a PR with a new dataset config (see [publishing standards](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/hf-publishing-standards.md))
 
 ## License
 

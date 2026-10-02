@@ -280,4 +280,4 @@ cause.retryable, cause.provider 등 메타데이터는 ExecutionError.__cause__�
 ### KPubData Product Family
 | 저장소 | 문서 | 설명 |
 |:---|:---|:---|
-| [kpubdata](https://github.com/yeongseon/kpubdata) | exceptions.py | Core 예외 계층 정의 |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | exceptions.py | Core 예외 계층 정의 |

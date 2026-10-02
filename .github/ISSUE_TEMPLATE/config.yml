@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 질문 / 토론
-    url: https://github.com/yeongseon/kpubdata-builder/discussions
+    url: https://github.com/kpubdata-lab/kpubdata-builder/discussions
     about: 버그·기능 제안이 아닌 사용법 질문이나 아이디어 토론은 여기서 나눠주세요.
   - name: KPubData 코어 저장소
-    url: https://github.com/yeongseon/kpubdata
+    url: https://github.com/kpubdata-lab/kpubdata
     about: 데이터 수집/정규화(provider) 관련 이슈는 코어 저장소에 등록해주세요.

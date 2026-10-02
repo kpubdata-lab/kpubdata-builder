@@ -220,7 +220,7 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: yeongseon/kpubdata/.github/actions/release-freeze@main
+      - uses: kpubdata-lab/kpubdata/.github/actions/release-freeze@main
         with:
           github_token: ${{ github.token }}
 

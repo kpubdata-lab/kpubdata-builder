@@ -1,15 +1,15 @@
 # 로드맵 — kpubdata-builder
 
 > **이 문서는 작업 진행상태의 정본이 아니다.** 방향(NOW / NEXT / LATER)만 적는다.
-> Issue 의 Status · Priority · Epic · Target Release 는 GitHub Project 에서 관리한다 — [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 2.1절.
-> 데이터셋 지원 상태는 이 저장소가 소유하지 않는다 — [kpubdata 의 생성 문서](https://github.com/yeongseon/kpubdata/blob/main/SUPPORTED_DATA.md)가 기준이다(POLICY 3절).
+> Issue 의 Status · Priority · Epic · Target Release 는 GitHub Project 에서 관리한다 — [POLICY.md](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md) 2.1절.
+> 데이터셋 지원 상태는 이 저장소가 소유하지 않는다 — [kpubdata 의 생성 문서](https://github.com/kpubdata-lab/kpubdata/blob/main/SUPPORTED_DATA.md)가 기준이다(POLICY 3절).
 
 > **✅ 는 "그 범위의 작업이 끝났다" 는 뜻이고, 릴리스 여부가 아니다.**
 >
 > 선언과 태그는 이제 맞는다 — `pyproject.toml` 의 `0.4.0` 과 태그·GitHub Release
 > `v0.4.0`(2026-09-28). 그래도 **로드맵 번호와 패키지 버전은 다른 것을 센다.** 아래
 > v0.5 는 작업 범위의 이름이고, 그 작업이 담긴 릴리스 번호가 아니다. 어느 릴리스에
-> 무엇이 들어갔는지는 [CHANGELOG](https://github.com/yeongseon/kpubdata-builder/blob/main/CHANGELOG.md) 가 기준이다.
+> 무엇이 들어갔는지는 [CHANGELOG](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/CHANGELOG.md) 가 기준이다.
 >
 > 둘이 다시 어긋나지 않게 **게이트가 막는다**(#690). `scripts/check_version_consistency.py`
 > 가 `pyproject.toml` 을 정본으로 CHANGELOG 와 git 태그를 대조하고, 개발 버전
@@ -109,12 +109,12 @@ Plugin 생태계와 고급 빌드 기능.
 작업 범위의 이름이고 릴리스 번호가 아니다. 다음 Builder·Studio 릴리스는 2026-10 창
 (10/26–11/01) 이다 — kpubdata 호환성 문서 §5.1.
 
-- 🔄 **DuckDB 로 tabular 엔진 전환** — [ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md),
+- 🔄 **DuckDB 로 tabular 엔진 전환** — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md),
   #864–#877. 단계마다 `tests/parity/` 기준선과 같아야 한다. 끝나면 `src/` 의 엔진은
   DuckDB 하나이고 레거시 publish 경로만 Polars 를 쓴다. 다중 테이블 SQL(#704)은 그 다음
-- 🔄 **배포 형태에 따른 자격 증명 수명** — [ADR 0020](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0020-credential-lifetime-by-deployment.md),
+- 🔄 **배포 형태에 따른 자격 증명 수명** — [ADR 0020](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0020-credential-lifetime-by-deployment.md),
   ADR 0012 개정. 다중 사용자 배포는 키를 저장하지 않고 소유권을 강제한다
-- 🔄 **레거시 publish 파이프라인 이관** — [ADR 0018](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0018-legacy-publish-pipeline.md)
+- 🔄 **레거시 publish 파이프라인 이관** — [ADR 0018](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0018-legacy-publish-pipeline.md)
   선택지 C: config 를 하나씩 BuildSpec 으로 옮긴다
 - ✅ kpubdata 0.8 핀 (`>=0.8.0,<0.9`, #882), Builder 소유 wire 어휘(#831), kpubdata
   private import 게이트(#830)
@@ -123,5 +123,5 @@ Plugin 생태계와 고급 빌드 기능.
 
 ## ADR 인덱스
 
-ADR 목록과 상태는 [docs/adrs/README.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/README.md) 한 곳에서 관리한다 — 이 문서에
+ADR 목록과 상태는 [docs/adrs/README.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/README.md) 한 곳에서 관리한다 — 이 문서에
 사본을 두면 어긋난다(0017–0021 이 빠져 있었고, 0008·0011 의 상태가 달랐다).

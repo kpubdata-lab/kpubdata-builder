@@ -166,5 +166,5 @@ exporter는 레지스트리 기반 플러그인이며, 서드파티 exporter를 
 ### KPubData Product Family
 | 저장소 | 문서 | 설명 |
 | :--- | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | [PRD.md](https://github.com/yeongseon/kpubdata/blob/main/PRD.md) | 코어 제품 요구사항 |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | [PRD.md](https://github.com/yeongseon/kpubdata-studio/blob/main/PRD.md) | 스튜디오 제품 요구사항 |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | [PRD.md](https://github.com/kpubdata-lab/kpubdata/blob/main/PRD.md) | 코어 제품 요구사항 |
+| [kpubdata-studio](https://github.com/kpubdata-lab/kpubdata-studio) | [PRD.md](https://github.com/kpubdata-lab/kpubdata-studio/blob/main/PRD.md) | 스튜디오 제품 요구사항 |

@@ -1,7 +1,7 @@
 site_name: "KPubData Builder"
-site_url: "https://yeongseon.github.io/kpubdata-builder/"
-repo_url: "https://github.com/yeongseon/kpubdata-builder"
-repo_name: "yeongseon/kpubdata-builder"
+site_url: "https://kpubdata-lab.github.io/kpubdata-builder/"
+repo_url: "https://github.com/kpubdata-lab/kpubdata-builder"
+repo_name: "kpubdata-lab/kpubdata-builder"
 
 theme:
   name: material

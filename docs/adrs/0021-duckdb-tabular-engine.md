@@ -163,7 +163,7 @@ DuckDB `memory_limit` 만으로 프로세스 RSS 가 묶인다고 보지 않는�
 [15] Polars runtime removal         #876
 [16] docs / API contract / 배포     #877
 → #704 multi-table SQL (전환 뒤)
-Studio 후속: yeongseon/kpubdata-studio#565
+Studio 후속: kpubdata-lab/kpubdata-studio#565
 ```
 
 ## 결과
