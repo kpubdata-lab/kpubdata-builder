@@ -325,6 +325,29 @@ def test_decimal_to_integer_truncates_toward_zero_as_polars_does() -> None:
     assert values == ["2", "0", "0", "-2", "3", "-3", "0"]
 
 
+def test_decimal_to_integer_at_int64_boundaries() -> None:
+    """#918/#975: the largest Int64 Decimal casts exactly; one past it nulls and audits."""
+    from decimal import Decimal as D
+
+    max64 = D(str(2**63 - 1))
+    min64 = D(str(-(2**63)))
+    over = D(str(2**63))
+
+    values, _ = _duckdb("DECIMAL(38,0)", [max64, min64, over], "int")
+
+    # Exact boundary values survive; one past BIGINT is null (TRY_CAST), caught by audit.
+    assert values[0] == str(2**63 - 1)
+    assert values[1] == str(-(2**63))
+    assert values[2] is None
+
+
+def test_decimal_to_integer_null_passes_through() -> None:
+    """#975: a null Decimal stays null; the audit's nulls_before == nulls_after."""
+    values, _ = _duckdb("DECIMAL(38,2)", [None, None], "int")
+
+    assert values == [None, None]
+
+
 def test_a_cast_that_nulls_values_is_reported() -> None:
     """R4/R5: no silent cast-to-null — the audit sees every null a cast introduced."""
     connection = duckdb.connect()
