@@ -37,7 +37,7 @@ release notes.
 | **PR titles** | English (Conventional Commits) — a squash merge turns it into a commit |
 | CHANGELOG and release notes | English |
 | **Governance documents** (`AGENTS.md`, `CONTRIBUTING.md`) | English |
-| **Implementation contracts** (`API_CONTRACT.md`, `EXPORT_MODEL.md`) | English — both are still Korean; translation is #971 |
+| **Implementation contracts** (`API_CONTRACT.md`, `EXPORT_MODEL.md`) | English |
 | **Design rationale** (`VALIDATION.md`, `ARCHITECTURE.md`, ADRs) | Korean |
 | **README** | Korean first, with an English section in the same file |
 | **Issue titles** | English |

@@ -1,484 +1,232 @@
-# API 계약 — KPubData Builder
+# API Contract — KPubData Builder
 
-## 1. 단일 소스
+## 1. Single Source of Truth
 
-KPubData Builder(패키지 `kpubdata-builder`) HTTP wire 계약의 단일 소스는 [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml)입니다.
+The single source of truth for KPubData Builder's (package `kpubdata-builder`) HTTP wire contract is [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml).
 
-- endpoint, request body, response body, status code, security scheme은 OpenAPI 문서를 기준으로 합니다.
-- `contract/builder-api.yaml`의 `info.version`은 `kpubdata_builder.service.API_CONTRACT_VERSION`과 일치해야 합니다.
-- `tests/unit/test_service_contract.py`가 버전 일치, 정적 route/status 일치, 실제 `dispatch()` 응답의 wire-level conformance를 검증합니다.
-- Studio 같은 소비자는 이 문서가 아니라 OpenAPI SSOT와 `GET /version`을 기준으로 호환성을 판단합니다.
-- 버전 상승·Studio 호환 범위·release freeze 절차는 [ADR 0013](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0013-api-contract-release-policy.md)을 따릅니다.
+- Endpoints, request bodies, response bodies, status codes and security schemes follow the OpenAPI document.
+- `info.version` in `contract/builder-api.yaml` must match `kpubdata_builder.service.API_CONTRACT_VERSION`.
+- `tests/unit/test_service_contract.py` verifies the version match, static route/status alignment, and wire-level conformance of actual `dispatch()` responses.
+- Consumers like Studio base compatibility on the OpenAPI SSOT and `GET /version`, not on this document.
+- Version bumps, Studio compatibility ranges, and release freeze procedures follow [ADR 0013](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0013-api-contract-release-policy.md).
 
-### 계약 버전 요약
+### Contract Version Summary
 
-- `main`의 계약 버전은 항상 stable SemVer이며 OpenAPI와 코드가 같은 값을 사용합니다.
-- additive wire 변경은 minor, 기존 의미를 유지하는 계약 오류 수정은 patch, breaking 변경은 major입니다.
-- example·설명·내부 refactor처럼 wire가 같으면 버전을 올리지 않습니다.
-- 위 두 줄은 **CI 가 강제한다**(#693). PR 마다 `scripts/check_contract_compat.py` 가 base
-  브랜치의 계약과 비교해, 규범적 변경(설명·summary·example·`x-*` 이외)에 `info.version` 이
-  오르지 않았거나, operation·status code·media type·property·schema·enum 값 제거, 타입·`$ref`
-  변경, 새 필수 parameter 같은 **breaking 변경이 major 상승 없이** 들어오면 실패한다. 의도한
-  breaking 변경의 명시적 승인은 major 상승 자체다.
-- Studio는 exact equality가 아니라 같은 major와 기능별 최소 SemVer를 확인합니다. 새 operation을
-  실제로 소비할 때만 schema/client와 최소 기능 버전을 갱신합니다.
-- Epic #484 완료는 개발 중 버전 변경을 미루는 지점이 아니라 최종 계약을 freeze하고 release
-  manifest/tag에 기록하는 지점입니다.
+- The contract version on `main` is always a stable SemVer; the OpenAPI document and the code use the same value.
+- Additive wire changes are minor, contract-error fixes that preserve existing semantics are patch, breaking changes are major.
+- Same-wire changes (examples, descriptions, internal refactors) do not bump the version.
+- The two rules above are **CI-enforced** (#693). On every PR, `scripts/check_contract_compat.py` compares against the base branch's contract and fails when a normative change (anything other than description, summary, example, `x-*`) does not raise `info.version`, or when a breaking change — removing an operation, status code, media type, property, schema or enum value; changing a type or `$ref`; adding a new required parameter — arrives without a major bump. The explicit approval of an intended breaking change is the major bump itself.
+- Studio checks the same major plus a per-feature minimum SemVer, not exact equality. It bumps its schema/client and minimum feature version only when it actually consumes a new operation.
+- Completing Epic #484 is the point to freeze the final contract and record it in the release manifest and tag, not to defer version changes during development.
 
-### 클라이언트 호환 규칙 (#814)
+### Client Compatibility Rules (#814)
 
-응답을 읽는 쪽이 지켜야 하는 규칙입니다. 서버 쪽 규칙(위)과 짝을 이룹니다.
+These are the rules the reading side follows. They pair with the server-side rules above.
 
-- **응답에는 minor 버전마다 선택 필드가 더해질 수 있습니다.** 모르는 필드는 무시합니다.
-  계약의 `additionalProperties: false` 는 *이 버전의 Builder 가 보내는 것*을 서술할 뿐,
-  클라이언트가 추가 필드를 거부하라는 뜻이 아닙니다. 응답 파서를 strict 하게 만들면 additive
-  변경에 깨집니다 — 1.30.0 의 `logical_type`/`wire_encoding` 추가 때 Studio 의
-  `silverColumnInfoSchema.strict()` 가 실제로 그랬습니다(#735).
-- **필수 필드의 이름과 타입은 다음 major 전까지 바뀌지 않습니다.** 필수 필드가 없거나 타입이
-  다르면 클라이언트는 여전히 거부합니다. 관대함은 모르는 필드에만 적용됩니다.
-- 모르는 enum 값(예: 새 `wire_encoding`)은 원문으로 다루고, 숫자로 추측하지 않습니다.
-- `logical_type: identifier`(1.61.0, #702)는 kpubdata 명세가 `semantic_kind: code` 로 선언한
-  텍스트 컬럼입니다(법정동코드, PNU, 우편번호). `wire_encoding` 은 항상 `string` 이고, 클라이언트는
-  이 값을 자동으로 `Number()` 로 바꾸지 않습니다 — 앞자리 0 이 사라지고 JOIN 이 어긋납니다.
-  어떤 컬럼이 identifier 인지는 kpubdata 선언에서 오며, Builder 는 값을 보고 추정하지 않습니다.
+- **Minor versions may add optional fields to responses.** Unknown fields are ignored. The contract's `additionalProperties: false` describes *what this version of Builder sends*, not an instruction for the client to reject extra fields. A strict response parser breaks on additive changes — Studio's `silverColumnInfoSchema.strict()` did exactly that when 1.30.0 added `logical_type`/`wire_encoding` (#735).
+- **Required field names and types do not change until the next major.** A missing required field or a wrong type is still rejected. Leniency applies to unknown fields only.
+- Unknown enum values (e.g. a new `wire_encoding`) are treated as opaque text, not guessed as numbers.
+- `logical_type: identifier` (1.61.0, #702) is a text column the kpubdata spec declares as `semantic_kind: code` (legal district codes, PNU, postal codes). Its `wire_encoding` is always `string`; a client must not coerce it with `Number()` — leading zeros vanish and JOINs misalign. Which columns are identifiers comes from the kpubdata declaration; Builder never guesses from the values.
 
-이 규칙은 기계가 검사할 수 있게 fixture 로 내놓습니다. `contract/fixtures/responses.json` 은
-계약의 모든 2xx named response example 마다 세 가지 본문을 담습니다.
+These rules ship as fixtures so machines can check them. `contract/fixtures/responses.json` holds three bodies for every 2xx named response example in the contract:
 
-| 키 | 뜻 | 클라이언트 기대 |
+| Key | Meaning | Client expectation |
 | :--- | :--- | :--- |
-| `current` | 이 계약 버전이 보내는 그대로 | 통과 |
-| `with_additive_fields` | 속성을 선언한 모든 객체에 `future_optional_field` 를 더한 것(`additive_paths` 가 위치) | 통과 |
-| `required_type_broken` | 최상위 필수 필드 하나(`broken_path`)의 타입을 바꾼 것 | 거부 |
+| `current` | Exactly what this contract version sends | Pass |
+| `with_additive_fields` | `future_optional_field` added to every object that declares properties (`additive_paths` marks the location) | Pass |
+| `required_type_broken` | One top-level required field (`broken_path`) with its type changed | Reject |
 
-파일 머리의 `contract_version` 이 fixture 가 만들어진 계약 버전입니다. 이 파일은
-`scripts/generate_response_fixtures.py` 가 계약에서 생성하며, 손으로 고치지 않습니다.
-`tests/unit/test_response_fixtures.py` 가 커밋된 파일이 재생성 결과와 같은지, `current` 가 계약에
-맞는지, 추가 필드 본문은 strict 파서가 거부하고 관대한 파서는 받아들이는지, 필수 필드 타입 오류는
-관대한 파서도 거부하는지 확인합니다. 계약 example 을 바꾸면 스크립트를 다시 실행해 함께
-커밋합니다. Studio 계약 테스트는 이 파일을 읽어 자기 응답 스키마를 검사합니다(짝 이슈).
+`contract_version` in the file header is the contract version the fixtures were generated from. `scripts/generate_response_fixtures.py` generates this file from the contract; it is not hand-edited. `tests/unit/test_response_fixtures.py` checks that the committed file matches regeneration, that `current` conforms to the contract, that additive-field bodies are rejected by a strict parser and accepted by a lenient one, and that required-field type errors are rejected by both. When a contract example changes, re-run the script and commit both. Studio's contract tests read this file to check their own response schemas (companion issue).
 
-오류 응답은 같은 세 본문을 `error_fixtures` 에 따로 담습니다(1.72.0, #947, #951). 2xx 를 성공
-파서에 대응시키는 클라이언트가 오류 본문을 받지 않도록 `fixtures` 와 나눴습니다. 모든 non-2xx
-named example 이 한 번씩 들어갑니다 — operation 자체 응답은 `operation_id`/`method`/`path`/`status`
-로, 공유 응답(`components.responses`: `Unauthorized`, `SignupNotApproved` 등)은 `response`/`status`
-로 한 번만. 예: `saveRevision`·`revertRevision` 409 `RevisionConflict`(`current_revision` 포함),
-`SignupNotApproved` 403 `SignupPending`/`SignupRejected`. `SignupNotApproved` 는 operation 마다
-붙이지 않고(이미 자기 403 을 선언한 operation 이 많다) 모든 인증된 operation 이 낼 수 있다고
-`bearerAuth` 와 `Error.code` 에 적었으며, 상태 코드는 `x-status` 로 둡니다.
+Error responses carry the same three bodies separately in `error_fixtures` (1.72.0, #947, #951), split from `fixtures` so a client that maps 2xx to a success parser never receives an error body. Every non-2xx named example appears once — operation-specific responses under `operation_id`/`method`/`path`/`status`, shared responses (`components.responses`: `Unauthorized`, `SignupNotApproved`, etc.) once under `response`/`status`. Examples: `saveRevision`/`revertRevision` 409 `RevisionConflict` (with `current_revision`), `SignupNotApproved` 403 `SignupPending`/`SignupRejected`. `SignupNotApproved` is not attached per-operation (many already declare their own 403); it is written on `bearerAuth` and `Error.code` as something any authenticated operation can return, with the status code in `x-status`.
 
-이 문서는 사람이 읽는 운영 가이드입니다. wire 형태를 옮겨 적지 않습니다.
+This document is the operational guide humans read. It does not restate wire shapes.
 
-### Builder 가 소유하는 어휘 (#831)
+### Builder-Owned Vocabulary (#831)
 
-계약의 enum 은 모두 Builder 의 것입니다 (Independence Rule 7). 값이 지금 kpubdata 와 같아도
-소유자는 Builder 이고, kpubdata 의 enum 값을 그대로 wire 로 흘려보내지 않습니다.
-`src/kpubdata_builder/service/vocabulary.py` 가 kpubdata 값마다 Builder 값을 명시적으로 매핑하고,
-매핑에 없는 값은 선언된 대체값으로 바꿉니다.
+Every enum in the contract belongs to Builder (Independence Rule 7). Even when the values currently match kpubdata's, Builder is the owner, and kpubdata enum values are never passed through to the wire as-is. `src/kpubdata_builder/service/vocabulary.py` explicitly maps each kpubdata value to a Builder value, and any value not in the mapping becomes the declared fallback.
 
-| 계약 필드 | Builder 어휘 | 현재 값의 출처 | 매핑에 없는 kpubdata 값 |
+| Contract field | Builder vocabulary | Current value source | kpubdata value not in mapping |
 | :--- | :--- | :--- | :--- |
-| `DatasetStatusAxes.access` | `AccessStatus` | kpubdata probe 분류 + `unknown` | `unknown` |
+| `DatasetStatusAxes.access` | `AccessStatus` | kpubdata probe classification + `unknown` | `unknown` |
 | `CatalogDataset.representation` | `Representation` | kpubdata `Representation` | `other` |
-| `CatalogDataset.operations[]` | `Operation` | kpubdata `Operation` | 목록에서 뺌 |
-| `CatalogQuerySupport.pagination` | `PaginationMode` | kpubdata `PaginationMode` | `query_support` 전체를 `null` |
+| `CatalogDataset.operations[]` | `Operation` | kpubdata `Operation` | Removed from the list |
+| `CatalogQuerySupport.pagination` | `PaginationMode` | kpubdata `PaginationMode` | `query_support` becomes `null` entirely |
 
-kpubdata 가 값을 더해도 wire 는 바뀌지 않습니다. 새 값을 어떻게 부를지는 Builder 가 이 매핑에서
-정하고, wire 에 값이 늘면 계약 버전을 올립니다. `tests/unit/test_wire_vocabulary.py` 가 매핑이
-계약 enum 과 같은지, 설치된 kpubdata 의 값을 모두 매핑하는지, 모르는 값이 대체값이 되는지 확인합니다.
+When kpubdata adds values, the wire does not change. Builder decides what to call the new value in this mapping; adding a value to the wire bumps the contract version. `tests/unit/test_wire_vocabulary.py` verifies the mapping matches the contract enums, covers every value of the installed kpubdata, and that unknown values become the fallback.
 
-## 2. 실행 모델
+## 2. Execution Model
 
-v0.4 Builder service는 동기식 실행 모델을 유지합니다.
+The v0.4 Builder service keeps a synchronous execution model.
 
-| 범위 | 모델 | 기준 |
+| Scope | Model | Reference |
 | :--- | :--- | :--- |
-| `/validate`, `/preview`, `/build`, 조회 계열 | 요청-응답 동기 처리 | ADR 0002 |
-| 비동기 job 모델 (`POST /builds`, `GET /builds/{run_id}`, `POST /builds/{run_id}/cancel`) | 접수 후 즉시 반환, 상태는 polling | ADR 0008 / #334 |
+| `/validate`, `/preview`, `/build`, read endpoints | Request-response, synchronous | ADR 0002 |
+| Async job model (`POST /builds`, `GET /builds/{run_id}`, `POST /builds/{run_id}/cancel`) | Accept and return immediately; poll for status | ADR 0008 / #334 |
 
-원칙:
+Principles:
 
-- `POST /build`는 현재 요청 안에서 파이프라인을 실행하고 성공/실패 결과를 반환합니다.
-- `POST /builds` / `GET /builds/{run_id}` / `POST /builds/{run_id}/cancel`은 ADR 0008(#334)의 상태 머신·멱등성·협력적 취소·부분 산출물 규약에 따라 도입되어 있습니다.
-- Medallion stage별 artifact/preview 조회가 필요해지면 OpenAPI SSOT에 stage-specific endpoint를 먼저 추가합니다.
+- `POST /build` runs the pipeline within the current request and returns the success or failure result.
+- `POST /builds` / `GET /builds/{run_id}` / `POST /builds/{run_id}/cancel` follow ADR 0008 (#334): state machine, idempotency, cooperative cancellation, and partial artifact rules.
+- When Medallion stage-specific artifact/preview access is needed, a stage-specific endpoint is added to the OpenAPI SSOT first.
 
-## 3. 응답 정책
+## 3. Response Policy
 
-자세한 schema와 status code는 OpenAPI SSOT를 따릅니다. 정책 수준의 의미는 다음과 같습니다.
+Detailed schemas and status codes follow the OpenAPI SSOT. The policy-level semantics are:
 
-| 상황 | 정책 |
+| Situation | Policy |
 | :--- | :--- |
-| 정상 요청 | endpoint별 성공 응답을 `200`으로 반환 |
-| BuildSpec 파싱/로드 실패 | 클라이언트가 수정할 수 있는 입력 오류로 처리 |
-| BuildSpec 검증 실패 | 문제 목록을 포함한 입력 오류로 처리 |
-| preview source 실패 | HTTP 요청 자체는 성공할 수 있으며, source별 `status`/`error`로 실패를 표현 |
-| build source 실패 | upstream/source 의존 실패로 처리하고 가능한 경우 manifest를 남김 |
-| run별 BuildSpec 조회 | `GET /builds/{run_id}/spec`으로 redaction된 canonical YAML과 그 bytes의 digest를 반환 |
-| built dataset 조회 | `GET /datasets`, `GET /datasets/{dataset_id}`, `GET /datasets/{dataset_id}/runs`로 `BuildSpec.dataset_id` 단위 grouping/latest run/run history를 반환 |
-| stage summary/preview | `GET /builds/{run_id}/stages`, `GET /builds/{run_id}/stages/{stage}`로 source별 Bronze/Silver/Gold 상태와 안전한 요약을 반환 |
-| structured quality/drift | `GET /builds/{run_id}/quality`로 run의 source별 `quality_results`/`schema_drift`를, `GET /datasets/{dataset_id}/quality/history`로 dataset의 run별 PASS/WARN/FAIL 집계 이력을 반환 |
-| read-only query | `POST /query`가 server-resolved Silver/Gold table을 logical `dataset`으로 등록하고 별도 capacity/timeout 안에서 실행 |
-| composition(join) | `BuildSpec.composition`이 있으면 `POST /build` 응답에 source별 `outcomes`와 별도로 `composition` 키(결합 결과)가 노출됨 |
-| 비동기 job 취소 | `POST /builds/{run_id}/cancel`이 `queued` job은 실행 전에 곧바로 `cancelled`로, `running` job은 `cancelling`을 거쳐 안전한 stage 경계에서 `cancelled`로 종결. 종단 job이거나 정상 종료로 확정된 job은 `409` |
-| 취소된 run의 부분 산출물 | 삭제하지 않고 partial manifest(`status: cancelled`, `partial: true`)와 함께 보존. 실행되지 않은 stage는 성공으로 기록하지 않으며, 취소를 실패로도 실패를 취소로도 표기하지 않음 |
-| 인증 실패 | `401`은 재인증 대상, `403`은 권한 요청 대상, `503`은 JWKS 일시 장애 대상. 같은 클라이언트의 `401`이 반복되면 `429`(`code: "auth_throttled"`, `retry_after_seconds`)로 전환되고, 이때는 인증을 시도하지 않고 즉시 거부한다 |
+| Successful request | Per-endpoint success response, `200` |
+| BuildSpec parse/load failure | Input error the client can fix |
+| BuildSpec validation failure | Input error including a problem list |
+| Preview source failure | The HTTP request itself can succeed; per-source `status`/`error` carries the failure |
+| Build source failure | Treated as an upstream/source dependency failure; manifest preserved where possible |
+| Per-run BuildSpec retrieval | `GET /builds/{run_id}/spec` returns the redacted canonical YAML and its bytes' digest |
+| Built dataset retrieval | `GET /datasets`, `GET /datasets/{dataset_id}`, `GET /datasets/{dataset_id}/runs` return grouping by `BuildSpec.dataset_id`, latest run, and run history |
+| Stage summary/preview | `GET /builds/{run_id}/stages`, `GET /builds/{run_id}/stages/{stage}` return per-source Bronze/Silver/Gold status with safe summaries |
+| Structured quality/drift | `GET /builds/{run_id}/quality` returns per-source `quality_results`/`schema_drift` for the run; `GET /datasets/{dataset_id}/quality/history` returns the dataset's per-run PASS/WARN/FAIL aggregate history |
+| Read-only query | `POST /query` registers the server-resolved Silver/Gold table as the logical `dataset` and runs within separate capacity/timeout limits |
+| Composition (join) | When `BuildSpec.composition` is present, the `POST /build` response exposes a separate `composition` key (the join result) alongside per-source `outcomes` |
+| Async job cancellation | `POST /builds/{run_id}/cancel` moves a `queued` job directly to `cancelled` before execution, and a `running` job through `cancelling` to `cancelled` at a safe stage boundary. Terminal jobs or jobs confirmed to have exited normally return `409` |
+| Partial artifacts of a cancelled run | Preserved with a partial manifest (`status: cancelled`, `partial: true`). Stages that never ran are not recorded as successes; a cancellation is never labelled a failure, nor a failure a cancellation |
+| Authentication failure | `401` means re-authenticate, `403` means request permission, `503` means a temporary JWKS outage. Repeated `401` from the same client becomes `429` (`code: "auth_throttled"`, `retry_after_seconds`) and is rejected without attempting authentication |
 
-정책과 구현이 다르면 구현 각주를 늘리지 말고 다음 순서로 정리합니다.
+When policy and implementation disagree, do not add implementation footnotes. Fix in this order:
 
-1. 실제 의도한 계약이면 `contract/builder-api.yaml`을 수정합니다.
-2. 구현 버그이면 service 코드와 conformance test를 수정합니다.
-3. Studio 영향이 있으면 Studio 클라이언트/문서 PR을 별도로 엽니다.
+1. If the intended contract is different, update `contract/builder-api.yaml`.
+2. If it is an implementation bug, fix the service code and conformance tests.
+3. If Studio is affected, open a separate Studio client/docs PR.
 
-### BuildSpec과 preview 계약 해석
+### BuildSpec and Preview Contract Interpretation
 
-- HTTP 요청의 `spec` 필드는 현재와 같이 YAML 문자열입니다. OpenAPI의 `BuildSpec`
-  컴포넌트는 그 YAML이 표현하는 canonical 도메인 구조를 타입 생성기가 읽을 수 있게
-  정의합니다.
-- `metadata`, `sources[].params`, `exports[].options` 값은 표준 JSON 호환 범위입니다.
-- source preview는 성공과 실패 모두 `source_key`, `status`, `error`, `schema`,
-  `sample`, `total_rows`, `statistics`를 반환합니다. source 실패는 HTTP 200 안에서
-  `status: failed`, 비어 있는 schema/sample, 0 기반 statistics, 문자열 `error`로
-  표현합니다.
-- 제거된 `transforms`, top-level `normalization_mode`,
-  `sources[].normalization_mode`는 계약 필드가 아니며 파서가 명시적으로 거부합니다.
-- 검증을 통과해 실행을 시작한 spec은 pipeline 진입 전에
-  `{output_root}/{run_id}/buildspec.yaml`에 원자 저장됩니다. legacy run처럼 snapshot이
-  없는 경우 API는 manifest에서 추측·복원하지 않고 unavailable `404`를 반환합니다.
-- snapshot redaction은 범용 매핑의 명시적인 credential 키에만 적용됩니다. inline secret은
-  `<redacted>`로 대체되므로 해당 snapshot만으로 credential이 필요한 실행을 그대로 재실행할
-  수는 없으며, credential은 환경/서비스 설정에서 다시 공급해야 합니다.
-- `spec_digest`는 원본 객체가 아니라 **실제로 저장된 redaction 후 canonical snapshot bytes**의
-  SHA-256입니다. credential 값만 다른 두 spec은 의도적으로 같은 snapshot/digest가 될 수 있습니다.
+- The `spec` field in HTTP requests is a YAML string, as now. The OpenAPI `BuildSpec` component defines the canonical domain structure that YAML represents, so type generators can read it.
+- `metadata`, `sources[].params`, `exports[].options` values are standard JSON-compatible.
+- Source preview returns `source_key`, `status`, `error`, `schema`, `sample`, `total_rows`, `statistics` for both success and failure. A failed source within HTTP 200 is represented by `status: failed`, empty schema/sample, zero-based statistics, and a string `error`.
+- The removed `transforms`, top-level `normalization_mode`, and `sources[].normalization_mode` are not contract fields; the parser rejects them explicitly.
+- A spec that passes validation is atomically saved to `{output_root}/{run_id}/buildspec.yaml` before entering the pipeline. For legacy runs without a snapshot, the API returns an unavailable `404` rather than guessing from the manifest.
+- Snapshot redaction applies only to explicitly-mapped credential keys. Inline secrets are replaced with `<redacted>`, so a snapshot alone cannot re-execute a run that needs credentials; credentials must be supplied again from environment/service configuration.
+- `spec_digest` is the SHA-256 of the **redacted canonical snapshot bytes actually stored**, not of the original object. Two specs that differ only in credential values intentionally share the same snapshot/digest.
 
-### Built Dataset과 Stage Summary/Preview (#488)
+### Built Dataset and Stage Summary/Preview (#488)
 
-- **identity**: built dataset의 identity는 오직 `BuildSpec.dataset_id`입니다. 디렉터리
-  이름이나 source catalog 이름으로 추측하지 않습니다. `buildspec.yaml` snapshot(#487)이
-  없는 legacy run의 dataset_id는 추측하지 않으며, `GET /datasets*` grouping에서
-  조용히 제외됩니다(`GET /builds`에는 계속 나타남).
-- **latest run**: 각 dataset은 principal이 접근 가능한 run 중 `finished_at` 기준
-  최신 run으로 요약됩니다. 동일 `finished_at`은 `run_id` 내림차순으로 결정적으로
-  타이브레이크합니다. ownership 필터링은 latest 선정보다 먼저 적용되므로, 동일
-  dataset_id를 가진 타 사용자의 run이 latest 후보나 metadata에 섞이지 않습니다.
-- **row_count**: multi-source dataset의 row_count는 단일 스칼라로 축약하지 않습니다.
-  `row_counts`(source_key별 맵)와 `total_row_count`(합계)를 함께 제공합니다.
-- **quality**: `#486`(구조화된 quality gate)이 선반영되지 않았으므로 `quality` 필드는
-  항상 `null`입니다. 현재의 log-only 품질 경고를 임의로 PASS/WARN/FAIL로 변환하지
-  않습니다 — 미평가는 PASS가 아닙니다.
-- **stage status**: `completed`/`failed`/`not_run`/`unavailable` 네 가지로 구분합니다.
-  파일시스템 존재만으로 성공을 추측하지 않고, manifest의 실패 기록과 sidecar
-  완전성을 함께 봐서 partial/failed run에서도 "Bronze 성공 → Silver 실패 → Gold
-  미실행" 같은 상태를 구분합니다.
-- **secret/path 비노출**: Bronze의 `fetch_params`/`provenance.fetch_params`, Gold
-  export의 `options`/`output_path`, 그리고 어떤 응답에서도 절대 filesystem 경로는
-  노출되지 않습니다. Silver `sample`은 build 시점에 이미 persist된 preview 상한
-  (기본 5행) 안에서만 반환되며 parquet 전체를 읽지 않습니다.
-- `dataset_id`는 slash/space 등 경로에 그대로 쓸 수 없는 문자를 포함할 수 있으므로,
-  `GET /datasets/{dataset_id}` 경로의 `dataset_id`는 클라이언트가 percent-encoding해야
-  합니다. `BuildSpec.dataset_id` 자체에는 이 API 때문에 새로운 제약을 추가하지
-  않았습니다.
+- **Identity**: a built dataset's identity is solely its `BuildSpec.dataset_id`. Directory names and source catalog names are never used to guess. Legacy runs without a `buildspec.yaml` snapshot (#487) have no guessable `dataset_id` and are silently excluded from `GET /datasets*` grouping (they still appear in `GET /builds`).
+- **Latest run**: each dataset is summarized by the run with the latest `finished_at` among runs the principal can access. Ties at the same `finished_at` are broken deterministically by descending `run_id`. Ownership filtering applies before latest-run selection, so another user's run with the same `dataset_id` never appears in latest candidates or metadata.
+- **row_count**: a multi-source dataset's row count is not collapsed to a single scalar. `row_counts` (a per-source_key map) and `total_row_count` (the sum) are provided together.
+- **quality**: the `quality` field is always `null` until #486 (structured quality gates) is implemented. Log-only quality warnings are not arbitrarily converted to PASS/WARN/FAIL — unevaluated is not PASS.
+- **stage status**: four states — `completed`/`failed`/`not_run`/`unavailable`. Success is never guessed from filesystem presence alone; manifest failure records and sidecar completeness are checked together so partial/failed runs still distinguish "Bronze succeeded → Silver failed → Gold never ran".
+- **Secret/path non-exposure**: Bronze `fetch_params`/`provenance.fetch_params`, Gold export `options`/`output_path`, and every response never expose filesystem paths. Silver `sample` is returned within the preview limit persisted at build time (default 5 rows) and does not read the full Parquet.
+- `dataset_id` can contain characters that cannot be used verbatim in a URL path (slashes, spaces), so clients must percent-encode the `dataset_id` in `GET /datasets/{dataset_id}`. No new constraint is added to `BuildSpec.dataset_id` itself for this API.
 
-### 구조화된 Quality/Schema Drift와 History (#486)
+### Structured Quality/Schema Drift and History (#486)
 
-- **정본은 manifest**: `quality_results`(source_key별 `QualityCheckResult` 목록)와
-  `schema_drift`(source_key별 `SchemaDriftFinding` 목록)는 build 시점에 manifest.json에
-  기록되며, `GET /builds/{run_id}/quality`는 이를 그대로 노출합니다. 별도로 다시
-  계산하지 않습니다.
-- **`availability`로 "0건 평가"와 "계산된 적 없음"을 구분(#514)**: 빈
-  `quality_results: {}`만으로는 rule이 없어서 0건인지, quality 단계 자체가 돌지
-  않았는지 구분할 수 없었습니다. `GET /builds/{run_id}/quality`는 이제
-  `availability`(`available`/`partial`/`unavailable`)와 `evaluated_checks`(정수)를
-  함께 반환합니다. `available`은 이 run이 시도한 모든 source(`manifest.inputs`)의
-  quality 결과가 있음을 뜻하며 `evaluated_checks`가 0일 수 있습니다(rule 미설정 등).
-  `partial`은 일부 source만 결과가 있는 경우(예: multi-source run에서 한 source의
-  Silver가 실패)입니다. `unavailable`은 결과가 전혀 없는 경우로, `quality_results`
-  필드 자체가 없는 legacy run(#486 이전)뿐 아니라, 필드는 있지만(`{}`) 시도한
-  source 중 하나도 결과가 없는 새 run도 포함합니다(예: 모든 source가 quality
-  단계 진입 전에 실패 — manifest writer는 quality가 하나도 계산되지 않았어도
-  빈 `{}`를 항상 기록하므로 실제로 발생할 수 있습니다). 이 필드는 additive이며
-  기존 `quality_results`/`schema_drift`
-  형태는 바뀌지 않습니다.
-- **PASS 포함 전체 보존**: `QualityCheckResult`는 실제로 평가된 check만 담되 PASS도
-  포함합니다. rule 미설정/평가 불가(컬럼 없음, denominator 0 등)는 결과에서 아예
-  제외됩니다 — PASS로 가장하지 않습니다.
-- **확장 규칙 조건 보존**: `range` 결과의 `threshold`는 `min`/`max`를,
-  `compare_columns` 결과는 `operator`/`right_column`을 구조화해 보존합니다. 컬럼은
-  존재하지만 dtype이 호환되지 않아 평가할 수 없는 경우에는 규칙을 생략하지 않고
-  선언된 severity의 WARN/FAIL과 안전한 `detail`을 기록합니다.
-- **WARN/FAIL gate**: WARN은 Build를 계속 진행시키고 결과만 기록합니다. FAIL은 해당
-  source를 Gold 진입 전에 실패시키며, 실패해도 이미 계산된 `quality_results`는
-  manifest에 보존됩니다.
-- **Preview/Build 동일 판정**: `POST /preview`의 각 `SourcePreview.quality_results`는
-  Build와 동일한 evaluator(`quality.evaluate_quality`) 결과입니다. Preview는 drift는
-  포함하지 않습니다(워크스페이스에 아무것도 쓰지 않으므로 이전 run과 비교할 대상이 없음).
-- **Schema drift 비교 범위**: `detect_drift`는 "직전 아무 run"이 아니라 **동일
-  dataset_id·source_key의 직전 "성공" run**과만 비교합니다. 다른 dataset/source의
-  silver와 비교해 가짜 drift를 만들지 않습니다.
-- **Quality History 집계**: `GET /datasets/{dataset_id}/quality/history`는 #488의
-  dataset→run 조회 helper를 재사용해 접근 가능한 run별로 pass/warn/fail count,
-  `evaluated_checks`, `rule_pass_rate`(`pass_count / evaluated_checks`,
-  `evaluated_checks == 0`이면 `null`), `validated_rows`를 반환합니다. `validated_rows`는
-  `QualityCheckResult.evaluated_rows`를 rule 수만큼 합산하지 않고, `#488`이 이미
-  정의한 `row_counts` 합계(소스별 Silver row_count) semantics를 재사용합니다.
-- **Legacy/partial/failed run**: manifest에 `quality_results`가 없는 legacy run은
-  `evaluated_checks=0, rule_pass_rate=null`로 표현됩니다 — 미평가를 "전부 PASS"로
-  해석하지 않습니다. partial/failed run도 structured 결과가 있으면 history에
-  포함됩니다(정책적으로 제외하지 않음).
-- **Ownership**: History/detail 모두 `/datasets/{dataset_id}`·`/datasets/{dataset_id}/runs`와
-  동일한 ownership semantics를 공유합니다. 동일 `dataset_id`라도 타 사용자의 run은
-  섞이지 않습니다.
-- **AI 해석은 gate에 영향 없음**: drift의 원인 해석(#448, advisory)이 존재하더라도
-  PASS/WARN/FAIL 판정이나 dataset quality 요약에는 관여하지 않습니다.
-- `GET /datasets`, `GET /datasets/{dataset_id}` 응답의 `quality` 필드는 여전히 항상
-  `null`입니다. 임의 종합 quality score를 만들지 않기 위한 의도적 설계이며, 구조화된
-  결과는 위 두 전용 엔드포인트로 조회합니다.
+- **The manifest is the source of truth**: `quality_results` (per-source_key list of `QualityCheckResult`) and `schema_drift` (per-source_key list of `SchemaDriftFinding`) are recorded in manifest.json at build time; `GET /builds/{run_id}/quality` exposes them as-is. Nothing is recomputed.
+- **`availability` distinguishes "zero checks" from "never computed" (#514)**: an empty `quality_results: {}` alone cannot tell whether there were no rules to evaluate or whether the quality stage never ran. `GET /builds/{run_id}/quality` now also returns `availability` (`available`/`partial`/`unavailable`) and `evaluated_checks` (an integer). `available` means every source the run attempted (`manifest.inputs`) has quality results, though `evaluated_checks` may be zero (no rules configured). `partial` means only some sources have results (e.g., one source's Silver failed in a multi-source run). `unavailable` means no results at all — including legacy runs predating #486 (no `quality_results` field) and new runs where the field exists (as `{}`) but no attempted source has a result (e.g., every source failed before the quality stage — the manifest writer always records an empty `{}` even when nothing was computed). This field is additive; the existing `quality_results`/`schema_drift` shapes are unchanged.
+- **Full preservation including PASS**: `QualityCheckResult` contains only checks that were actually evaluated, including PASS. Rules not configured or not evaluable (missing column, denominator zero) are excluded entirely — never faked as PASS.
+- **Extended rule condition preservation**: a `range` result's `threshold` preserves `min`/`max`; a `compare_columns` result preserves `operator`/`right_column`. When the column exists but the dtype is incompatible, the rule is not omitted — a WARN/FAIL at the declared severity is recorded with a safe `detail`.
+- **WARN/FAIL gate**: WARN lets the build continue and records the result. FAIL fails the source before Gold; the already-computed `quality_results` are still preserved in the manifest.
+- **Preview/Build same evaluation**: each `SourcePreview.quality_results` from `POST /preview` is the result of the same evaluator (`quality.evaluate_quality`) the build uses. Preview does not include drift (it writes nothing to the workspace, so there is nothing to compare against a previous run).
+- **Schema drift comparison scope**: `detect_drift` compares only against the previous **successful** run of the same `dataset_id` and `source_key`, not "any previous run". It never compares against another dataset/source's silver, which would create fake drift.
+- **Quality History aggregate**: `GET /datasets/{dataset_id}/quality/history` reuses #488's dataset-to-run lookup helpers to return per-run pass/warn/fail counts, `evaluated_checks`, `rule_pass_rate` (`pass_count / evaluated_checks`, `null` when `evaluated_checks == 0`), and `validated_rows` for accessible runs. `validated_rows` reuses the `row_counts` sum semantics #488 already defined (per-source Silver row_count), not a sum over `QualityCheckResult.evaluated_rows` multiplied by rule count.
+- **Legacy/partial/failed runs**: a legacy run without `quality_results` in its manifest is represented as `evaluated_checks=0, rule_pass_rate=null` — unevaluated is not interpreted as "all PASS". Partial and failed runs with structured results are included in history (not excluded by policy).
+- **Ownership**: History and detail share the same ownership semantics as `/datasets/{dataset_id}` and `/datasets/{dataset_id}/runs`. Another user's runs never mix in, even with the same `dataset_id`.
+- **AI interpretation does not affect gates**: even when drift cause interpretation (#448, advisory) exists, it does not participate in PASS/WARN/FAIL decisions or dataset quality summaries.
+- The `quality` field in `GET /datasets` and `GET /datasets/{dataset_id}` responses is still always `null`. This is intentional: no arbitrary composite quality score is invented; structured results live in the two dedicated endpoints above.
 
 ### Read-only Query (#504)
 
-- `/query`는 `dataset` physical relation을 최소 한 번 참조하는 단일 SELECT/CTE만
-  허용합니다. CTE의 `dataset` shadowing, recursive CTE, 외부 table/table function,
-  filesystem/network 접근, DML/DDL은 거부합니다.
-- query는 HTTP worker pool과 별도인 bounded capacity를 사용합니다. Query timeout은 child
-  process를 실제 종료하며 429/504 오류는 안정적인 `code`로 구분됩니다.
+- `/query` allows only a single SELECT/CTE referencing the `dataset` physical relation at least once. CTE `dataset` shadowing, recursive CTEs, external tables/table functions, filesystem/network access, and DML/DDL are rejected.
+- Queries use a bounded capacity separate from the HTTP worker pool. The query timeout actually terminates the child process; 429/504 errors are distinguished by stable `code` values.
 
-### Silver·Bronze 읽기의 선언된 PII (#900)
+### Declared PII in Silver and Bronze Reads (#900)
 
-Gold 는 선언된 PII(kpubdata `license.pii_columns` + BuildSpec `sources[].gold.pii_columns`)를
-마스킹하지만(#689) Silver·Bronze 는 원래 값을 보존한다(#611). 그래서 서비스가 Silver·Bronze 를
-읽는 경로는 모두 Gold 와 **같은 컬럼을 같은 방식으로** 가리거나 거부한다(계약 1.68.0).
+Gold masks declared PII (kpubdata `license.pii_columns` + BuildSpec `sources[].gold.pii_columns`) (#689) but Silver and Bronze preserve the original values (#611). So every service path that reads Silver or Bronze masks or refuses **the same columns in the same way** as Gold (contract 1.68.0).
 
-| 경로 | 동작 |
+| Path | Behaviour |
 | :--- | :--- |
-| `POST /query` `stage: silver` | 선언 컬럼을 마스킹한 Silver 사본 위에서 질의한다. `upper(col)`·`substr`·`WHERE col = '…'` 같은 식도 원래 값을 보지 못한다. 사본은 질의 엔진과 같은 `scan_builder_parquet` 로 읽어 DuckDB 가 파일 metadata 에 남긴 Builder dtype·실제 컬럼 이름(#891)을 되살린 뒤 쓰므로, 응답의 `columns`·`column_meta` 는 마스킹하지 않은 질의와 같다(all-null·Duration·Int128·zone 포함). 응답의 `masked_columns` 가 가린 컬럼을 적는다. `stage: gold` 는 빌드 때 이미 마스킹되어 변하지 않는다 |
-| `POST /preview` | 소스별 `sample`, `source_sample`(원본 필드명 — `schema.coalesce`·`rename` 을 거꾸로 따라간다), 그 컬럼의 `diffs` 를 가리고 `masked_columns` 를 적는다 |
-| `GET /builds/{run_id}/stages/silver/{source}` | `sample` 을 가리고 `masked_columns` 를 적는다. Bronze stage 상세에는 행이 없다 |
-| `GET /artifacts/{run_id}/{file_path}` | 선언 컬럼이 있는 소스의 `bronze/{source}/…`·`silver/{source}/…` 파일은 **전부 403 `declared_pii_withheld`**(`columns` 에 컬럼 이름만). Gold 파일과 manifest 는 그대로 내려간다 |
+| `POST /query` `stage: silver` | Queries run over a masked copy of Silver. Expressions like `upper(col)`, `substr`, `WHERE col = '…'` never see the original values. The copy is read with the same `scan_builder_parquet` the query engine uses, restoring the Builder dtypes and real column names DuckDB stored in file metadata (#891), so the response's `columns`/`column_meta` match an unmasked query (including all-null, Duration, Int128, zone). The response's `masked_columns` lists the masked columns. `stage: gold` is already masked at build time and does not change |
+| `POST /preview` | Masks each source's `sample`, `source_sample` (original field names — walking back through `schema.coalesce` and `rename`), and those columns' `diffs`; records `masked_columns` |
+| `GET /builds/{run_id}/stages/silver/{source}` | Masks `sample`, records `masked_columns`. Bronze stage detail has no rows |
+| `GET /artifacts/{run_id}/{file_path}` | `bronze/{source}/…` and `silver/{source}/…` files for sources with declared columns are **all 403 `declared_pii_withheld`** (with column names in `columns`). Gold files and the manifest are served as-is |
 
-- **마스킹 방식**은 Gold 와 같다(#902): 텍스트 값은 `[masked]`, 텍스트가 아닌 dtype 은 null,
-  null 은 null. `masked_columns` 는 실제로 가린 컬럼이 있을 때만 온다.
-- **어떤 컬럼을 가리는가**는 `stages/gold/pii.py` 의 `columns_withheld_from_silver` 하나가
-  정한다. Gold 가 쓰는 `declared_pii_columns` 선언 해석에서 `gold.publish_unmasked` 를 뺀 것이라,
-  Gold 에 평문으로 게시되는 컬럼만 읽기에서도 평문이다. `gold.select` 가 뺀 컬럼은 Gold 에는
-  없지만 Silver 에는 있으므로 가린다. `pii.allow_columns` 는 스캔 게이트의 스위치라 선언 컬럼을
-  풀지 않는다. 선언은 빌드와 같은 client factory 로 읽고, run manifest 의 `pii_masking.masked`
-  에 기록된 컬럼도 더한다 — 카탈로그가 나중에 선언을 빼도 그때 빌드한 run 이 풀리지 않는다.
-- **선언을 읽지 못하면 거부한다(fail closed)**: public_api 소스의 kpubdata 선언 조회가 실패하면
-  어느 컬럼이 개인정보인지 모른다(#688 "모르는 것은 허가가 아니다"). manifest 기록은 대신할 수
-  없다 — Gold 가 가린 것만 적혀 있어 `gold.select` 가 뺀 컬럼이나 Gold 까지 가지 못한 run 의
-  컬럼은 빠진다. 그래서 그 소스의 `/query`(`stage: silver`)·`/preview`·Bronze·Silver 파일
-  다운로드는 **503 `pii_declaration_unavailable`**(`dataset` 에 읽지 못한 데이터셋)로 거부하고,
-  Silver stage 상세는 메타데이터는 주되 `sample: []`, `sample_withheld:
-  pii_declaration_unavailable` 로 행을 뺀다(#892 의 `redistribution_forbidden` 과 같은 모양).
-  503 인 이유: 요청이 아니라 서버 쪽 조회가 일시적으로 실패한 것이라 다시 시도할 수 있다.
-  file·url 소스와 BuildSpec 만의 `gold.pii_columns` 는 조회가 필요 없어 영향이 없고, Gold 읽기도
-  그대로다. 조회가 성공했지만 결과가 달라진 경우에는 manifest 기록과의 합집합을 그대로 쓴다.
-- **원본 파일은 왜 거부인가**: `raw_records.jsonl`·`table.parquet`·`preview.json` 을 전송 중에
-  고쳐 쓰면 산출물이 아닌 파일을 산출물 이름으로 내보내게 된다. 가려진 표가 필요하면 Gold 를
-  받는다. Silver 가 없는 소스(Bronze 만 있는 경우)는 선언이 모두 있다고 보고 판단하고, 어느
-  소스인지 알 수 없는 stage 디렉터리는 run 의 모든 소스로 판단한다 — 모르는 것은 허가가 아니다.
-- **#892(재배포 게이트)와 같은 지점을 쓴다**: artifact 다운로드와 stage 상세는
-  `BuilderService.serve_artifact_file`·`get_run_stage_detail`, `/query` 는
-  `QueryApiService.query` — #892 가 약관 판정을 넣은 바로 그 자리에서, 약관 판정 **다음에**
-  돈다. `forbidden` 이면 아무것도 나가지 않으니 가릴 것도 없다. `/preview` 는 약관 판정이
-  fetch 전(스펙만으로)이고 PII 는 fetch 한 결과와 그 client 가 읽은 선언이 필요해서, 같은
-  `SpecApiService.preview` 안의 fetch 직후에 가린다. 정책 모듈은 합치지 않았다
-  (`service/redistribution.py` 와 `service/pii_reads.py`): 약관은 읽기를 **거부**하고, 선언은
-  읽기를 **가린다** — 답이 다르다.
-- warehouse 읽기·export·프로파일은 Gold 스냅샷을 읽으므로 이 변경의 대상이 아니다.
+- **Masking method** is the same as Gold's (#902): text values become `[masked]`, non-text dtypes become null, null stays null. `masked_columns` appears only when columns were actually masked.
+- **Which columns are masked** is decided by one function: `stages/gold/pii.py`'s `columns_withheld_from_silver`. It is the `declared_pii_columns` declaration interpretation Gold uses, minus `gold.publish_unmasked` — only columns published in plaintext in Gold are plaintext in reads. Columns removed by `gold.select` are absent from Gold but present in Silver, so they are masked. `pii.allow_columns` is a scan-gate switch and does not unmask declared columns. Declarations are read with the same client factory as the build, and columns recorded in the run manifest's `pii_masking.masked` are added — a later catalog removing a declaration does not unmask runs built while it existed.
+- **When the declaration cannot be read, refuse (fail closed)**: if the kpubdata declaration lookup for a public_api source fails, which columns are personal is unknown (#688 — "unknown is not permission"). The manifest record cannot substitute: it lists only what Gold masked, missing columns excluded by `gold.select` or columns from runs that never reached Gold. So that source's `/query` (`stage: silver`), `/preview`, and Bronze/Silver file downloads are **refused with 503 `pii_declaration_unavailable`** (with the unreadable dataset in `dataset`); Silver stage detail gives metadata but omits rows with `sample: []`, `sample_withheld: pii_declaration_unavailable` (the same shape as #892's `redistribution_forbidden`). 503 because the failure is a temporary server-side lookup, not a client error — it can be retried. File and url sources and BuildSpec-only `gold.pii_columns` need no lookup and are unaffected; Gold reads are also unchanged. When the lookup succeeds but the result has changed, the union with the manifest record is used as-is.
+- **Why the original files are refused, not masked in transit**: rewriting `raw_records.jsonl`, `table.parquet`, or `preview.json` on the fly would export files that are not the artifacts under artifact names. When a masked table is needed, take Gold's. Sources without Silver (Bronze-only) are judged against all declared columns available; a stage directory whose source cannot be determined is judged against all sources of the run — unknown is not permission.
+- **The same checkpoints as #892 (redistribution gate)**: artifact download and stage detail run through `BuilderService.serve_artifact_file` and `get_run_stage_detail`; `/query` through `QueryApiService.query` — right where #892 put the terms check, and **after** it. When `forbidden`, nothing leaves, so there is nothing to mask. `/preview` checks terms before fetch (from the spec alone) and PII after fetch (needing fetched results and the declarations the client read), so it masks within the same `SpecApiService.preview`, right after fetch. The policy modules were not merged (`service/redistribution.py` and `service/pii_reads.py`): terms **refuse** reads, declarations **mask** them — different answers.
+- Warehouse reads, exports and profiles read the Gold snapshot, so they are not in scope for this change.
 
 ### Composition/Join (#506)
 
-- `BuildSpec.composition`은 두 source의 검증된 Silver를 join해 별도 결합 Gold
-  dataset(`gold/{composition.name}/`)을 부가로 만듭니다. source별 독립 Gold는
-  그대로 유지되며, `composition`이 없는 기존 multi-source BuildSpec은 영향받지
-  않습니다.
-- `composition.join.left`/`right`가 참조하는 source는 `alias`를 반드시 선언해야
-  하고, `composition`을 쓰는 BuildSpec 안에서는 선언된 `alias` 값이 서로
-  달라야 합니다 — 이 규칙은 `composition`이 없는 BuildSpec에는 적용되지 않습니다.
-- alias 참조·`join.type`/`join.on_duplicate_key` 어휘 같은 구조 문제는
-  `validate_spec`이 스펙 파싱 직후 거부합니다. join key 컬럼의 존재 여부와 dtype
-  일치(완전 동일만 허용, 자동 캐스팅 없음)는 두 source가 각각 Silver를 통과해야
-  알 수 있으므로 빌드 파이프라인의 런타임 게이트가 담당합니다.
-- 양쪽 join key가 모두 중복 값을 가지면(many-to-many) 결과 행이 곱셈으로
-  폭증할 수 있습니다 — 기본 `on_duplicate_key: warn`은 결과를 만들고 경고를
-  남기며, `fail`은 composition을 실패 처리합니다.
-- `POST /build` 응답의 `composition` 키는 `{name, status, error}`이며
-  `status`는 `ok`/`failed`(join 실행 자체 실패)/`skipped`(참조한 source가
-  실패해 join을 시도조차 못함) 중 하나입니다. `composition`만 실패하고 모든
-  source가 성공해도 최상위 `error` 요약은 composition의 error에서 파생됩니다.
-- `manifest.json`의 `composition`(`CompositionProvenance`, additive)에는 join
-  조건과 좌우 원본 행 수·distinct key 수·결과 행 수가 그대로 기록되어 원천과
-  join 조건을 추적할 수 있습니다. legacy manifest는 이 필드가 없거나 null이며
-  "composition 미사용 run"으로 해석해야 합니다.
+- `BuildSpec.composition` joins the validated Silver of two sources and produces a separate combined Gold dataset (`gold/{composition.name}/`) as an addition. Per-source independent Gold is preserved; existing multi-source BuildSpecs without `composition` are unaffected.
+- Sources referenced by `composition.join.left`/`right` must declare an `alias`, and within a BuildSpec that uses `composition`, the declared `alias` values must differ — this rule does not apply to BuildSpecs without `composition`.
+- Structural problems — alias references, `join.type`/`join.on_duplicate_key` vocabulary — are rejected by `validate_spec` immediately after parsing. Join key column existence and dtype compatibility (exact match only, no automatic casting) require both sources to have passed Silver, so they are the build pipeline's runtime gate.
+- When both join keys have duplicate values (many-to-many), the output rows can multiply explosively — the default `on_duplicate_key: warn` produces the result and logs a warning; `fail` fails the composition.
+- The `composition` key in `POST /build` responses is `{name, status, error}` where `status` is one of `ok`/`failed` (the join itself failed)/`skipped` (a referenced source failed, so the join was never attempted). When only the composition fails and all sources succeed, the top-level `error` summary derives from the composition's error.
+- `manifest.json`'s `composition` (`CompositionProvenance`, additive) records the join conditions and both sides' row counts, distinct key counts, and output row count, so the sources and join conditions are traceable. Legacy manifests lack this field or have null — they are read as "runs without composition".
 
 ### Stable Owner Identity (#505)
 
-- display identity(사람이 읽는 라벨)와 persistent resource ownership identity를 분리합니다.
-  `manifest.json`의 `created_by`는 기존(#388) display/legacy 라벨 그대로 유지되며, 신규
-  `owner_id`(additive)가 ownership 판정에 쓰이는 canonical stable identity입니다.
-- `owner_id`는 principal 종류별로 domain-separated SHA-256 해시입니다. OIDC는
-  `sha256(kind + "\0" + issuer + "\0" + subject)`로 issuer/subject 전체(트렁케이션 없이)를
-  해시해 사용합니다 — 이메일/표시 이름이 바뀌어도 값이 바뀌지 않고, subject 앞부분이
-  우연히 겹치는 다른 사용자와도 절대 같아지지 않습니다. raw `sub`/이메일 등 민감한
-  claim은 owner_id에도, 로그에도 직접 남기지 않습니다.
-- ownership 판정(`_check_ownership`, `/query`, dataset/quality/stage 목록)은 레코드와
-  principal 양쪽에 `owner_id`가 있으면 이를 우선 비교합니다. 어느 한쪽이라도 없으면(예:
-  #505 이전에 생성된 legacy run) 기존 `created_by`/label 비교로 폴백합니다 — 기존 리소스가
-  즉시 접근 불가가 되지 않습니다. `owner_id`도 `created_by`도 없는 레코드는 "누구나 접근
-  가능"으로 취급되지 않고 거부됩니다(fail-closed).
-- `owner_id`는 내부 ownership 판정 전용입니다. 디스크의 persisted `manifest.json`과
-  파생 `BuildIndex`에는 저장하지만 `/builds` 목록과
-  `GET /builds/{run_id}/manifest`를 포함한 HTTP 응답에서는 제거합니다. 따라서 OpenAPI
-  `BuildManifest`의 공개 property가 아니며 wire 계약과 API 계약 버전은 바뀌지 않습니다.
-- subject prefix 충돌 방지는 `owner_id`가 기록되는 #505 이후 신규 resource에 적용됩니다.
-  `owner_id`가 없는 pre-#505 legacy resource는 호환성을 위해 기존 `created_by` 라벨로
-  폴백하므로, 이미 저장된 truncated subject prefix 충돌을 소급해서 해소할 수 없습니다.
-- 특정 신규 IdP 채택이나 email/password 로그인은 이 절의 범위가 아닙니다 — 향후 IdP
-  결정(#515)과 무관하게 stable owner identity 계산 방식이 먼저 확정된 것입니다.
+- Display identity (human-readable labels) and persistent resource ownership identity are separated. `manifest.json`'s `created_by` keeps the existing (#388) display/legacy label; the new `owner_id` (additive) is the canonical stable identity used for ownership decisions.
+- `owner_id` is a domain-separated SHA-256 hash per principal kind. For OIDC, `sha256(kind + "\0" + issuer + "\0" + subject)` hashes the full issuer/subject (no truncation) — the value does not change when email or display name changes, and never collides with another user whose subject prefix happens to overlap. Raw `sub`/email and other sensitive claims are never left in `owner_id` or in logs.
+- Ownership decisions (`_check_ownership`, `/query`, dataset/quality/stage listings) compare `owner_id` first when both the record and the principal have one. When either side lacks it (e.g., legacy runs predating #505), they fall back to the existing `created_by`/label comparison — existing resources do not become immediately inaccessible. Records with neither `owner_id` nor `created_by` are not treated as "accessible to everyone" but are refused (fail-closed).
+- `owner_id` is internal to ownership decisions. It is stored in the on-disk `manifest.json` and derived `BuildIndex`, but removed from HTTP responses including `/builds` listings and `GET /builds/{run_id}/manifest`. It is therefore not a public property of the OpenAPI `BuildManifest`, and neither the wire contract nor the API contract version changes.
+- Subject-prefix collision prevention applies to new resources recorded with `owner_id` after #505. Pre-#505 legacy resources without `owner_id` fall back to the existing `created_by` label for compatibility, so already-stored truncated subject prefix collisions cannot be retroactively resolved.
+- Adopting a specific new IdP or email/password login is outside this section's scope — the stable owner identity computation was settled first, independent of any future IdP decision (#515).
 
-### System Resource·Build Statistics API (#516)
+### System Resource and Build Statistics API (#516)
 
-`GET /monitoring/summary`, `GET /monitoring/builds`는 Studio Monitoring 화면에
-필요한 시스템/집계 observability를 제공합니다. Run 단위 이벤트(#496)는 별도
-범위입니다.
+`GET /monitoring/summary` and `GET /monitoring/builds` provide the system/aggregate observability Studio's Monitoring view needs. Per-run events (#496) are a separate scope.
 
-- **"모른다"와 "0"을 구분합니다.** 측정된 적 없는 값은 `0`/`healthy`로 위장하지 않고
-  `null`과 `available`/`partial`/`unavailable`(quality.py가 이미 정의한 어휘를
-  재사용)로 표현합니다.
-- **Aggregate status**(`MonitoringSummaryResponse.status`): required subsystem
-  (`api`/`queue`/`workers`/`artifact_store`)의 `availability`로부터 계산되는
-  deterministic 판정입니다. 넷 모두 `available`이면 `healthy`, 하나라도
-  `partial`/`unavailable`이면 `degraded`입니다. latency SLA threshold(예:
-  p95 100ms/500ms/1s)는 근거(ADR/config)가 없어 사용하지 않습니다 —
-  `sample_count=0`/`p95_latency_ms=null` 자체나 `queue`/`workers`의 실제 0건은
-  degraded 근거가 아닙니다(availability가 실제로 `unavailable`/`partial`일 때만
-  degraded). Provider 상태(#492)는 optional이라 이 판정에 포함되지 않습니다.
-- **Builder API 상태**: `dispatch()` 실행 시간을 최근 최대 1000개 요청의 bounded
-  ring buffer로 기록하고 nearest-rank(보간 없음) 방식으로 p95를 계산합니다.
-  `sample_count=0`이면 `p95_latency_ms=null`입니다. collector 자체가 손상되어
-  표본을 읽을 수 없으면(#527) `availability=unavailable` +
-  `sample_count=null` + `p95_latency_ms=null`입니다 — "정상 무표본"과 "측정
-  불가"를 같은 값으로 뭉개지 않으며, 이 subsystem 실패가 원 요청이나
-  monitoring 응답 자체를 실패시키지 않습니다. Healthy/Degraded 같은 latency
-  임계값 판정은 근거(ADR/config)가 없어 발명하지 않았습니다 — raw
-  `sample_count`/`p95_latency_ms`만 제공합니다.
-- **Queue/Worker**: async build 실행 모델은 `AsyncBuildExecutor`/
-  `AsyncBuildJobRegistry`(#511/#513)로 구현되어 있고 `BuilderService`가 항상
-  생성해 `POST /builds`(비동기) 제출에 사용합니다. `queue`/`workers`는 이
-  실행기의 read-only snapshot(`AsyncBuildExecutor.stats()`)을 그대로 반영하므로
-  정상 runtime에서는 항상 `availability: available`입니다. `waiting`은
-  status=`queued`, `running`은 status=`running`인 active job 수이고
-  `total = waiting + running`입니다 — registry가 계속 보존하는 terminal
-  (`succeeded`/`failed`/`cancelled`) job 이력은 섞지 않습니다. `workers.active`는
-  `running`과 같고(worker 하나가 job 하나를 실행), `workers.capacity`는 실행기
-  생성 시 보존한 `max_workers`이며 `ThreadPoolExecutor`의 private field를 직접
-  읽지 않습니다. `workers.utilization`은 `active / capacity`(0.0~1.0)입니다.
-  `availability: unavailable`은 (현재는 도달하지 않는) 진짜 async 미지원 구성을
-  위한 fallback으로만 남겨두며, 그때만 나머지 필드가 `null`입니다 — "0건"과
-  "확인 불가"를 구분합니다. `BoundedThreadingHTTPServer`의
-  `ThreadPoolExecutor`(#253)는 이것과 무관한 HTTP 연결 동시성 상한입니다.
-- **Artifact Store**: `output_root` 폴더가 존재한다는 사실만으로 `available`로
-  간주하지 않습니다 — BuildIndex 쿼리도 성공해야 `available`입니다. `last_write_at`은
-  BuildIndex에 기록된 가장 최근 성공(`ok`) 빌드의 `finished_at`에서만 얻으며, 성공
-  기록이 없으면 `available`이되 `null`입니다(0건과 확인 불가를 구분). 절대 파일시스템
-  경로는 노출하지 않습니다.
-- **Build 통계**(`/monitoring/builds`): timezone은 UTC, bucket 경계는
-  `[start, end)` 반열린, bucket 기준 timestamp는 `finished_at`(BuildIndex는 완료된
-  빌드만 기록, ADR 0003)입니다. 현재 `window=24h`/`bucket=hour`만 지원하며 다른
-  값은 400입니다. malformed timestamp(파싱 실패, NULL 포함)는 집계에서 제외되고
-  `excluded_count`에 반영되며 전체 `availability`는 `partial`이 됩니다(BuildIndex
-  쿼리 자체 실패는 `unavailable`, 정상 집계 결과 0건은 `available`). bucket 카운트
-  wire 필드는 `total`/`success`/`failed`/`cancelled`입니다 — 내부 BuildIndex
-  status 값 `ok`는 그대로 두고(변경 없음) 외부 Monitoring API 필드 이름만
-  `success`로 매핑합니다(#527).
-- **Provider 상태**는 요청마다 실제 네트워크 프로브를 유발하므로(#492) 이번 버전의
-  Monitoring 응답에는 포함되지 않습니다.
-- **Ownership**: 시스템 aggregate(`api`/`queue`/`workers`/`artifact_store`)는 개별
-  run의 dataset/owner/credential 정보를 포함하지 않아 필터링이 필요 없습니다.
-  `/monitoring/builds`의 버킷 집계와 recent runs는 `ENFORCE_OWNERSHIP`+oidc
-  principal일 때 `principal_owns()`(#505)와 동일한 정책으로 필터링해 다른
-  사용자의 run이 섞이지 않습니다. bucket 집계는 window 전체를 먼저 가져온 뒤
-  필터링해도 손실이 없지만, `recent_runs`는 고정 10건 LIMIT이 걸린 조회라 필터를
-  LIMIT **이전에** SQL에서 적용합니다(`BuildIndex.list_recent_owned`, #527) —
-  그렇지 않으면 다른 principal의 최신 run들이 LIMIT을 다 채워 요청자 본인의
-  recent run이 빠질 수 있습니다.
+- **"Unknown" and "zero" are distinguished.** Values that were never measured are not faked as `0`/`healthy` but expressed as `null` with `available`/`partial`/`unavailable` (reusing the vocabulary quality.py already defines).
+- **Aggregate status** (`MonitoringSummaryResponse.status`): a deterministic judgment computed from the `availability` of required subsystems (`api`/`queue`/`workers`/`artifact_store`). All four `available` → `healthy`; any `partial`/`unavailable` → `degraded`. Latency SLA thresholds (e.g., p95 100ms/500ms/1s) are not used without evidence (ADR/config) — `sample_count=0`/`p95_latency_ms=null` itself, or an actual zero count in `queue`/`workers`, is not a degraded reason (only actual `unavailable`/`partial` availability is). Provider status (#492) is optional and not in this judgment.
+- **Builder API status**: `dispatch()` execution times are recorded in a bounded ring buffer of the most recent 1000 requests, and p95 is computed nearest-rank (no interpolation). `sample_count=0` → `p95_latency_ms=null`. When the collector itself is broken and samples cannot be read (#527): `availability=unavailable` + `sample_count=null` + `p95_latency_ms=null` — "healthy with no samples" and "cannot measure" are not conflated, and this subsystem's failure does not fail the original request or the monitoring response. Healthy/degraded latency threshold judgments are not invented without evidence (ADR/config) — only raw `sample_count`/`p95_latency_ms` are provided.
+- **Queue/Worker**: the async build execution model is implemented with `AsyncBuildExecutor`/`AsyncBuildJobRegistry` (#511/#513); `BuilderService` always creates it and uses it for `POST /builds` (async) submissions. `queue`/`workers` directly reflect this executor's read-only snapshot (`AsyncBuildExecutor.stats()`), so in a normal runtime they are always `availability: available`. `waiting` is the count of active jobs with status=`queued`, `running` with status=`running`, and `total = waiting + running` — terminal (`succeeded`/`failed`/`cancelled`) job history the registry retains is not mixed in. `workers.active` equals `running` (one worker runs one job); `workers.capacity` is the `max_workers` preserved at executor creation, not read from `ThreadPoolExecutor`'s private fields. `workers.utilization` is `active / capacity` (0.0–1.0). `availability: unavailable` is kept only as a fallback for (currently unreachable) genuinely async-unsupported configurations, and only then are the remaining fields `null` — "zero jobs" and "cannot check" are distinguished. `BoundedThreadingHTTPServer`'s `ThreadPoolExecutor` (#253) is the HTTP connection concurrency limit, unrelated to this.
+- **Artifact store**: the mere existence of the `output_root` folder does not count as `available` — a BuildIndex query must also succeed. `last_write_at` is obtained only from the `finished_at` of the most recent successful (`ok`) build recorded in BuildIndex; without a success record it is `available` with `null` (distinguishing zero from unknown). Filesystem paths are never exposed.
+- **Build statistics** (`/monitoring/builds`): timezone is UTC, bucket boundaries are half-open `[start, end)`, and the bucket timestamp is `finished_at` (BuildIndex records only completed builds, ADR 0003). Currently only `window=24h`/`bucket=hour` is supported; other values return 400. Malformed timestamps (parse failure, containing NULL) are excluded from aggregation and reflected in `excluded_count`, making the overall `availability` `partial` (a BuildIndex query failure is `unavailable`; a normal aggregate result of zero is `available`). Bucket count wire fields are `total`/`success`/`failed`/`cancelled` — the internal BuildIndex status value `ok` is kept as-is (no change); only the external Monitoring API field name maps to `success` (#527).
+- **Provider status** is not included in this version's Monitoring responses because it would trigger real network probes per request (#492).
+- **Ownership**: the system aggregates (`api`/`queue`/`workers`/`artifact_store`) contain no individual run's dataset/owner/credential information, so no filtering is needed. `/monitoring/builds` bucket aggregates and recent runs are filtered with the same policy as `principal_owns()` (#505) when `ENFORCE_OWNERSHIP`+oidc principal applies, so another user's runs never mix in. Bucket aggregates fetch the whole window first and filter with no loss; `recent_runs` is a fixed LIMIT-10 query, so the filter is applied in SQL **before** the LIMIT (`BuildIndex.list_recent_owned`, #527) — otherwise another principal's recent runs could fill the LIMIT and omit the requester's own.
 
-### File·URL Source Ingestion (#498)
+### File and URL Source Ingestion (#498)
 
-Public API/File/URL source가 동일한 canonical source contract와
-Bronze→Silver→Gold pipeline을 공유합니다. `BuildSpec.sources[].kind`가
-`public_api`(기본)/`file`/`url`을 구분하며, `kind`를 생략한 source는 항상
-`public_api`로 해석되어 기존 동작이 그대로 유지됩니다.
+Public API, file and URL sources share the same canonical source contract and Bronze→Silver→Gold pipeline. `BuildSpec.sources[].kind` distinguishes `public_api` (default) / `file` / `url`; omitting `kind` always means `public_api`, preserving existing behaviour.
 
-- **File 업로드**: `POST /uploads`는 JSON이 아니라 raw binary body를 받습니다
-  (multipart 대신 동등한 binary upload). `format`/`encoding`/`filename`은
-  query parameter로 전달하며, 서버가 즉시 파싱 가능성을 검증해(손상·빈 파일은
-  400) fail-fast합니다. 저장된 content는 요청 principal의 `owner_id`로
-  격리되며, 다시 원문을 내려주는 API는 없습니다 — `GET /uploads/{upload_id}`는
-  메타데이터만 반환합니다. `BuildSpec.sources[].upload_id`가 참조하는 업로드는
-  build/preview를 요청한 principal과 소유자가 같아야 하며, 다르면 존재 여부를
-  구분하지 않고 동일하게 not found로 처리합니다(fail-closed, #505의 ownership
-  패턴과 동일). `sources[].format`/`encoding`은 업로드 시점에 검증된 값과
-  정확히 일치해야 합니다. 업로드 content는 SQLite 에 저장되고, 8 MiB 이상이면
-  서버가 이름을 붙인 파일로 나갑니다(#622) — 어느 쪽이든 사용자가 준 filename/path
-  는 저장 경로에 쓰이지 않으므로 path traversal 표면이 없고, `upload_id`는 서버가
-  발급하는 불투명한 식별자(`upl_<hex32>`)입니다 — 사용자가 filename/path를
-  직접 참조할 수 없습니다.
-- **URL fetch(P0)**: `kind="url"` source는 GET, Auth=None인 안전한 HTTP(S)
-  fetch만 지원합니다(Bearer credential 연동은 #492 이후 P1). SSRF 방어로
-  `https` 외 scheme과 userinfo가 포함된 URL을 거부하고, hostname을 DNS로 직접
-  resolve해 loopback/private/link-local/reserved 등 비공인(non-global) 주소로의
-  접속을 차단합니다(하나라도 비공인이면 전체 거부). 실제 TCP 연결은 검증한
-  IP에 직접 여는 방식으로 검증 시점과 연결 시점 사이의 DNS rebinding을
-  방지하며, redirect마다 동일 검증을 반복합니다(최대 5회). 응답 크기와
-  connect/read timeout에 상한을 둡니다. BuildSpec 계약에 header/POST/PUT/PATCH
-  필드가 아예 없어 임의 header나 다른 HTTP method를 표현할 수 없습니다.
-  **다중 사용자 배포에서는 `url` source 를 쓸 수 없습니다(#685).** `POST /preview`,
-  `POST /build`, `POST /builds` 가 요청을 보내기 전에 `403 url_source_forbidden` 으로
-  거부합니다 — 자세한 것은 `BUILD_SPEC.md`.
-- **Provenance/manifest 비노출**: file source의 provenance는 로컬 파일시스템
-  경로 대신 `upload_id`만 담습니다. url source의 provenance/manifest는 query
-  string이 제거된 endpoint만 담아 우연히 섞인 secret이 남지 않게 합니다. 두
-  kind 모두 기존 `SourceProvenance`(provider/dataset 필드) 모양을 그대로
-  재사용합니다 — file은 `provider="file", dataset=upload_id`, url은
-  `provider="url", dataset=<host+path 기반 경로-안전 slug>`로 채웁니다(사람이
-  읽는 원본 endpoint는 `fetch_params.endpoint`에 별도로 남습니다).
-- **Preview/Build 동일 경로**: `POST /preview`와 `POST /build` 모두 같은
-  source resolver를 공유하므로, file/url source도 Public API source와 동일한
-  스키마/샘플/quality 판정 흐름을 거칩니다.
+- **File upload**: `POST /uploads` accepts a raw binary body, not JSON (binary upload instead of multipart). `format`/`encoding`/`filename` are passed as query parameters; the server validates parseability immediately (corrupt or empty files return 400) for fail-fast. Stored content is isolated by the requesting principal's `owner_id`; no API returns the original content — `GET /uploads/{upload_id}` returns metadata only. An upload referenced by `BuildSpec.sources[].upload_id` must have the same owner as the principal requesting the build/preview; otherwise it is treated identically to not-found without distinguishing existence (fail-closed, same ownership pattern as #505). `sources[].format`/`encoding` must exactly match the values validated at upload time. Upload content is stored in SQLite; at 8 MiB or above it spills to a server-named file (#622) — either way, the user-supplied filename/path is never used in the storage path, so there is no path traversal surface, and `upload_id` is an opaque server-issued identifier (`upl_<hex32>`) — users cannot reference filenames/paths directly.
+- **URL fetch (P0)**: a `kind="url"` source supports only GET with Auth=None over safe HTTP(S) (Bearer credential integration is P1 after #492). As SSRF defence, schemes other than `https` and URLs containing userinfo are refused; hostnames are resolved directly via DNS and connections to non-global addresses (loopback, private, link-local, reserved) are blocked (any non-global address refuses the whole request). The actual TCP connection opens directly to the validated IP, preventing DNS rebinding between validation and connection; each redirect repeats the same validation (max 5). Response size and connect/read timeouts are capped. The BuildSpec contract has no header/POST/PUT/PATCH fields at all, so arbitrary headers or non-GET methods cannot be expressed. **`url` sources are disabled in multi-user deployments (#685).** `POST /preview`, `POST /build`, `POST /builds` refuse with `403 url_source_forbidden` before sending any request — see `BUILD_SPEC.md`.
+- **Provenance/manifest non-exposure**: a file source's provenance contains only the `upload_id`, never the local filesystem path. A url source's provenance/manifest contains only the endpoint with the query string removed, so no incidentally-embedded secret survives. Both kinds reuse the existing `SourceProvenance` shape (provider/dataset fields) — file fills `provider="file", dataset=upload_id`; url fills `provider="url", dataset=<path-safe slug based on host+path>` (the human-readable original endpoint stays separately in `fetch_params.endpoint`).
+- **Preview/Build same path**: `POST /preview` and `POST /build` share the same source resolver, so file/url sources go through the same schema/sample/quality evaluation flow as public_api sources.
 
-## 4. 인증과 CORS
+## 4. Authentication and CORS
 
-브라우저 클라이언트(Studio 등)와의 연동을 위해 CORS는 default-deny입니다.
+CORS is default-deny for browser clients (Studio, etc.).
 
-- `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 미설정 시 cross-origin 요청을 거부합니다.
-- Same-origin 요청은 허용합니다.
-- preflight는 허용 origin에 대해 `GET, POST, OPTIONS`와 `Content-Type, X-API-Key, Authorization`을 허용합니다.
+- Without `KPUBDATA_BUILDER_ALLOWED_ORIGINS` set, cross-origin requests are refused.
+- Same-origin requests are allowed.
+- Preflight allows `GET, POST, OPTIONS` and `Content-Type, X-API-Key, Authorization` for allowed origins.
 
-인증은 두 경로를 지원합니다.
+Authentication supports two paths:
 
-| 방식 | 헤더 | 용도 | 환경변수 |
+| Method | Header | Use | Environment |
 | :--- | :--- | :--- | :--- |
-| API Key | `X-API-Key: <secret>` | 서비스 계정, 스케줄 워크플로 | `KPUBDATA_BUILDER_API_KEY` |
-| Bearer (OIDC) | `Authorization: Bearer <jwt>` | 사람 사용자, Studio | `OIDC_ISSUER` + `OIDC_AUDIENCE` |
+| API Key | `X-API-Key: <secret>` | Service accounts, scheduled workflows | `KPUBDATA_BUILDER_API_KEY` |
+| Bearer (OIDC) | `Authorization: Bearer <jwt>` | Human users, Studio | `OIDC_ISSUER` + `OIDC_AUDIENCE` |
 
-OIDC는 `OIDC_ISSUER`/`OIDC_AUDIENCE`와 허용 목록(`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`)이 설정된 경우에만 활성화됩니다.
+OIDC is enabled only when `OIDC_ISSUER`/`OIDC_AUDIENCE` and allowlists (`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`) are configured.
 
-## 5. CLI 대응 관계
+## 5. CLI Correspondence
 
-CLI와 HTTP service mode는 같은 도메인 계약을 공유합니다.
+CLI and HTTP service mode share the same domain contract.
 
-| CLI | 대응 API operation |
+| CLI | API operation |
 | :--- | :--- |
 | `kpubdata-builder validate spec.yaml` | `validateSpec` |
 | `kpubdata-builder preview spec.yaml` | `previewBuild` |
 | `kpubdata-builder build spec.yaml` | `createBuild` |
 
-CLI와 HTTP 응답 의미가 갈라지면 OpenAPI와 service conformance test를 먼저 확인합니다.
+When CLI and HTTP response semantics diverge, check the OpenAPI and service conformance tests first.
 
 ## 6. Python API — BuilderService
 
-Python 코드에서 직접 사용하는 경우 `BuilderService`를 통해 HTTP 없이 같은 service 로직을 호출할 수 있습니다.
+Python code can call the same service logic without HTTP through `BuilderService`.
 
 ```python
 from pathlib import Path
@@ -494,15 +242,15 @@ validate_response = service.validate(spec_yaml_str)
 build_response = service.build(spec_yaml_str, run_id="my-run-001")
 ```
 
-반환 객체의 body shape도 OpenAPI SSOT와 conformance test 대상입니다.
+The returned objects' body shapes are also subject to the OpenAPI SSOT and conformance tests.
 
-## 7. 관련 문서
+## 7. Related Documents
 
-| 문서 | 역할 |
+| Document | Role |
 | :--- | :--- |
-| [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml) | HTTP wire 계약 SSOT |
-| [BUILD_SPEC.md](./BUILD_SPEC.md) | BuildSpec 입력 계약 |
-| [BUILD_STATE.md](./BUILD_STATE.md) | build 상태 모델 |
-| [BOUNDARY.md](./BOUNDARY.md) | Builder-Studio 경계 |
-| [docs/adrs/0002-build-execution-model.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0002-build-execution-model.md) | v0.4 동기 build 모델 결정 |
-| [docs/adrs/0005-api-contract-single-source.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0005-api-contract-single-source.md) | OpenAPI SSOT 결정 |
+| [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml) | HTTP wire contract SSOT |
+| [BUILD_SPEC.md](./BUILD_SPEC.md) | BuildSpec input contract |
+| [BUILD_STATE.md](./BUILD_STATE.md) | Build state model |
+| [BOUNDARY.md](./BOUNDARY.md) | Builder–Studio boundary |
+| [docs/adrs/0002-build-execution-model.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0002-build-execution-model.md) | v0.4 synchronous build model decision |
+| [docs/adrs/0005-api-contract-single-source.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0005-api-contract-single-source.md) | OpenAPI SSOT decision |
