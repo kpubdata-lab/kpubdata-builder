@@ -53,6 +53,8 @@ Node = tuple[Any, ...]
 
 _NULL: Node = ("null",)
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+_INT128_MIN, _INT128_MAX = -(2**127), 2**127 - 1
+_DECIMAL_MAX_DIGITS = 38
 
 
 class _TypeConflict(TabularError):
@@ -65,12 +67,28 @@ def _infer(value: object) -> Node:
     if isinstance(value, bool):
         return ("bool",)
     if isinstance(value, int):
-        return ("int",) if _INT64_MIN <= value <= _INT64_MAX else ("int128",)
+        if _INT64_MIN <= value <= _INT64_MAX:
+            return ("int",)
+        # #919: DuckDB's HUGEINT stops at 128 bits; beyond that its loader dies
+        # with an InvalidInputException that names server paths. The check here
+        # states the limit as Builder's own TabularError instead.
+        if not _INT128_MIN <= value <= _INT128_MAX:
+            raise TabularError(
+                "an integer value exceeds the supported range (±2^127); "
+                "read the column as a string instead"
+            )
+        return ("int128",)
     if isinstance(value, float):
         return ("float",)
     if isinstance(value, str):
         return ("str",)
     if isinstance(value, Decimal):
+        digits = len(value.as_tuple().digits)
+        if digits > _DECIMAL_MAX_DIGITS:
+            raise TabularError(
+                f"a decimal value has {digits} significant digits; "
+                f"the supported maximum is {_DECIMAL_MAX_DIGITS}"
+            )
         exponent = value.as_tuple().exponent
         return ("decimal", -exponent if isinstance(exponent, int) and exponent < 0 else 0)
     if isinstance(value, dt.datetime):
