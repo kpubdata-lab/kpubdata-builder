@@ -174,12 +174,20 @@ class RecordTypeScan:
         return tuple(self._shapes)
 
     def add(self, record: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        """Check one record; returns it with ``read_as`` applied."""
+        """Check one record; returns it with ``read_as`` applied.
+
+        Raises:
+            TabularError: A value Polars cannot hold (#974), with the column
+                key the scan was on when it refused (#977).
+        """
         if self._declared:
             record = _apply_read_as(record, self._declared)
         for key, value in record.items():
             _collect_numeric_kinds(value, key, self._numeric_kinds)
-            shape = _unify(self._shapes.get(key, _NULL), _shape(value))
+            try:
+                shape = _unify(self._shapes.get(key, _NULL), _shape(value))
+            except TabularError as exc:
+                raise TabularError(f"column {key!r}: {exc}") from exc
             self._shapes[key] = shape
             if shape is _CONFLICT and key not in self._conflicts:
                 self._conflicts.append(key)
