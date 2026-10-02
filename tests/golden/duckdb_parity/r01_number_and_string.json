@@ -32,7 +32,7 @@
  "manifest": {
   "composition": null,
   "errors": [
-   "t: pipeline failed for source 't'"
+   "t: heterogeneous column types detected (refusing to silently coerce): ['v']"
   ],
   "gold_selection": null,
   "partial": false,

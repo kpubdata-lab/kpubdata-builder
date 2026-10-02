@@ -20,7 +20,7 @@ import logging
 
 import duckdb
 
-from ..errors import DatasetValidationError, ValidationError
+from ..errors import DatasetValidationError, TabularError, ValidationError
 from ..ingestion import IngestionError
 from ..stages.gold.pii import PiiDeclarationError
 from ..stages.gold.select import GoldSelectionError
@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # block/oversize/corrupt file reasons are visible to the user immediately.
 # GoldSelectionError and PiiDeclarationError describe the spec's own declarations.
 # ResourceLimitError (#701) only ever carries Builder's fixed RESOURCE_LIMIT_MESSAGE.
+# TabularError (#984) names the spec's own columns and dtypes — a sweep of all 35
+# call sites (`grep -rn "raise TabularError(" src/`) found none that embed a
+# filesystem path, workdir or other server internal; every message describes what
+# the data or declaration got wrong, in the caller's terms.
 # Other BuildError subclasses (ExportError/ManifestError) may include internal info
 # like destination paths, so they are deliberately absent (#225).
 PUBLIC_MESSAGE_ERRORS: tuple[type[Exception], ...] = (
@@ -42,6 +46,7 @@ PUBLIC_MESSAGE_ERRORS: tuple[type[Exception], ...] = (
     GoldSelectionError,
     PiiDeclarationError,
     ResourceLimitError,
+    TabularError,
 )
 
 

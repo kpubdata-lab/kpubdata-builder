@@ -32,7 +32,7 @@
  "manifest": {
   "composition": null,
   "errors": [
-   "t: pipeline failed for source 't'"
+   "t: integer precision loss risk: columns mix floats with integers beyond the IEEE-754 safe range (±2^53) and would round on f64 upcast: ['v']. Use an explicit cast to keep these columns as strings or integers."
   ],
   "gold_selection": null,
   "partial": false,

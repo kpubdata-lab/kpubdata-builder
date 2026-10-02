@@ -32,7 +32,7 @@
  "manifest": {
   "composition": null,
   "errors": [
-   "t: pipeline failed for source 't'"
+   "t: zfill target 'c' has 1 value(s) longer than the declared width 3 (longest is 5 characters)"
   ],
   "gold_selection": null,
   "partial": false,
