@@ -101,6 +101,7 @@ _ALLOWED: list[BaseException] = [
     GoldSelectionError("selection names unknown column 'x'"),
     PiiDeclarationError("pii column 'x' is not in Silver"),
     ResourceLimitError(RESOURCE_LIMIT_MESSAGE),
+    TabularError("column 'v': an integer value exceeds the supported range"),
 ]
 
 _HIDDEN: list[BaseException] = [
@@ -108,7 +109,6 @@ _HIDDEN: list[BaseException] = [
     OSError(2, "No such file or directory", "/srv/kpubdata/runs/run-42/gold"),
     ExportError(f"cannot write {_RAW_TEXT}"),
     ManifestError(f"cannot serialize {_RAW_TEXT}"),
-    TabularError(f"lossy cast in {_RAW_TEXT}"),
     KeyError(_RAW_TEXT),
 ]
 
@@ -121,6 +121,7 @@ def test_allow_list_matches_documented_public_errors() -> None:
         GoldSelectionError,
         PiiDeclarationError,
         ResourceLimitError,
+        TabularError,
     }
 
 

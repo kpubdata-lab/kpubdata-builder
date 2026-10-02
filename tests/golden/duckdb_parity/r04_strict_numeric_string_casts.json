@@ -39,7 +39,7 @@
   "manifest": {
    "composition": null,
    "errors": [
-    "t: pipeline failed for source 't'"
+    "t: declared cast dropped values to null (data loss): 'v': 3 value(s) -> null"
    ],
    "gold_selection": null,
    "partial": false,
@@ -122,7 +122,7 @@
   "manifest": {
    "composition": null,
    "errors": [
-    "t: pipeline failed for source 't'"
+    "t: declared cast dropped values to null (data loss): 'v': 4 value(s) -> null"
    ],
    "gold_selection": null,
    "partial": false,

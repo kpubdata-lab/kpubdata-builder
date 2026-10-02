@@ -28,7 +28,7 @@
  "manifest": {
   "composition": null,
   "errors": [
-   "t: pipeline failed for source 't'"
+   "t: columns differ only in letter case, which SQL reads as one column: [['NAME', 'Name', 'name']]. Rename or coalesce them in the source's schema."
   ],
   "gold_selection": null,
   "partial": false,
