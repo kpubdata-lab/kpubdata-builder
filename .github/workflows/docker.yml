@@ -121,7 +121,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
-          images: ghcr.io/yeongseon/kpubdata-builder
+          images: ghcr.io/kpubdata-lab/kpubdata-builder
           tags: |
             type=raw,value=${{ inputs.ref }},enable=${{ inputs.ref != '' }}
             type=ref,event=tag
@@ -157,7 +157,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             EXTRAS=publish cubrid
-          tags: ghcr.io/yeongseon/kpubdata-builder:cubrid
+          tags: ghcr.io/kpubdata-lab/kpubdata-builder:cubrid
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -165,4 +165,4 @@ jobs:
           provenance: mode=max
 
       - name: Print image digest
-        run: echo "Published ghcr.io/yeongseon/kpubdata-builder@${{ steps.build-publish.outputs.digest }}"
+        run: echo "Published ghcr.io/kpubdata-lab/kpubdata-builder@${{ steps.build-publish.outputs.digest }}"

@@ -1,4 +1,4 @@
-"""kpubdata → Builder full E2E pipeline (yeongseon/kpubdata#282).
+"""kpubdata → Builder full E2E pipeline (kpubdata-lab/kpubdata#282).
 
 Previous cross-repo validation only checked **shape** — `test_kpubdata_client_protocol.py`
 verified that `kpubdata.Client` has the structure `.dataset().list().items`,
@@ -40,7 +40,7 @@ from kpubdata_builder.spec import JsonValue
 #    the recorded fixture doesn't exist and replay fails.
 # 2. **No mixed-type columns.** If a field declared as `integer` in spec has non-numeric
 #    values mixed in, kpubdata casts only some to int, leaving int/str coexisting in one column,
-#    and Builder Silver rejects it (yeongseon/kpubdata#452). apt_trade/sh_trade/
+#    and Builder Silver rejects it (kpubdata-lab/kpubdata#452). apt_trade/sh_trade/
 #    ultra_srt_ncst hit this — this test caught that bug on first run.
 _DATASET = "air_station"
 _PARAMS: dict[str, JsonValue] = {

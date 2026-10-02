@@ -38,4 +38,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: yeongseon/kpubdata/.github/actions/r3-review@main
+      - uses: kpubdata-lab/kpubdata/.github/actions/r3-review@main

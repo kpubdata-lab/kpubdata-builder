@@ -43,7 +43,7 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 
 두 값이 어긋나면 증상이 **CORS 오류**로 나타나 원인 추적이 어렵다. 로컬과 실배포 오리진을 모두 양쪽에 등록할 것.
 
-> GitHub Pages 데모(`https://yeongseon.github.io`)는 mock 모드(`VITE_USE_REAL_BUILDER` 미설정)라 Builder를 호출하지 않으므로 등록 대상이 아니다.
+> GitHub Pages 데모(`https://kpubdata-lab.github.io`)는 mock 모드(`VITE_USE_REAL_BUILDER` 미설정)라 Builder를 호출하지 않으므로 등록 대상이 아니다.
 
 ## 5. SPA 토큰 보관
 

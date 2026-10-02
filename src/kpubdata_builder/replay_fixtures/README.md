@@ -6,7 +6,7 @@ path without a provider key and without a checkout of another repository.
 
 | Dataset | Example | Source |
 |---|---|---|
-| `datago.air_station` | `gangnam_full_page` | `yeongseon/kpubdata` `tests/fixtures/datago/air_station/` at `8740e7d` |
+| `datago.air_station` | `gangnam_full_page` | `kpubdata-lab/kpubdata` `tests/fixtures/datago/air_station/` at `8740e7d` |
 
 Each `*.meta.json` records the request and the SHA-256 of its `*.raw.json`; the
 package's tests check the two still agree. The service key in the recording is

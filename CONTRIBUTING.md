@@ -1,6 +1,6 @@
 # KPubData Builder (`kpubdata-builder`) 기여 가이드 (CONTRIBUTING.md)
 
-> **프로젝트 관리·리뷰 정책의 정본은 [POLICY.md](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md) 하나다.**
+> **프로젝트 관리·리뷰 정책의 정본은 [POLICY.md](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md) 하나다.**
 > Epic · Issue · Priority · Review Level · Verification · Release 규칙은 그 문서를 따른다.
 > 이 문서에는 이 저장소 고유의 절차(빌드 명령, 디렉터리 규칙)만 남긴다.
 > 충돌하면 POLICY.md 가 우선한다.
@@ -40,7 +40,7 @@ KPubData 패밀리 소개:
     cd kpubdata-builder
 
     # 원본 저장소(upstream)를 등록하여 나중에 업데이트를 받기 쉽게 합니다.
-    git remote add upstream https://github.com/yeongseon/kpubdata-builder.git
+    git remote add upstream https://github.com/kpubdata-lab/kpubdata-builder.git
     ```
 
 ### Step 3: 개발 환경 구축
@@ -80,7 +80,7 @@ kpubdata = { path = "../kpubdata", editable = true }
 ├── kpubdata/          # ← 이 저장소가 있어야 함
 └── kpubdata-builder/  # ← 현재 저장소
 
-git clone https://github.com/yeongseon/kpubdata.git ../kpubdata
+git clone https://github.com/kpubdata-lab/kpubdata.git ../kpubdata
 uv sync --extra dev    # ../kpubdata 를 editable로 연결
 ```
 
@@ -170,7 +170,7 @@ flowchart TD
 5.  **PR**: GitHub 웹사이트에서 초록색 "Compare & pull request" 버튼을 누릅니다.
 
 ### 3-5. 제목과 커밋 메시지 규칙
-이슈·PR·최종 커밋 제목의 **정본은 kpubdata 의 [POLICY 2.1.3](https://github.com/yeongseon/kpubdata/blob/main/docs/governance/POLICY.md#213-유형은-제목이-정하고-라벨은-따라온다--2026-09-29-개정)** 입니다 — 세 저장소가
+이슈·PR·최종 커밋 제목의 **정본은 kpubdata 의 [POLICY 2.1.3](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md#213-유형은-제목이-정하고-라벨은-따라온다--2026-09-29-개정)** 입니다 — 세 저장소가
 같은 규칙과 같은 허용 type 11개를 씁니다. 요약하면:
 
 - `type: description` 또는 `type(scope): description`, 영어, 끝에 마침표 없음
@@ -217,7 +217,7 @@ uv run pytest
 - Bronze는 raw fetch/snapshot/provenance에 집중하고, Silver는 **tabularize·validation·statistics·preview**에 집중하며, Gold는 split-ready/export-ready package 조립에 집중해야 합니다.
 - stage 간 승격 규칙은 Builder가 소유하므로, Studio나 exporter 관점에서 임의 의미를 다시 정의하면 안 됩니다.
 - run workspace는 `build/{run_id}/bronze/`, `silver/`, `gold/` 규칙을 기준으로 생각해야 합니다.
-- tabular 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중입니다([ADR 0021](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 새 tabular 코드는 `tabular/duckdb_runtime.py`·`sql.py`·`dtypes.py` 위에 쓰고, 기존 Polars 코드는 그것을 대체하는 단계 전까지 최소한만 고칩니다. 각 단계는 `tests/parity/` 기준선과 같아야 합니다.
+- tabular 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중입니다([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 새 tabular 코드는 `tabular/duckdb_runtime.py`·`sql.py`·`dtypes.py` 위에 쓰고, 기존 Polars 코드는 그것을 대체하는 단계 전까지 최소한만 고칩니다. 각 단계는 `tests/parity/` 기준선과 같아야 합니다.
 
 ## 6. 테스트 가이드
 
@@ -296,5 +296,5 @@ docs/ARCHITECTURE.md -> ../ARCHITECTURE.md
 ### KPubData Product Family
 | 저장소 | 문서 | 설명 |
 | :--- | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | [CONTRIBUTING.md](https://github.com/yeongseon/kpubdata/blob/main/CONTRIBUTING.md) | Core 기여 가이드 |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | [CONTRIBUTING.md](https://github.com/yeongseon/kpubdata-studio/blob/main/CONTRIBUTING.md) | Studio 기여 가이드 |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | [CONTRIBUTING.md](https://github.com/kpubdata-lab/kpubdata/blob/main/CONTRIBUTING.md) | Core 기여 가이드 |
+| [kpubdata-studio](https://github.com/kpubdata-lab/kpubdata-studio) | [CONTRIBUTING.md](https://github.com/kpubdata-lab/kpubdata-studio/blob/main/CONTRIBUTING.md) | Studio 기여 가이드 |

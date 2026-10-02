@@ -1,7 +1,7 @@
 name: Cross-repo contract
 
 # kpubdata `main`(릴리스 전 소스)에 대해 Builder 통합 테스트를 돌린다 —
-# yeongseon/kpubdata#282 1단계.
+# kpubdata-lab/kpubdata#282 1단계.
 #
 # 일반 CI(ci.yml)는 `--no-sources`로 **PyPI에 게시된** kpubdata를 설치한다. 그래서
 # kpubdata main에 들어간 변경(필드명/응답 파싱/Client API)은 다음 릴리스가 나오고
@@ -54,7 +54,7 @@ jobs:
       - name: Checkout kpubdata (main)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          repository: yeongseon/kpubdata
+          repository: kpubdata-lab/kpubdata
           ref: main
           path: .kpubdata-src
 

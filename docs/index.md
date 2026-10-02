@@ -1,9 +1,9 @@
 # KPubData Builder — 한국 공공데이터 빌드·웨어하우스 도구
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/yeongseon/kpubdata-builder/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/LICENSE)
 
-**KPubData Builder**(패키지 `kpubdata-builder`)는 [`kpubdata`](https://github.com/yeongseon/kpubdata)가 수집한 한국 공공데이터를 다양한 형식의 결과물로 만들어주는 데이터셋 빌드 파이프라인입니다.
+**KPubData Builder**(패키지 `kpubdata-builder`)는 [`kpubdata`](https://github.com/kpubdata-lab/kpubdata)가 수집한 한국 공공데이터를 다양한 형식의 결과물로 만들어주는 데이터셋 빌드 파이프라인입니다.
 
 ---
 
@@ -199,12 +199,12 @@ src/kpubdata_builder/
 ### 프로젝트 관리
 - [요구사항 (PRD)](PRD.md): 제품 요구사항 및 목표 정의
 - [로드맵](ROADMAP.md): 향후 개발 계획 및 마일스톤
-- [작업 계획](https://github.com/yeongseon/kpubdata-builder/blob/main/.github/PLAN.md): 초기 구축 및 작업 계획
+- [작업 계획](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/.github/PLAN.md): 초기 구축 및 작업 계획
 
 ### 자세한 참고
 - [ADR 0001: 오케스트레이터로서의 Builder](adrs/0001-builder-as-orchestrator.md): 아키텍처 결정 기록
 - [에러 처리](guides/error-handling.md): 예외 계층 및 오류 응답 정책
-- [제품군 전체 아키텍처](https://github.com/yeongseon/kpubdata/blob/main/docs/product-family-architecture.md): **KPubData 3개 저장소의 전체 시스템 아키텍처**
+- [제품군 전체 아키텍처](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/product-family-architecture.md): **KPubData 3개 저장소의 전체 시스템 아키텍처**
 
 ---
 
@@ -212,9 +212,9 @@ src/kpubdata_builder/
 
 | 패키지 | 역할 |
 | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | 한국 공공데이터 접근 + 파싱 + 정규화 코어 |
-| [kpubdata-builder](https://github.com/yeongseon/kpubdata-builder) | 데이터셋 조립 + 내보내기 파이프라인 |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | 빌드 작성 및 실행을 위한 시각적 인터페이스 |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | 한국 공공데이터 접근 + 파싱 + 정규화 코어 |
+| [kpubdata-builder](https://github.com/kpubdata-lab/kpubdata-builder) | 데이터셋 조립 + 내보내기 파이프라인 |
+| [kpubdata-studio](https://github.com/kpubdata-lab/kpubdata-studio) | 빌드 작성 및 실행을 위한 시각적 인터페이스 |
 
 ---
 
@@ -231,15 +231,15 @@ src/kpubdata_builder/
 | [기여 방법](CONTRIBUTING.md) | 프로젝트 기여 가이드 |
 | [요구사항 (PRD)](PRD.md) | 제품 요구사항 정의서 |
 | [로드맵](ROADMAP.md) | 프로젝트 로드맵 |
-| [작업 계획](https://github.com/yeongseon/kpubdata-builder/blob/main/.github/PLAN.md) | 작업 실행 계획 |
+| [작업 계획](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/.github/PLAN.md) | 작업 실행 계획 |
 | [에러 처리](guides/error-handling.md) | 오류 처리 가이드 |
 | [변경 이력](CHANGELOG.md) | 프로젝트 변경 이력 |
 
 ### KPubData Product Family
 | 저장소 | 문서 | 설명 |
 | :--- | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | [ARCHITECTURE.md](https://github.com/yeongseon/kpubdata/blob/main/ARCHITECTURE.md) | KPubData 아키텍처 |
-| [kpubdata-studio](https://github.com/yeongseon/kpubdata-studio) | [ARCHITECTURE.md](https://github.com/yeongseon/kpubdata-studio/blob/main/ARCHITECTURE.md) | Studio 아키텍처 |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | [ARCHITECTURE.md](https://github.com/kpubdata-lab/kpubdata/blob/main/ARCHITECTURE.md) | KPubData 아키텍처 |
+| [kpubdata-studio](https://github.com/kpubdata-lab/kpubdata-studio) | [ARCHITECTURE.md](https://github.com/kpubdata-lab/kpubdata-studio/blob/main/ARCHITECTURE.md) | Studio 아키텍처 |
 
 ---
 

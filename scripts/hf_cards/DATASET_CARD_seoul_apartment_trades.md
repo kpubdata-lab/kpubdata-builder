@@ -164,5 +164,5 @@ under Korea Open Government License Type 1 (공공누리 제1유형).
 This dataset is part of the [kpubdata](https://huggingface.co/kpubdata) collection —
 Korean public data made globally accessible.
 
-Built with [kpubdata](https://github.com/yeongseon/kpubdata) SDK
-and [kpubdata-builder](https://github.com/yeongseon/kpubdata-builder) pipeline.
+Built with [kpubdata](https://github.com/kpubdata-lab/kpubdata) SDK
+and [kpubdata-builder](https://github.com/kpubdata-lab/kpubdata-builder) pipeline.

@@ -2,13 +2,13 @@
 
 ## 1. Single Source of Truth
 
-The single source of truth for KPubData Builder's (package `kpubdata-builder`) HTTP wire contract is [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml).
+The single source of truth for KPubData Builder's (package `kpubdata-builder`) HTTP wire contract is [contract/builder-api.yaml](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/contract/builder-api.yaml).
 
 - Endpoints, request bodies, response bodies, status codes and security schemes follow the OpenAPI document.
 - `info.version` in `contract/builder-api.yaml` must match `kpubdata_builder.service.API_CONTRACT_VERSION`.
 - `tests/unit/test_service_contract.py` verifies the version match, static route/status alignment, and wire-level conformance of actual `dispatch()` responses.
 - Consumers like Studio base compatibility on the OpenAPI SSOT and `GET /version`, not on this document.
-- Version bumps, Studio compatibility ranges, and release freeze procedures follow [ADR 0013](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0013-api-contract-release-policy.md).
+- Version bumps, Studio compatibility ranges, and release freeze procedures follow [ADR 0013](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0013-api-contract-release-policy.md).
 
 ### Contract Version Summary
 
@@ -248,9 +248,9 @@ The returned objects' body shapes are also subject to the OpenAPI SSOT and confo
 
 | Document | Role |
 | :--- | :--- |
-| [contract/builder-api.yaml](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml) | HTTP wire contract SSOT |
+| [contract/builder-api.yaml](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/contract/builder-api.yaml) | HTTP wire contract SSOT |
 | [BUILD_SPEC.md](./BUILD_SPEC.md) | BuildSpec input contract |
 | [BUILD_STATE.md](./BUILD_STATE.md) | Build state model |
 | [BOUNDARY.md](./BOUNDARY.md) | Builder–Studio boundary |
-| [docs/adrs/0002-build-execution-model.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0002-build-execution-model.md) | v0.4 synchronous build model decision |
-| [docs/adrs/0005-api-contract-single-source.md](https://github.com/yeongseon/kpubdata-builder/blob/main/docs/adrs/0005-api-contract-single-source.md) | OpenAPI SSOT decision |
+| [docs/adrs/0002-build-execution-model.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0002-build-execution-model.md) | v0.4 synchronous build model decision |
+| [docs/adrs/0005-api-contract-single-source.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0005-api-contract-single-source.md) | OpenAPI SSOT decision |

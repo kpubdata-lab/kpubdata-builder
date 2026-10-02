@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from kpubdata_builder import __version__
 
 #: Honest identity for the portal's logs — no browser spoofing (#448).
-_USER_AGENT = f"kpubdata-builder/{__version__} (+https://github.com/yeongseon/kpubdata-builder)"
+_USER_AGENT = f"kpubdata-builder/{__version__} (+https://github.com/kpubdata-lab/kpubdata-builder)"
 
 
 def _refusal_message(url: str, code: int) -> str:

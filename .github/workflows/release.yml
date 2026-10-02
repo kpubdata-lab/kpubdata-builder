@@ -74,7 +74,7 @@ jobs:
       # Builder and Studio release once a month, in the week holding the month's last
       # Thursday (KST); outside it only a critical patch that names its issue.
       - name: Release window
-        uses: yeongseon/kpubdata/.github/actions/release-window@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-window@main
         with:
           policy: monthly
           critical_patch: ${{ inputs.critical_patch }}
@@ -89,7 +89,7 @@ jobs:
       # repository for being impossible to run without dispatching a real release.
       - name: Work out the new version
         id: bump
-        uses: yeongseon/kpubdata/.github/actions/next-version@main
+        uses: kpubdata-lab/kpubdata/.github/actions/next-version@main
         with:
           bump: ${{ inputs.bump }}
           file: pyproject.toml
@@ -98,14 +98,14 @@ jobs:
       # `uv lock --check` in CI compares them — writing one without the other turns
       # nine checks red, which is how #744 first went.
       - name: Write the version
-        uses: yeongseon/kpubdata/.github/actions/set-version@main
+        uses: kpubdata-lab/kpubdata/.github/actions/set-version@main
         with:
           version: ${{ steps.bump.outputs.new_version }}
 
       # The release pull request carries its own CHANGELOG change: `[Unreleased]` becomes
       # this version, dated. An empty `[Unreleased]` stops here, before a branch exists.
       - name: Date the CHANGELOG section
-        uses: yeongseon/kpubdata/.github/actions/release-notes@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@main
         with:
           command: promote
           version: ${{ steps.bump.outputs.new_version }}
@@ -197,7 +197,7 @@ jobs:
       # critical_issue. Re-running this job does not help — it replays the same event,
       # so a Critical-Patch line added to the body after the merge is not seen.
       - name: Release window
-        uses: yeongseon/kpubdata/.github/actions/release-window@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-window@main
         with:
           policy: monthly
           critical_patch: ${{ steps.critical.outputs.patch }}
@@ -259,7 +259,7 @@ jobs:
       # is still nothing to clean up.
       - name: Release notes from the CHANGELOG
         id: notes
-        uses: yeongseon/kpubdata/.github/actions/release-notes@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@main
         with:
           command: extract
           version: ${{ steps.tag.outputs.tag }}

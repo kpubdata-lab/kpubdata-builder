@@ -24,8 +24,8 @@ CUBRID 상태 백엔드는 [ADR 0016](../../docs/adrs/0016-cubrid-state-backend.
 ### 1. 이미지 빌드·게시 (CUBRID extra 포함)
 
 ```bash
-docker build --build-arg EXTRAS="publish cubrid" -t ghcr.io/yeongseon/kpubdata-builder:cubrid .
-docker push ghcr.io/yeongseon/kpubdata-builder:cubrid
+docker build --build-arg EXTRAS="publish cubrid" -t ghcr.io/kpubdata-lab/kpubdata-builder:cubrid .
+docker push ghcr.io/kpubdata-lab/kpubdata-builder:cubrid
 ```
 
 ### 2. OCI 리소스

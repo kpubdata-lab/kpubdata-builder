@@ -32,7 +32,7 @@ services:
       start_period: 30s
 
   builder:
-    image: ${BUILDER_IMAGE:-ghcr.io/yeongseon/kpubdata-builder:cubrid}
+    image: ${BUILDER_IMAGE:-ghcr.io/kpubdata-lab/kpubdata-builder:cubrid}
     depends_on:
       cubrid:
         condition: service_healthy

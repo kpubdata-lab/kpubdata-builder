@@ -19,7 +19,7 @@
 
 services:
   builder:
-    image: ${BUILDER_IMAGE:-ghcr.io/yeongseon/kpubdata-builder:latest}
+    image: ${BUILDER_IMAGE:-ghcr.io/kpubdata-lab/kpubdata-builder:latest}
     build:
       context: .
     container_name: kpubdata-builder

@@ -332,4 +332,4 @@ print(f"빌드 준비 중: {spec.title}")
 ### KPubData Product Family
 | 저장소 | 문서 | 설명 |
 | :--- | :--- | :--- |
-| [kpubdata](https://github.com/yeongseon/kpubdata) | [CANONICAL_MODEL.md](https://github.com/yeongseon/kpubdata/blob/main/CANONICAL_MODEL.md) | 관련 데이터 모델 |
+| [kpubdata](https://github.com/kpubdata-lab/kpubdata) | [CANONICAL_MODEL.md](https://github.com/kpubdata-lab/kpubdata/blob/main/CANONICAL_MODEL.md) | 관련 데이터 모델 |

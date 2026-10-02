@@ -57,7 +57,7 @@ jobs:
 
       - name: Parse the title
         id: title
-        uses: yeongseon/kpubdata/.github/actions/conventional-title@main
+        uses: kpubdata-lab/kpubdata/.github/actions/conventional-title@main
         with:
           title: ${{ steps.current.outputs.title }}
           pull-request: "true"
@@ -88,7 +88,7 @@ jobs:
     steps:
       - name: Parse the title
         id: title
-        uses: yeongseon/kpubdata/.github/actions/conventional-title@main
+        uses: kpubdata-lab/kpubdata/.github/actions/conventional-title@main
         with:
           title: ${{ github.event.issue.title }}
 

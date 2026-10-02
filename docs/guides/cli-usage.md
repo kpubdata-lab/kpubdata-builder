@@ -521,7 +521,7 @@ $ curl -s http://127.0.0.1:8000/artifacts/run-20240601
 구현된 엔드포인트는 `GET /version`, `POST /validate`, `POST /preview`, `POST /build`,
 `GET /artifacts/{run_id}`이며, 이것이 실제 동작의 기준입니다.
 공식 API 계약(스키마·버전 협상 포함)은 PR #231에서 실제 구현과 동기화된
-[`contract/builder-api.yaml`](https://github.com/yeongseon/kpubdata-builder/blob/main/contract/builder-api.yaml)을 참고하세요.
+[`contract/builder-api.yaml`](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/contract/builder-api.yaml)을 참고하세요.
 
 ---
 
