@@ -66,8 +66,15 @@ def decode_record(line: str) -> dict[str, JsonValue]:
 
 
 def canonical_line(record: Mapping[str, JsonValue]) -> str:
-    """A record as the persisted Bronze file holds it: sorted keys, no NaN (#201)."""
-    return json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False)
+    """A record as the persisted Bronze file holds it: sorted keys, no NaN (#201).
+
+    A Parquet upload can hand the working copy native Python values the stdlib
+    encoder does not know — Decimal, date, datetime, time, timedelta, bytes
+    (#979). The working copy keeps their types via tags; the persisted file is
+    plain JSON, so they are written as their text form and arrive in Silver as
+    strings.
+    """
+    return json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False, default=str)
 
 
 def read_records(path: Path) -> Iterator[dict[str, JsonValue]]:
