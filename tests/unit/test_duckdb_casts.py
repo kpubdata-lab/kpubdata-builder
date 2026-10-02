@@ -312,6 +312,19 @@ def test_float_to_integer_truncates_as_stated() -> None:
     assert values == ["1", "-1", "2", "-2"]
 
 
+def test_decimal_to_integer_truncates_toward_zero_as_polars_does() -> None:
+    """#918: DuckDB's bare DECIMAL→BIGINT cast rounds; Polars truncates toward zero."""
+    from decimal import Decimal as D
+
+    values, _ = _duckdb(
+        "DECIMAL(38,2)",
+        [D("2.50"), D("0.50"), D("-0.50"), D("-2.50"), D("3"), D("-3"), D("0")],
+        "int",
+    )
+
+    assert values == ["2", "0", "0", "-2", "3", "-3", "0"]
+
+
 def test_a_cast_that_nulls_values_is_reported() -> None:
     """R4/R5: no silent cast-to-null — the audit sees every null a cast introduced."""
     connection = duckdb.connect()

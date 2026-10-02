@@ -135,6 +135,8 @@ def _kind(dtype: str) -> str:
         return "int"
     if base in ("Float32", "Float64"):
         return "float"
+    if base.startswith("Decimal"):
+        return "decimal"
     if base == "String":
         return "string"
     if base == "Boolean":
@@ -259,6 +261,10 @@ def cast_expression(column: str, source: str, target: str) -> str:
             return f"CAST(({column} - DATE '1970-01-01') AS BIGINT)"
         if kind == "datetime":
             return f"epoch_us({column})"
+        if kind == "decimal":
+            # Truncation toward zero, matching Polars (#918): DuckDB's bare
+            # CAST rounds (2.50 → 3, -0.50 → -1). trunc() gives 2 and 0.
+            return f"TRY_CAST(trunc({column}) AS BIGINT)"
         return f"TRY_CAST({column} AS BIGINT)"
     if goal == "float":
         if kind == "string":
