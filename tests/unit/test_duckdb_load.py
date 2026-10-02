@@ -110,6 +110,44 @@ def test_types_polars_refuses_are_refused_alike(tmp_path: Path) -> None:
         assert str(duckdb_error.value) == str(polars_error.value)
 
 
+class TestOutOfRangeValues:
+    """#919: values DuckDB cannot hold raise TabularError, not InvalidInputException."""
+
+    def test_int_beyond_128_bits_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TabularError, match="supported range"):
+            _load(tmp_path, [{"v": 2**130}])
+
+    def test_negative_int_beyond_128_bits_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TabularError, match="supported range"):
+            _load(tmp_path, [{"v": -(2**130)}])
+
+    def test_decimal_beyond_38_digits_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TabularError, match="significant digits"):
+            _load(tmp_path, [{"v": Decimal("1" + "0" * 38)}])
+
+    def test_out_of_range_inside_a_list_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TabularError, match="supported range"):
+            _load(tmp_path, [{"v": [1, 2**130]}])
+
+    def test_out_of_range_inside_a_struct_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TabularError, match="supported range"):
+            _load(tmp_path, [{"v": {"inner": 2**130}}])
+
+    def test_int128_boundary_values_load(self, tmp_path: Path) -> None:
+        boundary = 2**127 - 1
+        loaded, rows = _load(tmp_path, [{"v": boundary}, {"v": -boundary - 1}, {"v": 0}])
+
+        assert loaded.row_count == 3
+
+    def test_error_message_has_no_server_path(self, tmp_path: Path) -> None:
+        try:
+            _load(tmp_path, [{"v": 2**130}])
+        except TabularError as exc:
+            assert str(tmp_path) not in str(exc)
+        else:
+            pytest.fail("expected TabularError")
+
+
 def test_read_as_applies_before_loading(tmp_path: Path) -> None:
     records: list[dict[str, Any]] = [{"code": 123}, {"code": "00123"}, {"code": None}]
     frame = records_to_dataframe(records, read_as={"code": "str"})
