@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
+from decimal import Decimal
 
 from kpubdata_builder.stages.gold import (
     DatasetCard,
@@ -95,3 +96,18 @@ def test_render_serializes_temporal_sample_values() -> None:
 
     assert "2025-01-02" in text
     assert "2025-01-02T12:30:00" in text
+
+
+def test_render_serializes_decimal_time_and_nested_sample_values() -> None:
+    # A Parquet upload's Decimal and time, alone or nested, render as their text (#979).
+    card = build_dataset_card(
+        title="native",
+        fields=[("amount", "Decimal", False), ("at", "Time", False), ("parts", "List", False)],
+        sample_rows=[
+            {"amount": Decimal("2.50"), "at": time(1, 2, 3), "parts": [Decimal("0.10"), None]}
+        ],
+    )
+
+    text = render_dataset_card(card)
+
+    assert '| 2.50 | 01:02:03 | ["0.10", null] |' in text

@@ -23,8 +23,8 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
 
+from ...exporters._json_safe import json_safe
 from ...spec import JsonValue
 
 
@@ -174,12 +174,14 @@ def _cell(value: object) -> str:
         text = "true" if value else "false"
     elif isinstance(value, (str, int, float)):
         text = str(value)
-    elif isinstance(value, (date, datetime)):
-        # temporal Python objects fail if directly JSON encoded, so like Silver serializer
-        # convert to ISO 8601 strings (#195).
-        text = value.isoformat()
     else:
-        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        # A date, a time, a datetime and a Decimal fail if directly JSON encoded, alone
+        # or inside a list or struct, so they take the text every exporter gives them
+        # (#195, #979).
+        safe = json_safe(value)
+        text = (
+            safe if isinstance(safe, str) else json.dumps(safe, ensure_ascii=False, sort_keys=True)
+        )
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
 
