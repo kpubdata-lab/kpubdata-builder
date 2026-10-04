@@ -54,7 +54,11 @@ COPY README.md LICENSE ./
 # CUBRID 상태 백엔드(ADR 0016)로 배포하려면 cubrid extra를 포함한다:
 #   --build-arg EXTRAS="publish cubrid"
 # sqlalchemy-cubrid[pycubrid]는 순수 파이썬이라 python:3.12-slim에서 C 툴체인 없이 설치된다.
-ARG EXTRAS=publish
+#
+# auth: OIDC Bearer 검증에 쓰는 pyjwt (#992). 기본 이미지에 없으면 OIDC_ISSUER 를 설정한
+# 배포가 기동 시점에 "pyjwt 가 없다"로 거부된다 — Studio 는 Bearer 만 보내므로, Studio 가
+# 붙는 배포는 이 extra 없이는 성립하지 않는다. OIDC 를 켜지 않은 배포에는 영향이 없다.
+ARG EXTRAS="publish auth"
 RUN if [ -z "${EXTRAS}" ]; then \
       uv sync --no-sources; \
     else \
