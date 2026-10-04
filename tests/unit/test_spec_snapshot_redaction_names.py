@@ -82,7 +82,7 @@ def test_a_parameter_that_only_contains_a_secret_name_is_kept() -> None:
 def test_outside_request_parameters_a_bare_key_is_data_and_the_other_names_are_not() -> None:
     """``key`` names a credential only as a request parameter; ``oc`` and the sgis names
     are credentials wherever they appear."""
-    data = {
+    data: dict[str, object] = {
         "dataset_id": "leak.check",
         "title": "Leak check",
         "description": "d",
