@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from kpubdata_builder.cli import _create_client
+from kpubdata_builder.cli import _create_client, client_keeps_environment_keys_out
 from kpubdata_builder.credentials import AesGcmCredentialCipher, SQLiteCredentialRepository
 from kpubdata_builder.service import BuilderService
 from kpubdata_builder.service.auth import Principal
@@ -164,17 +164,88 @@ def test_switch_off_keeps_the_operator_fallback(
     assert factory.calls[-1] == {"keys": {"datago": "operator-key"}, "environment_keys": True}
 
 
-def test_the_default_factory_really_leaves_the_environment_out(
+def test_a_kpubdata_without_env_keys_is_refused_not_silently_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The real kpubdata client: with environment_keys=False the env key is absent."""
+    """kpubdata 0.8.0 swallows ``env_keys=False`` and still reads the environment (#990).
+
+    A client built without the operator's keys in ``provider_keys`` looks them up in
+    the environment when it is used, so the old check — the key is not in ``_config`` —
+    passed while the key was still in reach.
+    """
+
+    class _OldClient:
+        def __init__(self, *, provider_keys: object = None, **extra: object) -> None:
+            raise AssertionError("a client that cannot keep the env out must not be built")
+
+    monkeypatch.setattr("kpubdata.Client", _OldClient)
     monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", "operator-key")
+
+    assert client_keeps_environment_keys_out() is False
+    with pytest.raises(RuntimeError, match="cannot keep the environment's provider keys out"):
+        _create_client(environment_keys=False)
+
+
+def test_env_keys_false_is_passed_to_a_kpubdata_that_has_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[dict[str, object]] = []
+
+    class _NewClient:
+        def __init__(
+            self,
+            *,
+            provider_keys: object = None,
+            timeout: float = 30.0,
+            cache: bool = False,
+            env_keys: bool = True,
+        ) -> None:
+            built.append({"provider_keys": provider_keys, "env_keys": env_keys})
+
+    monkeypatch.setattr("kpubdata.Client", _NewClient)
+
+    assert client_keeps_environment_keys_out() is True
+    _create_client(provider_keys={"datago": "own"}, environment_keys=False)
+
+    assert built == [{"provider_keys": {"datago": "own"}, "env_keys": False}]
+
+
+@pytest.mark.skipif(
+    not client_keeps_environment_keys_out(),
+    reason="the installed kpubdata has no env_keys (0.8.0); the refusal is tested above",
+)
+def test_the_real_client_cannot_reach_the_operators_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behaviour, not storage: the key lookup itself answers None for every spelling."""
+    monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", "operator-key")
+    monkeypatch.setenv("DATAGO_API_KEY", "operator-key")
 
     kept_out = _create_client(environment_keys=False)
     default = _create_client()
 
-    assert "operator-key" not in repr(vars(kept_out._config))  # type: ignore[attr-defined]
-    assert default._config.provider_keys.get("datago") == "operator-key"  # type: ignore[attr-defined]
+    assert kept_out._config.get_provider_key("datago") is None  # type: ignore[attr-defined]
+    assert default._config.get_provider_key("datago") == "operator-key"  # type: ignore[attr-defined]
+
+
+def test_serve_refuses_to_start_when_it_cannot_keep_the_promise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fail closed at start, not on the first keyless build (#990)."""
+    from kpubdata_builder import cli
+
+    monkeypatch.setenv("KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL", "true")
+    monkeypatch.setattr(cli, "client_keeps_environment_keys_out", lambda: False)
+
+    def _must_not_serve(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the service must not start")
+
+    monkeypatch.setattr("kpubdata_builder.service.http.serve", _must_not_serve)
+
+    code = cli._run_serve(output_dir=str(tmp_path), host="127.0.0.1", port=0, max_workers=1)
+
+    assert code == 1
+    assert "cannot keep the environment's provider keys out" in capsys.readouterr().err
 
 
 def test_a_factory_that_cannot_keep_the_env_out_is_refused(

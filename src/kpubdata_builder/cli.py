@@ -453,6 +453,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Why a client that must not use the operator's keys cannot be built (#990).
+ENV_KEYS_UNSUPPORTED = (
+    "the installed kpubdata cannot keep the environment's provider keys out of a client "
+    "(Client has no env_keys option; it was added after 0.8.0), so a request without its "
+    "own key would run on the operator's. Install a kpubdata release that has it, or "
+    "turn KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL and multi-user mode off."
+)
+
+
+def client_keeps_environment_keys_out() -> bool:
+    """Whether the installed kpubdata ``Client`` takes ``env_keys`` (#990).
+
+    kpubdata 0.8.0 has no such option and accepts any keyword without an error, so
+    passing ``env_keys=False`` to it does nothing and says nothing. Asking the signature
+    is the only way to know the option is honoured.
+    """
+    import inspect
+
+    from kpubdata import Client
+
+    return "env_keys" in inspect.signature(Client).parameters
+
+
 def _create_client(
     *,
     provider_keys: dict[str, str] | None = None,
@@ -469,14 +492,18 @@ def _create_client(
 
     if not environment_keys:
         # The service asked for a client that must not carry the operator's keys
-        # (REQUIRE_OWN_PROVIDER_CREDENTIAL, #786). from_env would add them from the
-        # environment on its own, so build the client from explicit keys only.
+        # (REQUIRE_OWN_PROVIDER_CREDENTIAL, #786). Leaving them out of provider_keys
+        # is not enough: a kpubdata client looks a missing key up in the environment
+        # when it is used, so the client has to be told not to (#990).
+        if not client_keeps_environment_keys_out():
+            raise RuntimeError(ENV_KEYS_UNSUPPORTED)
         return cast(
             SourceClient,
             Client(
                 provider_keys=dict(provider_keys or {}),
                 timeout=timeout if timeout is not None else 30.0,
                 cache=bool(cache),
+                env_keys=False,
             ),
         )
     # Since kpubdata #276, from_env accepts only explicit parameters (**kwargs removed).
@@ -798,7 +825,8 @@ def _run_serve(
 
     Returns:
         int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when the replay
-        fixtures cannot be used.
+        fixtures cannot be used, or when the deployment requires each request's own
+        provider key and the installed kpubdata cannot keep the operator's out (#990).
     """
     from .service import BuilderService
     from .service.http import _DEFAULT_MAX_WORKERS, serve
@@ -832,6 +860,14 @@ def _run_serve(
             + (f" (placeholder key for: {', '.join(placeholders)})" if placeholders else ""),
             flush=True,
         )
+
+    # A deployment that promises not to use the operator's keys must be able to keep
+    # that promise before it takes a request, not find out on the first build (#990).
+    from .service.providers import require_own_provider_credential
+
+    if require_own_provider_credential() and not client_keeps_environment_keys_out():
+        print(f"error: {ENV_KEYS_UNSUPPORTED}", file=sys.stderr)
+        return 1
 
     service = BuilderService(
         output_root=Path(output_dir),

@@ -54,6 +54,18 @@ services:
       KPUBDATA_QUERY_MAX_CONCURRENCY: ${KPUBDATA_QUERY_MAX_CONCURRENCY:-1}
       KPUBDATA_QUERY_MAX_MEMORY_MB: ${KPUBDATA_QUERY_MAX_MEMORY_MB:-768}
       KPUBDATA_QUERY_MEMORY_BUDGET_MB: ${KPUBDATA_QUERY_MEMORY_BUDGET_MB:-768}
+      # OIDC Bearer (선택, ADR 0009/0015, #992). Studio 는 Bearer 만 보내므로 Studio 가
+      # 붙는 배포는 이것이 필요하다. 비워 두면 API 키 전용(단일 사용자) 배포 그대로다.
+      # OIDC_ISSUER 를 설정하면 다중 사용자 배포가 된다: OIDC_AUDIENCE 와, 허용 목록
+      # (OIDC_ALLOWED_*) 또는 관리자(KPUBDATA_BUILDER_ADMIN_SUBJECTS) 중 하나가 없으면
+      # serve 가 기동을 거부한다(#635). realm 설정은 docs/deploy.md 의 Keycloak 절.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_ALLOWED_HD: ${OIDC_ALLOWED_HD:-}
+      OIDC_ALLOWED_SUBJECTS: ${OIDC_ALLOWED_SUBJECTS:-}
+      OIDC_ALLOWED_EMAILS: ${OIDC_ALLOWED_EMAILS:-}
+      KPUBDATA_BUILDER_ADMIN_SUBJECTS: ${KPUBDATA_BUILDER_ADMIN_SUBJECTS:-}
+      KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT: ${KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT:-}
     ports:
       # 기본은 루프백이다. 예전 기본값("8000")은 모든 인터페이스에 공개돼서,
       # Caddy 없이 올리면 TLS 없는 8000 으로 API 키가 평문으로 오갔다. 헬스체크는
