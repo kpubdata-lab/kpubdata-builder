@@ -402,7 +402,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.78.0 -> 1.79.0: stable codes for the full build queue (429 build_queue_full),
 #   authentication failures (unauthorized, token_expired, auth_unavailable) and the
 #   overload 503 (server_overloaded) (#1000, additive).
-API_CONTRACT_VERSION = "1.79.0"
+# 1.79.0 -> 1.80.0: the X-Provider-Key parameter, the shared 429 auth_throttled and
+#   overload 503 responses and the X-Request-ID header are declared (#994, description).
+API_CONTRACT_VERSION = "1.80.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
