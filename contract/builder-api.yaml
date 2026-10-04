@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.79.0"
+  version: "1.80.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.80.0 declares what the service already sends (#994, description only — the wire is unchanged): the `X-Provider-Key` request header as a parameter of the five operations that call a provider (`previewBuild`, `createBuild`, `submitBuild`, `getProviderStatus`, `testProviderConnection`), the 429 `auth_throttled` and the overload 503 as shared responses any operation can answer (`components.responses.AuthThrottled`, `ServerOverloaded`), and the `X-Request-ID` response header (`components.headers.RequestId`).
     v1.79.0 gives four failures a stable `code` (#1000, additive): the full async build queue's 429 is `build_queue_full` (it was told from 429 `auth_throttled` only by its sentence), an authentication failure is `unauthorized`, `token_expired` (the bearer token's `exp` has passed — get a new token) or, with 503, `auth_unavailable` (the JWKS could not be fetched), and the overload 503 written before a request is read is `server_overloaded`. Each body keeps its `error` text.
     v1.78.0 lets the owner read a run a restart interrupted (#996, additive): `GET /builds/{run_id}` answers such a run as `failed` with the new optional `BuildJob.code` `credentials_required` and the reason in `error`, and `GET /builds/{run_id}/events` shows its `run_failed` event, where both answered 404 before; another user still gets what a missing run gets. The submitter of an async run is now recorded with its events, so this holds for runs submitted from this version on.
     v1.77.0 stops a snapshot profile's range from disclosing a single record's value (#903, additive): `ColumnRange.min`/`max` are read after removing the `range_trim` lowest and the `range_trim` highest values, the range's `status` is `trimmed` instead of `exact`, and it carries `trimmed_count`. `SnapshotProfile` gains `range_trim`, and `min_range_values` is at least `2 * range_trim + 1`. A client that showed only `exact` ranges shows none until it reads `trimmed`.
@@ -288,6 +289,7 @@ paths:
       operationId: getProviderStatus
       summary: 현재 principal credential로 Provider 연결 상태 확인
       parameters:
+        - $ref: "#/components/parameters/ProviderKey"
         - $ref: "#/components/parameters/ProviderName"
       responses:
         "200":
@@ -336,6 +338,7 @@ paths:
       operationId: testProviderConnection
       summary: 현재 principal credential로 lightweight connection test 실행
       parameters:
+        - $ref: "#/components/parameters/ProviderKey"
         - $ref: "#/components/parameters/ProviderName"
       responses:
         "200":
@@ -682,6 +685,8 @@ paths:
     post:
       operationId: previewBuild
       summary: 각 소스의 스키마와 샘플 행 산출 (파일 미기록, 동기식)
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       requestBody:
         required: true
         content:
@@ -805,6 +810,8 @@ paths:
     post:
       operationId: createBuild
       summary: 파이프라인 실행 및 결과 반환 (동기식)
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       requestBody:
         required: true
         content:
@@ -1376,6 +1383,8 @@ paths:
         제출한 principal 의 업로드를 읽고, 다른 소유자의 `upload_id` 나 안정적인
         소유자가 없는 요청은 job 이 `failed` 로 끝나며 그 source 의 `error` 에
         사유가 적힌다. 제출 시점(202)에는 업로드를 확인하지 않는다.
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       requestBody:
         required: true
         content:
@@ -4162,7 +4171,57 @@ components:
         each operation: an operation has one 403 response, and many already use it for
         their own refusal, whose `Error.code` tells the two apart.
 
+  headers:
+    RequestId:
+      description: >-
+        The id this request is logged under (#994). Sent on every response a handler
+        writes — success or error — so it can be quoted when reporting a problem;
+        absent only from the overload 503, which is written before a request is read.
+        Readable from a cross-origin page (`Access-Control-Expose-Headers`, #995).
+      schema:
+        type: string
+
   responses:
+    AuthThrottled:
+      x-status: 429
+      description: >-
+        Too many failed authentication attempts from this client address (#994) — any
+        operation can answer this before it runs. `retry_after_seconds` says how long
+        the window has left. `x-status` names the status code, since no single
+        operation references this response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AuthThrottled:
+              summary: The failure limit for this client address was reached
+              value:
+                error: too many failed authentication attempts
+                code: auth_throttled
+                retry_after_seconds: 42
+    ServerOverloaded:
+      x-status: 503
+      description: >-
+        Too many requests are in flight (#994, #1000). The connection is answered
+        before the request is read and closed; `Retry-After` says when to try again.
+        Any operation can answer this. `x-status` names the status code, since no
+        single operation references this response.
+      headers:
+        Retry-After:
+          description: Seconds to wait before sending the request again.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            ServerOverloaded:
+              summary: The request was refused before it was read
+              value:
+                error: server overloaded
+                code: server_overloaded
     SignupNotApproved:
       x-status: 403
       description: >-
@@ -4247,6 +4306,20 @@ components:
                       reason: "the dataset declares redistribution: forbidden"
 
   parameters:
+    ProviderKey:
+      name: X-Provider-Key
+      in: header
+      required: false
+      description: >-
+        Multi-user deployment only (#683): the requester's own provider key for this
+        request or the job it submits, `<provider>=<key>`, repeated or comma-separated.
+        Held in memory until the request ends, or the async job ends, is cancelled or
+        its TTL passes; never stored, logged or returned. A malformed header answers
+        400 `invalid_provider_key` on any route. A single-user deployment ignores it
+        and keeps its stored and server keys. Declared on the operations that call a
+        provider (#994).
+      schema:
+        type: string
     PublishCredential:
       name: X-Publish-Credential
       in: header

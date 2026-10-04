@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.79.0",
+  "contract_version": "1.80.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5666,6 +5666,53 @@
         "error": 12345,
         "code": "revision_conflict",
         "current_revision": 3
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "AuthThrottled",
+      "status": 429,
+      "example": "AuthThrottled",
+      "current": {
+        "error": "too many failed authentication attempts",
+        "code": "auth_throttled",
+        "retry_after_seconds": 42
+      },
+      "with_additive_fields": {
+        "error": "too many failed authentication attempts",
+        "code": "auth_throttled",
+        "retry_after_seconds": 42,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "auth_throttled",
+        "retry_after_seconds": 42
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "ServerOverloaded",
+      "status": 503,
+      "example": "ServerOverloaded",
+      "current": {
+        "error": "server overloaded",
+        "code": "server_overloaded"
+      },
+      "with_additive_fields": {
+        "error": "server overloaded",
+        "code": "server_overloaded",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "server_overloaded"
       },
       "broken_path": "$.error"
     },
