@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- The image's OS security patches are applied again (#1006). The `apt-get upgrade` layer was served from the build cache with packages from before `libpcre2` 10.42-1+deb12u2, so `docker build and scan` failed every pull request on CVE-2026-103111 although the fix was on the mirror. The layer now takes an `OS_PATCH_DATE` build argument as its cache key; raising the date rebuilds it.
 - A Decimal→integer cast rounds instead of truncating toward zero (#918). `_kind` classified Decimal as "other", reaching a bare `TRY_CAST(... AS BIGINT)` — DuckDB's own cast gives 2.50 → 3 and -0.50 → -1, while Polars (the engine whose semantics Builder promises) truncates toward zero (2 and 0). The value change is silent: null count does not increase, so the cast audit cannot catch it. `_kind` now classifies Decimal as its own family, and the integer cast wraps it in `trunc()` the same way floats already are; boundary tests pin Int64 exact values, one-past-boundary NULL, and null pass-through (#975).
 - Integers past ±2^127 and Decimals past 38 significant digits now raise `TabularError` in both engines instead of raw Polars or DuckDB exceptions (#919, #974). The DuckDB loader raised `InvalidInputException` with the absolute workdir; the Polars path raised `OverflowError` or `RuntimeError` wrapping Polars' `BindingsError`. Both paths state the same limits with the same messages, and the DuckDB scan names the offending column (#977).
 
