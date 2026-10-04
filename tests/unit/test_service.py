@@ -1237,6 +1237,37 @@ class TestHttpAdapter:
         with urllib.request.urlopen(req, timeout=2.0) as response:
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
 
+    def test_cors_exposes_the_headers_a_page_has_to_read(
+        self,
+        http_server: tuple[str, HTTPServer, threading.Thread],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Without Expose-Headers a cross-origin page cannot read a download's file name,
+        # the request id, or Retry-After (#995).
+        monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
+        base_url, _, _ = http_server
+        req = urllib.request.Request(
+            f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as response:
+            exposed = {
+                name.strip()
+                for name in response.headers["Access-Control-Expose-Headers"].split(",")
+            }
+            assert {"Content-Disposition", "X-Request-ID", "Retry-After"} <= exposed
+            assert response.headers["X-Request-ID"]
+
+    def test_cors_exposes_nothing_to_a_disallowed_origin(
+        self,
+        http_server: tuple[str, HTTPServer, threading.Thread],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
+        base_url, _, _ = http_server
+        req = urllib.request.Request(f"{base_url}/version", headers={"Origin": "https://evil.test"})
+        with urllib.request.urlopen(req, timeout=2.0) as response:
+            assert response.headers["Access-Control-Expose-Headers"] is None
+
     def test_cors_multiple_origins_configurable(
         self,
         http_server: tuple[str, HTTPServer, threading.Thread],
@@ -1686,6 +1717,76 @@ class TestHttpRobustness:
         headers = dict(line.split(b": ", 1) for line in head.split(b"\r\n")[1:])
         assert int(headers[b"Content-Length"]) == len(body)
         assert json.loads(body) == {"error": "server overloaded"}
+
+    @staticmethod
+    def _overloaded_headers(allowed: frozenset[str]) -> dict[bytes, bytes]:
+        from kpubdata_builder.service.http import _overloaded_response
+
+        head, _, body = _overloaded_response(allowed).partition(b"\r\n\r\n")
+        headers = dict(line.split(b": ", 1) for line in head.split(b"\r\n")[1:])
+        assert int(headers[b"Content-Length"]) == len(body)
+        assert json.loads(body) == {"error": "server overloaded"}
+        return headers
+
+    def test_overloaded_response_has_no_cors_header_without_an_allowed_origin(self) -> None:
+        """Default-deny stays default-deny (#995)."""
+        headers = self._overloaded_headers(frozenset())
+
+        assert not [name for name in headers if name.startswith(b"Access-Control-")]
+
+    def test_overloaded_response_names_the_one_allowed_origin(self) -> None:
+        """The request is not read, so the only origin it could be for is the one allowed."""
+        headers = self._overloaded_headers(frozenset({"https://studio.example.com"}))
+
+        assert headers[b"Access-Control-Allow-Origin"] == b"https://studio.example.com"
+        assert headers[b"Access-Control-Allow-Credentials"] == b"true"
+        assert headers[b"Vary"] == b"Origin"
+        assert headers[b"Access-Control-Expose-Headers"] == b"Retry-After"
+        assert headers[b"Retry-After"] == b"1"
+
+    def test_overloaded_response_is_readable_from_any_of_several_origins(self) -> None:
+        headers = self._overloaded_headers(
+            frozenset({"http://localhost:5173", "https://studio.example.com"})
+        )
+
+        assert headers[b"Access-Control-Allow-Origin"] == b"*"
+        assert b"Access-Control-Allow-Credentials" not in headers
+        assert headers[b"Access-Control-Expose-Headers"] == b"Retry-After"
+
+    def test_overloaded_response_drops_cors_for_an_origin_it_cannot_write(self) -> None:
+        headers = self._overloaded_headers(frozenset({"https://a.example\r\nX-Injected: 1"}))
+
+        assert not [name for name in headers if name.startswith(b"Access-Control-")]
+        assert b"X-Injected" not in headers
+
+    def test_a_rejected_connection_gets_the_cors_headers_of_the_deployment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The socket path uses the configured origins, not the constant without them."""
+        from kpubdata_builder.service.http import BoundedThreadingHTTPServer, make_handler
+
+        monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "https://studio.example.com")
+        sent: list[bytes] = []
+
+        class _Socket:
+            def sendall(self, data: bytes) -> None:
+                sent.append(data)
+
+            def close(self) -> None:
+                return None
+
+            def shutdown(self, _how: int) -> None:
+                return None
+
+        server = BoundedThreadingHTTPServer(
+            ("127.0.0.1", 0), make_handler(_service(tmp_path)), max_workers=1
+        )
+        try:
+            server._reject(_Socket(), ("10.0.0.1", 1))  # type: ignore[arg-type]
+        finally:
+            server.server_close()
+
+        assert b"Access-Control-Allow-Origin: https://studio.example.com\r\n" in sent[0]
 
     def test_oversized_body_content_length_returns_413_http(
         self, http_server: tuple[str, HTTPServer, threading.Thread]
