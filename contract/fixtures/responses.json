@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.76.0",
+  "contract_version": "1.77.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -2314,6 +2314,185 @@
           }
         ],
         "warnings": []
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getPublishReceipt",
+      "method": "GET",
+      "path": "/builds/{run_id}/publish/receipt",
+      "status": 200,
+      "example": "Unknown",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "destination": "kpubdata/air-quality",
+        "state": "unknown",
+        "fingerprint": "9f2c1d7a4b6e8035",
+        "options": {},
+        "reconcilable": true
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "target": "huggingface",
+        "destination": "kpubdata/air-quality",
+        "state": "unknown",
+        "fingerprint": "9f2c1d7a4b6e8035",
+        "options": {},
+        "reconcilable": true,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "target": "huggingface",
+        "destination": "kpubdata/air-quality",
+        "state": "unknown",
+        "fingerprint": "9f2c1d7a4b6e8035",
+        "options": {},
+        "reconcilable": true
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "resetPublishReceipt",
+      "method": "DELETE",
+      "path": "/builds/{run_id}/publish/receipt",
+      "status": 200,
+      "example": "Reset",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "state": "reset",
+        "retry_allowed": true,
+        "fingerprint": "9f2c1d7a4b6e8035"
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "state": "reset",
+        "retry_allowed": true,
+        "fingerprint": "9f2c1d7a4b6e8035",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "state": "reset",
+        "retry_allowed": true,
+        "fingerprint": "9f2c1d7a4b6e8035"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "reconcilePublish",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish/reconcile",
+      "status": 200,
+      "example": "Confirmed",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "state": "succeeded",
+        "reconciled": true,
+        "fingerprint": "9f2c1d7a4b6e8035"
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "state": "succeeded",
+        "reconciled": true,
+        "fingerprint": "9f2c1d7a4b6e8035",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "state": "succeeded",
+        "reconciled": true,
+        "fingerprint": "9f2c1d7a4b6e8035"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "reconcilePublish",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish/reconcile",
+      "status": 200,
+      "example": "AbsentReset",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "state": "reset",
+        "reconciled": true,
+        "retry_allowed": true,
+        "fingerprint": "9f2c1d7a4b6e8035"
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "state": "reset",
+        "reconciled": true,
+        "retry_allowed": true,
+        "fingerprint": "9f2c1d7a4b6e8035",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "state": "reset",
+        "reconciled": true,
+        "retry_allowed": true,
+        "fingerprint": "9f2c1d7a4b6e8035"
+      },
+      "broken_path": "$.run_id"
+    },
+    {
+      "operation_id": "getPublishAudit",
+      "method": "GET",
+      "path": "/builds/{run_id}/publish/audit",
+      "status": 200,
+      "example": "OneReset",
+      "current": {
+        "run_id": "air-quality-20260815",
+        "entries": [
+          {
+            "fingerprint": "9f2c1d7a4b6e8035",
+            "action": "manual_reset",
+            "actor": "operator",
+            "recorded_at": "2026-08-15T03:12:45+00:00"
+          }
+        ]
+      },
+      "with_additive_fields": {
+        "run_id": "air-quality-20260815",
+        "entries": [
+          {
+            "fingerprint": "9f2c1d7a4b6e8035",
+            "action": "manual_reset",
+            "actor": "operator",
+            "recorded_at": "2026-08-15T03:12:45+00:00",
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.entries[0]",
+        "$"
+      ],
+      "required_type_broken": {
+        "run_id": 12345,
+        "entries": [
+          {
+            "fingerprint": "9f2c1d7a4b6e8035",
+            "action": "manual_reset",
+            "actor": "operator",
+            "recorded_at": "2026-08-15T03:12:45+00:00"
+          }
+        ]
       },
       "broken_path": "$.run_id"
     },
@@ -5178,6 +5357,126 @@
       ],
       "required_type_broken": {
         "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "getPublishReceipt",
+      "method": "GET",
+      "path": "/builds/{run_id}/publish/receipt",
+      "status": 404,
+      "example": "ReceiptNotFound",
+      "current": {
+        "error": "publish receipt not found",
+        "code": "receipt_not_found"
+      },
+      "with_additive_fields": {
+        "error": "publish receipt not found",
+        "code": "receipt_not_found",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "receipt_not_found"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "resetPublishReceipt",
+      "method": "DELETE",
+      "path": "/builds/{run_id}/publish/receipt",
+      "status": 404,
+      "example": "ReceiptNotFound",
+      "current": {
+        "error": "publish receipt not found",
+        "code": "receipt_not_found"
+      },
+      "with_additive_fields": {
+        "error": "publish receipt not found",
+        "code": "receipt_not_found",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "receipt_not_found"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "resetPublishReceipt",
+      "method": "DELETE",
+      "path": "/builds/{run_id}/publish/receipt",
+      "status": 503,
+      "example": "ReconcileUnavailable",
+      "current": {
+        "error": "receipt reset could not be persisted; nothing was changed",
+        "code": "reconcile_unavailable"
+      },
+      "with_additive_fields": {
+        "error": "receipt reset could not be persisted; nothing was changed",
+        "code": "reconcile_unavailable",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "reconcile_unavailable"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "reconcilePublish",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish/reconcile",
+      "status": 404,
+      "example": "ReceiptNotFound",
+      "current": {
+        "error": "publish receipt not found",
+        "code": "receipt_not_found"
+      },
+      "with_additive_fields": {
+        "error": "publish receipt not found",
+        "code": "receipt_not_found",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "receipt_not_found"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "reconcilePublish",
+      "method": "POST",
+      "path": "/builds/{run_id}/publish/reconcile",
+      "status": 503,
+      "example": "ReconcileUnavailable",
+      "current": {
+        "error": "remote state could not be determined; nothing was changed",
+        "code": "reconcile_unavailable"
+      },
+      "with_additive_fields": {
+        "error": "remote state could not be determined; nothing was changed",
+        "code": "reconcile_unavailable",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "reconcile_unavailable"
       },
       "broken_path": "$.error"
     },

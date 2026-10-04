@@ -394,7 +394,9 @@ _BuildListEntry = dict[str, str | None]
 #   license_provider, license_mismatch and processing_declared (#955, additive).
 # 1.75.0 -> 1.76.0: saved analyses record their SQL dialect and engine; a legacy-polars
 #   analysis answers 409 analysis_migration_required to run (#875, additive).
-API_CONTRACT_VERSION = "1.76.0"
+# 1.76.0 -> 1.77.0: the publish recovery routes (receipt GET/DELETE, reconcile, audit) are
+#   declared in the contract; they were answered since 1.19.0/1.20.0 (#994, additive).
+API_CONTRACT_VERSION = "1.77.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
