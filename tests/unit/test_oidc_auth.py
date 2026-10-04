@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 import jwt
 import pytest
@@ -271,6 +272,8 @@ class TestInvalidTokens:
         token = _make_token(oidc_env, exp=now - 120)
         result = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(result, AuthError)
+        # A code of its own (#1000): the client gets a new token instead of reading the reason.
+        assert result.code == "token_expired"
 
     def test_wrong_audience(self, oidc_env: bytes) -> None:
         token = _make_token(oidc_env, aud="wrong-client")
@@ -768,3 +771,101 @@ class TestPrincipalOwns:
     def test_non_owner_denied_via_legacy_path(self) -> None:
         principal = Principal(kind="oidc", identifier="b", owner_id="oidc:deadbeef")
         assert not principal_owns(created_by="oidc:a", owner_id=None, principal=principal)
+
+
+class TestStableAuthCodes:
+    """An authentication failure says what kind it is without its sentence (#1000)."""
+
+    def test_a_refused_credential_is_unauthorized(self, oidc_env: bytes) -> None:
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env, aud='wrong-client')}")
+
+        assert isinstance(result, AuthError)
+        assert (result.status_code, result.code) == (401, "unauthorized")
+
+    def test_the_code_does_not_read_the_sentence(self) -> None:
+        # ``token_expired`` is set where the failure is made; rewording ``reason`` — or a
+        # reason that happens to end the same way — does not change the code.
+        assert AuthError(reason="the token is past its exp", expired=True).code == "token_expired"
+        assert AuthError(reason="invalid token: ExpiredSignatureError").code == "unauthorized"
+
+    @pytest.mark.parametrize("sent", [None, "wrong-key"])
+    def test_a_missing_key_and_a_wrong_key_get_the_contract_example(
+        self, sent: str | None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The contract's one ``Unauthorized`` example stands for both, so both must
+        # answer with its sentence.
+        monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret-key")
+
+        result = authenticate(api_key=sent)
+
+        assert isinstance(result, AuthError)
+        assert (result.reason, result.code) == ("invalid api key", "unauthorized")
+
+    def test_an_unreachable_jwks_is_auth_unavailable(self) -> None:
+        assert AuthError(reason="auth service unavailable (jwks)", status_code=503).code == (
+            "auth_unavailable"
+        )
+
+    def test_the_response_body_carries_the_code(
+        self, oidc_env: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
+
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_kw: None)
+        expired = _make_token(oidc_env, exp=int(time.time()) - 120)
+
+        response = dispatch(service, "GET", "/datasets", None, bearer_token=f"Bearer {expired}")
+
+        assert isinstance(response, ServiceResponse)
+        assert response.status_code == 401
+        assert response.body == {
+            "error": "invalid token: ExpiredSignatureError",
+            "code": "token_expired",
+        }
+
+
+class TestKeycloakAccessToken:
+    """What Studio sends is a Keycloak access token (kpubdata-studio#722).
+
+    Builder does not look at the token's kind; these pin which realm configuration
+    produces a token it accepts.
+    """
+
+    #: Claims of a Keycloak access token that the Builder checks do not read.
+    _ACCESS = {"typ": "Bearer", "azp": "kpubdata-studio", "scope": "openid email profile"}
+
+    def test_a_default_realms_access_token_is_refused(self, oidc_env: bytes) -> None:
+        """No audience mapper: the access token's audience is only ``account``."""
+        token = _make_token(oidc_env, aud="account", **self._ACCESS)
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, AuthError)
+        assert result.status_code == 401
+        assert "InvalidAudienceError" in result.reason
+
+    def test_an_access_token_with_the_audience_mapper_is_accepted(self, oidc_env: bytes) -> None:
+        token = _make_token(oidc_env, aud=[_AUDIENCE, "account"], **self._ACCESS)
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, Principal)
+        assert result.kind == "oidc"
+
+    def test_an_access_token_without_the_email_scope_is_refused(self, oidc_env: bytes) -> None:
+        """The audience is right, but no ``email_verified`` claim came with it."""
+        now = int(time.time())
+        payload = {
+            "iss": _ISSUER,
+            "aud": [_AUDIENCE, "account"],
+            "sub": "user-1234567890",
+            "iat": now,
+            "exp": now + 3600,
+            **self._ACCESS,
+        }
+        token = jwt.encode(payload, oidc_env, algorithm="RS256", headers={"kid": "test-key"})
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, AuthError)
+        assert result.reason == "email not verified"

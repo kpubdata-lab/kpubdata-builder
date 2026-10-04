@@ -16,7 +16,7 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 | 소비자 | 인증 | 비고 |
 | :--- | :--- | :--- |
 | 스케줄 워크플로(데이터 갱신) | `X-API-Key` | Google 로그인 불가 → 서비스 키 병행 유지 |
-| Studio(사람 사용자) | `Authorization: Bearer <Google ID token>` | ADR 0009, ADR 0006의 "다중 소비자" 후속 |
+| Studio(사람 사용자) | `Authorization: Bearer <OIDC access token>` — IdP 가 이 API 용으로 발급한 access 토큰(kpubdata-studio#722). audience 에 `OIDC_AUDIENCE` 가 있어야 한다 | ADR 0009, ADR 0015, ADR 0006의 "다중 소비자" 후속 |
 | 로컬 개발 | `KPUBDATA_BUILDER_DEV_MODE=1` | 컨테이너 외부에서만 (fail-closed) |
 
 두 경로 모두 `Principal`(`service`/`oidc`/`dev`)로 정규화된다 (B2/#384).
@@ -196,6 +196,25 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 넘지만 thread 는 CPU 를 나눠 쓸 뿐
 메모리를 늘리지 않는다. 임시 디스크 8 GB 는 컨테이너의 쓰기 가능한 디스크 안에 있어야 한다.
 
+**운영 compose(`docker-compose.prod.app.yml`)의 기본값** (#993). 컨테이너 한도는 `3G` 이고 아래 합이
+그 안에 들어온다. `tests/unit/test_prod_compose_budget.py` 가 compose 파일에서 같은 식을 계산해, 한도가
+합보다 작아지면 실패한다.
+
+| 항목 | 기본값 | 합 |
+| :--- | :--- | :--- |
+| DuckDB 연결 (build 2 × source 4 + preview 1 + composition 1 = 10) | `KPUBDATA_BUILDER_MAX_WORKERS=2`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=128MB` | 1280 MB |
+| query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 768 MB |
+| 기본 프로세스·HTTP·여유 | 검사가 쓰는 고정값 | 400 MB |
+| **합** | | **2448 MB ≤ 3072 MB** |
+
+`KPUBDATA_DUCKDB_MEMORY_LIMIT` 을 `64MB` 로 두면 20행짜리 테이블의 빌드도
+`the table needs more memory or temporary disk than this deployment allows` 로 실패한다(parity
+시나리오로 실측, `96MB` 부터 통과). 그래서 운영 기본값은 `128MB` 이고, 위 "1 vCPU / 2 GiB 예시"의
+`96MB` 는 여유가 거의 없는 하한이다. 2 GiB 호스트에 맞추려면 `KPUBDATA_DUCKDB_MEMORY_LIMIT` 을 더
+내리지 말고 `KPUBDATA_BUILDER_MAX_WORKERS` 나 query 예산을 줄인다. warehouse 는
+`KPUBDATA_BUILDER_WAREHOUSE=/data/warehouse` 로 켜져 있다 — 없으면 `/warehouse/*` 가
+`warehouse_not_configured` 로 답한다.
+
 query worker 의 종료는 네 경로 모두에서 child process 를 남기지 않는다: 성공, 실패(child 가 스스로
 끝나지 않아도 1초 뒤 terminate), timeout(terminate 를 무시하면 kill), 요청 취소(대기 중인 요청 thread 가
 중단되면 child 도 멈춘다). 클라이언트가 연결을 끊은 것은 서버가 따로 감지하지 않는다 — 그 질의는 timeout
@@ -346,6 +365,20 @@ OIDC 없이 `ENFORCE_OWNERSHIP`도 설정하지 않은 단일 사용자 배포�
 `KPUBDATA_BUILDER_DEV_MODE`는 **인증을 통째로 우회**하므로 로컬 개발 전용이다. 켜진 채로
 기동하면 경고 로그를 남기고, `OIDC_ISSUER`가 함께 설정돼 있으면 (사용자 인증을 구성해두고
 인증을 우회하는 모순된 조합이므로) `serve`가 기동을 거부한다.
+
+**Builder 가 받는 것은 access 토큰이다**(kpubdata-studio#722). Studio 는 Keycloak 의 access 토큰을
+`Authorization: Bearer` 로 보낸다. Builder 는 토큰의 종류(`typ`·`azp`·`nonce`)를 보지 않고 클레임만
+검증한다 — RS256 서명, `iss`, `aud` 에 `OIDC_AUDIENCE` 포함, `exp`/`iat`/`sub`, `email_verified: true`.
+기본 Keycloak realm 의 access 토큰은 `aud` 가 `account` 뿐이라 **거부된다**(401). realm 에 두 가지를
+설정해야 한다:
+
+1. **Audience mapper** — `kpubdata-studio` client(또는 그 client 의 dedicated scope)에 mapper 를
+   추가한다: Mapper type `Audience`, Included Client Audience(또는 Included Custom Audience)에
+   `OIDC_AUDIENCE` 값(예: `kpubdata-builder`), **Add to access token: ON**. 이것이 없으면 access
+   토큰의 `aud` 에 Builder 가 없다.
+2. **`email` client scope 를 Default 로** — access 토큰에 `email` 과 `email_verified` 가 실려야 한다.
+   사용자 계정의 Email verified 가 꺼져 있으면 `401 email not verified` 다. realm 의 Verify email 을
+   켜면 가입 과정에서 채워진다.
 
 Keycloak Admin Console에서 realm의 User registration과 Verify email을 켜고 적절한
 password policy를 설정한다. Google Identity Broker를 사용하려면 broker의 Store Tokens는

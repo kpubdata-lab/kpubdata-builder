@@ -394,7 +394,17 @@ _BuildListEntry = dict[str, str | None]
 #   license_provider, license_mismatch and processing_declared (#955, additive).
 # 1.75.0 -> 1.76.0: saved analyses record their SQL dialect and engine; a legacy-polars
 #   analysis answers 409 analysis_migration_required to run (#875, additive).
-API_CONTRACT_VERSION = "1.76.0"
+# 1.76.0 -> 1.77.0: a snapshot profile's range is trimmed (ColumnRange.status
+#   `trimmed`, trimmed_count; SnapshotProfile.range_trim) so that one record's extreme
+#   is not disclosed (#903, additive).
+# 1.77.0 -> 1.78.0: a run a restart interrupted is readable by its owner — BuildJob
+#   gains the optional `code` (`credentials_required`) (#996, additive).
+# 1.78.0 -> 1.79.0: stable codes for the full build queue (429 build_queue_full),
+#   authentication failures (unauthorized, token_expired, auth_unavailable) and the
+#   overload 503 (server_overloaded) (#1000, additive).
+# 1.79.0 -> 1.80.0: the X-Provider-Key parameter, the shared 429 auth_throttled and
+#   overload 503 responses and the X-Request-ID header are declared (#994, description).
+API_CONTRACT_VERSION = "1.80.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -1063,15 +1073,14 @@ class BuilderService:
         """Actual execution entry point called by async job registry (#482, #496
         follow-up).
 
-        Do not pass ``owner_id`` to build() for file resolver (stays ``None``) —
-        kind="file" source resolver still lacks stable owner identity in async
-        path (#498 async limitation maintained). SourceRef registry snapshot-
-        preserved submitting principal owner_id used as ``credential_owner_id``
-        for public_api credential resolution and ``manifest_owner_id`` for
-        persisted manifest ownership (and BuildIndex reading it, #505 SSOT only) —
-        persisted manifest (and BuildIndex reading it directly, #505 SSOT) gains
-        accurate owner_id from single write inside build(). No post-build manifest
-        amendments needed.
+        The owner the job was submitted by — kept in the registry snapshot — is the
+        owner of everything the build does: ``owner_id`` for the ``kind="file"``
+        source resolver, ``manifest_owner_id`` for the persisted manifest (and the
+        BuildIndex reading it, #505 SSOT) and ``credential_owner_id`` for public_api
+        credential resolution. The file resolver used to get no owner here, so an
+        async build of an uploaded file was accepted and then failed in the worker
+        (#998); the upload store is isolated per owner, and the submitting owner is
+        the one whose uploads the spec may name.
         """
         snapshot = self._async_builds.get(run_id)
         manifest_owner_id = snapshot.owner_id if snapshot is not None else None
@@ -1084,6 +1093,7 @@ class BuilderService:
                     spec_yaml,
                     run_id=run_id,
                     created_by=created_by,
+                    owner_id=manifest_owner_id,
                     manifest_owner_id=manifest_owner_id,
                     credential_owner_id=manifest_owner_id,
                     # Pass cooperative cancel probe (#481) down to pipeline — don't carry
@@ -1450,7 +1460,9 @@ def _dispatch_impl(
         # fault).
         if principal.status_code == 401:
             service._auth_throttle.record_failure(client_id)
-        return ServiceResponse(principal.status_code, {"error": principal.reason})
+        return ServiceResponse(
+            principal.status_code, {"error": principal.reason, "code": principal.code}
+        )
 
     # Successful authentication clears failure record — normal client that received
     # a few 401s due to token expiry doesn't get throttled during subsequent normal

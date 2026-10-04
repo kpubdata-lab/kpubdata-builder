@@ -1,14 +1,15 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.76.0"
+  version: "1.80.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
     공유한다. 본 문서는 BuilderService(service/app.py)의 dispatch 라우팅과 실제
     wire 형태를 기계 판독용(OpenAPI 3.1) 단일 소스로 고정하며, Studio 같은 소비자가
-    타입 클라이언트를 생성하는 기준이 된다. v0.4에서는 동기식 build만 유지하며
-    비동기/publish 엔드포인트는 제외된다(ADR 0002, #226). v1.5.0은 built dataset
+    타입 클라이언트를 생성하는 기준이 된다. 동기식 build(`POST /build`)와 함께
+    비동기 build(`POST /builds`, ADR 0008)와 publish 엔드포인트도 이 계약에
+    선언되어 있다 — v0.4 당시에는 동기식 build 만 있었다(ADR 0002, #226). v1.5.0은 built dataset
     단위 조회(dataset_id로 여러 run을 grouping)와 Bronze/Silver/Gold stage
     summary/preview API를 추가했다(#488, additive). v1.6.0은 구조화된 Quality/Schema
     Drift 결과(PASS 포함 모든 evaluated check)와 dataset별 quality history/trend
@@ -19,6 +20,10 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.80.0 declares what the service already sends (#994, description only — the wire is unchanged): the `X-Provider-Key` request header as a parameter of the five operations that call a provider (`previewBuild`, `createBuild`, `submitBuild`, `getProviderStatus`, `testProviderConnection`), the 429 `auth_throttled` and the overload 503 as shared responses any operation can answer (`components.responses.AuthThrottled`, `ServerOverloaded`), and the `X-Request-ID` response header (`components.headers.RequestId`).
+    v1.79.0 gives four failures a stable `code` (#1000, additive): the full async build queue's 429 is `build_queue_full` (it was told from 429 `auth_throttled` only by its sentence), an authentication failure is `unauthorized`, `token_expired` (the bearer token's `exp` has passed — get a new token) or, with 503, `auth_unavailable` (the JWKS could not be fetched), and the overload 503 written before a request is read is `server_overloaded`. Each body keeps its `error` text.
+    v1.78.0 lets the owner read a run a restart interrupted (#996, additive): `GET /builds/{run_id}` answers such a run as `failed` with the new optional `BuildJob.code` `credentials_required` and the reason in `error`, and `GET /builds/{run_id}/events` shows its `run_failed` event, where both answered 404 before; another user still gets what a missing run gets. The submitter of an async run is now recorded with its events, so this holds for runs submitted from this version on.
+    v1.77.0 stops a snapshot profile's range from disclosing a single record's value (#903, additive): `ColumnRange.min`/`max` are read after removing the `range_trim` lowest and the `range_trim` highest values, the range's `status` is `trimmed` instead of `exact`, and it carries `trimmed_count`. `SnapshotProfile` gains `range_trim`, and `min_range_values` is at least `2 * range_trim + 1`. A client that showed only `exact` ranges shows none until it reads `trimmed`.
     v1.76.0 records which SQL a saved analysis is written in (#875, additive): `SavedAnalysis` gains `sql_dialect` (`duckdb`, or `legacy-polars` for one saved before the DuckDB cutover), `engine`, `engine_version`, `query_contract_version` and `migration_required`. A legacy analysis is never re-run on DuckDB: `POST /analyses/{analysis_id}/run` answers 409 `analysis_migration_required` until its SQL is reviewed and saved as a new analysis. Existing stores gain the columns on start; their rows are the legacy ones.
     v1.74.0 runs SQL, rows, aggregates, profiles and exports on DuckDB (#874, ADR 0021 step 13): each in a child process over a DuckDB connection that may read only the pinned snapshot file and spill into its own directory, with no other file, network or extension access and its configuration locked. The validator now parses the DuckDB dialect and refuses introspective functions (settings, variables, versions, sequences …) and nondeterministic SQL (random values, UUIDs, the current time, `USING SAMPLE`/`TABLESAMPLE`) with `unsafe_query`. Results keep the types DuckDB gives them, in Builder's spelling, where they differ from the Polars engine: `COUNT(*)` is `int64` (was `uint32`) and an unnamed aggregate is named as DuckDB names it (`count_star()`, `sum(v)` — they were `len` or failed); a `SUM` of an integer column is `int128`, sent as a number or as exact decimal text by its values; `ORDER BY … DESC` puts nulls last (Polars put them first; rows and aggregates always did); `date + INTERVAL` now works and is a datetime; a column that is Null in Builder is `int32` (all null) in SQL results, while a page of rows still reports it Null; a zoned datetime is sent in UTC. A table with a column SQL cannot name (an empty name, or two names one letter case apart) answers `query_execution_failed` to SQL, while rows, aggregates and profiles still read it.
     v1.10.0은 `POST /preview`에 Source↔Silver diff와 sample_mode(first/random)
@@ -284,6 +289,7 @@ paths:
       operationId: getProviderStatus
       summary: 현재 principal credential로 Provider 연결 상태 확인
       parameters:
+        - $ref: "#/components/parameters/ProviderKey"
         - $ref: "#/components/parameters/ProviderName"
       responses:
         "200":
@@ -332,6 +338,7 @@ paths:
       operationId: testProviderConnection
       summary: 현재 principal credential로 lightweight connection test 실행
       parameters:
+        - $ref: "#/components/parameters/ProviderKey"
         - $ref: "#/components/parameters/ProviderName"
       responses:
         "200":
@@ -678,6 +685,8 @@ paths:
     post:
       operationId: previewBuild
       summary: 각 소스의 스키마와 샘플 행 산출 (파일 미기록, 동기식)
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       requestBody:
         required: true
         content:
@@ -801,6 +810,8 @@ paths:
     post:
       operationId: createBuild
       summary: 파이프라인 실행 및 결과 반환 (동기식)
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       requestBody:
         required: true
         content:
@@ -1368,6 +1379,12 @@ paths:
         반환하고(#513), 이미 완료된 run_id면 409, queue가 가득 차면 429를
         반환한다. 잡의 실행 결과는 `GET /builds/{run_id}`로 polling하고,
         협력적 취소는 `POST /builds/{run_id}/cancel`(#481)로 요청한다.
+        `kind: file` source 는 동기 `POST /build` 와 같게 동작한다(#998): job 은
+        제출한 principal 의 업로드를 읽고, 다른 소유자의 `upload_id` 나 안정적인
+        소유자가 없는 요청은 job 이 `failed` 로 끝나며 그 source 의 `error` 에
+        사유가 적힌다. 제출 시점(202)에는 업로드를 확인하지 않는다.
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       requestBody:
         required: true
         content:
@@ -1449,11 +1466,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: async build queue가 가득 참
+          description: async build queue가 가득 참 (`build_queue_full`, #1000)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                BuildQueueFull:
+                  summary: The async build queue is full
+                  value:
+                    error: async build queue is full
+                    code: build_queue_full
         "500":
           description: job 접수 실패(event 기록/큐잉 불가 — job은 생성되지 않음)
           content:
@@ -4150,7 +4173,57 @@ components:
         each operation: an operation has one 403 response, and many already use it for
         their own refusal, whose `Error.code` tells the two apart.
 
+  headers:
+    RequestId:
+      description: >-
+        The id this request is logged under (#994). Sent on every response a handler
+        writes — success or error — so it can be quoted when reporting a problem;
+        absent only from the overload 503, which is written before a request is read.
+        Readable from a cross-origin page (`Access-Control-Expose-Headers`, #995).
+      schema:
+        type: string
+
   responses:
+    AuthThrottled:
+      x-status: 429
+      description: >-
+        Too many failed authentication attempts from this client address (#994) — any
+        operation can answer this before it runs. `retry_after_seconds` says how long
+        the window has left. `x-status` names the status code, since no single
+        operation references this response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AuthThrottled:
+              summary: The failure limit for this client address was reached
+              value:
+                error: too many failed authentication attempts
+                code: auth_throttled
+                retry_after_seconds: 42
+    ServerOverloaded:
+      x-status: 503
+      description: >-
+        Too many requests are in flight (#994, #1000). The connection is answered
+        before the request is read and closed; `Retry-After` says when to try again.
+        Any operation can answer this. `x-status` names the status code, since no
+        single operation references this response.
+      headers:
+        Retry-After:
+          description: Seconds to wait before sending the request again.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            ServerOverloaded:
+              summary: The request was refused before it was read
+              value:
+                error: server overloaded
+                code: server_overloaded
     SignupNotApproved:
       x-status: 403
       description: >-
@@ -4179,7 +4252,10 @@ components:
                 code: signup_rejected
 
     Unauthorized:
-      description: X-API-Key가 누락되었거나 서버에 설정된 키와 일치하지 않음
+      description: >-
+        X-API-Key가 누락되었거나 서버에 설정된 키와 일치하지 않음, 또는 Bearer 토큰이
+        검증되지 않음. `code` 는 `unauthorized`, 토큰의 `exp` 가 지났으면
+        `token_expired` 다(#1000).
       content:
         application/json:
           schema:
@@ -4188,7 +4264,8 @@ components:
             MissingOrInvalidApiKey:
               summary: 인증 정보가 없거나 일치하지 않음
               value:
-                error: unauthorized
+                error: invalid api key
+                code: unauthorized
 
     PiiDeclarationUnavailable:
       description: >-
@@ -4231,6 +4308,20 @@ components:
                       reason: "the dataset declares redistribution: forbidden"
 
   parameters:
+    ProviderKey:
+      name: X-Provider-Key
+      in: header
+      required: false
+      description: >-
+        Multi-user deployment only (#683): the requester's own provider key for this
+        request or the job it submits, `<provider>=<key>`, repeated or comma-separated.
+        Held in memory until the request ends, or the async job ends, is cancelled or
+        its TTL passes; never stored, logged or returned. A malformed header answers
+        400 `invalid_provider_key` on any route. A single-user deployment ignores it
+        and keeps its stored and server keys. Declared on the operations that call a
+        provider (#994).
+      schema:
+        type: string
     PublishCredential:
       name: X-Publish-Credential
       in: header
@@ -4403,6 +4494,13 @@ components:
             (`SignupNotApprovedError`, `components.responses.SignupNotApproved`).
             `revision_conflict`(#820, #947, 409) — a revision save or revert based on a
             stale revision; the body carries `current_revision` (`RevisionConflictError`).
+            `build_queue_full`(#1000, 429) — `POST /builds` when the async build queue
+            is full; try again later. `unauthorized` / `token_expired`(#1000, 401) — any
+            operation: the credentials were refused, or the bearer token's `exp` has
+            passed and a new token is needed. `auth_unavailable`(#1000, 503) — the
+            JWKS could not be fetched, so the credentials were not judged.
+            `server_overloaded`(#1000, 503) — too many requests in flight; the response
+            carries `Retry-After`.
         redistribution:
           description: >-
             `code: redistribution_forbidden`일 때만 온다(#688): 판정과 source별 이유.
@@ -4825,7 +4923,7 @@ components:
       additionalProperties: false
       required:
         [snapshot_id, artifact_digest, algorithm_version, computed_at, scope, accuracy,
-         min_range_values, row_count, columns]
+         min_range_values, range_trim, row_count, columns]
       properties:
         snapshot_id: {type: string}
         artifact_digest:
@@ -4845,7 +4943,15 @@ components:
         min_range_values:
           type: integer
           minimum: 1
-          description: A range over fewer finite values than this is withheld.
+          description: >-
+            A range over fewer finite values than this is withheld: at least
+            `2 * range_trim + 1`, so that a trimmed range has a value left.
+        range_trim:
+          type: integer
+          minimum: 0
+          description: >-
+            How many of the lowest, and how many of the highest, values a range leaves
+            out before its `min`/`max` are read (#903) — rows, not distinct values.
         row_count: {type: integer, minimum: 0}
         columns:
           type: array
@@ -4914,14 +5020,20 @@ components:
       additionalProperties: false
       required: [status]
       description: >-
-        `exact` min/max over finite, non-null values, sent by `wire_encoding`;
+        `trimmed` min/max over finite, non-null values, sent by `wire_encoding`: the
+        bounds left after the profile's `range_trim` lowest and `range_trim` highest
+        values are removed, so that one record's extreme is not disclosed (#903). `min`
+        is the value below which exactly `range_trim` values lie, so a value more than
+        `range_trim` records share is still reported. `exact` is the untrimmed min/max,
+        which a profile gives only when its `range_trim` is 0.
         `withheld_small_group` when fewer than `min_range_values` values exist;
         `no_values` when none do; `not_applicable` for non-numeric, non-temporal
-        columns. `excluded_count` is how many NaN or infinite values were left out.
+        columns. `excluded_count` is how many NaN or infinite values were left out;
+        `trimmed_count` is how many values the trimming removed, both ends together.
       properties:
         status:
           type: string
-          enum: [exact, withheld_small_group, no_values, not_applicable]
+          enum: [exact, trimmed, withheld_small_group, no_values, not_applicable]
         min:
           $ref: "#/components/schemas/JsonValue"
         max:
@@ -4929,6 +5041,7 @@ components:
         wire_encoding: {type: string, enum: [number, decimal_string, string]}
         value_count: {type: integer, minimum: 0}
         excluded_count: {type: integer, minimum: 0}
+        trimmed_count: {type: integer, minimum: 0}
 
     WarehouseTableDetailResponse:
       type: object
@@ -7482,8 +7595,10 @@ components:
       type: object
       required: [run_id, status, created_at, updated_at]
       description: >-
-        비동기 build job 스냅샷 (#482, #480). 프로세스 메모리 상주 registry
-        기반이라 서버 재시작 후 active/terminal 잡은 더 이상 조회되지 않는다.
+        비동기 build job 스냅샷 (#482, #480). 프로세스 메모리 상주 registry 가
+        먼저 답하고, 거기서 밀려나거나 서버가 재시작한 뒤에는 매니페스트로,
+        매니페스트도 없이 재시작으로 중단된 run 은 이벤트 저장소의 기록으로
+        답한다(`failed`, `code: credentials_required`, #996).
         `response`는 잡이 만든 응답 본문이다 — 성공한 잡은 최종 build 응답,
         실패한 잡은 오류 본문일 수 있다(빌드 본문이 생기기 전에 실패하면
         `{"error": ...}` 뿐이다, #921). 형태는 `object | null` 만 보장하며, 실패
@@ -7501,6 +7616,11 @@ components:
             `cancelling` job은 다음 안전한 stage 경계에서 `cancelled`가 된다.
             `succeeded`/`failed`/`cancelled`는 종단 상태이며 다시
             `running`/`cancelling`으로 돌아가지 않는다.
+            산출물은 모두 만들어졌지만 warehouse 테이블 커밋이 되지 않은
+            run(동기 `POST /build` 의 409, `warehouse_failures`)은 `failed` 다
+            (#997) — job 이 레지스트리에 있을 때도, 재시작이나 eviction 뒤
+            매니페스트로 읽을 때도 같다. 매니페스트 자체의 `status` 는 build
+            결과인 `ok` 이고 커밋 실패는 `warehouse_failures` 에 따로 있다.
         created_at:
           type: string
           description: job 접수 시각 (ISO 8601)
@@ -7519,6 +7639,14 @@ components:
         error:
           type: [string, "null"]
           description: 실패 사유 (실패 시에만)
+        code:
+          type: string
+          enum: [credentials_required]
+          description: >-
+            A stable reason for a failure the service itself caused (#996), when there
+            is one. `credentials_required`: the server restarted while the job was
+            queued or running; its provider keys were held only in memory (#683), so
+            it cannot go on — submit it again.
 
     BuildsResponse:
       type: object

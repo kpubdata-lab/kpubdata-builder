@@ -84,6 +84,11 @@ def _declared_dataset_id(spec_yaml: str) -> str | None:
     return dataset_id if isinstance(dataset_id, str) and dataset_id else None
 
 
+#: The stable code of a run a restart interrupted (#683, #996). It starts the failure
+#: event's message and is the ``code`` of the job status read back from that event.
+INTERRUPTED_CODE = "credentials_required"
+
+
 class BuildRunsApiService:
     """Runs a build, queues one, reports on it and cancels it."""
 
@@ -143,9 +148,8 @@ class BuildRunsApiService:
         ``manifest_owner_id`` separate value for persisted manifest ownership (and
         BuildIndex reading it, #505 SSOT) only — separated from ``owner_id``
         (kind="file" source resolver upload ownership check, #498). Omit defaults
-        to ``owner_id`` (backward compat). async run (``_run_build_job``) uses
-        this to record submitting principal owner_id in manifest/BuildIndex while
-        still not passing owner_id to file resolver (#496 follow-up).
+        to ``owner_id`` (backward compat). An async run (``_run_build_job``) passes
+        the submitting principal's owner_id as both (#496 follow-up, #998).
 
         ``credential_owner_id`` internal value for async worker interpreting
         public_api credential only as submitting principal stable identity. Not
@@ -360,10 +364,10 @@ class BuildRunsApiService:
         ``owner_id`` persisted in job registry snapshot — not exposed in wire
         response (``to_body()``). This value in registry serves two: (1) active
         run ownership judgment (``check_active_run_access``, #496 follow-up),
-        (2) ``_run_build_job`` passes as ``manifest_owner_id`` to build() for
-        persisted manifest/BuildIndex (#505 SSOT) accurate owner_id recording.
-        Still not passed as ``owner_id`` (kind="file" source resolver, #498) to
-        build() — async file-backed source owner propagation limitation maintained.
+        (2) ``_run_build_job`` passes it to build() as the run's owner: for the
+        persisted manifest/BuildIndex (#505 SSOT), for credential resolution, and for
+        the ``kind="file"`` source resolver, so an async build reads the submitter's
+        uploads as a synchronous one does (#998).
         """
         resolved_run_id = run_id or generate_run_id()
         if self._build_index.get(resolved_run_id) is not None:
@@ -384,15 +388,25 @@ class BuildRunsApiService:
             # fails to record, job also never created: "event lost but job running"
             # contradiction never happens (recorder absorption differs; here no real
             # side effect yet to compromise other canonical).
+            submitted_at = datetime.now(tz=timezone.utc)
             self._event_store().append(
                 BuildEvent(
                     seq=0,
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=submitted_at,
                     run_id=resolved_run_id,
                     event="run_submitted",
                     status="ok",
                     message="build accepted for async execution",
                 )
+            )
+            # Whose run this is, kept where it survives a restart (#996): the registry
+            # that holds the owner is memory, and a run that never writes a manifest
+            # has nothing else to say who may read why it ended.
+            self._event_store().record_submission(
+                resolved_run_id,
+                owner_id=owner_id,
+                created_by=created_by,
+                submitted_at=submitted_at,
             )
             if job_credentials is not None:
                 job_credentials.bind(resolved_run_id, owner_id, request_credentials.current_keys())
@@ -464,7 +478,11 @@ class BuildRunsApiService:
                     raise RuntimeError("existing async build is missing snapshot")
                 return ServiceResponse(200, result.snapshot.to_body())
             case "queue_full":
-                return ServiceResponse(429, {"error": "async build queue is full"})
+                # A code of its own (#1000): the other 429 on this route's way in is
+                # `auth_throttled`, and the sentence was the only way to tell them apart.
+                return ServiceResponse(
+                    429, {"error": "async build queue is full", "code": "build_queue_full"}
+                )
             case unreachable:
                 assert_never(unreachable)
 
@@ -490,7 +508,42 @@ class BuildRunsApiService:
         evicted = self._build_status_from_manifest(run_id)
         if evicted is not None:
             return ServiceResponse(200, evicted)
+        interrupted = self._build_status_from_events(run_id)
+        if interrupted is not None:
+            return ServiceResponse(200, interrupted)
         return ServiceResponse(404, {"error": f"build job not found: {run_id}"})
+
+    def _build_status_from_events(self, run_id: str) -> dict[str, JsonValue] | None:
+        """Status of a run that ended without a manifest and is no longer in the registry.
+
+        A restart leaves such a run: ``mark_interrupted_runs`` records its failure in
+        the event store only (#683), so neither the registry nor a manifest knows it
+        and the owner polling it got 404 instead of "submit it again" (#996). The
+        submission record gives the run's start, the terminal event its end and reason.
+        Only a failed or cancelled ending is reported from here — a run that finished
+        has a manifest, and that path is the authority for it.
+        """
+        store = self._event_store()
+        submission = store.submission(run_id)
+        if submission is None:
+            return None
+        terminal = store.terminal_event(run_id)
+        if terminal is None or terminal.event == "run_finished":
+            return None
+        body: dict[str, JsonValue] = {
+            "run_id": run_id,
+            "status": "cancelled" if terminal.event == "run_cancelled" else "failed",
+            "created_at": submission.submitted_at,
+            "updated_at": terminal.timestamp.astimezone(timezone.utc).isoformat(),
+        }
+        if submission.created_by is not None:
+            body["created_by"] = submission.created_by
+        if terminal.event == "run_failed":
+            message = terminal.message or "the run did not finish"
+            body["error"] = message
+            if message.startswith(f"{INTERRUPTED_CODE}:"):
+                body["code"] = INTERRUPTED_CODE
+        return body
 
     def _build_status_from_manifest(self, run_id: str) -> dict[str, JsonValue] | None:
         """Restore evicted terminal job status from persisted manifest.
@@ -504,6 +557,13 @@ class BuildRunsApiService:
             return None
         manifest_status = status_from_manifest(manifest)
         status = "succeeded" if manifest_status == "ok" else manifest_status
+        # A build whose artifacts are complete but whose table was not committed
+        # answers 409 (#788), so its job ended ``failed`` while the registry held it.
+        # The manifest says ``ok`` for the build and records the commit failure apart;
+        # read alone it turned the same run into ``succeeded`` after an eviction or a
+        # restart (#997). One run has one status.
+        if status == "succeeded" and manifest.get("warehouse_failures"):
+            status = "failed"
         started = manifest.get("started_at")
         finished = manifest.get("finished_at")
         body: dict[str, JsonValue] = {
@@ -577,7 +637,7 @@ class BuildRunsApiService:
                     run_id=run_id,
                     event="run_failed",
                     status="fail",
-                    message="credentials_required: the server restarted and the job's "
+                    message=f"{INTERRUPTED_CODE}: the server restarted and the job's "
                     "provider keys, held only in memory, are gone; submit it again",
                 )
             )
