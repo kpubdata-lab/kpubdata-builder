@@ -89,7 +89,7 @@ def route(
             return run_id
         # Caller could supply run_id directly without checking who it belongs to (#635).
         # Passing someone else's run_id would overwrite that run's output and return results
-        # in response. Async POST /builds has gate but sync path was missing — apply same rule.
+        # in response. Async POST /builds applies the same rule (#991).
         if run_id is not None:
             denied = check_existing_run_access(service, run_id, principal)
             if denied is not None:
