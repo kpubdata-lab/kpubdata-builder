@@ -394,7 +394,10 @@ _BuildListEntry = dict[str, str | None]
 #   license_provider, license_mismatch and processing_declared (#955, additive).
 # 1.75.0 -> 1.76.0: saved analyses record their SQL dialect and engine; a legacy-polars
 #   analysis answers 409 analysis_migration_required to run (#875, additive).
-API_CONTRACT_VERSION = "1.76.0"
+# 1.76.0 -> 1.77.0: a snapshot profile's range is trimmed (ColumnRange.status
+#   `trimmed`, trimmed_count; SnapshotProfile.range_trim) so that one record's extreme
+#   is not disclosed (#903, additive).
+API_CONTRACT_VERSION = "1.77.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
