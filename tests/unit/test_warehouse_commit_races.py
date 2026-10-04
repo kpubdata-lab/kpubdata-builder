@@ -167,3 +167,83 @@ def test_a_manifest_without_failures_keeps_its_shape(tmp_path: Path) -> None:
 
     manifest = json.loads((tmp_path / "runs" / "plain" / "manifest.json").read_text("utf-8"))
     assert "warehouse_failures" not in manifest
+
+
+def test_a_failed_commit_reads_the_same_from_the_registry_and_from_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#997: the job said ``failed`` while the registry held it and ``succeeded`` after a
+    restart, when the status was derived from the manifest alone."""
+    import time
+
+    def failing_materialize(*_args: object, **_kwargs: object) -> object:
+        raise SnapshotStateError("the promoted files do not match their digest")
+
+    monkeypatch.setattr(orchestrator, "materialize", failing_materialize)
+    runs = tmp_path / "runs"
+    runs.mkdir()
+
+    def service() -> BuilderService:
+        return BuilderService(
+            output_root=runs,
+            client_factory=lambda **_: _Client("x"),
+            warehouse_root=tmp_path / "wh",
+        )
+
+    spec_yaml = """\
+dataset_id: race.table
+title: Race
+description: d
+sources:
+  - provider: datago
+    dataset: air_quality
+exports:
+  - kind: jsonl
+    output_path: data.jsonl
+"""
+    first = service()
+    assert first.submit_build(spec_yaml, run_id="conflicted").status_code == 202
+    for _ in range(400):
+        from_registry = first.build_status("conflicted").body
+        if from_registry["status"] in ("succeeded", "failed", "cancelled"):
+            break
+        time.sleep(0.02)
+    first._async_builds.shutdown()
+
+    # A new service has an empty registry: the status comes from the manifest.
+    restarted = service()
+    try:
+        assert restarted._async_builds.get("conflicted") is None
+        from_manifest = restarted.build_status("conflicted").body
+    finally:
+        restarted._async_builds.shutdown()
+
+    manifest = json.loads((runs / "conflicted" / "manifest.json").read_text("utf-8"))
+    assert manifest["status"] == "ok"
+    assert manifest["warehouse_failures"][_SOURCE_KEY]["reason"] == "commit_failed"
+    assert from_registry["status"] == "failed"
+    assert from_manifest["status"] == from_registry["status"]
+
+
+def test_a_committed_run_still_reads_succeeded_from_the_manifest(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    service = BuilderService(
+        output_root=runs, client_factory=lambda **_: _Client("x"), warehouse_root=tmp_path / "wh"
+    )
+    spec_yaml = """\
+dataset_id: race.table
+title: Race
+description: d
+sources:
+  - provider: datago
+    dataset: air_quality
+exports:
+  - kind: jsonl
+    output_path: data.jsonl
+"""
+    try:
+        assert service.build(spec_yaml, run_id="fine").status_code == 200
+        assert service.build_status("fine").body["status"] == "succeeded"
+    finally:
+        service._async_builds.shutdown()

@@ -504,6 +504,13 @@ class BuildRunsApiService:
             return None
         manifest_status = status_from_manifest(manifest)
         status = "succeeded" if manifest_status == "ok" else manifest_status
+        # A build whose artifacts are complete but whose table was not committed
+        # answers 409 (#788), so its job ended ``failed`` while the registry held it.
+        # The manifest says ``ok`` for the build and records the commit failure apart;
+        # read alone it turned the same run into ``succeeded`` after an eviction or a
+        # restart (#997). One run has one status.
+        if status == "succeeded" and manifest.get("warehouse_failures"):
+            status = "failed"
         started = manifest.get("started_at")
         finished = manifest.get("finished_at")
         body: dict[str, JsonValue] = {
