@@ -196,6 +196,25 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 넘지만 thread 는 CPU 를 나눠 쓸 뿐
 메모리를 늘리지 않는다. 임시 디스크 8 GB 는 컨테이너의 쓰기 가능한 디스크 안에 있어야 한다.
 
+**운영 compose(`docker-compose.prod.app.yml`)의 기본값** (#993). 컨테이너 한도는 `3G` 이고 아래 합이
+그 안에 들어온다. `tests/unit/test_prod_compose_budget.py` 가 compose 파일에서 같은 식을 계산해, 한도가
+합보다 작아지면 실패한다.
+
+| 항목 | 기본값 | 합 |
+| :--- | :--- | :--- |
+| DuckDB 연결 (build 2 × source 4 + preview 1 + composition 1 = 10) | `KPUBDATA_BUILDER_MAX_WORKERS=2`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=128MB` | 1280 MB |
+| query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 768 MB |
+| 기본 프로세스·HTTP·여유 | 검사가 쓰는 고정값 | 400 MB |
+| **합** | | **2448 MB ≤ 3072 MB** |
+
+`KPUBDATA_DUCKDB_MEMORY_LIMIT` 을 `64MB` 로 두면 20행짜리 테이블의 빌드도
+`the table needs more memory or temporary disk than this deployment allows` 로 실패한다(parity
+시나리오로 실측, `96MB` 부터 통과). 그래서 운영 기본값은 `128MB` 이고, 위 "1 vCPU / 2 GiB 예시"의
+`96MB` 는 여유가 거의 없는 하한이다. 2 GiB 호스트에 맞추려면 `KPUBDATA_DUCKDB_MEMORY_LIMIT` 을 더
+내리지 말고 `KPUBDATA_BUILDER_MAX_WORKERS` 나 query 예산을 줄인다. warehouse 는
+`KPUBDATA_BUILDER_WAREHOUSE=/data/warehouse` 로 켜져 있다 — 없으면 `/warehouse/*` 가
+`warehouse_not_configured` 로 답한다.
+
 query worker 의 종료는 네 경로 모두에서 child process 를 남기지 않는다: 성공, 실패(child 가 스스로
 끝나지 않아도 1초 뒤 terminate), timeout(terminate 를 무시하면 kill), 요청 취소(대기 중인 요청 thread 가
 중단되면 child 도 멈춘다). 클라이언트가 연결을 끊은 것은 서버가 따로 감지하지 않는다 — 그 질의는 timeout

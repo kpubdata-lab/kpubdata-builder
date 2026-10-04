@@ -36,6 +36,24 @@ services:
       # 사용자별 Provider credential AES-GCM master key (ADR 0012). 재기동 사이에
       # 반드시 동일 값을 재주입한다 — 교체 시 기존 credential 복호화 불가.
       KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY: ${KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY:-}
+      # 테이블 카탈로그 루트 (#993). 없으면 /warehouse/* 가 전부
+      # `warehouse_not_configured` 로 답해 Studio 의 Tables·SQL·Saved Analysis 가
+      # 동작하지 않는다. builder-data 볼륨 안에 둔다.
+      KPUBDATA_BUILDER_WAREHOUSE: /data/warehouse
+      # 리소스 예산 (#993, docs/deploy.md §9). 아래 값들의 합이 deploy.resources 의
+      # memory 한도 안에 들어와야 하고, tests/unit/test_prod_compose_budget.py 가
+      # 그 식을 검사한다. 기본값은 3 GiB 컨테이너 기준이다.
+      #   DuckDB 연결 수 = MAX_WORKERS × 4 (build 당 source) + 2 (preview, composition)
+      #   메모리 = DuckDB 연결 수 × DUCKDB_MEMORY_LIMIT + QUERY_MEMORY_BUDGET_MB + 기본 400 MB
+      KPUBDATA_BUILDER_MAX_WORKERS: ${KPUBDATA_BUILDER_MAX_WORKERS:-2}
+      KPUBDATA_DUCKDB_THREADS: ${KPUBDATA_DUCKDB_THREADS:-1}
+      # 64MB 에서는 20행짜리 빌드도 ResourceLimitError 로 실패한다(실측). 그 아래로
+      # 내리지 않는다.
+      KPUBDATA_DUCKDB_MEMORY_LIMIT: ${KPUBDATA_DUCKDB_MEMORY_LIMIT:-128MB}
+      KPUBDATA_DUCKDB_MAX_TEMP_SIZE: ${KPUBDATA_DUCKDB_MAX_TEMP_SIZE:-1GB}
+      KPUBDATA_QUERY_MAX_CONCURRENCY: ${KPUBDATA_QUERY_MAX_CONCURRENCY:-1}
+      KPUBDATA_QUERY_MAX_MEMORY_MB: ${KPUBDATA_QUERY_MAX_MEMORY_MB:-768}
+      KPUBDATA_QUERY_MEMORY_BUDGET_MB: ${KPUBDATA_QUERY_MEMORY_BUDGET_MB:-768}
     ports:
       # 기본은 루프백이다. 예전 기본값("8000")은 모든 인터페이스에 공개돼서,
       # Caddy 없이 올리면 TLS 없는 8000 으로 API 키가 평문으로 오갔다. 헬스체크는
@@ -66,7 +84,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          # 위 environment 의 리소스 예산과 함께 바꾼다 (#993). 512M 은 DuckDB 연결
+          # 하나의 기본 한도(1GB)보다도 작았다.
+          memory: ${BUILDER_MEMORY_LIMIT:-3G}
 
   # 공개 진입 리버스 프록시. Cloudflare → Caddy → builder.
   # Cloudflare SSL mode: Full(strict). `--profile caddy`로 opt-in.
