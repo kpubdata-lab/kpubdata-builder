@@ -143,9 +143,8 @@ class BuildRunsApiService:
         ``manifest_owner_id`` separate value for persisted manifest ownership (and
         BuildIndex reading it, #505 SSOT) only — separated from ``owner_id``
         (kind="file" source resolver upload ownership check, #498). Omit defaults
-        to ``owner_id`` (backward compat). async run (``_run_build_job``) uses
-        this to record submitting principal owner_id in manifest/BuildIndex while
-        still not passing owner_id to file resolver (#496 follow-up).
+        to ``owner_id`` (backward compat). An async run (``_run_build_job``) passes
+        the submitting principal's owner_id as both (#496 follow-up, #998).
 
         ``credential_owner_id`` internal value for async worker interpreting
         public_api credential only as submitting principal stable identity. Not
@@ -360,10 +359,10 @@ class BuildRunsApiService:
         ``owner_id`` persisted in job registry snapshot — not exposed in wire
         response (``to_body()``). This value in registry serves two: (1) active
         run ownership judgment (``check_active_run_access``, #496 follow-up),
-        (2) ``_run_build_job`` passes as ``manifest_owner_id`` to build() for
-        persisted manifest/BuildIndex (#505 SSOT) accurate owner_id recording.
-        Still not passed as ``owner_id`` (kind="file" source resolver, #498) to
-        build() — async file-backed source owner propagation limitation maintained.
+        (2) ``_run_build_job`` passes it to build() as the run's owner: for the
+        persisted manifest/BuildIndex (#505 SSOT), for credential resolution, and for
+        the ``kind="file"`` source resolver, so an async build reads the submitter's
+        uploads as a synchronous one does (#998).
         """
         resolved_run_id = run_id or generate_run_id()
         if self._build_index.get(resolved_run_id) is not None:
