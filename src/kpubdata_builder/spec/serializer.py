@@ -11,6 +11,7 @@ from typing import cast
 
 import yaml
 
+from ..logging_redaction import SENSITIVE_PARAM_KEYS
 from ..stages._path_safety import ensure_within, validate_path_segment
 from .models import BuildSpec, JsonValue, SourceRef
 
@@ -20,24 +21,18 @@ REDACTED_VALUE = "<redacted>"
 # BuildSpec has no separate credential model — only free-form JSON mapping.
 # Therefore, redact only explicit keys actually used in credential values,
 # not substring guessing.
-_SECRET_FIELD_NAMES = frozenset(
+#
+# The names Builder adds to kpubdata's own list: credentials of the publish targets
+# and of Builder itself, which kpubdata never sends.
+_BUILDER_SECRET_FIELD_NAMES = frozenset(
     {
         "access_token",
-        "accesstoken",
-        "api_key",
-        "apikey",
-        "authorization",
         "bearer_token",
         "bearertoken",
         "client_secret",
         "clientsecret",
-        "password",
         "refresh_token",
         "refreshtoken",
-        "secret",
-        "service_key",
-        "servicekey",
-        "token",
         # Keys actually used as credential environment variables/header names in
         # this repository.
         "hf_token",
@@ -48,17 +43,36 @@ _SECRET_FIELD_NAMES = frozenset(
     }
 )
 
+# Every name kpubdata masks as a credential is redacted here too (#999): the set is
+# derived from kpubdata's list, not copied, so a name added there — ``oc`` for law,
+# ``consumer_key``/``consumer_secret`` for sgis — cannot be missing from a snapshot's
+# redaction. The copy this replaces lacked ``key``, ``oc``, ``consumer_key`` and
+# ``consumer_secret``.
+_SECRET_FIELD_NAMES = _BUILDER_SECRET_FIELD_NAMES | frozenset(
+    name.casefold().replace("-", "_") for name in SENSITIVE_PARAM_KEYS
+)
+
+# Outside a source's request parameters a bare ``key`` is not a credential name: an
+# export option or a metadata entry called ``key`` is ordinary data (a business key, a
+# partition key), and redacting it would change what the snapshot says the spec was.
+# kpubdata lists ``key`` because providers take their API key under that parameter
+# name, which is only true of ``params`` and ``param_grid``.
+_SECRET_FIELD_NAMES_OUTSIDE_PARAMS = _SECRET_FIELD_NAMES - {"key"}
+
 
 def _normalized_key(key: str) -> str:
     return key.casefold().replace("-", "_")
 
 
-def _canonical_json(value: JsonValue) -> JsonValue:
+def _canonical_json(
+    value: JsonValue, secret_names: frozenset[str] = _SECRET_FIELD_NAMES_OUTSIDE_PARAMS
+) -> JsonValue:
     """Copy free-form JSON value with fixed key order and secret redaction.
 
     Use only for free-form mappings like ``params``/``auth`` where keys may be
     credential names. For structural mappings where keys are column names, use
-    :func:`_canonical_structure`.
+    :func:`_canonical_structure`. ``secret_names`` is ``_SECRET_FIELD_NAMES`` for a
+    source's request parameters, where ``key`` is a credential too.
     """
     if isinstance(value, dict):
         result: dict[str, JsonValue] = {}
@@ -66,12 +80,12 @@ def _canonical_json(value: JsonValue) -> JsonValue:
             item = value[key]
             result[key] = (
                 REDACTED_VALUE
-                if _normalized_key(key) in _SECRET_FIELD_NAMES
-                else _canonical_json(item)
+                if _normalized_key(key) in secret_names
+                else _canonical_json(item, secret_names)
             )
         return result
     if isinstance(value, list):
-        return [_canonical_json(item) for item in value]
+        return [_canonical_json(item, secret_names) for item in value]
     return value
 
 
@@ -195,7 +209,7 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
     else:
         entry["provider"] = source.provider
         entry["dataset"] = source.dataset
-        entry["params"] = _canonical_json(source.params)
+        entry["params"] = _canonical_json(source.params, _SECRET_FIELD_NAMES)
         if source.param_grid:
             # Expanded combinations determine which data was fetched — part of
             # the recipe. If omitted, changing grid leaves digest unchanged,
@@ -203,10 +217,17 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
             #
             # Omit when empty. Existing specs' digests must not change because
             # of unused features (same reason as #640).
+            # The keys are request parameter names, so one that names a credential
+            # has its values redacted like the same key under ``params`` (#999).
             entry["param_grid"] = _canonical_structure(
                 cast(
                     JsonValue,
-                    {key: list(values) for key, values in source.param_grid.items()},
+                    {
+                        key: REDACTED_VALUE
+                        if _normalized_key(key) in _SECRET_FIELD_NAMES
+                        else list(values)
+                        for key, values in source.param_grid.items()
+                    },
                 )
             )
     return entry
