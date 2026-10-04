@@ -7,8 +7,9 @@ info:
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
     공유한다. 본 문서는 BuilderService(service/app.py)의 dispatch 라우팅과 실제
     wire 형태를 기계 판독용(OpenAPI 3.1) 단일 소스로 고정하며, Studio 같은 소비자가
-    타입 클라이언트를 생성하는 기준이 된다. v0.4에서는 동기식 build만 유지하며
-    비동기/publish 엔드포인트는 제외된다(ADR 0002, #226). v1.5.0은 built dataset
+    타입 클라이언트를 생성하는 기준이 된다. 동기식 build(`POST /build`)와 함께
+    비동기 build(`POST /builds`, ADR 0008)와 publish 엔드포인트도 이 계약에
+    선언되어 있다 — v0.4 당시에는 동기식 build 만 있었다(ADR 0002, #226). v1.5.0은 built dataset
     단위 조회(dataset_id로 여러 run을 grouping)와 Bronze/Silver/Gold stage
     summary/preview API를 추가했다(#488, additive). v1.6.0은 구조화된 Quality/Schema
     Drift 결과(PASS 포함 모든 evaluated check)와 dataset별 quality history/trend

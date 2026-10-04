@@ -110,11 +110,9 @@ Manifest는 **artifact 생성 직후, publish 이전**에 생성하는 것을 �
 
 publish가 요청된 경우에는 publish 결과를 반영한 후 manifest를 업데이트하거나, publish 기록을 별도 항목으로 추가할 수 있습니다. 단, **manifest 스키마 소유권은 항상 Builder에 있습니다.**
 
-## 8. 비동기 Job 상태 머신 (미래 계획)
+## 8. 비동기 Job 상태 머신
 
-> **x-planned**: 이 섹션은 미래 비동기 모드를 위해 문서화되었습니다. v0.4 호출 계약에는 포함되지 않습니다.
-
-비동기 실행 모드에서는 build run이 다음 상태를 따릅니다.
+비동기 실행(`POST /builds`, ADR 0008 / #334)은 구현되어 계약에 들어 있습니다. build run은 다음 상태를 따릅니다.
 
 `queued → running → succeeded` 또는 `failed` 또는 `cancelled`
 
