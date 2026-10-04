@@ -83,7 +83,9 @@ def check_active_run_access(
            enqueue failure), decide ownership by that snapshot's stable ``owner_id``
            (#505 canonical identity — ``created_by``/``Principal.label`` are legacy
            fallbacks only; we pass them as-is to ``ownership_allows`` for priority).
-        3. If neither exist, 404.
+        3. If neither exist, the recorded submission (event store) decides, by the
+           same ownership rule: this is a run a restart interrupted (#996).
+        4. If none exist, 404.
 
     Snapshot ``owner_id`` is the value ``BuilderService.submit_build`` preserved in
     registry — not exposed in wire response (``BuildJobSnapshot.to_body()`` never exports
@@ -103,6 +105,16 @@ def check_active_run_access(
     if snapshot is not None:
         if ownership_module.ownership_allows(
             created_by=snapshot.created_by, owner_id=snapshot.owner_id, principal=principal
+        ):
+            return None
+        return not_owner(run_id)
+    # A run a restart interrupted has no manifest and is gone from the registry; who
+    # submitted it is in the event store (#996). Someone else still gets what a run
+    # that does not exist gets.
+    submission = service._event_store.submission(run_id)
+    if submission is not None:
+        if ownership_module.ownership_allows(
+            created_by=submission.created_by, owner_id=submission.owner_id, principal=principal
         ):
             return None
         return not_owner(run_id)

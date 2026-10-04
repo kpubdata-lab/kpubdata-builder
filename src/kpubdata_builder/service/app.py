@@ -397,7 +397,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.76.0 -> 1.77.0: a snapshot profile's range is trimmed (ColumnRange.status
 #   `trimmed`, trimmed_count; SnapshotProfile.range_trim) so that one record's extreme
 #   is not disclosed (#903, additive).
-API_CONTRACT_VERSION = "1.77.0"
+# 1.77.0 -> 1.78.0: a run a restart interrupted is readable by its owner — BuildJob
+#   gains the optional `code` (`credentials_required`) (#996, additive).
+API_CONTRACT_VERSION = "1.78.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
