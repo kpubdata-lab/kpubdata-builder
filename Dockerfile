@@ -16,7 +16,13 @@
 FROM python:3.12-slim-bookworm
 
 # 베이스 이미지에 포함된 Debian 패키지의 보안 패치를 적용한다.
-RUN apt-get update \
+#
+# OS_PATCH_DATE 는 이 레이어의 캐시 키다 (#1006). RUN 문자열이 같으면 buildx 캐시
+# (docker.yml 의 type=gha)가 패치 이전 레이어를 계속 재사용해, 수정 버전이 mirror 에 있어도
+# Trivy 가 같은 CVE 를 잡는다. 새 OS 패치로 스캔이 실패하면 이 날짜를 올린다.
+ARG OS_PATCH_DATE=2026-10-04
+RUN echo "os patches as of ${OS_PATCH_DATE}" \
+    && apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
