@@ -7516,6 +7516,11 @@ components:
             `cancelling` job은 다음 안전한 stage 경계에서 `cancelled`가 된다.
             `succeeded`/`failed`/`cancelled`는 종단 상태이며 다시
             `running`/`cancelling`으로 돌아가지 않는다.
+            산출물은 모두 만들어졌지만 warehouse 테이블 커밋이 되지 않은
+            run(동기 `POST /build` 의 409, `warehouse_failures`)은 `failed` 다
+            (#997) — job 이 레지스트리에 있을 때도, 재시작이나 eviction 뒤
+            매니페스트로 읽을 때도 같다. 매니페스트 자체의 `status` 는 build
+            결과인 `ok` 이고 커밋 실패는 `warehouse_failures` 에 따로 있다.
         created_at:
           type: string
           description: job 접수 시각 (ISO 8601)
