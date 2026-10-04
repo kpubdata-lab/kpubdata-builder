@@ -9,10 +9,12 @@ the value into ``buildspec.yaml`` in the clear. The list is now derived from kpu
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from kpubdata_builder.logging_redaction import SENSITIVE_PARAM_KEYS
+from kpubdata_builder.spec import BuildSpec, JsonValue
 from kpubdata_builder.spec.loader import parse_spec
 from kpubdata_builder.spec.serializer import (
     REDACTED_VALUE,
@@ -24,7 +26,7 @@ from kpubdata_builder.spec.serializer import (
 _CANARY = "CANARY-do-not-store-7f3a"
 
 
-def _spec(params: dict[str, object], **source: object):  # type: ignore[no-untyped-def]
+def _spec(params: dict[str, object], **source: object) -> BuildSpec:
     return parse_spec(
         {
             "dataset_id": "leak.check",
@@ -62,9 +64,10 @@ def test_the_match_ignores_case_and_hyphens(name: str) -> None:
 def test_a_credential_named_grid_axis_is_redacted_too() -> None:
     spec = _spec({}, param_grid={"oc": [_CANARY, _CANARY + "-2"], "page": [1, 2]})
 
-    (source,) = canonical_spec_mapping(spec)["sources"]  # type: ignore[misc]
+    sources = cast(list[dict[str, JsonValue]], canonical_spec_mapping(spec)["sources"])
+    (source,) = sources
 
-    assert source["param_grid"] == {"oc": REDACTED_VALUE, "page": [1, 2]}  # type: ignore[index,call-overload]
+    assert source["param_grid"] == {"oc": REDACTED_VALUE, "page": [1, 2]}
     assert _CANARY not in serialize_spec(spec)
 
 
