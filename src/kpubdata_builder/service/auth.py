@@ -168,6 +168,21 @@ class AuthError:
     reason: str
     status_code: int = 401
 
+    @property
+    def code(self) -> str:
+        """A stable code for the failure, so a client does not branch on ``reason`` (#1000).
+
+        ``token_expired`` — the bearer token's ``exp`` has passed: get a new token and
+        send the request again. ``auth_unavailable`` — the JWKS could not be fetched
+        (503): the credentials were not judged, try again. ``unauthorized`` — every
+        other refusal: a missing or wrong API key, a token that does not verify.
+        """
+        if self.status_code == 503:
+            return "auth_unavailable"
+        if self.reason.endswith("ExpiredSignatureError"):
+            return "token_expired"
+        return "unauthorized"
+
 
 def _is_dev_mode() -> bool:
     """Check if in local development mode (#321, ADR 0006).

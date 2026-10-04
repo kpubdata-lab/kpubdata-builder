@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 import jwt
 import pytest
@@ -271,6 +272,8 @@ class TestInvalidTokens:
         token = _make_token(oidc_env, exp=now - 120)
         result = authenticate(bearer_token=f"Bearer {token}")
         assert isinstance(result, AuthError)
+        # A code of its own (#1000): the client gets a new token instead of reading the reason.
+        assert result.code == "token_expired"
 
     def test_wrong_audience(self, oidc_env: bytes) -> None:
         token = _make_token(oidc_env, aud="wrong-client")
@@ -768,3 +771,35 @@ class TestPrincipalOwns:
     def test_non_owner_denied_via_legacy_path(self) -> None:
         principal = Principal(kind="oidc", identifier="b", owner_id="oidc:deadbeef")
         assert not principal_owns(created_by="oidc:a", owner_id=None, principal=principal)
+
+
+class TestStableAuthCodes:
+    """An authentication failure says what kind it is without its sentence (#1000)."""
+
+    def test_a_refused_credential_is_unauthorized(self, oidc_env: bytes) -> None:
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env, aud='wrong-client')}")
+
+        assert isinstance(result, AuthError)
+        assert (result.status_code, result.code) == (401, "unauthorized")
+
+    def test_an_unreachable_jwks_is_auth_unavailable(self) -> None:
+        assert AuthError(reason="auth service unavailable (jwks)", status_code=503).code == (
+            "auth_unavailable"
+        )
+
+    def test_the_response_body_carries_the_code(
+        self, oidc_env: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
+
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_kw: None)
+        expired = _make_token(oidc_env, exp=int(time.time()) - 120)
+
+        response = dispatch(service, "GET", "/datasets", None, bearer_token=f"Bearer {expired}")
+
+        assert isinstance(response, ServiceResponse)
+        assert response.status_code == 401
+        assert response.body == {
+            "error": "invalid token: ExpiredSignatureError",
+            "code": "token_expired",
+        }

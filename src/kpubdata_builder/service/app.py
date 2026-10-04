@@ -399,7 +399,10 @@ _BuildListEntry = dict[str, str | None]
 #   is not disclosed (#903, additive).
 # 1.77.0 -> 1.78.0: a run a restart interrupted is readable by its owner — BuildJob
 #   gains the optional `code` (`credentials_required`) (#996, additive).
-API_CONTRACT_VERSION = "1.78.0"
+# 1.78.0 -> 1.79.0: stable codes for the full build queue (429 build_queue_full),
+#   authentication failures (unauthorized, token_expired, auth_unavailable) and the
+#   overload 503 (server_overloaded) (#1000, additive).
+API_CONTRACT_VERSION = "1.79.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -1455,7 +1458,9 @@ def _dispatch_impl(
         # fault).
         if principal.status_code == 401:
             service._auth_throttle.record_failure(client_id)
-        return ServiceResponse(principal.status_code, {"error": principal.reason})
+        return ServiceResponse(
+            principal.status_code, {"error": principal.reason, "code": principal.code}
+        )
 
     # Successful authentication clears failure record — normal client that received
     # a few 401s due to token expiry doesn't get throttled during subsequent normal
