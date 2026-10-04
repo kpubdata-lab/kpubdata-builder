@@ -242,9 +242,11 @@ def test_persist_bronze_artifact_rejects_unsafe_run_id(tmp_path: Path) -> None:
 
 def test_canonical_line_writes_native_types_as_text() -> None:
     """#979: a Parquet upload's Decimal/date/datetime arrives as native Python
-    objects; the persisted Bronze file is plain JSON, so they become text."""
+    objects; the persisted Bronze file is plain JSON, so each becomes its one
+    standard text."""
     import datetime as dt
     from decimal import Decimal
+    from zoneinfo import ZoneInfo
 
     from kpubdata_builder.stages.bronze.writer import canonical_line
 
@@ -252,20 +254,40 @@ def test_canonical_line_writes_native_types_as_text() -> None:
         "v": Decimal("2.50"),
         "d": dt.date(2024, 1, 1),
         "ts": dt.datetime(2024, 1, 1, 12, 30),
+        "seoul": dt.datetime(2024, 1, 1, 12, 30, tzinfo=ZoneInfo("Asia/Seoul")),
+        "t": dt.time(1, 2, 3),
+        "raw": b"\x00\x01\xff",
+        "pair": (Decimal("1.0"), None),
         "s": "text",
         "n": 42,
         "ok": True,
         "nil": None,
     }
 
-    line = canonical_line(record)
-    parsed = json.loads(line)
+    assert json.loads(canonical_line(record)) == {
+        "v": "2.50",
+        "d": "2024-01-01",
+        # ISO 8601: a T separator, and the offset when the value has a zone.
+        "ts": "2024-01-01T12:30:00",
+        "seoul": "2024-01-01T12:30:00+09:00",
+        "t": "01:02:03",
+        "raw": "0001ff",
+        "pair": ["1.0", None],
+        "s": "text",
+        "n": 42,
+        "ok": True,
+        "nil": None,
+    }
 
-    assert parsed["v"] == "2.50"
-    assert parsed["d"] == "2024-01-01"
-    assert "2024-01-01" in parsed["ts"]
-    # JSON-native types are unaffected by the default handler.
-    assert parsed["s"] == "text"
-    assert parsed["n"] == 42
-    assert parsed["ok"] is True
-    assert parsed["nil"] is None
+
+@pytest.mark.parametrize("value", ["timedelta", "set", "object"])
+def test_canonical_line_refuses_a_value_with_no_standard_text(value: str) -> None:
+    """A timedelta has no one text, and str() of an arbitrary object is not data."""
+    import datetime as dt
+
+    from kpubdata_builder.stages.bronze.writer import canonical_line
+
+    values = {"timedelta": dt.timedelta(days=1), "set": {1}, "object": object()}
+
+    with pytest.raises(TypeError, match="is not JSON serializable"):
+        canonical_line({"v": values[value]})

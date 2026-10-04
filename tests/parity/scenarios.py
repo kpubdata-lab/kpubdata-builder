@@ -367,6 +367,53 @@ def r06_float_to_int() -> dict[str, Any]:
     return _silver([{"v": 1.9}, {"v": -1.9}, {"v": 2.5}], {"casts": {"v": "int"}})
 
 
+def r06_decimal_to_int() -> dict[str, Any]:
+    """A Decimal column cast to int truncates toward zero (#918, #979).
+
+    Only a Parquet upload brings a Decimal into Bronze, so the file is written here.
+    """
+    import duckdb
+
+    with _workspace() as root:
+        path = root / "decimal.parquet"
+        with duckdb.connect(":memory:") as connection:
+            connection.execute(
+                "COPY (SELECT CAST(v AS DECIMAL(38, 2)) AS v FROM (VALUES "
+                "('2.50'), ('-2.50'), ('1.90'), ('-1.90'), ('0.50'), ('-0.50'), (NULL)) t(v)) "
+                f"TO '{path}' (FORMAT parquet)"
+            )
+        service = _service(root)
+        owner = "parity-owner"
+        metadata = service._upload_repository.put(
+            owner,
+            content=path.read_bytes(),
+            format="parquet",
+            encoding="utf-8",
+            original_filename="decimal.parquet",
+        )
+        spec = {
+            "dataset_id": "parity.tiny",
+            "title": "Parity",
+            "description": "d",
+            "sources": [
+                {
+                    "kind": "file",
+                    "upload_id": metadata.upload_id,
+                    "format": "parquet",
+                    "alias": "t",
+                    "schema": {"casts": {"v": "int"}},
+                }
+            ],
+        }
+        response = service.build(_spec_text(spec), run_id="r1", owner_id=owner)
+        result: dict[str, Any] = {"status_code": response.status_code}
+        if (root / "r1" / "manifest.json").is_file():
+            result.update(_run_outputs(root / "r1"))
+        else:
+            result["body"] = strip_volatile(canonical_value(response.body))
+        return result
+
+
 def r07_case_insensitive_duplicate_columns() -> dict[str, Any]:
     return _silver([{"Name": "a", "name": "b", "NAME": "c"}])
 
@@ -626,6 +673,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "r04_strict_numeric_string_casts": r04_strict_numeric_string_casts,
     "r05_strict_iso_date": r05_strict_iso_date,
     "r06_float_to_int": r06_float_to_int,
+    "r06_decimal_to_int": r06_decimal_to_int,
     "r07_case_insensitive_duplicate_columns": r07_case_insensitive_duplicate_columns,
     "r08_integer_sum": r08_integer_sum,
     "r09_interval": r09_interval,

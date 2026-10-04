@@ -142,7 +142,7 @@ sources:
 | `alias` | string | 아니오 | 조립 단계에서 사용할 사용자 정의 소스 이름 |
 | `schema` | object | 아니오 | Silver 정규화 및 required-column/dtype 검증 계약 |
 
-지원 포맷은 CSV/JSON(top-level array of objects)/JSONL/Parquet입니다.
+지원 포맷은 CSV/JSON(top-level array of objects)/JSONL/Parquet입니다. Parquet의 Decimal·date·datetime·time 컬럼은 타입 그대로 Silver에 들어가고, 텍스트 출력(Bronze `raw_records.jsonl`, 카드, CSV/JSONL/Markdown)에는 십진 문자열·ISO 8601로 쓰입니다. 표준 텍스트 표현이 하나로 정해지지 않은 binary·duration 값을 가진 컬럼은 컬럼 이름을 밝힌 오류로 거절됩니다(#979).
 Excel/ZIP은 범위 밖입니다.
 
 #### `kind: url` (#498 P0)

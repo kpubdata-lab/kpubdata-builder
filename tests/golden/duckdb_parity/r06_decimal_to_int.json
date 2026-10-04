@@ -1,0 +1,369 @@
+{
+ "bronze": {
+  "t": {
+   "metadata": {
+    "artifact_paths": {
+     "metadata": "metadata.json",
+     "records": "raw_records.jsonl"
+    },
+    "fetch_params": {
+     "encoding": "utf-8",
+     "format": "parquet",
+     "upload_id": "upl_<id>"
+    },
+    "provenance": {
+     "fetch_params": {
+      "encoding": "utf-8",
+      "format": "parquet",
+      "upload_id": "upl_<id>"
+     },
+     "operation": "fetch",
+     "source_key": "file.upl_<id>"
+    },
+    "record_count": 7,
+    "source_key": "t"
+   },
+   "record_count": 7,
+   "records": [
+    {
+     "v": "2.50"
+    },
+    {
+     "v": "-2.50"
+    },
+    {
+     "v": "1.90"
+    },
+    {
+     "v": "-1.90"
+    },
+    {
+     "v": "0.50"
+    },
+    {
+     "v": "-0.50"
+    },
+    {
+     "v": null
+    }
+   ]
+  }
+ },
+ "gold": {
+  "t": {
+   "export_csv": [
+    [
+     "v"
+    ],
+    [
+     "2"
+    ],
+    [
+     "-2"
+    ],
+    [
+     "1"
+    ],
+    [
+     "-1"
+    ],
+    [
+     "0"
+    ],
+    [
+     "0"
+    ],
+    [
+     ""
+    ]
+   ],
+   "export_huggingface": {
+    "README.md": "---\nlanguage:\n- ko\npretty_name: Parity\n---\n\n# Parity\n\nd\n\n## Sources\n\n- t\n\n## Schema\n\n| Column | Type | Nullable |\n| --- | --- | --- |\n| v | Int64 | yes |\n\n## Sample\n\n| v |\n| --- |\n| 2 |\n| -2 |\n| 1 |\n| -1 |\n| 0 |\n\n## Provenance\n\n### t\n\n- Attribution: _not declared_\n- Source: uploaded file\n- Licence: _not declared_\n- Collected: <time>\n\n## Processing\n\n- Converted v to int\n\n## Personal information\n\nNo column was declared personal information. Values were not scanned for personal information (no pii policy).\n\n## License\n\nN/A\n\n## Version\n\nunversioned\n",
+    "card.json": {
+     "card_version": 1,
+     "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+     "processing": [
+      "Converted v to int"
+     ],
+     "processing_declared": true,
+     "provenance": [
+      {
+       "institution": "",
+       "license": "",
+       "license_declared": null,
+       "license_mismatch": false,
+       "license_provider": null,
+       "source": "t",
+       "url": "uploaded file"
+      }
+     ],
+     "title": "Parity"
+    },
+    "data/train-00000-of-00001.jsonl": [
+     {
+      "v": 2
+     },
+     {
+      "v": -2
+     },
+     {
+      "v": 1
+     },
+     {
+      "v": -1
+     },
+     {
+      "v": 0
+     },
+     {
+      "v": 0
+     },
+     {
+      "v": null
+     }
+    ],
+    "dataset_infos.json": {
+     "features": {
+      "v": "Int64"
+     },
+     "metadata": {
+      "dataset_id": "parity.tiny",
+      "description": "d",
+      "title": "Parity"
+     },
+     "num_examples": 7,
+     "provenance": [
+      "t"
+     ]
+    }
+   },
+   "export_jsonl": [
+    {
+     "v": 2
+    },
+    {
+     "v": -2
+    },
+    {
+     "v": 1
+    },
+    {
+     "v": -1
+    },
+    {
+     "v": 0
+    },
+    {
+     "v": 0
+    },
+    {
+     "v": null
+    }
+   ],
+   "export_markdown": "# Parity\n\nd\n\n- Records: 7\n\n## Schema\n\n| field | type |\n| --- | --- |\n| v | Int64 |\n\n## Sample Rows\n\n| v |\n| --- |\n| 2 |\n| -2 |\n| 1 |\n| -1 |\n| 0 |\n\n## Provenance\n\n- t\n\n",
+   "export_parquet": {
+    "columns": [
+     "v"
+    ],
+    "dtypes": [
+     "Int64"
+    ],
+    "nullable": [
+     true
+    ],
+    "rows": [
+     [
+      2
+     ],
+     [
+      -2
+     ],
+     [
+      1
+     ],
+     [
+      -1
+     ],
+     [
+      0
+     ],
+     [
+      0
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   "table": {
+    "columns": [
+     "v"
+    ],
+    "dtypes": [
+     "Int64"
+    ],
+    "nullable": [
+     true
+    ],
+    "rows": [
+     [
+      2
+     ],
+     [
+      -2
+     ],
+     [
+      1
+     ],
+     [
+      -1
+     ],
+     [
+      0
+     ],
+     [
+      0
+     ],
+     [
+      null
+     ]
+    ]
+   }
+  }
+ },
+ "manifest": {
+  "composition": null,
+  "errors": [],
+  "gold_selection": null,
+  "partial": false,
+  "provenance": [
+   {
+    "api_version": "unknown",
+    "coverage": {
+     "reasons": [
+      "the source reports no total"
+     ],
+     "status": "unknown"
+    },
+    "data_checksum": "sha256:b80c016382af2ee2b3c78415e3a9e1ef78a7f7f879362d1c20598c2090e3679e",
+    "data_checksum_algorithm": "canonical-multiset-v2",
+    "dataset": "upl_<id>",
+    "fetched_row_count": 7,
+    "params": {
+     "encoding": "utf-8",
+     "format": "parquet",
+     "upload_id": "upl_<id>"
+    },
+    "provider": "file",
+    "record_count": 7,
+    "source_reported_total": {
+     "calls": [],
+     "status": "not_reported",
+     "value": null
+    }
+   }
+  ],
+  "quality_results": {
+   "t": []
+  },
+  "row_counts": {
+   "t": 7
+  },
+  "schema_drift": {},
+  "schema_summaries": {
+   "t": {
+    "fields": [
+     {
+      "name": "v",
+      "nullable": true,
+      "type": "Int64"
+     }
+    ],
+    "total_fields": 1
+   }
+  },
+  "status": "ok"
+ },
+ "silver": {
+  "t": {
+   "preview": {
+    "rows": [
+     {
+      "v": 2
+     },
+     {
+      "v": -2
+     },
+     {
+      "v": 1
+     },
+     {
+      "v": -1
+     },
+     {
+      "v": 0
+     }
+    ],
+    "total_rows": 7
+   },
+   "schema": {
+    "columns": [
+     {
+      "dtype": "Int64",
+      "logical_type": "int64",
+      "name": "v",
+      "nullable": true,
+      "unique_count": 6,
+      "wire_encoding": "number"
+     }
+    ]
+   },
+   "stats": {
+    "duplicate_rate": 0.1428571428571429,
+    "null_counts": {
+     "v": 1
+    },
+    "row_count": 7
+   },
+   "table": {
+    "columns": [
+     "v"
+    ],
+    "dtypes": [
+     "Int64"
+    ],
+    "nullable": [
+     true
+    ],
+    "rows": [
+     [
+      2
+     ],
+     [
+      -2
+     ],
+     [
+      1
+     ],
+     [
+      -1
+     ],
+     [
+      0
+     ],
+     [
+      0
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   "validation": {
+    "ok": true,
+    "problems": []
+   }
+  }
+ },
+ "status_code": 200
+}
