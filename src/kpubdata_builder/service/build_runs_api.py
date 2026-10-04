@@ -84,6 +84,11 @@ def _declared_dataset_id(spec_yaml: str) -> str | None:
     return dataset_id if isinstance(dataset_id, str) and dataset_id else None
 
 
+#: The stable code of a run a restart interrupted (#683, #996). It starts the failure
+#: event's message and is the ``code`` of the job status read back from that event.
+INTERRUPTED_CODE = "credentials_required"
+
+
 class BuildRunsApiService:
     """Runs a build, queues one, reports on it and cancels it."""
 
@@ -383,15 +388,25 @@ class BuildRunsApiService:
             # fails to record, job also never created: "event lost but job running"
             # contradiction never happens (recorder absorption differs; here no real
             # side effect yet to compromise other canonical).
+            submitted_at = datetime.now(tz=timezone.utc)
             self._event_store().append(
                 BuildEvent(
                     seq=0,
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=submitted_at,
                     run_id=resolved_run_id,
                     event="run_submitted",
                     status="ok",
                     message="build accepted for async execution",
                 )
+            )
+            # Whose run this is, kept where it survives a restart (#996): the registry
+            # that holds the owner is memory, and a run that never writes a manifest
+            # has nothing else to say who may read why it ended.
+            self._event_store().record_submission(
+                resolved_run_id,
+                owner_id=owner_id,
+                created_by=created_by,
+                submitted_at=submitted_at,
             )
             if job_credentials is not None:
                 job_credentials.bind(resolved_run_id, owner_id, request_credentials.current_keys())
@@ -489,7 +504,42 @@ class BuildRunsApiService:
         evicted = self._build_status_from_manifest(run_id)
         if evicted is not None:
             return ServiceResponse(200, evicted)
+        interrupted = self._build_status_from_events(run_id)
+        if interrupted is not None:
+            return ServiceResponse(200, interrupted)
         return ServiceResponse(404, {"error": f"build job not found: {run_id}"})
+
+    def _build_status_from_events(self, run_id: str) -> dict[str, JsonValue] | None:
+        """Status of a run that ended without a manifest and is no longer in the registry.
+
+        A restart leaves such a run: ``mark_interrupted_runs`` records its failure in
+        the event store only (#683), so neither the registry nor a manifest knows it
+        and the owner polling it got 404 instead of "submit it again" (#996). The
+        submission record gives the run's start, the terminal event its end and reason.
+        Only a failed or cancelled ending is reported from here — a run that finished
+        has a manifest, and that path is the authority for it.
+        """
+        store = self._event_store()
+        submission = store.submission(run_id)
+        if submission is None:
+            return None
+        terminal = store.terminal_event(run_id)
+        if terminal is None or terminal.event == "run_finished":
+            return None
+        body: dict[str, JsonValue] = {
+            "run_id": run_id,
+            "status": "cancelled" if terminal.event == "run_cancelled" else "failed",
+            "created_at": submission.submitted_at,
+            "updated_at": terminal.timestamp.astimezone(timezone.utc).isoformat(),
+        }
+        if submission.created_by is not None:
+            body["created_by"] = submission.created_by
+        if terminal.event == "run_failed":
+            message = terminal.message or "the run did not finish"
+            body["error"] = message
+            if message.startswith(f"{INTERRUPTED_CODE}:"):
+                body["code"] = INTERRUPTED_CODE
+        return body
 
     def _build_status_from_manifest(self, run_id: str) -> dict[str, JsonValue] | None:
         """Restore evicted terminal job status from persisted manifest.
@@ -583,7 +633,7 @@ class BuildRunsApiService:
                     run_id=run_id,
                     event="run_failed",
                     status="fail",
-                    message="credentials_required: the server restarted and the job's "
+                    message=f"{INTERRUPTED_CODE}: the server restarted and the job's "
                     "provider keys, held only in memory, are gone; submit it again",
                 )
             )

@@ -28,7 +28,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -55,6 +55,29 @@ CREATE TABLE IF NOT EXISTS build_events (
 """
 
 _SELECT_COLUMNS = "seq, run_id, timestamp, event, status, source_key, stage, message, metrics"
+
+# Who submitted an async run, and when (#996). The event timeline says what happened to
+# a run but not whose it is; ownership lived in the job registry (memory) until the run
+# wrote a manifest. A run a restart interrupts has neither, so its owner could not read
+# why it ended. Kept here, next to the events it belongs with; rows are only added.
+_CREATE_SUBMISSIONS_SQL = """
+CREATE TABLE IF NOT EXISTS run_submissions (
+    run_id TEXT PRIMARY KEY,
+    owner_id TEXT,
+    created_by TEXT,
+    submitted_at TEXT NOT NULL
+)
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class RunSubmission:
+    """Who submitted an async run and when (#996)."""
+
+    run_id: str
+    owner_id: str | None
+    created_by: str | None
+    submitted_at: str
 
 
 class BuildEventStore:
@@ -104,6 +127,7 @@ class BuildEventStore:
                     f"INSERT INTO schema_version (version) VALUES ({SCHEMA_VERSION})"
                 )
             self._conn.execute(_CREATE_TABLE_SQL)
+            self._conn.execute(_CREATE_SUBMISSIONS_SQL)
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_build_events_run_seq ON build_events(run_id, seq)"
             )
@@ -153,6 +177,43 @@ class BuildEventStore:
         if seq is None:  # pragma: no cover - sqlite3 always assigns lastrowid on INSERT
             raise RuntimeError("build event insert did not return a row id")
         return replace(event, seq=seq)
+
+    def record_submission(
+        self, run_id: str, *, owner_id: str | None, created_by: str | None, submitted_at: datetime
+    ) -> None:
+        """Remember who submitted ``run_id`` (#996). A second submission of the id is ignored."""
+        if submitted_at.tzinfo is None or submitted_at.utcoffset() is None:
+            raise ValueError("submitted_at must be timezone-aware")
+        with self._transaction():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO run_submissions (run_id, owner_id, created_by, submitted_at)"
+                " VALUES (?, ?, ?, ?)",
+                (run_id, owner_id, created_by, submitted_at.astimezone(timezone.utc).isoformat()),
+            )
+
+    def submission(self, run_id: str) -> RunSubmission | None:
+        """The recorded submitter of ``run_id``, or None when it was never recorded."""
+        row = self._conn.execute(
+            "SELECT owner_id, created_by, submitted_at FROM run_submissions WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return RunSubmission(
+            run_id=run_id,
+            owner_id=None if row[0] is None else str(row[0]),
+            created_by=None if row[1] is None else str(row[1]),
+            submitted_at=str(row[2]),
+        )
+
+    def terminal_event(self, run_id: str) -> BuildEvent | None:
+        """The run's last terminal event (finished, failed or cancelled), if it has one."""
+        events = [
+            event
+            for event in self.list_for_run(run_id, limit=50, tail=True)
+            if event.event in ("run_finished", "run_failed", "run_cancelled")
+        ]
+        return events[-1] if events else None
 
     def unfinished_runs(self) -> tuple[str, ...]:
         """Runs with a submission or start event and no terminal event (#683)."""
@@ -224,4 +285,4 @@ def _row_to_event(row: tuple[object, ...]) -> BuildEvent:
     )
 
 
-__all__ = ["BuildEventStore", "SCHEMA_VERSION"]
+__all__ = ["SCHEMA_VERSION", "BuildEventStore", "RunSubmission"]
