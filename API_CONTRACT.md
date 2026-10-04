@@ -201,7 +201,7 @@ CORS is default-deny for browser clients (Studio, etc.).
 
 - Without `KPUBDATA_BUILDER_ALLOWED_ORIGINS` set, cross-origin requests are refused.
 - Same-origin requests are allowed.
-- Preflight allows `GET, POST, OPTIONS` and `Content-Type, X-API-Key, Authorization` for allowed origins.
+- Preflight allows `GET, POST, PUT, DELETE, OPTIONS` and `Content-Type, X-API-Key, Authorization, X-Provider-Key, X-Publish-Credential` for allowed origins.
 
 Authentication supports two paths:
 
@@ -211,6 +211,13 @@ Authentication supports two paths:
 | Bearer (OIDC) | `Authorization: Bearer <jwt>` | Human users, Studio | `OIDC_ISSUER` + `OIDC_AUDIENCE` |
 
 OIDC is enabled only when `OIDC_ISSUER`/`OIDC_AUDIENCE` and allowlists (`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`) are configured.
+
+**Whether a provider key is stored depends on the deployment mode**, so "keys are not stored" is true of one mode only:
+
+| Mode | Provider key |
+| :--- | :--- |
+| Multi-user (OIDC, or `KPUBDATA_BUILDER_ENFORCE_OWNERSHIP`) | Not stored. Sent per request in `X-Provider-Key` and held in memory for the request or the async job only (#683); `PUT /providers/{provider}/credential` answers 403 `credential_storage_disabled` |
+| Single-user (API key) | Stored, encrypted with `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` (AES-GCM, ADR 0012), per principal |
 
 ## 5. CLI Correspondence
 
