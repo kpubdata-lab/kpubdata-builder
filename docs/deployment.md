@@ -20,7 +20,7 @@
 | `KPUBDATA_BUILDER_CUBRID_URL` | CUBRID SQLAlchemy URL (예: `cubrid+pycubrid://user:pass@host:33000/db?charset=utf8`) | 미설정 | `STORAGE_BACKEND=cubrid` 시 필수 |
 | `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` | `prune-cancelled --apply`가 cancelled partial run을 정리하기까지의 보존 시간(시간). 미설정이면 정리 대상 없음(#549) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT` | HTTP `local` publish target의 루트 디렉터리(절대 경로). destination은 이 안의 상대 `owner/name`로 한정된다(#550). 미설정이면 local target blocker | 미설정 | local publish 사용 시 필수 |
-| `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` | `true` 면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683) | 미설정 | 선택 |
+| `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` | `true` 면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683). **`env_keys` 를 지원하는 kpubdata 가 필요하다**(0.8.0 에는 없다): 없으면 `serve` 가 기동을 거부하고(종료 코드 1), 그 kpubdata 로 키 없는 클라이언트를 만들려는 시도도 오류로 끝난다 — 환경변수 키로 조용히 내려가지 않는다(#990). | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` | 다중 사용자 배포에서 비동기 작업에 묶인 provider 키를 워커가 가져가기 전까지 메모리에 두는 최대 시간(#683). 지나면 키를 버리고 작업은 키 없이 실패한다 | `3600` | 선택 |
 | `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` | `true`면 게시 시 요청자에게 저장된 publish credential 만 쓰고 서버 환경변수(`HF_TOKEN` 등)로 내려가지 않는다(#635). 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 폴백이 없고 저장된 publish credential 도 읽지 않는다** — 토큰은 요청의 `X-Publish-Credential` 헤더(`HF_TOKEN=...`, `KAGGLE_USERNAME=...`, `KAGGLE_KEY=...`)로만 받아 그 요청 동안만 메모리에 둔다(#925) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES` | `POST /uploads`가 받는 최대 본문 크기(바이트). 초과분은 413 | 코드 기본값 | 선택 |
@@ -270,9 +270,12 @@ kpubdata-builder warehouse-restore BACKUP NEW_DIR
   커밋이 일어나도 읽는 것은 바뀌지 않고, 응답의 `snapshot.snapshot_id` 로 같은 질의를
   다시 돌릴 수 있다. SQL 샌드박스는 `POST /query` 와 같다(테이블 이름은 `dataset`).
 - `GET /warehouse/tables/{name}/profile?snapshot=current|<id>` — 열 프로파일(#817). 행 수,
-  null 수·비율, float 열의 NaN·무한대 수, 숫자·시간 열의 최소·최대를 **전 행에서 정확히**
-  계산한다(표본 없음). NaN·무한대는 범위에서 빼고 `excluded_count` 로 센다. 값이 10개 미만인
-  범위는 공개하지 않는다. 값 패턴이나 열 이름으로 개인정보가 의심되는 열은 BuildSpec 의
+  null 수·비율, float 열의 NaN·무한대 수를 **전 행에서 정확히** 계산한다(표본 없음).
+  숫자·시간 열의 최소·최대는 **위·아래 각각 5개 값을 뺀 뒤**의 값이다(`range_trim`, #903,
+  `status: trimmed`) — 가장 큰 소득이나 가장 이른 날짜는 레코드 하나의 값이기 때문이다.
+  빼는 것은 행이지 서로 다른 값이 아니므로, 6개 이상의 레코드가 같이 가진 값(예: 0)은
+  그대로 보고된다. NaN·무한대는 범위에서 빼고 `excluded_count` 로 센다. 값이 11개 미만인
+  범위(`min_range_values`: 10개 미만이거나, 절삭 후 남는 값이 없는 10개)는 공개하지 않는다. 값 패턴이나 열 이름으로 개인정보가 의심되는 열은 BuildSpec 의
   `pii` 정책(`mode: allow` 또는 `allow_columns`)이 받아들이지 않는 한 통계를 전부 비운다.
   질의와 같은 한도(자식 프로세스·메모리 상한·동시 실행 슬롯)로 돌고, 결과는 스냅샷을 건드리지
   않고 `tables/<table_id>/_profiles/<snapshot_id>.json` 에 snapshot id·콘텐츠 다이제스트·

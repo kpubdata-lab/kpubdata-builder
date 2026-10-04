@@ -63,19 +63,44 @@ _DEFAULT_MAX_WORKERS = 10
 _DEFAULT_MAX_PENDING_REQUESTS = 100
 
 
-def _overloaded_response() -> bytes:
+def _overloaded_response(allowed_origins: frozenset[str] = frozenset()) -> bytes:
     """Minimal HTTP response sent directly to socket for connections exceeding wait limit.
 
     Bypass handler (that's why we're rejecting) and write directly to socket.
     Use ``Connection: close`` so client does not reuse this connection.
+
+    The request is never read, so its ``Origin`` is unknown (#995). Without CORS headers
+    a browser hides this response from a cross-origin page: it sees a network error, not
+    a 503 with ``Retry-After``. What is sent instead depends only on the deployment:
+
+    - no allowed origin (default-deny): no CORS header, as before;
+    - one allowed origin: that origin, as any other response to it carries;
+    - several: ``*``, which a browser accepts for a request made without credentials
+      (a bearer header is not one). The body is a constant and says nothing a page from
+      another origin could not learn by being refused.
     """
-    body = b'{"error": "server overloaded"}'
+    body = b'{"error": "server overloaded", "code": "server_overloaded"}'
+    cors = b""
+    # This is written to the socket as bytes, so a configured origin with a line break
+    # or a non-ASCII character would corrupt the response: send no CORS header then.
+    if any(not origin.isascii() or not origin.isprintable() for origin in allowed_origins):
+        allowed_origins = frozenset()
+    if allowed_origins:
+        if len(allowed_origins) == 1:
+            (origin,) = allowed_origins
+            cors = (
+                b"Access-Control-Allow-Origin: " + origin.encode("ascii") + b"\r\n"
+                b"Access-Control-Allow-Credentials: true\r\n"
+                b"Vary: Origin\r\n"
+            )
+        else:
+            cors = b"Access-Control-Allow-Origin: *\r\n"
+        cors += b"Access-Control-Expose-Headers: Retry-After\r\n"
     return (
         b"HTTP/1.1 503 Service Unavailable\r\n"
         b"Content-Type: application/json; charset=utf-8\r\n"
         b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
-        b"Retry-After: 1\r\n"
-        b"Connection: close\r\n"
+        b"Retry-After: 1\r\n" + cors + b"Connection: close\r\n"
         b"\r\n" + body
     )
 
@@ -91,6 +116,11 @@ _ALLOWED_ORIGINS_ENV = "KPUBDATA_BUILDER_ALLOWED_ORIGINS"
 _CORS_ALLOWED_HEADERS = (
     f"Content-Type, X-API-Key, Authorization, {PROVIDER_KEY_HEADER}, {PUBLISH_CREDENTIAL_HEADER}"
 )
+
+# Response headers a cross-origin page may read (#995). A browser shows a script only
+# the CORS-safelisted ones unless they are named here: without this Studio cannot read a
+# download's file name, the request id to quote in a report, or how long to wait.
+_CORS_EXPOSED_HEADERS = "Content-Disposition, X-Request-ID, Retry-After"
 
 # Default MIME type (#323). Used when mimetypes.guess_type returns None.
 _DEFAULT_MIME_TYPE = "application/octet-stream"
@@ -315,6 +345,7 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", _CORS_ALLOWED_HEADERS)
                 self.send_header("Access-Control-Max-Age", "86400")
+                self.send_header("Access-Control-Expose-Headers", _CORS_EXPOSED_HEADERS)
 
         def _write(self, status_code: int, body: dict[str, JsonValue]) -> None:
             payload = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
@@ -475,7 +506,7 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
             self._max_inflight,
         )
         try:
-            cast(_socket, request).sendall(_OVERLOADED_RESPONSE)
+            cast(_socket, request).sendall(_overloaded_response(_get_allowed_origins()))
         except OSError:
             # Peer already closed. Just close our end.
             pass

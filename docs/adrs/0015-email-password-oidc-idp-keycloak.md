@@ -21,9 +21,13 @@
    Google 로그인은 Keycloak의 identity broker(선택적)로 수용해 기존 Google 사용자
    경로를 보존할 수 있다.
 3. **인증 플로우: Authorization Code + PKCE** — Studio(public SPA client)는
-   Keycloak hosted login 페이지로 이동해 code 교환으로 ID token을 받는다.
-   ID token을 `Authorization: Bearer`로 Builder에 전송하는 하부 계약은 ADR 0009와
-   동일하다. Resource Owner Password Credentials(ROPC) grant는 사용 금지
+   Keycloak hosted login 페이지로 이동해 code 교환으로 토큰을 받는다.
+   **access token**을 `Authorization: Bearer`로 Builder에 전송한다 — 검증 방식(JWKS
+   오프라인 검증, iss/aud/exp)은 ADR 0009와 동일하다. (2026-10-04 정정,
+   kpubdata-studio#722: 이 문장은 "ID token"이라고 적혀 있었지만 Studio 는 처음부터
+   access token 을 보냈고 Builder 는 토큰 종류를 가리지 않는다. API 호출에는 access
+   token 이 OAuth 의 통상 용법이므로 그쪽을 계약으로 정한다. access token 의 `aud` 에
+   Builder audience 를 넣는 mapper 가 필요하다 — `docs/deploy.md`.) Resource Owner Password Credentials(ROPC) grant는 사용 금지
    (deprecated, MFA/SSO/세션 관리 불가).
 4. **password/secret 책임 경계(원칙 재확정)** — Builder와 Studio 어느 쪽도
    password 원문·해시를 저장·검증·전송하지 않는다. Studio의

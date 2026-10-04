@@ -423,7 +423,7 @@ def test_async_credential_is_not_persisted_or_exposed(
         service._async_builds.shutdown()
 
 
-def test_async_credential_owner_does_not_enable_file_source(
+def test_async_file_source_is_built_for_the_owner_who_uploaded_it(
     tmp_path: Path, repository: SQLiteCredentialRepository
 ) -> None:
     principal = Principal("oidc", "user-a", "oidc:owner-a")
@@ -447,11 +447,12 @@ def test_async_credential_owner_does_not_enable_file_source(
         assert submitted.status_code == 202
         status = _wait_for_terminal_job(service, "async-file-unsupported")
 
-        assert status["status"] == "failed"
+        # The #498 limitation is lifted (#998): the submitting owner reaches the file
+        # resolver, so the uploader's async build succeeds.
+        assert status["status"] == "succeeded"
         response = cast(dict[str, JsonValue], status["response"])
         outcomes = cast(list[dict[str, JsonValue]], response["outcomes"])
-        assert outcomes[0]["status"] == "failed"
-        assert "authenticated, stable principal owner" in cast(str, outcomes[0]["error"])
+        assert outcomes[0]["status"] == "ok"
         manifest = json.loads(
             (tmp_path / "build" / "async-file-unsupported" / "manifest.json").read_text(
                 encoding="utf-8"

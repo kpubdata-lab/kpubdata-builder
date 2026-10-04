@@ -750,7 +750,7 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "getBuildEvents": {200, 400, 403, 404},
     "getPublishReadiness": {200, 400, 403, 404},
     "publishBuild": {200, 400, 403, 404, 409, 502},
-    # Publish recovery (#551, #563), declared in 1.77.0 (#994). 503: the remote could not
+    # Publish recovery (#551, #563), declared in 1.81.0 (#994). 503: the remote could not
     # be read, or the outcome could not be persisted — nothing changed.
     "getPublishReceipt": {200, 400, 403, 404},
     "resetPublishReceipt": {200, 400, 403, 404, 503},

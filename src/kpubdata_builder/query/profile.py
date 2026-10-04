@@ -4,15 +4,24 @@ A table screen wants to say what each column holds — its type, how much of it 
 missing, the range of its values — without the client reading the rows. This is the
 first, bounded step of that:
 
-- **Exact, over every row.** Row count, null count and ratio, NaN and infinite counts
-  for float columns, and min/max for numeric and temporal columns. Nothing is sampled,
-  so ``scope`` says ``full`` and ``accuracy`` says ``exact``. Quantiles, histograms,
-  distinct counts and top values are left out until their cost and their disclosure
-  risk have been weighed — a top value or a distinct count of a name column *is* data.
+- **Exact counts, over every row.** Row count, null count and ratio, NaN and infinite
+  counts for float columns. Nothing is sampled, so ``scope`` says ``full`` and
+  ``accuracy`` says ``exact``. Quantiles, histograms, distinct counts and top values
+  are left out until their cost and their disclosure risk have been weighed — a top
+  value or a distinct count of a name column *is* data.
+- **A range leaves out the extremes (#903).** The highest income or the largest area
+  of a column is one record's value. The min/max of a numeric or temporal column are
+  therefore reported after removing the ``RANGE_TRIM`` lowest and the ``RANGE_TRIM``
+  highest values — rows, not distinct values: ``min`` is the value below which exactly
+  ``RANGE_TRIM`` values lie. Such a range says ``trimmed``, never ``exact``. A value
+  more than ``RANGE_TRIM`` records share is not an extreme of one record and is still
+  reported.
 - **NaN and infinity are not values of a range.** They are excluded from min/max and
   counted, so ``range.excluded_count`` says how many were left out.
-- **Small groups are not described.** A min or max over fewer than
-  ``MIN_RANGE_VALUES`` values can point at one record, so the range is withheld.
+- **Small groups are not described.** A range over fewer than ``MIN_RANGE_VALUES``
+  values can point at one record, and one over ``2 * RANGE_TRIM`` values or fewer has
+  nothing left once the extremes are removed; either way the range is withheld.
+  ``min_range_values`` in the body is the count below which that happens.
 - **Suspected personal data is not profiled.** A column whose values match a PII
   pattern, or whose name suggests one, gets its type and nothing else, unless the
   BuildSpec's ``pii`` policy accepts it (``mode: allow``, or the column in
@@ -53,9 +62,11 @@ from .sandbox import ORDERED_DATASET
 
 #: Raised whenever what is computed, or how, changes; cached profiles of another
 #: version are recomputed.
-PROFILE_ALGORITHM_VERSION = 2
+PROFILE_ALGORITHM_VERSION = 3
 #: Fewer finite values than this and a column's min/max is withheld.
 MIN_RANGE_VALUES = 10
+#: How many of the lowest, and how many of the highest, values a range leaves out (#903).
+RANGE_TRIM = 5
 #: The sensitivity kind of a column that can hold text the value patterns did not read.
 UNCHECKED_VALUES_KIND = "unchecked_values"
 
@@ -66,16 +77,36 @@ class ProfilePlan:
 
     allow_all_pii: bool
     allow_columns: tuple[str, ...]
+    #: Values removed from each end of a range before its min/max are read (#903).
+    range_trim: int = RANGE_TRIM
+
+    def __post_init__(self) -> None:
+        if self.range_trim < 0:
+            raise ValueError("range_trim must not be negative")
+
+    @property
+    def min_range_values(self) -> int:
+        """Fewer finite values than this and a range is withheld: the small-group
+        floor, or one more than trimming removes, whichever is larger."""
+        return max(MIN_RANGE_VALUES, 2 * self.range_trim + 1)
 
     def to_json(self) -> str:
         return json.dumps(
-            {"allow_all_pii": self.allow_all_pii, "allow_columns": list(self.allow_columns)}
+            {
+                "allow_all_pii": self.allow_all_pii,
+                "allow_columns": list(self.allow_columns),
+                "range_trim": self.range_trim,
+            }
         )
 
     @classmethod
     def from_json(cls, raw: str) -> ProfilePlan:
         data = json.loads(raw)
-        return cls(bool(data["allow_all_pii"]), tuple(str(c) for c in data["allow_columns"]))
+        return cls(
+            bool(data["allow_all_pii"]),
+            tuple(str(c) for c in data["allow_columns"]),
+            int(data.get("range_trim", RANGE_TRIM)),
+        )
 
 
 _NUMERIC = ("Int8", "Int16", "Int32", "Int64", "Int128", "UInt8", "UInt16", "UInt32", "UInt64")
@@ -233,8 +264,11 @@ def profile_table(table_path: str, plan: ProfilePlan) -> dict[str, JsonValue]:
                 finite = f"isfinite({col})"
             if _has_range(dtype):
                 value = f"CAST({col} AS TIMESTAMP)" if _time_zone(dtype) is not None else col
-                slot(f"min{index}", f"min({value}) FILTER (WHERE {finite})")
-                slot(f"max{index}", f"max({value}) FILTER (WHERE {finite})")
+                # The value just inside the trimmed ends: the (trim + 1)-th lowest and
+                # highest, null when there are not that many (#903).
+                nth = plan.range_trim + 1
+                slot(f"min{index}", f"min({value}, {nth}) FILTER (WHERE {finite})[{nth}]")
+                slot(f"max{index}", f"max({value}, {nth}) FILTER (WHERE {finite})[{nth}]")
                 slot(f"cnt{index}", f"count(*) FILTER (WHERE {finite})")
         row = connection.execute(f"SELECT {', '.join(exprs)} FROM {ORDERED_DATASET}").fetchone()
         assert row is not None
@@ -297,14 +331,15 @@ def profile_table(table_path: str, plan: ProfilePlan) -> dict[str, JsonValue]:
                 null_ratio=None if row_count == 0 else nulls / row_count,
                 nan_count=nan,
                 infinite_count=infinite,
-                range=_range_body(dtype, stats, index, nan, infinite),
+                range=_range_body(dtype, stats, index, nan, infinite, plan),
             )
             columns.append(column)
     return {
         "algorithm_version": PROFILE_ALGORITHM_VERSION,
         "scope": {"mode": "full", "sampled": False, "sample_size": None},
         "accuracy": "exact",
-        "min_range_values": MIN_RANGE_VALUES,
+        "min_range_values": plan.min_range_values,
+        "range_trim": plan.range_trim,
         "row_count": row_count,
         "columns": columns,
     }
@@ -316,6 +351,7 @@ def _range_body(
     index: int,
     nan: int | None,
     infinite: int | None,
+    plan: ProfilePlan,
 ) -> JsonValue:
     if not _has_range(dtype):
         return {"status": "not_applicable"}
@@ -323,17 +359,18 @@ def _range_body(
     count = int(cast(int, stats[f"cnt{index}"]))
     if count == 0:
         return {"status": "no_values", "value_count": 0, "excluded_count": excluded}
-    if count < MIN_RANGE_VALUES:
+    if count < plan.min_range_values:
         return {"status": "withheld_small_group", "value_count": count, "excluded_count": excluded}
     low, high = stats[f"min{index}"], stats[f"max{index}"]
     encoding = _range_encoding(dtype, low, high)
     return {
-        "status": "exact",
+        "status": "trimmed" if plan.range_trim else "exact",
         "min": encode_value(low, encoding),
         "max": encode_value(high, encoding),
         "wire_encoding": encoding,
         "value_count": count,
         "excluded_count": excluded,
+        "trimmed_count": 2 * plan.range_trim,
     }
 
 

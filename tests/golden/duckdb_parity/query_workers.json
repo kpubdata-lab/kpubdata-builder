@@ -357,7 +357,7 @@
   "body": {
    "profile": {
     "accuracy": "exact",
-    "algorithm_version": 2,
+    "algorithm_version": 3,
     "columns": [
      {
       "infinite_count": null,
@@ -936,7 +936,8 @@
       "time_zone": null
      }
     ],
-    "min_range_values": 10,
+    "min_range_values": 11,
+    "range_trim": 5,
     "row_count": 12,
     "scope": {
      "mode": "full",

@@ -47,6 +47,13 @@ dependencies = [
   "urllib3>=2.7.0,<3",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kpubdata-lab/kpubdata-builder"
+Documentation = "https://kpubdata-lab.github.io/kpubdata-builder/"
+Repository = "https://github.com/kpubdata-lab/kpubdata-builder"
+Issues = "https://github.com/kpubdata-lab/kpubdata-builder/issues"
+Changelog = "https://github.com/kpubdata-lab/kpubdata-builder/blob/main/CHANGELOG.md"
+
 [project.scripts]
 kpubdata-builder = "kpubdata_builder.cli:main"
 

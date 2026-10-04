@@ -4,7 +4,12 @@ Returns ``Principal`` instead of ``bool`` to preserve "who made the request" (B2
 This module unifies two authentication paths (B3, ADR 0009):
 
 - ``X-API-Key`` — service accounts (scheduled workflows, users who can't use Google login).
-- ``Authorization: Bearer <Google ID token>`` — human users (Studio). JWKS offline verification.
+- ``Authorization: Bearer <OIDC access token>`` — human users (Studio). JWKS offline
+  verification. The token is the **access token** the IdP issued for this API
+  (kpubdata-studio#722): what is checked is its claims, not its kind — the issuer, an
+  ``aud`` that includes ``OIDC_AUDIENCE``, and ``email_verified``. A Keycloak realm puts
+  the Builder audience into its access tokens with an audience mapper; a token without
+  it is refused. (ADR 0009 wrote "Google ID token", from before Keycloak, ADR 0015.)
 
 When ``OIDC_ISSUER`` is not set, the Bearer path is disabled, with no impact on
 existing deployments. When set, ``OIDC_AUDIENCE`` is required and the ``pyjwt``
@@ -167,6 +172,24 @@ class AuthError:
 
     reason: str
     status_code: int = 401
+    # Set where the failure is made, so ``code`` does not depend on how ``reason`` is
+    # worded.
+    expired: bool = False
+
+    @property
+    def code(self) -> str:
+        """A stable code for the failure, so a client does not branch on ``reason`` (#1000).
+
+        ``token_expired`` — the bearer token's ``exp`` has passed: get a new token and
+        send the request again. ``auth_unavailable`` — the JWKS could not be fetched
+        (503): the credentials were not judged, try again. ``unauthorized`` — every
+        other refusal: a missing or wrong API key, a token that does not verify.
+        """
+        if self.status_code == 503:
+            return "auth_unavailable"
+        if self.expired:
+            return "token_expired"
+        return "unauthorized"
 
 
 def _is_dev_mode() -> bool:
@@ -415,7 +438,11 @@ def _is_unknown_signing_key(exc: Exception) -> bool:
 
 
 def _verify_bearer_token(token: str) -> Principal | AuthError:
-    """Offline verify Google ID token via JWKS (#385, ADR 0009).
+    """Offline verify the bearer token via JWKS (#385, ADR 0009).
+
+    The token is the IdP's access token for this API (kpubdata-studio#722). Its kind is
+    not inspected (``typ``, ``azp`` and ``nonce`` are ignored): it is accepted for what
+    it claims — issuer, audience, expiry, subject and a verified e-mail.
 
     - RS256 fixed (reject alg:none / HS*).
     - Verify iss/aud/exp/nbf/iat (60s leeway), require email_verified.
@@ -457,7 +484,10 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
             options={"require": ["exp", "iat", "iss", "sub"]},
         )
     except jwt.PyJWTError as exc:
-        return AuthError(reason=f"invalid token: {type(exc).__name__}")
+        return AuthError(
+            reason=f"invalid token: {type(exc).__name__}",
+            expired=isinstance(exc, jwt.ExpiredSignatureError),
+        )
 
     if not payload.get("email_verified", False):
         return AuthError(reason="email not verified")

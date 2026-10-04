@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.77.0",
+  "contract_version": "1.81.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5277,6 +5277,30 @@
       "broken_path": "$.error"
     },
     {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
+      "status": 429,
+      "example": "BuildQueueFull",
+      "current": {
+        "error": "async build queue is full",
+        "code": "build_queue_full"
+      },
+      "with_additive_fields": {
+        "error": "async build queue is full",
+        "code": "build_queue_full",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "build_queue_full"
+      },
+      "broken_path": "$.error"
+    },
+    {
       "operation_id": "listBuilds",
       "method": "GET",
       "path": "/builds",
@@ -5945,6 +5969,53 @@
       "broken_path": "$.error"
     },
     {
+      "response": "AuthThrottled",
+      "status": 429,
+      "example": "AuthThrottled",
+      "current": {
+        "error": "too many failed authentication attempts",
+        "code": "auth_throttled",
+        "retry_after_seconds": 42
+      },
+      "with_additive_fields": {
+        "error": "too many failed authentication attempts",
+        "code": "auth_throttled",
+        "retry_after_seconds": 42,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "auth_throttled",
+        "retry_after_seconds": 42
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "ServerOverloaded",
+      "status": 503,
+      "example": "ServerOverloaded",
+      "current": {
+        "error": "server overloaded",
+        "code": "server_overloaded"
+      },
+      "with_additive_fields": {
+        "error": "server overloaded",
+        "code": "server_overloaded",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "server_overloaded"
+      },
+      "broken_path": "$.error"
+    },
+    {
       "response": "SignupNotApproved",
       "status": 403,
       "example": "SignupPending",
@@ -5993,17 +6064,20 @@
       "status": 401,
       "example": "MissingOrInvalidApiKey",
       "current": {
-        "error": "unauthorized"
+        "error": "invalid api key",
+        "code": "unauthorized"
       },
       "with_additive_fields": {
-        "error": "unauthorized",
+        "error": "invalid api key",
+        "code": "unauthorized",
         "future_optional_field": "added by a later minor contract version"
       },
       "additive_paths": [
         "$"
       ],
       "required_type_broken": {
-        "error": 12345
+        "error": 12345,
+        "code": "unauthorized"
       },
       "broken_path": "$.error"
     },
