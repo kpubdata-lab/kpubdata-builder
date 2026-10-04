@@ -16,6 +16,7 @@ from kpubdata_builder.query.engine import QueryEngine, QueryTimeoutError
 from kpubdata_builder.query.models import QueryResult
 from kpubdata_builder.query.profile import (
     MIN_RANGE_VALUES,
+    RANGE_TRIM,
     UNCHECKED_VALUES_KIND,
     ProfilePlan,
     profile_table,
@@ -82,7 +83,7 @@ _OPEN = ProfilePlan(allow_all_pii=False, allow_columns=())
 
 
 def test_edge_cases_are_counted_not_guessed(tmp_path: Path) -> None:
-    n = MIN_RANGE_VALUES + 2
+    n = _OPEN.min_range_values + 2
     frame = pl.DataFrame(
         {
             "amount": [float(i) for i in range(n - 2)] + [float("nan"), float("inf")],
@@ -105,7 +106,13 @@ def test_edge_cases_are_counted_not_guessed(tmp_path: Path) -> None:
     )
     amount = cast(dict[str, JsonValue], cols["amount"]["range"])
     assert (cols["amount"]["nan_count"], cols["amount"]["infinite_count"]) == (1, 1)
-    assert (amount["min"], amount["max"], amount["excluded_count"]) == (0.0, n - 3.0, 2)
+    # n - 2 finite values 0..n-3; RANGE_TRIM are left out at each end (#903).
+    assert (amount["status"], amount["trimmed_count"]) == ("trimmed", 2 * RANGE_TRIM)
+    assert (amount["min"], amount["max"], amount["excluded_count"]) == (
+        float(RANGE_TRIM),
+        n - 3.0 - RANGE_TRIM,
+        2,
+    )
     assert cols["all_null"]["null_ratio"] == 1.0
     assert cols["all_null"]["range"] == {
         "status": "no_values",
@@ -146,6 +153,88 @@ def test_a_small_group_range_is_withheld(tmp_path: Path) -> None:
         "value_count": 3,
         "excluded_count": 0,
     }
+
+
+def test_one_records_extreme_is_not_the_reported_min_or_max(tmp_path: Path) -> None:
+    """Negative (#903): the highest income and the earliest date are one record's."""
+    incomes = [*range(30_000, 30_040), 900_000_000, -5]
+    days = [dt.date(2024, 1, 1) + dt.timedelta(days=i) for i in range(41)] + [dt.date(1931, 4, 2)]
+    frame = pl.DataFrame({"income": incomes, "joined": days})
+
+    body = profile_table(_table(tmp_path / "t.parquet", frame), _OPEN)
+    income, joined = (
+        cast(dict[str, JsonValue], column["range"])
+        for column in cast(list[dict[str, JsonValue]], body["columns"])
+    )
+
+    assert body["range_trim"] == RANGE_TRIM
+    assert income["status"] == joined["status"] == "trimmed"
+    # 42 values: the 5 lowest are -5, 30000..30003 and the 5 highest 900000000, 30039..30036.
+    assert (income["min"], income["max"]) == (30_004, 30_035)
+    assert (joined["min"], joined["max"]) == ("2024-01-05", "2024-02-05")
+    assert (income["value_count"], income["trimmed_count"]) == (42, 10)
+    assert "900000000" not in json.dumps(body)
+    assert "1931" not in json.dumps(body)
+
+
+def test_a_value_many_records_share_is_still_reported(tmp_path: Path) -> None:
+    """Trimming removes rows, not distinct values: a floor that RANGE_TRIM + 1 records
+    sit on is not one record's value."""
+    frame = pl.DataFrame({"fee": [0] * (RANGE_TRIM + 1) + list(range(100, 120))})
+
+    body = profile_table(_table(tmp_path / "t.parquet", frame), _OPEN)
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+
+    assert cast(dict[str, JsonValue], column["range"])["min"] == 0
+
+
+@pytest.mark.parametrize("count", [MIN_RANGE_VALUES, 2 * RANGE_TRIM])
+def test_a_range_with_nothing_left_after_trimming_is_withheld(tmp_path: Path, count: int) -> None:
+    """Ten values pass the small-group floor, but removing five from each end leaves none."""
+    frame = pl.DataFrame({"v": list(range(count))})
+
+    body = profile_table(_table(tmp_path / "t.parquet", frame), _OPEN)
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+
+    assert body["min_range_values"] == 2 * RANGE_TRIM + 1
+    assert column["range"] == {
+        "status": "withheld_small_group",
+        "value_count": count,
+        "excluded_count": 0,
+    }
+
+
+def test_the_smallest_trimmed_range_is_its_middle_value(tmp_path: Path) -> None:
+    frame = pl.DataFrame({"v": list(range(2 * RANGE_TRIM + 1))})
+
+    body = profile_table(_table(tmp_path / "t.parquet", frame), _OPEN)
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+    found = cast(dict[str, JsonValue], column["range"])
+
+    assert (found["min"], found["max"]) == (RANGE_TRIM, RANGE_TRIM)
+
+
+def test_the_plan_carries_the_trim_to_the_worker() -> None:
+    plan = ProfilePlan(False, (), range_trim=2)
+
+    assert ProfilePlan.from_json(plan.to_json()) == plan
+    assert plan.min_range_values == MIN_RANGE_VALUES
+    # A plan written before the trim existed is read with the default, not with none.
+    legacy = '{"allow_all_pii": false, "allow_columns": []}'
+    assert ProfilePlan.from_json(legacy).range_trim == RANGE_TRIM
+    with pytest.raises(ValueError, match="range_trim"):
+        ProfilePlan(False, (), range_trim=-1)
+
+
+def test_an_untrimmed_plan_says_exact(tmp_path: Path) -> None:
+    frame = pl.DataFrame({"v": list(range(20))})
+
+    body = profile_table(_table(tmp_path / "t.parquet", frame), ProfilePlan(False, (), 0))
+    (column,) = cast(list[dict[str, JsonValue]], body["columns"])
+    found = cast(dict[str, JsonValue], column["range"])
+
+    assert (found["status"], found["min"], found["max"]) == ("exact", 0, 19)
+    assert found["trimmed_count"] == 0
 
 
 def test_suspected_personal_columns_are_not_profiled(tmp_path: Path) -> None:

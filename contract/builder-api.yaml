@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.76.0"
+  version: "1.77.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -19,6 +19,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.77.0 stops a snapshot profile's range from disclosing a single record's value (#903, additive): `ColumnRange.min`/`max` are read after removing the `range_trim` lowest and the `range_trim` highest values, the range's `status` is `trimmed` instead of `exact`, and it carries `trimmed_count`. `SnapshotProfile` gains `range_trim`, and `min_range_values` is at least `2 * range_trim + 1`. A client that showed only `exact` ranges shows none until it reads `trimmed`.
     v1.76.0 records which SQL a saved analysis is written in (#875, additive): `SavedAnalysis` gains `sql_dialect` (`duckdb`, or `legacy-polars` for one saved before the DuckDB cutover), `engine`, `engine_version`, `query_contract_version` and `migration_required`. A legacy analysis is never re-run on DuckDB: `POST /analyses/{analysis_id}/run` answers 409 `analysis_migration_required` until its SQL is reviewed and saved as a new analysis. Existing stores gain the columns on start; their rows are the legacy ones.
     v1.74.0 runs SQL, rows, aggregates, profiles and exports on DuckDB (#874, ADR 0021 step 13): each in a child process over a DuckDB connection that may read only the pinned snapshot file and spill into its own directory, with no other file, network or extension access and its configuration locked. The validator now parses the DuckDB dialect and refuses introspective functions (settings, variables, versions, sequences …) and nondeterministic SQL (random values, UUIDs, the current time, `USING SAMPLE`/`TABLESAMPLE`) with `unsafe_query`. Results keep the types DuckDB gives them, in Builder's spelling, where they differ from the Polars engine: `COUNT(*)` is `int64` (was `uint32`) and an unnamed aggregate is named as DuckDB names it (`count_star()`, `sum(v)` — they were `len` or failed); a `SUM` of an integer column is `int128`, sent as a number or as exact decimal text by its values; `ORDER BY … DESC` puts nulls last (Polars put them first; rows and aggregates always did); `date + INTERVAL` now works and is a datetime; a column that is Null in Builder is `int32` (all null) in SQL results, while a page of rows still reports it Null; a zoned datetime is sent in UTC. A table with a column SQL cannot name (an empty name, or two names one letter case apart) answers `query_execution_failed` to SQL, while rows, aggregates and profiles still read it.
     v1.10.0은 `POST /preview`에 Source↔Silver diff와 sample_mode(first/random)
@@ -4823,7 +4824,7 @@ components:
       additionalProperties: false
       required:
         [snapshot_id, artifact_digest, algorithm_version, computed_at, scope, accuracy,
-         min_range_values, row_count, columns]
+         min_range_values, range_trim, row_count, columns]
       properties:
         snapshot_id: {type: string}
         artifact_digest:
@@ -4843,7 +4844,15 @@ components:
         min_range_values:
           type: integer
           minimum: 1
-          description: A range over fewer finite values than this is withheld.
+          description: >-
+            A range over fewer finite values than this is withheld: at least
+            `2 * range_trim + 1`, so that a trimmed range has a value left.
+        range_trim:
+          type: integer
+          minimum: 0
+          description: >-
+            How many of the lowest, and how many of the highest, values a range leaves
+            out before its `min`/`max` are read (#903) — rows, not distinct values.
         row_count: {type: integer, minimum: 0}
         columns:
           type: array
@@ -4912,14 +4921,20 @@ components:
       additionalProperties: false
       required: [status]
       description: >-
-        `exact` min/max over finite, non-null values, sent by `wire_encoding`;
+        `trimmed` min/max over finite, non-null values, sent by `wire_encoding`: the
+        bounds left after the profile's `range_trim` lowest and `range_trim` highest
+        values are removed, so that one record's extreme is not disclosed (#903). `min`
+        is the value below which exactly `range_trim` values lie, so a value more than
+        `range_trim` records share is still reported. `exact` is the untrimmed min/max,
+        which a profile gives only when its `range_trim` is 0.
         `withheld_small_group` when fewer than `min_range_values` values exist;
         `no_values` when none do; `not_applicable` for non-numeric, non-temporal
-        columns. `excluded_count` is how many NaN or infinite values were left out.
+        columns. `excluded_count` is how many NaN or infinite values were left out;
+        `trimmed_count` is how many values the trimming removed, both ends together.
       properties:
         status:
           type: string
-          enum: [exact, withheld_small_group, no_values, not_applicable]
+          enum: [exact, trimmed, withheld_small_group, no_values, not_applicable]
         min:
           $ref: "#/components/schemas/JsonValue"
         max:
@@ -4927,6 +4942,7 @@ components:
         wire_encoding: {type: string, enum: [number, decimal_string, string]}
         value_count: {type: integer, minimum: 0}
         excluded_count: {type: integer, minimum: 0}
+        trimmed_count: {type: integer, minimum: 0}
 
     WarehouseTableDetailResponse:
       type: object

@@ -270,9 +270,12 @@ kpubdata-builder warehouse-restore BACKUP NEW_DIR
   커밋이 일어나도 읽는 것은 바뀌지 않고, 응답의 `snapshot.snapshot_id` 로 같은 질의를
   다시 돌릴 수 있다. SQL 샌드박스는 `POST /query` 와 같다(테이블 이름은 `dataset`).
 - `GET /warehouse/tables/{name}/profile?snapshot=current|<id>` — 열 프로파일(#817). 행 수,
-  null 수·비율, float 열의 NaN·무한대 수, 숫자·시간 열의 최소·최대를 **전 행에서 정확히**
-  계산한다(표본 없음). NaN·무한대는 범위에서 빼고 `excluded_count` 로 센다. 값이 10개 미만인
-  범위는 공개하지 않는다. 값 패턴이나 열 이름으로 개인정보가 의심되는 열은 BuildSpec 의
+  null 수·비율, float 열의 NaN·무한대 수를 **전 행에서 정확히** 계산한다(표본 없음).
+  숫자·시간 열의 최소·최대는 **위·아래 각각 5개 값을 뺀 뒤**의 값이다(`range_trim`, #903,
+  `status: trimmed`) — 가장 큰 소득이나 가장 이른 날짜는 레코드 하나의 값이기 때문이다.
+  빼는 것은 행이지 서로 다른 값이 아니므로, 6개 이상의 레코드가 같이 가진 값(예: 0)은
+  그대로 보고된다. NaN·무한대는 범위에서 빼고 `excluded_count` 로 센다. 값이 11개 미만인
+  범위(`min_range_values`: 10개 미만이거나, 절삭 후 남는 값이 없는 10개)는 공개하지 않는다. 값 패턴이나 열 이름으로 개인정보가 의심되는 열은 BuildSpec 의
   `pii` 정책(`mode: allow` 또는 `allow_columns`)이 받아들이지 않는 한 통계를 전부 비운다.
   질의와 같은 한도(자식 프로세스·메모리 상한·동시 실행 슬롯)로 돌고, 결과는 스냅샷을 건드리지
   않고 `tables/<table_id>/_profiles/<snapshot_id>.json` 에 snapshot id·콘텐츠 다이제스트·
