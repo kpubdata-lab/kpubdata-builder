@@ -822,3 +822,50 @@ class TestStableAuthCodes:
             "error": "invalid token: ExpiredSignatureError",
             "code": "token_expired",
         }
+
+
+class TestKeycloakAccessToken:
+    """What Studio sends is a Keycloak access token (kpubdata-studio#722).
+
+    Builder does not look at the token's kind; these pin which realm configuration
+    produces a token it accepts.
+    """
+
+    #: Claims of a Keycloak access token that the Builder checks do not read.
+    _ACCESS = {"typ": "Bearer", "azp": "kpubdata-studio", "scope": "openid email profile"}
+
+    def test_a_default_realms_access_token_is_refused(self, oidc_env: bytes) -> None:
+        """No audience mapper: the access token's audience is only ``account``."""
+        token = _make_token(oidc_env, aud="account", **self._ACCESS)
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, AuthError)
+        assert result.status_code == 401
+        assert "InvalidAudienceError" in result.reason
+
+    def test_an_access_token_with_the_audience_mapper_is_accepted(self, oidc_env: bytes) -> None:
+        token = _make_token(oidc_env, aud=[_AUDIENCE, "account"], **self._ACCESS)
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, Principal)
+        assert result.kind == "oidc"
+
+    def test_an_access_token_without_the_email_scope_is_refused(self, oidc_env: bytes) -> None:
+        """The audience is right, but no ``email_verified`` claim came with it."""
+        now = int(time.time())
+        payload = {
+            "iss": _ISSUER,
+            "aud": [_AUDIENCE, "account"],
+            "sub": "user-1234567890",
+            "iat": now,
+            "exp": now + 3600,
+            **self._ACCESS,
+        }
+        token = jwt.encode(payload, oidc_env, algorithm="RS256", headers={"kid": "test-key"})
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, AuthError)
+        assert result.reason == "email not verified"

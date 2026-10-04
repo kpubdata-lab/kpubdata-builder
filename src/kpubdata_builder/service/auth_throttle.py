@@ -1,6 +1,6 @@
 """Authentication failure throttle — push the cost of repeated failed auth attempts onto the client.
 
-The auth gate (``dispatch``) performs API key comparison or ID token RS256 signature
+The auth gate (``dispatch``) performs API key comparison or bearer token RS256 signature
 verification on every request. If we accept unlimited failed attempts, two things become free:
 
 1. Guessing attempts against the single static ``X-API-Key`` per instance (ADR 0006).
