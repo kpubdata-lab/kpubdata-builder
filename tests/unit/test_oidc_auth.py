@@ -782,6 +782,25 @@ class TestStableAuthCodes:
         assert isinstance(result, AuthError)
         assert (result.status_code, result.code) == (401, "unauthorized")
 
+    def test_the_code_does_not_read_the_sentence(self) -> None:
+        # ``token_expired`` is set where the failure is made; rewording ``reason`` — or a
+        # reason that happens to end the same way — does not change the code.
+        assert AuthError(reason="the token is past its exp", expired=True).code == "token_expired"
+        assert AuthError(reason="invalid token: ExpiredSignatureError").code == "unauthorized"
+
+    @pytest.mark.parametrize("sent", [None, "wrong-key"])
+    def test_a_missing_key_and_a_wrong_key_get_the_contract_example(
+        self, sent: str | None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The contract's one ``Unauthorized`` example stands for both, so both must
+        # answer with its sentence.
+        monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "secret-key")
+
+        result = authenticate(api_key=sent)
+
+        assert isinstance(result, AuthError)
+        assert (result.reason, result.code) == ("invalid api key", "unauthorized")
+
     def test_an_unreachable_jwks_is_auth_unavailable(self) -> None:
         assert AuthError(reason="auth service unavailable (jwks)", status_code=503).code == (
             "auth_unavailable"

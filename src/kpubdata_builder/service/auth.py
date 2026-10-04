@@ -167,6 +167,9 @@ class AuthError:
 
     reason: str
     status_code: int = 401
+    # Set where the failure is made, so ``code`` does not depend on how ``reason`` is
+    # worded.
+    expired: bool = False
 
     @property
     def code(self) -> str:
@@ -179,7 +182,7 @@ class AuthError:
         """
         if self.status_code == 503:
             return "auth_unavailable"
-        if self.reason.endswith("ExpiredSignatureError"):
+        if self.expired:
             return "token_expired"
         return "unauthorized"
 
@@ -472,7 +475,10 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
             options={"require": ["exp", "iat", "iss", "sub"]},
         )
     except jwt.PyJWTError as exc:
-        return AuthError(reason=f"invalid token: {type(exc).__name__}")
+        return AuthError(
+            reason=f"invalid token: {type(exc).__name__}",
+            expired=isinstance(exc, jwt.ExpiredSignatureError),
+        )
 
     if not payload.get("email_verified", False):
         return AuthError(reason="email not verified")
