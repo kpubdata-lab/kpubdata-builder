@@ -478,7 +478,11 @@ class BuildRunsApiService:
                     raise RuntimeError("existing async build is missing snapshot")
                 return ServiceResponse(200, result.snapshot.to_body())
             case "queue_full":
-                return ServiceResponse(429, {"error": "async build queue is full"})
+                # A code of its own (#1000): the other 429 on this route's way in is
+                # `auth_throttled`, and the sentence was the only way to tell them apart.
+                return ServiceResponse(
+                    429, {"error": "async build queue is full", "code": "build_queue_full"}
+                )
             case unreachable:
                 assert_never(unreachable)
 

@@ -79,7 +79,7 @@ def _overloaded_response(allowed_origins: frozenset[str] = frozenset()) -> bytes
       (a bearer header is not one). The body is a constant and says nothing a page from
       another origin could not learn by being refused.
     """
-    body = b'{"error": "server overloaded"}'
+    body = b'{"error": "server overloaded", "code": "server_overloaded"}'
     cors = b""
     # This is written to the socket as bytes, so a configured origin with a line break
     # or a non-ASCII character would corrupt the response: send no CORS header then.

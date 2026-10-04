@@ -1716,7 +1716,7 @@ class TestHttpRobustness:
         head, _, body = _OVERLOADED_RESPONSE.partition(b"\r\n\r\n")
         headers = dict(line.split(b": ", 1) for line in head.split(b"\r\n")[1:])
         assert int(headers[b"Content-Length"]) == len(body)
-        assert json.loads(body) == {"error": "server overloaded"}
+        assert json.loads(body) == {"error": "server overloaded", "code": "server_overloaded"}
 
     @staticmethod
     def _overloaded_headers(allowed: frozenset[str]) -> dict[bytes, bytes]:
@@ -1725,7 +1725,7 @@ class TestHttpRobustness:
         head, _, body = _overloaded_response(allowed).partition(b"\r\n\r\n")
         headers = dict(line.split(b": ", 1) for line in head.split(b"\r\n")[1:])
         assert int(headers[b"Content-Length"]) == len(body)
-        assert json.loads(body) == {"error": "server overloaded"}
+        assert json.loads(body) == {"error": "server overloaded", "code": "server_overloaded"}
         return headers
 
     def test_overloaded_response_has_no_cors_header_without_an_allowed_origin(self) -> None:

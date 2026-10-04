@@ -172,6 +172,24 @@ class AuthError:
 
     reason: str
     status_code: int = 401
+    # Set where the failure is made, so ``code`` does not depend on how ``reason`` is
+    # worded.
+    expired: bool = False
+
+    @property
+    def code(self) -> str:
+        """A stable code for the failure, so a client does not branch on ``reason`` (#1000).
+
+        ``token_expired`` — the bearer token's ``exp`` has passed: get a new token and
+        send the request again. ``auth_unavailable`` — the JWKS could not be fetched
+        (503): the credentials were not judged, try again. ``unauthorized`` — every
+        other refusal: a missing or wrong API key, a token that does not verify.
+        """
+        if self.status_code == 503:
+            return "auth_unavailable"
+        if self.expired:
+            return "token_expired"
+        return "unauthorized"
 
 
 def _is_dev_mode() -> bool:
@@ -466,7 +484,10 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
             options={"require": ["exp", "iat", "iss", "sub"]},
         )
     except jwt.PyJWTError as exc:
-        return AuthError(reason=f"invalid token: {type(exc).__name__}")
+        return AuthError(
+            reason=f"invalid token: {type(exc).__name__}",
+            expired=isinstance(exc, jwt.ExpiredSignatureError),
+        )
 
     if not payload.get("email_verified", False):
         return AuthError(reason="email not verified")
