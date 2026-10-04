@@ -103,8 +103,10 @@ def restarted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Build
         yield second
     finally:
         gate.set()
-        first._async_builds.shutdown()
-        second._async_builds.shutdown()
+        # Wait for the released worker: left running, it allocates behind whichever
+        # test comes next, and one of those measures peak memory.
+        first._async_builds._executor.shutdown(wait=True)
+        second._async_builds._executor.shutdown(wait=True)
 
 
 def test_the_owner_reads_failed_with_a_stable_code(
