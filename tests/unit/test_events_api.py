@@ -885,14 +885,12 @@ class TestAsyncManifestOwnerIdPropagation:
         assert "owner_id" not in manifest_resp.body
         assert secret_owner_id not in json.dumps(manifest_resp.body)
 
-    def test_async_file_source_resolver_still_does_not_receive_owner_id(
+    def test_async_file_source_resolver_receives_the_submitters_owner_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#498 known limitation persistence check: ``kind=file`` submitted via async path
-        even though manifest owner_id is now correctly filled, still does not pass owner_id to file
-        source resolver — if upload owner themselves submit, async path cannot find that upload
-        and build must fail
-        (unlike sync ``/build``)."""
+        """The #498 limitation is lifted (#998): a ``kind=file`` build submitted through
+        the async path passes the submitting owner to the file source resolver, so the
+        uploader's own upload is found and the build succeeds, as sync ``/build`` does."""
         completed = threading.Event()
         service = _ObservedAsyncService(
             output_root=tmp_path,
@@ -917,17 +915,15 @@ class TestAsyncManifestOwnerIdPropagation:
         assert submitted.status_code == 202
         assert completed.wait(timeout=5)
 
-        # manifest ownership is now correct — but file resolver
-        # still doesn't receive owner_id so can't find upload; build itself fails
-        # (#498 async limitation, maintained as-is).
         manifest_data = json.loads(
             (tmp_path / "run1" / "manifest.json").read_text(encoding="utf-8")
         )
         assert manifest_data["owner_id"] == "oidc:owner-a"
-        assert manifest_data["errors"], "file resolver가 owner_id 없이 업로드를 찾지 못해야 한다"
+        assert manifest_data["status"] == "ok"
+        assert not manifest_data["errors"]
 
         status = dispatch(service, "GET", "/builds/run1", None)
-        assert status.body["status"] == "failed"
+        assert status.body["status"] == "succeeded"
 
     def test_completed_run_build_index_records_stable_owner_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

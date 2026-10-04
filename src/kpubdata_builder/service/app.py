@@ -1066,15 +1066,14 @@ class BuilderService:
         """Actual execution entry point called by async job registry (#482, #496
         follow-up).
 
-        Do not pass ``owner_id`` to build() for file resolver (stays ``None``) —
-        kind="file" source resolver still lacks stable owner identity in async
-        path (#498 async limitation maintained). SourceRef registry snapshot-
-        preserved submitting principal owner_id used as ``credential_owner_id``
-        for public_api credential resolution and ``manifest_owner_id`` for
-        persisted manifest ownership (and BuildIndex reading it, #505 SSOT only) —
-        persisted manifest (and BuildIndex reading it directly, #505 SSOT) gains
-        accurate owner_id from single write inside build(). No post-build manifest
-        amendments needed.
+        The owner the job was submitted by — kept in the registry snapshot — is the
+        owner of everything the build does: ``owner_id`` for the ``kind="file"``
+        source resolver, ``manifest_owner_id`` for the persisted manifest (and the
+        BuildIndex reading it, #505 SSOT) and ``credential_owner_id`` for public_api
+        credential resolution. The file resolver used to get no owner here, so an
+        async build of an uploaded file was accepted and then failed in the worker
+        (#998); the upload store is isolated per owner, and the submitting owner is
+        the one whose uploads the spec may name.
         """
         snapshot = self._async_builds.get(run_id)
         manifest_owner_id = snapshot.owner_id if snapshot is not None else None
@@ -1087,6 +1086,7 @@ class BuilderService:
                     spec_yaml,
                     run_id=run_id,
                     created_by=created_by,
+                    owner_id=manifest_owner_id,
                     manifest_owner_id=manifest_owner_id,
                     credential_owner_id=manifest_owner_id,
                     # Pass cooperative cancel probe (#481) down to pipeline — don't carry

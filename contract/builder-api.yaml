@@ -1370,6 +1370,10 @@ paths:
         반환하고(#513), 이미 완료된 run_id면 409, queue가 가득 차면 429를
         반환한다. 잡의 실행 결과는 `GET /builds/{run_id}`로 polling하고,
         협력적 취소는 `POST /builds/{run_id}/cancel`(#481)로 요청한다.
+        `kind: file` source 는 동기 `POST /build` 와 같게 동작한다(#998): job 은
+        제출한 principal 의 업로드를 읽고, 다른 소유자의 `upload_id` 나 안정적인
+        소유자가 없는 요청은 job 이 `failed` 로 끝나며 그 source 의 `error` 에
+        사유가 적힌다. 제출 시점(202)에는 업로드를 확인하지 않는다.
       requestBody:
         required: true
         content:
