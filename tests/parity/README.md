@@ -22,6 +22,7 @@ checked against it (#865).
 | `composition_trades_rent` | Two sources joined: the composition statistics and the joined rows |
 | `replay_air_station` | The fixture Builder ships, through the real kpubdata client in replay mode |
 | `r01`–`r15` | The risk cases of ADR 0021: inference, strict casts, integer sums, intervals, unnamed aggregates, NULL ordering, Parquet logical equality, zfill width, introspection and path access, the SQL validator's dialect |
+| `r06_decimal_to_int` | A Parquet upload's Decimal column cast to int: truncation toward zero, through every stage and exporter (#918, #979) |
 | `query_workers` | SQL, rows, aggregate, profile and export on one table |
 
 A scenario pins the current answer, including a refusal: `r09_interval` records that the

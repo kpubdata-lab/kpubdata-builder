@@ -22,9 +22,10 @@ Line *n* is record *n*: the file order is the row ordinal (ADR 0021 D8), kept fr
 first page of the first call to the last.
 
 The persisted Bronze file (``raw_records.jsonl``, sorted keys) is written from the
-working copy when the artifact is persisted, with the same bytes and the same failures
-as before — a value JSON cannot hold (NaN #201, a date) fails the persist, as it
-always did.
+working copy when the artifact is persisted, with the same bytes as before. A date, a
+time, a datetime, a ``Decimal`` and ``bytes`` are written as their standard text
+(#979); any other value JSON cannot hold (NaN #201, a ``timedelta``) fails the persist,
+as it always did.
 
 Every record is scrubbed of the requester's keys before it is written (#686). A writer
 that is not committed removes everything it wrote.
@@ -69,12 +70,30 @@ def canonical_line(record: Mapping[str, JsonValue]) -> str:
     """A record as the persisted Bronze file holds it: sorted keys, no NaN (#201).
 
     A Parquet upload can hand the working copy native Python values the stdlib
-    encoder does not know — Decimal, date, datetime, time, timedelta, bytes
-    (#979). The working copy keeps their types via tags; the persisted file is
-    plain JSON, so they are written as their text form and arrive in Silver as
-    strings.
+    encoder does not know (#979). The working copy keeps their types via tags, and
+    that is what Silver reads; the persisted file is a plain-JSON snapshot, so each is
+    written as its one standard text (:func:`_plain`). Anything else still fails the
+    persist with ``TypeError``, as it always did.
     """
-    return json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False, default=str)
+    return json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False, default=_plain)
+
+
+def _plain(value: object) -> str:
+    """The text of a value plain JSON cannot hold, for the persisted file.
+
+    Only types with one standard text are converted (the rule of
+    ``exporters/_json_safe.py``): ISO 8601 for a date, a time and a datetime (``T``
+    separator, numeric offset when it has a zone), the decimal text for a ``Decimal``,
+    hex for ``bytes`` as in the working copy. A ``timedelta`` has no such text and is
+    refused with everything else.
+    """
+    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, bytes):
+        return value.hex()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def read_records(path: Path) -> Iterator[dict[str, JsonValue]]:

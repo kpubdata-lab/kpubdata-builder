@@ -25,6 +25,7 @@ gives the same records the stream gives.
 from __future__ import annotations
 
 import codecs
+import datetime as dt
 import io
 import json
 import re
@@ -100,7 +101,9 @@ def iter_tabular_batches(
     if format == "parquet":
         with _spill(workdir) as path:
             _copy(stream, path)
-            yield from _parquet_batches(path, batch_records)
+            for batch in _parquet_batches(path, batch_records):
+                _refuse_untexted_values(batch)
+                yield batch
         return
     decoder = _decoder(encoding)
     if format == "csv":
@@ -198,6 +201,34 @@ def _transcode(
 
 
 # ----------------------------------------------------------------- formats
+
+
+#: Parquet column types whose values have no one standard text. Builder's JSON, CSV and
+#: Markdown outputs would each have to pick one, so the upload is refused instead (#979).
+_UNTEXTED = {bytes: "binary", dt.timedelta: "duration"}
+
+
+def _refuse_untexted_values(batch: Batch) -> None:
+    """Refuse a record holding a binary or duration value, naming the column and type."""
+    for record in batch:
+        for column, value in record.items():
+            kind = _untexted_kind(value)
+            if kind is not None:
+                raise IngestionError(
+                    f"column {column!r} holds {kind} values, which a parquet upload cannot "
+                    "carry: write the column as text or a number before uploading"
+                )
+
+
+def _untexted_kind(value: object) -> str | None:
+    """``binary`` or ``duration`` when the value, or one nested in it, is one."""
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return None
+    if isinstance(value, (list, tuple)):
+        return next(filter(None, map(_untexted_kind, value)), None)
+    if isinstance(value, dict):
+        return next(filter(None, map(_untexted_kind, value.values())), None)
+    return _UNTEXTED.get(type(value))
 
 
 def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
