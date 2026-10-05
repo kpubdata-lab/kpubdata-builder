@@ -74,6 +74,15 @@ class TestTrustedProxySetting:
         assert parse_trusted_proxies("caddy, 172.18.0.2") == parse_trusted_proxies("172.18.0.2")
         assert parse_trusted_proxies("*") == ()
 
+    def test_a_dropped_entry_is_named_by_position_not_by_its_text(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            parse_trusted_proxies("172.18.0.2, not-an-address-CANARY")
+
+        assert "entry 2" in caplog.text
+        assert "CANARY" not in caplog.text
+
     def test_the_throttle_reads_it_from_the_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

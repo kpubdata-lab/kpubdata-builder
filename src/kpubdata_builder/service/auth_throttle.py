@@ -96,15 +96,19 @@ def parse_trusted_proxies(raw: str) -> tuple[_Network, ...]:
     dropped with a warning: startup does not fail, and what is left trusts less, not
     more."""
     networks: list[_Network] = []
-    for entry in raw.split(","):
+    for position, entry in enumerate(raw.split(","), start=1):
         entry = entry.strip()
         if not entry:
             continue
         try:
             networks.append(ipaddress.ip_network(entry, strict=False))
         except ValueError:
+            # The position, not the text: a variable set by mistake to something else
+            # must not end up in the log.
             _logger.warning(
-                "%s: ignoring %r — not an address or CIDR block", TRUSTED_PROXIES_ENV, entry
+                "%s: ignoring entry %d — not an address or CIDR block",
+                TRUSTED_PROXIES_ENV,
+                position,
             )
     return tuple(networks)
 

@@ -336,7 +336,7 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 `KPUBDATA_BUILDER_TRUSTED_PROXIES` 에 프록시의 주소나 CIDR 블록을 콤마로 적으면, TCP
 peer 가 그중 하나일 때에만 `X-Forwarded-For` 를 읽는다. 오른쪽부터 읽어 신뢰하는 프록시가
 아닌 첫 주소를 클라이언트로 본다 — 프록시가 덧붙인 부분만 쓰고, 클라이언트가 직접 써
-보낸 왼쪽 부분에는 닿지 않는다. 주소로 읽히지 않는 항목은 경고 로그와 함께 버린다(호스트
+보낸 왼쪽 부분에는 닿지 않는다. 주소로 읽히지 않는 항목은 경고 로그(값이 아니라 몇 번째 항목인지)와 함께 버린다(호스트
 이름은 쓸 수 없다).
 
 ```bash
