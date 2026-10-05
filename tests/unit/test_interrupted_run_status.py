@@ -3,7 +3,7 @@
 ``mark_interrupted_runs`` fails such a run in the event store alone. After the restart
 the job registry is empty and no manifest exists, so the status and events routes
 answered 404: a client polling its build was told the run did not exist instead of to
-submit it again.
+submit it again — under a new run id (#1042).
 """
 
 from __future__ import annotations
@@ -207,25 +207,68 @@ def test_another_user_cannot_submit_under_the_interrupted_run_id(
     assert submission.owner_id == _ALICE.owner_id
 
 
-def test_the_submitter_can_submit_the_interrupted_run_again(
+_USED = {
+    "error": "run_id already ended; submit the retry under a new run_id",
+    "run_id": "in-flight",
+}
+
+
+def test_the_submitter_cannot_submit_under_the_interrupted_run_id_either(
     restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # What the interrupted run's message asks for: send it again.
+    # A run id is one attempt (#1042, kpubdata#812): a second build under it would
+    # append its events after the first attempt's ``run_failed``. The retry takes a new
+    # id — the answer a completed run's id already gets.
     _as(monkeypatch, _ALICE)
+    before = _get(restarted, "/builds/in-flight").body
 
     response = _submit(restarted, "in-flight")
 
+    assert response.status_code == 409
+    assert response.body == _USED
+    assert restarted._async_builds.get("in-flight") is None
+    # The run still reads as it ended: failed, with the reason it was interrupted.
+    after = _get(restarted, "/builds/in-flight").body
+    assert (after["status"], after["code"]) == (before["status"], before["code"])
+    assert (after["status"], after["code"]) == ("failed", "credentials_required")
+    events = cast(
+        list[dict[str, object]], _get(restarted, "/builds/in-flight/events").body["events"]
+    )
+    assert [event["event"] for event in events].count("run_submitted") == 1
+
+
+def test_the_synchronous_route_refuses_the_submitter_the_same_way(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as(monkeypatch, _ALICE)
+
+    response = dispatch(restarted, "POST", "/build", {"spec": _SPEC, "run_id": "in-flight"})
+
+    assert isinstance(response, ServiceResponse)
+    # 400, not 409: this route's 409 is a build response with another body (contract).
+    assert response.status_code == 400
+    assert response.body == _USED
+
+
+def test_the_retry_goes_through_under_a_new_run_id(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as(monkeypatch, _ALICE)
+
+    response = _submit(restarted, "in-flight-retry")
+
     assert response.status_code == 202
-    assert response.body["run_id"] == "in-flight"
-    submission = restarted._event_store.submission("in-flight")
-    assert submission is not None
-    assert submission.owner_id == _ALICE.owner_id
+    assert response.body["run_id"] == "in-flight-retry"
 
 
-def test_the_submitter_may_use_the_interrupted_run_id_again(restarted: BuilderService) -> None:
-    from kpubdata_builder.service.routes._guards import check_existing_run_access
+def test_the_interrupted_message_asks_for_a_new_run_id(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as(monkeypatch, _ALICE)
 
-    assert check_existing_run_access(restarted, "in-flight", _ALICE) is None
+    assert str(_get(restarted, "/builds/in-flight").body["error"]).endswith(
+        "submit it again under a new run_id"
+    )
 
 
 def test_an_id_nobody_submitted_is_free_to_anyone(restarted: BuilderService) -> None:

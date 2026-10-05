@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.82.0"
+  version: "1.83.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.83.0 makes a `run_id` one attempt (#1042, kpubdata#812): the id of a run that ended without a manifest — one a restart interrupted — is refused to its own submitter too — with 409 on `POST /builds`, as a completed run's id is, and with 400 on `POST /build`, whose 409 is a build response with a different body.
     v1.82.0 bounds how long a synchronous `POST /build` waits for a build slot (#1040, additive): past `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` it answers 429 `build_queue_full`, the code `POST /builds` already gives for a full queue, without having fetched anything.
     v1.81.0 declares the publish recovery routes the service has answered since v1.19.0 and v1.20.0 (#994, additive): `GET` and `DELETE /builds/{run_id}/publish/receipt`, `POST /builds/{run_id}/publish/reconcile` and `GET /builds/{run_id}/publish/audit` were described only in this text, so a client had no schema to check them against. Nothing on the wire changed.
     v1.80.0 declares what the service already sends (#994, description only — the wire is unchanged): the `X-Provider-Key` request header as a parameter of the five operations that call a provider (`previewBuild`, `createBuild`, `submitBuild`, `getProviderStatus`, `testProviderConnection`), the 429 `auth_throttled` and the overload 503 as shared responses any operation can answer (`components.responses.AuthThrottled`, `ServerOverloaded`), and the `X-Request-ID` response header (`components.headers.RequestId`).
@@ -857,7 +858,10 @@ paths:
                     manifest: build/air-quality-20260815/manifest.json
                     api_version: "1.8.0"
         "400":
-          description: 잘못된 요청(spec 누락/검증 실패, run_id 타입/경로 안전성 오류 등)
+          description: >-
+            잘못된 요청(spec 누락/검증 실패, run_id 타입/경로 안전성 오류 등). 매니페스트 없이
+            끝난 run(재시작으로 중단된 run)의 `run_id` 를 다시 쓴 경우도 여기다(#1042) —
+            `run_id` 는 한 번의 시도이고, 재시도는 새 `run_id` 로 보낸다.
           content:
             application/json:
               schema:
@@ -1478,7 +1482,9 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "409":
-          description: run_id가 이미 완료된 run
+          description: >-
+            run_id가 이미 완료된 run, 또는 매니페스트 없이 끝난 run(재시작으로 중단된
+            run, #1042). `run_id` 는 한 번의 시도다 — 재시도는 새 `run_id` 로 보낸다.
           content:
             application/json:
               schema:
@@ -7938,7 +7944,8 @@ components:
             A stable reason for a failure the service itself caused (#996), when there
             is one. `credentials_required`: the server restarted while the job was
             queued or running; its provider keys were held only in memory (#683), so
-            it cannot go on — submit it again.
+            it cannot go on — submit it again under a new `run_id`. The interrupted
+            run's id is not reused: a `run_id` is one attempt (#1042).
 
     BuildsResponse:
       type: object
