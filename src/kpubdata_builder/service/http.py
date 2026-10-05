@@ -302,9 +302,14 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                     publish_credential_headers=(
                         self.headers.get_all(PUBLISH_CREDENTIAL_HEADER) or []
                     ),
-                    # Client ID for auth failure throttling. Use TCP peer address only;
-                    # don't read X-Forwarded-For — headers can be forged.
-                    client_id=self.client_address[0] if self.client_address else None,
+                    # Client ID for auth failure throttling. The TCP peer address,
+                    # unless that peer is a proxy the deployment names: only then is
+                    # X-Forwarded-For read, and only the part that proxy wrote — a
+                    # header from anyone else can be forged (#1031).
+                    client_id=service._auth_throttle.client_id(
+                        self.client_address[0] if self.client_address else None,
+                        self.headers.get_all("X-Forwarded-For") or [],
+                    ),
                 )
             except Exception:
                 _logger.error(
