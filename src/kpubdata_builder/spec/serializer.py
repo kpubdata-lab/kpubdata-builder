@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import cast
+from urllib.parse import unquote_plus
 
 import yaml
 
@@ -107,6 +108,40 @@ def _canonical_structure(value: JsonValue) -> JsonValue:
     return value
 
 
+def redacted_endpoint(endpoint: str) -> str:
+    """A ``url`` source's endpoint as the snapshot records it (#1029).
+
+    data.go.kr-style URLs carry the key as a query parameter, so an endpoint pasted
+    whole would put it in ``buildspec.yaml`` in the clear. Two places are redacted:
+
+    - the value of a query parameter whose name is a credential name. These are
+      request parameters, so the set is the one ``params`` uses, ``key`` included;
+    - userinfo (``https://user:password@host/``), whole.
+
+    The text is edited in place rather than parsed and rebuilt: an endpoint with
+    nothing to redact comes back byte for byte, so its digest does not change, and a
+    string no URL parser accepts is still handled.
+    """
+    head, hash_mark, fragment = endpoint.partition("#")
+    head, question_mark, query = head.partition("?")
+    scheme, separator, rest = head.partition("://")
+    if separator:
+        authority, slash, path = rest.partition("/")
+        userinfo, at, host = authority.rpartition("@")
+        if at:
+            authority = f"{REDACTED_VALUE}@{host}"
+        head = f"{scheme}{separator}{authority}{slash}{path}"
+    if question_mark:
+        pairs = []
+        for pair in query.split("&"):
+            name, equals, _value = pair.partition("=")
+            if equals and _normalized_key(unquote_plus(name)) in _SECRET_FIELD_NAMES:
+                pair = f"{name}={REDACTED_VALUE}"
+            pairs.append(pair)
+        query = "&".join(pairs)
+    return f"{head}{question_mark}{query}{hash_mark}{fragment}"
+
+
 def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
     """One source as it appears in the canonical spec, secrets redacted.
 
@@ -203,7 +238,7 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
         entry["format"] = source.format
         entry["encoding"] = source.encoding
     elif source.kind == "url":
-        entry["endpoint"] = source.endpoint
+        entry["endpoint"] = redacted_endpoint(source.endpoint)
         entry["method"] = source.method
         entry["format"] = source.format
     else:
