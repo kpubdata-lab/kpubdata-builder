@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,7 +108,10 @@ class BuildRunsApiService:
         build_index: BuildIndex,
         store: ArtifactStore,
         async_builds: AsyncBuildExecutor,
+        build_slots: threading.BoundedSemaphore,
     ) -> None:
+        # One slot per build that may run at once, whichever way it arrived (#1028).
+        self._build_slots = build_slots
         self._output_root = output_root
         self._api_version = api_version
         self._load_validated = load_validated
@@ -195,6 +199,11 @@ class BuildRunsApiService:
             return ServiceResponse(400, {"error": str(exc)})
         except Exception:
             return ServiceResponse(502, {"error": "provider client unavailable"})
+        # Every build passes here — the synchronous route on a request thread, an async
+        # job on a worker — so this is the one place that bounds how many run at once
+        # (#1028). The memory budget multiplies by that number; without the shared slot
+        # the two paths each had their own pool and twice as many could run.
+        self._build_slots.acquire()
         try:
             result = run_build(
                 spec_or_error,
@@ -217,6 +226,7 @@ class BuildRunsApiService:
                 secret_values=tuple(provider_keys.values()),
             )
         finally:
+            self._build_slots.release()
             self._close_client(client)
         secret_values = tuple(provider_keys.values())
         if secret_values:

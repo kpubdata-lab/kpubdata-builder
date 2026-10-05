@@ -434,6 +434,8 @@ class BuilderService:
         provider_test_timeout: float | None = None,
         async_max_workers: int = 10,
         async_max_queue_size: int = 10,
+        max_concurrent_builds: int | None = None,
+        max_concurrent_previews: int | None = None,
         warehouse_root: Path | None = None,
         terms_lookup: TermsLookup | None = None,
         publish_visibility_probe: VisibilityProbe | None = None,
@@ -563,6 +565,27 @@ class BuilderService:
         self._quality_api = QualityApiService(
             output_root=self._output_root, store=self._store, datasets=self._datasets_api
         )
+        # How many builds run at once, counting both ways one can start: an async job
+        # on a worker and a synchronous ``POST /build`` on a request thread (#1028).
+        # Unset, it is the async worker count — what a deployment already set to bound
+        # builds — and now that number holds for both paths together.
+        self.max_concurrent_builds = (
+            max_concurrent_builds if max_concurrent_builds is not None else async_max_workers
+        )
+        if self.max_concurrent_builds < 1:
+            raise ValueError("max_concurrent_builds must be >= 1")
+        self._build_slots = threading.BoundedSemaphore(self.max_concurrent_builds)
+        # Previews run on request threads and each may open a DuckDB connection. With no
+        # limit (None) they are bounded only by the request pool, as before; a deployment
+        # that budgets memory names the number its budget counts (#1028).
+        if max_concurrent_previews is not None and max_concurrent_previews < 1:
+            raise ValueError("max_concurrent_previews must be >= 1")
+        self.max_concurrent_previews = max_concurrent_previews
+        self._preview_slots = (
+            threading.BoundedSemaphore(max_concurrent_previews)
+            if max_concurrent_previews is not None
+            else None
+        )
         self._async_builds = AsyncBuildExecutor(
             max_workers=async_max_workers,
             max_queue_size=async_max_queue_size,
@@ -608,6 +631,7 @@ class BuilderService:
             build_index=self._build_index,
             store=self._store,
             async_builds=self._async_builds,
+            build_slots=self._build_slots,
         )
         # Publish domain (#637). Requires async job registry — terminal judgment
         # for blocking non-terminal run publish reads that registry.
@@ -953,9 +977,16 @@ class BuilderService:
             )
             if refusal is not None:
                 return refusal
-        return self._spec_api.preview(
-            spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
-        )
+        if self._preview_slots is None:
+            return self._spec_api.preview(
+                spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
+            )
+        # A preview past the limit waits its turn rather than being refused: it is a
+        # short read, and the caller is a person looking at a form.
+        with self._preview_slots:
+            return self._spec_api.preview(
+                spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
+            )
 
     def _load_validated(self, spec_yaml: str) -> BuildSpec | ServiceResponse:
         """Parse and validate spec_yaml; return error ServiceResponse on failure."""

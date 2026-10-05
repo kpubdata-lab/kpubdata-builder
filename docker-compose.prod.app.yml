@@ -43,9 +43,15 @@ services:
       # 리소스 예산 (#993, docs/deploy.md §9). 아래 값들의 합이 deploy.resources 의
       # memory 한도 안에 들어와야 하고, tests/unit/test_prod_compose_budget.py 가
       # 그 식을 검사한다. 기본값은 3 GiB 컨테이너 기준이다.
-      #   DuckDB 연결 수 = MAX_WORKERS × 4 (build 당 source) + 2 (preview, composition)
+      #   DuckDB 연결 수 = MAX_BUILDS × 4 (build 당 source) + MAX_PREVIEWS + 1 (composition)
       #   메모리 = DuckDB 연결 수 × DUCKDB_MEMORY_LIMIT + QUERY_MEMORY_BUDGET_MB + 기본 400 MB
-      KPUBDATA_BUILDER_MAX_WORKERS: ${KPUBDATA_BUILDER_MAX_WORKERS:-2}
+      # 동시 build 수와 preview 수는 요청 스레드 수와 따로 정한다(#1028). 예전에는
+      # MAX_WORKERS 하나가 요청 스레드와 비동기 build worker 를 함께 정해서, 2 로 두면
+      # 동기 POST /build 2 + 비동기 2 = build 4 가 돌 수 있었고 요청 스레드도 2 로 줄었다.
+      # MAX_BUILDS 는 두 경로를 합친 상한이고, 식이 곱하는 수가 바로 이 값이다.
+      KPUBDATA_BUILDER_MAX_BUILDS: ${KPUBDATA_BUILDER_MAX_BUILDS:-2}
+      KPUBDATA_BUILDER_MAX_PREVIEWS: ${KPUBDATA_BUILDER_MAX_PREVIEWS:-1}
+      KPUBDATA_BUILDER_MAX_WORKERS: ${KPUBDATA_BUILDER_MAX_WORKERS:-10}
       KPUBDATA_DUCKDB_THREADS: ${KPUBDATA_DUCKDB_THREADS:-1}
       # 64MB 에서는 20행짜리 빌드도 ResourceLimitError 로 실패한다(실측). 그 아래로
       # 내리지 않는다.
