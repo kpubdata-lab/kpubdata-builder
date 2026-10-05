@@ -6,6 +6,7 @@ mapping can be tested without assembling the whole service.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,7 @@ def _service(tmp_path: Path, open_client: object) -> BuildRunsApiService:
         build_index=make_build_index(tmp_path),
         store=make_artifact_store(tmp_path),
         async_builds=executor,
+        build_slots=threading.BoundedSemaphore(1),
     )
 
 
