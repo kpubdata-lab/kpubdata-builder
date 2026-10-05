@@ -418,6 +418,105 @@ class TestExecutorEnqueueFailure:
         assert second.body["status"] == "failed"
 
 
+class TestSubmitBuildRunIdOwnership:
+    """``POST /builds`` with a run id that already exists answers only its owner (#991).
+
+    The registry returns the existing job to whoever names its run id, and that
+    snapshot holds ``created_by``, the build's response body and its error. The read
+    routes are gated (#480); resubmission was the way around them.
+    """
+
+    _OWNER = Principal(kind="oidc", identifier="a", owner_id="oidc:owner-a")
+    _OTHER = Principal(kind="oidc", identifier="b", owner_id="oidc:owner-b")
+    _BODY: dict[str, JsonValue] = {"spec": VALID_SPEC_YAML, "run_id": "run1"}
+
+    def test_another_caller_does_not_get_a_running_job(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        entered = threading.Event()
+        release = threading.Event()
+        service = _BlockingBuildService(output_root=tmp_path, entered=entered, release=release)
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OWNER)
+        assert dispatch(service, "POST", "/builds", self._BODY).status_code == 202
+        assert entered.wait(timeout=5)
+
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OTHER)
+        refused = dispatch(service, "POST", "/builds", self._BODY)
+        release.set()
+
+        assert refused.status_code == 403
+        assert refused.body == {"error": "forbidden: not run owner"}
+
+    def test_the_owner_still_gets_the_existing_job(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        entered = threading.Event()
+        release = threading.Event()
+        service = _BlockingBuildService(output_root=tmp_path, entered=entered, release=release)
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OWNER)
+        assert dispatch(service, "POST", "/builds", self._BODY).status_code == 202
+        assert entered.wait(timeout=5)
+
+        again = dispatch(service, "POST", "/builds", self._BODY)
+        release.set()
+
+        assert again.status_code == 200
+        assert again.body["run_id"] == "run1"
+        assert again.body["status"] == "running"
+
+    def test_another_caller_does_not_get_a_job_that_failed_without_a_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A job that never reached a manifest lives only in the registry, past the 409."""
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        client = _FakeClient({"datago.air_quality": [{"id": "1", "v": 10}]})
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
+
+        def _broken_executor_submit(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("simulated worker pool rejection")
+
+        monkeypatch.setattr(service._async_builds._executor, "submit", _broken_executor_submit)
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OWNER)
+        assert dispatch(service, "POST", "/builds", self._BODY).status_code >= 500
+
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OTHER)
+        refused = dispatch(service, "POST", "/builds", self._BODY)
+
+        assert refused.status_code == 403
+        assert "status" not in refused.body
+
+    def test_another_caller_is_refused_a_completed_run_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        completed = threading.Event()
+        service = _service(tmp_path, completed)
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OWNER)
+        assert dispatch(service, "POST", "/builds", self._BODY).status_code == 202
+        assert completed.wait(timeout=5)
+        assert dispatch(service, "POST", "/builds", self._BODY).status_code == 409
+
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OTHER)
+        refused = dispatch(service, "POST", "/builds", self._BODY)
+
+        assert refused.status_code == 403
+
+    def test_a_new_run_id_is_accepted_from_anyone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        completed = threading.Event()
+        service = _service(tmp_path, completed)
+        monkeypatch.setattr(app_module, "authenticate", lambda **_kwargs: self._OTHER)
+
+        accepted = dispatch(service, "POST", "/builds", self._BODY)
+
+        assert accepted.status_code == 202
+        assert completed.wait(timeout=5)
+
+
 class TestBuildJobStatusOwnership:
     """GET /builds/{run_id}   polling ownership  (#480).
 

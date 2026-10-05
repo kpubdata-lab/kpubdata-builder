@@ -10,7 +10,12 @@ from ...spec import JsonValue
 from ...stages._path_safety import validate_path_segment
 from ..auth import Principal
 from ..responses import ServiceResponse
-from ._guards import check_active_run_access, check_ownership, check_run_exists
+from ._guards import (
+    check_active_run_access,
+    check_existing_run_access,
+    check_ownership,
+    check_run_exists,
+)
 from ._parsing import optional_run_id, spec_from_body
 from ._types import RouteResponse
 
@@ -33,6 +38,15 @@ def route(
         run_id = optional_run_id(body)
         if isinstance(run_id, ServiceResponse):
             return run_id
+        # A run id that already exists answers only its owner (#991). The registry hands
+        # the existing job to whoever names it, and that snapshot carries created_by, the
+        # build's response body and its error — the same data GET /builds/{run_id} gates.
+        # The 409 below covers completed runs only; a queued, running or manifest-less
+        # failed job is in the registry alone.
+        if run_id is not None:
+            denied = check_existing_run_access(service, run_id, principal)
+            if denied is not None:
+                return denied
         return service.submit_build(
             spec, run_id=run_id, created_by=principal.label, owner_id=principal.owner_id
         )

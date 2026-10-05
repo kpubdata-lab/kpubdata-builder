@@ -1451,7 +1451,9 @@ paths:
             the deployment requires the requester's own provider key and there is none
             (`providers` lists them). `url_source_forbidden` (#685): a multi-user
             deployment does not allow `url` sources (`sources` lists each by index and
-            path).
+            path). `forbidden: not run owner` (#991): `run_id` names a run another owner
+            already holds — queued, running, failed or completed — and nothing about that
+            run is returned.
           content:
             application/json:
               schema:

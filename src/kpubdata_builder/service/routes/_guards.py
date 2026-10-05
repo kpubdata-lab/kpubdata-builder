@@ -133,7 +133,9 @@ def check_existing_run_access(
 
     Without this gate, sync ``POST /build`` did not verify who owned the caller's
     run_id. Giving someone else's run_id would overwrite that run's output and return
-    results in response. Async ``POST /builds`` blocks with 409 in the same situation.
+    results in response. Async ``POST /builds`` had only its 409 for a completed run:
+    a job still in the registry was returned to whoever named it, so that route calls
+    this too (#991).
     """
     run_dir = service._output_root / run_id
     ensure_within(service._output_root, run_dir, label="run directory")
