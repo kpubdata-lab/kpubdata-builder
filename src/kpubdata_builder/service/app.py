@@ -56,6 +56,7 @@ from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
 from .build_runs_api import BuildRunsApiService
+from .build_slots import BuildSlots
 from .builds_api import BuildArtifactsApiService
 from .datasets_api import DatasetsApiService
 from .exports_api import ExportsApiService
@@ -406,7 +407,14 @@ _BuildListEntry = dict[str, str | None]
 #   overload 503 responses and the X-Request-ID header are declared (#994, description).
 # 1.80.0 -> 1.81.0: the publish recovery routes (receipt GET/DELETE, reconcile, audit) are
 #   declared in the contract; they were answered since 1.19.0/1.20.0 (#994, additive).
-API_CONTRACT_VERSION = "1.81.0"
+# 1.81.0 -> 1.82.0: a synchronous POST /build that gets no build slot within the wait
+#   bound answers 429 build_queue_full (#1040, additive).
+API_CONTRACT_VERSION = "1.82.0"
+
+#: How long a synchronous ``POST /build`` waits for a build slot before it answers
+#: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
+#: enough that a burst does not park the request pool behind the build limit.
+DEFAULT_BUILD_WAIT_SECONDS = 30.0
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
@@ -436,6 +444,7 @@ class BuilderService:
         async_max_queue_size: int = 10,
         max_concurrent_builds: int | None = None,
         max_concurrent_previews: int | None = None,
+        build_wait_seconds: float | None = DEFAULT_BUILD_WAIT_SECONDS,
         warehouse_root: Path | None = None,
         terms_lookup: TermsLookup | None = None,
         publish_visibility_probe: VisibilityProbe | None = None,
@@ -572,9 +581,9 @@ class BuilderService:
         self.max_concurrent_builds = (
             max_concurrent_builds if max_concurrent_builds is not None else async_max_workers
         )
-        if self.max_concurrent_builds < 1:
-            raise ValueError("max_concurrent_builds must be >= 1")
-        self._build_slots = threading.BoundedSemaphore(self.max_concurrent_builds)
+        self._build_slots = BuildSlots(self.max_concurrent_builds)
+        if build_wait_seconds is not None and build_wait_seconds < 0:
+            raise ValueError("build_wait_seconds must be >= 0")
         # Previews run on request threads and each may open a DuckDB connection. With no
         # limit (None) they are bounded only by the request pool, as before; a deployment
         # that budgets memory names the number its budget counts (#1028).
@@ -587,6 +596,7 @@ class BuilderService:
             else None
         )
         self._async_builds = AsyncBuildExecutor(
+            build_slots=self._build_slots,
             max_workers=async_max_workers,
             max_queue_size=async_max_queue_size,
             # running job safely terminates at boundary exactly once (#481). Terminal
@@ -632,6 +642,7 @@ class BuilderService:
             store=self._store,
             async_builds=self._async_builds,
             build_slots=self._build_slots,
+            build_wait_seconds=build_wait_seconds,
         )
         # Publish domain (#637). Requires async job registry — terminal judgment
         # for blocking non-terminal run publish reads that registry.

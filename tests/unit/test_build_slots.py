@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -188,6 +189,132 @@ def test_a_limit_below_one_is_refused(tmp_path: Path, gauge: _Gauge, bad: dict[s
         BuilderService(output_root=tmp_path, client_factory=_factory(gauge), **bad)
 
 
+# --- waiting for a slot (#1040) ---
+
+
+def _poll(check: Callable[[], bool], *, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.01)
+    return check()
+
+
+def _status(service: BuilderService, run_id: str) -> str:
+    response = dispatch(service, "GET", f"/builds/{run_id}", None)
+    assert isinstance(response, ServiceResponse)
+    return str(response.body["status"])
+
+
+def _hold_the_only_slot(service: BuilderService, gauge: _Gauge) -> threading.Thread:
+    """A synchronous build that is inside its fetch, holding the one slot."""
+
+    def sync() -> None:
+        response = dispatch(service, "POST", "/build", {"spec": _SPEC.format(name="holder")})
+        assert isinstance(response, ServiceResponse)
+        assert response.status_code == 200
+
+    thread = _start(sync)
+    gauge.wait_for(1)
+    return thread
+
+
+def test_a_synchronous_build_that_gets_no_slot_in_time_is_turned_away(
+    tmp_path: Path, gauge: _Gauge
+) -> None:
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=_factory(gauge),
+        max_concurrent_builds=1,
+        build_wait_seconds=0.2,
+    )
+    holder = _hold_the_only_slot(service, gauge)
+    started = time.monotonic()
+
+    late = dispatch(service, "POST", "/build", {"spec": _SPEC.format(name="late")})
+
+    waited = time.monotonic() - started
+    assert isinstance(late, ServiceResponse)
+    assert late.status_code == 429
+    assert late.body == {
+        "error": "every build slot is in use; try again shortly",
+        "code": "build_queue_full",
+    }
+    # It waited the bound and no longer, and never reached the provider.
+    assert 0.15 <= waited < 5
+    assert gauge.entered == 1
+    gauge.gate.set()
+    holder.join(timeout=20)
+    # The slot the refused build never took is not handed back: one build still fits,
+    # and only one.
+    assert service._build_slots.acquire(timeout=1) is True
+    assert service._build_slots.acquire(timeout=0.05) is False
+    service._build_slots.release()
+
+
+def test_an_async_job_waiting_for_a_slot_is_queued_not_running(
+    tmp_path: Path, gauge: _Gauge
+) -> None:
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=_factory(gauge),
+        async_max_workers=1,
+        max_concurrent_builds=1,
+    )
+    holder = _hold_the_only_slot(service, gauge)
+
+    submitted = dispatch(
+        service, "POST", "/builds", {"spec": _SPEC.format(name="waiting"), "run_id": "waiting"}
+    )
+    assert isinstance(submitted, ServiceResponse)
+    assert submitted.status_code == 202
+    # Its worker has picked it up and is waiting for the slot; it has started nothing.
+    time.sleep(0.5)
+
+    assert _status(service, "waiting") == "queued"
+    assert gauge.entered == 1
+
+    gauge.gate.set()
+    holder.join(timeout=20)
+    assert _poll(lambda: _status(service, "waiting") == "succeeded")
+    service._async_builds._executor.shutdown(wait=True)
+
+
+def test_a_job_cancelled_while_waiting_ends_cancelled_once_and_keeps_the_slots(
+    tmp_path: Path, gauge: _Gauge
+) -> None:
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=_factory(gauge),
+        async_max_workers=1,
+        max_concurrent_builds=1,
+    )
+    holder = _hold_the_only_slot(service, gauge)
+    dispatch(service, "POST", "/builds", {"spec": _SPEC.format(name="doomed"), "run_id": "doomed"})
+    time.sleep(0.3)
+
+    cancelled = dispatch(service, "POST", "/builds/doomed/cancel", None)
+
+    assert isinstance(cancelled, ServiceResponse)
+    assert cancelled.status_code in (200, 202)
+    assert _status(service, "doomed") == "cancelled"
+    gauge.gate.set()
+    holder.join(timeout=20)
+    service._async_builds._executor.shutdown(wait=True)
+    # The cancelled job never ran, and is cancelled exactly once.
+    assert gauge.entered == 1
+    events = dispatch(service, "GET", "/builds/doomed/events", None)
+    assert isinstance(events, ServiceResponse)
+    names = [event["event"] for event in cast(list[dict[str, object]], events.body["events"])]
+    assert names.count("run_cancelled") == 1
+    assert "run_started" not in names
+    # Its worker took the slot only to give it straight back: one build fits, one only.
+    assert service._build_slots.acquire(timeout=1) is True
+    assert service._build_slots.acquire(timeout=0.05) is False
+    service._build_slots.release()
+
+
 # --- serve: the settings ---
 
 
@@ -255,3 +382,33 @@ def test_serve_refuses_a_limit_below_one(
 
     with pytest.raises(SystemExit, match="must be >= 1"):
         main(["serve", "--output-dir", str(tmp_path), flag, "0"])
+
+
+def test_the_wait_bound_comes_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, clean_env: None
+) -> None:
+    seen: dict[str, float | None] = {}
+
+    def fake_serve(service: object, **_kwargs: object) -> None:
+        assert isinstance(service, BuilderService)
+        seen["wait"] = service._build_runs._build_wait_seconds
+
+    monkeypatch.setattr(http_module, "serve", fake_serve)
+    monkeypatch.delenv("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", raising=False)
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+    assert seen["wait"] == 30.0
+
+    monkeypatch.setenv("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "5")
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+    assert seen["wait"] == 5.0
+
+
+@pytest.mark.parametrize("value", ["soon", "-1"])
+def test_serve_refuses_a_wait_bound_that_is_not_a_duration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, clean_env: None, value: str
+) -> None:
+    monkeypatch.setattr(http_module, "serve", lambda *_args, **_kwargs: None)
+    monkeypatch.setenv("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", value)
+
+    with pytest.raises(SystemExit, match="KPUBDATA_BUILDER_BUILD_WAIT_SECONDS"):
+        main(["serve", "--output-dir", str(tmp_path)])
