@@ -168,6 +168,60 @@ def test_another_user_cannot_build_under_the_interrupted_run_id(
     assert submission.owner_id == _ALICE.owner_id
 
 
+def _submit(service: BuilderService, run_id: str) -> ServiceResponse:
+    response = dispatch(
+        service,
+        "POST",
+        "/builds",
+        {"spec": _SPEC, "run_id": run_id},
+        provider_key_headers=["datago=key"],
+    )
+    assert isinstance(response, ServiceResponse)
+    return response
+
+
+def test_another_user_cannot_submit_under_the_interrupted_run_id(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The async path (#1025): #1008 routes POST /builds through the same guard. Before
+    # the guard read the submission record, Bob's job was accepted, he read Alice's
+    # events while it ran, and Alice would have read his failure.
+    _as(monkeypatch, _BOB)
+
+    response = _submit(restarted, "in-flight")
+
+    assert response.status_code == 403
+    assert response.body == {"error": "forbidden: not run owner"}
+    assert restarted._async_builds.get("in-flight") is None
+    assert _get(restarted, "/builds/in-flight/events").status_code == 404
+    # No second submission was recorded on the run Alice still reads. (The whole list
+    # is not compared: the first process's worker, which a real restart would have
+    # killed, may still be writing its own events until it reaches the gate.)
+    _as(monkeypatch, _ALICE)
+    events = cast(
+        list[dict[str, object]], _get(restarted, "/builds/in-flight/events").body["events"]
+    )
+    assert [event["event"] for event in events].count("run_submitted") == 1
+    submission = restarted._event_store.submission("in-flight")
+    assert submission is not None
+    assert submission.owner_id == _ALICE.owner_id
+
+
+def test_the_submitter_can_submit_the_interrupted_run_again(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What the interrupted run's message asks for: send it again.
+    _as(monkeypatch, _ALICE)
+
+    response = _submit(restarted, "in-flight")
+
+    assert response.status_code == 202
+    assert response.body["run_id"] == "in-flight"
+    submission = restarted._event_store.submission("in-flight")
+    assert submission is not None
+    assert submission.owner_id == _ALICE.owner_id
+
+
 def test_the_submitter_may_use_the_interrupted_run_id_again(restarted: BuilderService) -> None:
     from kpubdata_builder.service.routes._guards import check_existing_run_access
 
