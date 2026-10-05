@@ -25,6 +25,9 @@
 | `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` | 다중 사용자 배포에서 비동기 작업에 묶인 provider 키를 워커가 가져가기 전까지 메모리에 두는 최대 시간(#683). 지나면 키를 버리고 작업은 키 없이 실패한다 | `3600` | 선택 |
 | `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` | `true`면 게시 시 요청자에게 저장된 publish credential 만 쓰고 서버 환경변수(`HF_TOKEN` 등)로 내려가지 않는다(#635). 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 폴백이 없고 저장된 publish credential 도 읽지 않는다** — 토큰은 요청의 `X-Publish-Credential` 헤더(`HF_TOKEN=...`, `KAGGLE_USERNAME=...`, `KAGGLE_KEY=...`)로만 받아 그 요청 동안만 메모리에 둔다(#925) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES` | `POST /uploads`가 받는 최대 본문 크기(바이트). 초과분은 413 | 코드 기본값 | 선택 |
+| `KPUBDATA_BUILDER_UPLOAD_MAX_FILES` | 다중 사용자 배포에서 사용자 한 명이 가질 수 있는 업로드 수(#1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `50` | 선택 |
+| `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES` | 다중 사용자 배포에서 사용자 한 명의 업로드 합계 크기(바이트, #1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔 | `1073741824` (1 GiB) | 선택 |
+| `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS` | 다중 사용자 배포에서 업로드를 보관하는 일수(#1045). 지난 업로드는 서비스가 뜰 때와 그 사용자가 다음에 업로드할 때 **삭제된다** — 그것을 가리키는 저장 스펙의 다음 빌드는 업로드를 찾지 못한다. `0` 이면 끔 | `30` | 선택 |
 | `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES` | `kind: url` source가 가져오는 최대 응답 크기(바이트). SSRF 방어의 일부(#498) | 코드 기본값 | 선택 |
 | `OIDC_JWKS_URL` | JWKS 엔드포인트를 직접 지정한다. 미설정 시 issuer의 discovery 문서에서 찾는다 | 미설정 | 선택 |
 | `OIDC_JWKS_TTL` | JWKS 캐시 수명(초). 만료되면 다음 Bearer 인증이 다시 가져온다 | `3600` | 선택 |

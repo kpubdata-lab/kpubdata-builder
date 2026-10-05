@@ -759,7 +759,8 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "getPublishAudit": {200, 400, 403, 404},
     "getMonitoringSummary": {200},
     "getMonitoringBuilds": {200, 400},
-    "createUpload": {200, 400, 403, 413},
+    # 409: the owner's file count or total size limit (#1045).
+    "createUpload": {200, 400, 403, 409, 413},
     "getUpload": {200, 403, 404},
     "deleteUpload": {200, 403, 404},
 }
