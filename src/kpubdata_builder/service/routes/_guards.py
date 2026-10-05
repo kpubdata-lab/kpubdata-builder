@@ -126,9 +126,10 @@ def check_existing_run_access(
 ) -> ServiceResponse | None:
     """If the caller-specified run_id **already exists**, verify ownership (#635).
 
-    Decision rules match ``check_active_run_access``; only how missing runs are
-    handled differs. That is for query routes: if run is missing, 404. Here, missing
-    run_id is normal — means starting a new build with that name.
+    Decision rules match ``check_active_run_access`` — manifest, then the job
+    registry, then the recorded submission — and only how missing runs are handled
+    differs. That is for query routes: if run is missing, 404. Here, missing run_id is
+    normal — means starting a new build with that name.
 
     Without this gate, sync ``POST /build`` did not verify who owned the caller's
     run_id. Giving someone else's run_id would overwrite that run's output and return
@@ -149,11 +150,22 @@ def check_existing_run_access(
         # would say the id is free when it is not.
         return ServiceResponse(403, {"error": "forbidden: not run owner"})
     snapshot = service._async_builds.get(run_id)
-    if snapshot is None:
-        # run_id does not exist yet — new build.
-        return None
-    if ownership_module.ownership_allows(
-        created_by=snapshot.created_by, owner_id=snapshot.owner_id, principal=principal
+    if snapshot is not None:
+        if ownership_module.ownership_allows(
+            created_by=snapshot.created_by, owner_id=snapshot.owner_id, principal=principal
+        ):
+            return None
+        return ServiceResponse(403, {"error": "forbidden: not run owner"})
+    # A run a restart interrupted has neither a manifest nor a registry entry, but its
+    # id is not free: the event store says who submitted it, and that person can still
+    # read why it ended (#996). Someone else building under the id would read those
+    # events while their job runs, and hand their own failure to the first submitter
+    # if it is interrupted in turn (#1025). The submitter may use the id again — that
+    # is what the interrupted run's message asks for.
+    submission = service._event_store.submission(run_id)
+    if submission is not None and not ownership_module.ownership_allows(
+        created_by=submission.created_by, owner_id=submission.owner_id, principal=principal
     ):
-        return None
-    return ServiceResponse(403, {"error": "forbidden: not run owner"})
+        return ServiceResponse(403, {"error": "forbidden: not run owner"})
+    # run_id does not exist yet, or is the caller's own interrupted run — new build.
+    return None

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.80.0"
+  version: "1.81.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.81.0 declares the publish recovery routes the service has answered since v1.19.0 and v1.20.0 (#994, additive): `GET` and `DELETE /builds/{run_id}/publish/receipt`, `POST /builds/{run_id}/publish/reconcile` and `GET /builds/{run_id}/publish/audit` were described only in this text, so a client had no schema to check them against. Nothing on the wire changed.
     v1.80.0 declares what the service already sends (#994, description only — the wire is unchanged): the `X-Provider-Key` request header as a parameter of the five operations that call a provider (`previewBuild`, `createBuild`, `submitBuild`, `getProviderStatus`, `testProviderConnection`), the 429 `auth_throttled` and the overload 503 as shared responses any operation can answer (`components.responses.AuthThrottled`, `ServerOverloaded`), and the `X-Request-ID` response header (`components.headers.RequestId`).
     v1.79.0 gives four failures a stable `code` (#1000, additive): the full async build queue's 429 is `build_queue_full` (it was told from 429 `auth_throttled` only by its sentence), an authentication failure is `unauthorized`, `token_expired` (the bearer token's `exp` has passed — get a new token) or, with 503, `auth_unavailable` (the JWKS could not be fetched), and the overload 503 written before a request is read is `server_overloaded`. Each body keeps its `error` text.
     v1.78.0 lets the owner read a run a restart interrupted (#996, additive): `GET /builds/{run_id}` answers such a run as `failed` with the new optional `BuildJob.code` `credentials_required` and the reason in `error`, and `GET /builds/{run_id}/events` shows its `run_failed` event, where both answered 404 before; another user still gets what a missing run gets. The submitter of an async run is now recorded with its events, so this holds for runs submitted from this version on.
@@ -1960,6 +1961,280 @@ paths:
                   summary: local은 HTTP publish target에서 제외된다(#491)
                   value:
                     error: "target 'local' is not available over the publish HTTP API"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 해당 run의 소유자가 아님
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 해당 run을 찾을 수 없음
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /builds/{run_id}/publish/receipt:
+    get:
+      operationId: getPublishReceipt
+      summary: >-
+        The caller's publish receipt for one target and destination (#551). A publish that
+        answered 409 `publish_state_unknown` left a receipt in state `unknown`; this is
+        how its state is read before choosing between reconcile and reset.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/PublishCredential"
+        - name: target
+          in: query
+          required: true
+          description: The publish target the receipt was written for.
+          schema:
+            $ref: "#/components/schemas/PublishTarget"
+        - name: destination
+          in: query
+          required: true
+          description: The destination the receipt was written for, as sent to `POST .../publish`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishReceipt"
+              examples:
+                Unknown:
+                  summary: The publish outcome was not learnt, so a retry is blocked
+                  value:
+                    run_id: air-quality-20260815
+                    target: huggingface
+                    destination: kpubdata/air-quality
+                    state: unknown
+                    fingerprint: 9f2c1d7a4b6e8035
+                    options: {}
+                    reconcilable: true
+        "400":
+          description: An unsafe run_id, or `target` or `destination` missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 해당 run의 소유자가 아님
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >-
+            The run is not found, or the caller has no receipt for this target and
+            destination (`receipt_not_found`). Another owner's receipt answers the same.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                ReceiptNotFound:
+                  value:
+                    error: publish receipt not found
+                    code: receipt_not_found
+    delete:
+      operationId: resetPublishReceipt
+      summary: >-
+        Delete the caller's receipt, in any state, so the same publish can be claimed again
+        (#551). Nothing is undone remotely — what was already published stays published.
+        The reset is recorded in the audit history.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/PublishCredential"
+        - name: target
+          in: query
+          required: true
+          description: The publish target the receipt was written for.
+          schema:
+            $ref: "#/components/schemas/PublishTarget"
+        - name: destination
+          in: query
+          required: true
+          description: The destination the receipt was written for, as sent to `POST .../publish`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The receipt was deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishReceiptReset"
+              examples:
+                Reset:
+                  value:
+                    run_id: air-quality-20260815
+                    state: reset
+                    retry_allowed: true
+                    fingerprint: 9f2c1d7a4b6e8035
+        "400":
+          description: An unsafe run_id, or `target` or `destination` missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 해당 run의 소유자가 아님
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >-
+            The run is not found, or the caller has no receipt for this target and
+            destination (`receipt_not_found`). Another owner's receipt answers the same.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                ReceiptNotFound:
+                  value:
+                    error: publish receipt not found
+                    code: receipt_not_found
+        "503":
+          description: >-
+            `reconcile_unavailable`: the reset could not be persisted. Nothing was changed; the same request may be
+            sent again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                ReconcileUnavailable:
+                  value:
+                    error: receipt reset could not be persisted; nothing was changed
+                    code: reconcile_unavailable
+
+  /builds/{run_id}/publish/reconcile:
+    post:
+      operationId: reconcilePublish
+      summary: >-
+        Settle a receipt by looking at the remote (#551). When the destination exists
+        there, the receipt becomes `succeeded`; when it does not, the receipt is deleted
+        so the publish can be sent again (`state: reset`). A receipt already `succeeded`
+        is returned as it is, with `reconciled: false` and no remote call. When the
+        remote cannot be read, nothing changes and the answer is 503.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/PublishCredential"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishReconcileRequest"
+      responses:
+        "200":
+          description: The receipt's state after the check
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishReconcileResponse"
+              examples:
+                Confirmed:
+                  summary: The destination exists remotely
+                  value:
+                    run_id: air-quality-20260815
+                    state: succeeded
+                    reconciled: true
+                    fingerprint: 9f2c1d7a4b6e8035
+                AbsentReset:
+                  summary: Nothing was found remotely, so the publish may be sent again
+                  value:
+                    run_id: air-quality-20260815
+                    state: reset
+                    reconciled: true
+                    retry_allowed: true
+                    fingerprint: 9f2c1d7a4b6e8035
+        "400":
+          description: >-
+            An unsafe run_id, a body that is not an object, a field other than `target` and
+            `destination`, an unsupported target (`unsupported_target`) or a destination
+            the target does not accept
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 해당 run의 소유자가 아님
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >-
+            The run is not found, or the caller has no receipt for this target and
+            destination (`receipt_not_found`). Another owner's receipt answers the same.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                ReceiptNotFound:
+                  value:
+                    error: publish receipt not found
+                    code: receipt_not_found
+        "503":
+          description: >-
+            `reconcile_unavailable`: the remote state could not be read, or the outcome could not be persisted. Nothing was changed; the same request may be
+            sent again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                ReconcileUnavailable:
+                  value:
+                    error: remote state could not be determined; nothing was changed
+                    code: reconcile_unavailable
+
+  /builds/{run_id}/publish/audit:
+    get:
+      operationId: getPublishAudit
+      summary: >-
+        The caller's reconcile and reset history for a run (#563), oldest first. It
+        outlives the receipts: a reset deletes the receipt and leaves its entry here.
+        An entry holds no credential and no path.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: The history; `entries` is empty when nothing was reconciled or reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishAuditLog"
+              examples:
+                OneReset:
+                  value:
+                    run_id: air-quality-20260815
+                    entries:
+                      - fingerprint: 9f2c1d7a4b6e8035
+                        action: manual_reset
+                        actor: operator
+                        recorded_at: "2026-08-15T03:12:45+00:00"
+        "400":
+          description: An unsafe run_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -9077,3 +9352,104 @@ components:
       properties:
         export_id: {type: string}
         deleted: {type: boolean, const: true}
+    PublishReceipt:
+      type: object
+      description: >-
+        What the service remembers of one publish, per owner, run, target and destination
+        (#551). `fingerprint` identifies the claim; it is not a secret and not a path.
+      additionalProperties: false
+      required: [run_id, target, destination, state, fingerprint, options, reconcilable]
+      properties:
+        run_id: {type: string}
+        target:
+          $ref: "#/components/schemas/PublishTarget"
+        destination: {type: string}
+        state:
+          type: string
+          enum: [pending, succeeded, unknown]
+          description: >-
+            `pending` — a publish holds the claim and has not finished. `succeeded` — it
+            finished, and `result` is its response. `unknown` — it ended without the
+            outcome being learnt; a retry is blocked until the receipt is reconciled or
+            reset.
+        fingerprint: {type: string}
+        options:
+          type: object
+          description: The `options` the publish was sent with.
+          additionalProperties: true
+        reconcilable:
+          type: boolean
+          description: True when `state` is `unknown`.
+        result:
+          type: object
+          description: The publish response recorded for a `succeeded` receipt.
+          additionalProperties: true
+    PublishReconcileRequest:
+      type: object
+      additionalProperties: false
+      required: [target, destination]
+      properties:
+        target:
+          $ref: "#/components/schemas/PublishTarget"
+        destination:
+          type: string
+          description: The destination the receipt was written for.
+    PublishReconcileResponse:
+      type: object
+      additionalProperties: false
+      required: [run_id, state, reconciled, fingerprint]
+      properties:
+        run_id: {type: string}
+        state:
+          type: string
+          enum: [succeeded, reset]
+          description: >-
+            `succeeded` — the destination exists remotely, or the receipt already said so.
+            `reset` — nothing was found remotely and the receipt was deleted.
+        reconciled:
+          type: boolean
+          description: False only when the receipt was already `succeeded` and no check ran.
+        fingerprint: {type: string}
+        retry_allowed:
+          type: boolean
+          description: Sent, as true, when `state` is `reset`.
+        result:
+          type: object
+          description: The recorded publish response, when the receipt was already `succeeded`.
+          additionalProperties: true
+    PublishReceiptReset:
+      type: object
+      additionalProperties: false
+      required: [run_id, state, retry_allowed, fingerprint]
+      properties:
+        run_id: {type: string}
+        state: {type: string, const: reset}
+        retry_allowed: {type: boolean, const: true}
+        fingerprint: {type: string}
+    PublishAuditLog:
+      type: object
+      additionalProperties: false
+      required: [run_id, entries]
+      properties:
+        run_id: {type: string}
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublishAuditEntry"
+    PublishAuditEntry:
+      type: object
+      additionalProperties: false
+      required: [fingerprint, action, actor, recorded_at]
+      properties:
+        fingerprint: {type: string}
+        action:
+          type: string
+          description: >-
+            What was done to the receipt: `manual_reset` (`DELETE .../publish/receipt`),
+            `reconcile_succeeded` (a reconcile that found the destination remotely) or
+            `reconcile_absent_reset` (one that found nothing). Read it as text: later
+            versions may record more actions.
+        actor: {type: string}
+        recorded_at:
+          type: string
+          description: When it was recorded, ISO 8601.

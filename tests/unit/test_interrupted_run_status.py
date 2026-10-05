@@ -151,6 +151,35 @@ def test_another_user_gets_what_a_missing_run_gets(
     assert "credentials_required" not in str(theirs.body)
 
 
+def test_another_user_cannot_build_under_the_interrupted_run_id(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The id has no manifest and no registry entry, but it is not free (#1025): a
+    # build under it would read Alice's events, and could leave its failure to her.
+    _as(monkeypatch, _BOB)
+
+    response = dispatch(restarted, "POST", "/build", {"spec": _SPEC, "run_id": "in-flight"})
+
+    assert isinstance(response, ServiceResponse)
+    assert response.status_code == 403
+    assert response.body == {"error": "forbidden: not run owner"}
+    submission = restarted._event_store.submission("in-flight")
+    assert submission is not None
+    assert submission.owner_id == _ALICE.owner_id
+
+
+def test_the_submitter_may_use_the_interrupted_run_id_again(restarted: BuilderService) -> None:
+    from kpubdata_builder.service.routes._guards import check_existing_run_access
+
+    assert check_existing_run_access(restarted, "in-flight", _ALICE) is None
+
+
+def test_an_id_nobody_submitted_is_free_to_anyone(restarted: BuilderService) -> None:
+    from kpubdata_builder.service.routes._guards import check_existing_run_access
+
+    assert check_existing_run_access(restarted, "never-existed", _BOB) is None
+
+
 def test_a_run_nobody_submitted_is_still_404(
     restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
 ) -> None:

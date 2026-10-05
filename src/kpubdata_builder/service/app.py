@@ -404,7 +404,9 @@ _BuildListEntry = dict[str, str | None]
 #   overload 503 (server_overloaded) (#1000, additive).
 # 1.79.0 -> 1.80.0: the X-Provider-Key parameter, the shared 429 auth_throttled and
 #   overload 503 responses and the X-Request-ID header are declared (#994, description).
-API_CONTRACT_VERSION = "1.80.0"
+# 1.80.0 -> 1.81.0: the publish recovery routes (receipt GET/DELETE, reconcile, audit) are
+#   declared in the contract; they were answered since 1.19.0/1.20.0 (#994, additive).
+API_CONTRACT_VERSION = "1.81.0"
 
 
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
