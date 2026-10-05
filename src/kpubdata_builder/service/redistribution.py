@@ -3,8 +3,9 @@
 kpubdata 0.8 declares, per dataset, whether its data may be redistributed
 (``DatasetRef.license.redistribution``, kpubdata#525): ``allowed``, ``non_commercial``,
 ``forbidden`` or ``unknown``. A dataset that declares nothing is ``unknown`` — not
-knowing is never read as permission. A file or URL source has no provider terms and is
-``unknown`` too.
+knowing is never read as permission. One that says ``allowed`` without the ``attribution``
+text that shows the terms were confirmed is ``unknown`` too (#1030). A file or URL source
+has no provider terms and is ``unknown`` as well.
 
 A build is as restricted as its most restricted source:
 ``forbidden`` > ``unknown`` > ``non_commercial`` > ``allowed``.
@@ -43,8 +44,17 @@ _ORDER: tuple[Verdict, ...] = ("forbidden", "unknown", "non_commercial", "allowe
 _VERDICTS = frozenset(_ORDER)
 _NON_COMMERCIAL_MARKER = re.compile(r"(?i)(^|[-_ ])nc([-_ ]|$)|non[-_ ]?commercial")
 
+#: What the catalog lookup answers for a dataset that says ``redistribution: allowed``
+#: without the ``attribution`` text. kpubdata's rule is that a term nobody confirmed must
+#: not read as permission (kpubdata#785), and the attribution text is what shows the
+#: terms were read from the provider's page (kpubdata#525). kpubdata still ships such
+#: specs — frozen in its ``scripts/unconfirmed_terms_baseline.txt`` — so the gate reads
+#: the text itself instead of taking ``allowed`` at its word (#1030).
+UNCONFIRMED_ALLOWED = "allowed_unconfirmed"
+
 #: ``"provider.dataset"`` → the dataset's declared ``redistribution`` (None when it
-#: declares no licence), or raises ``LookupError`` when the dataset is not in the catalog.
+#: declares no licence, :data:`UNCONFIRMED_ALLOWED` when it says ``allowed`` without a
+#: confirmed attribution), or raises ``LookupError`` when the dataset is not in the catalog.
 TermsLookup = Callable[[str], str | None]
 
 
@@ -92,8 +102,20 @@ def _catalog_terms(dataset_id: str) -> str | None:
         raise LookupError(dataset_id) from exc
     finally:
         client.close()
-    license_spec = getattr(ref, "license", None)
-    return getattr(license_spec, "redistribution", None) if license_spec is not None else None
+    return declared_terms(getattr(ref, "license", None))
+
+
+def declared_terms(license_spec: object | None) -> str | None:
+    """A licence declaration as the gate reads it: ``allowed`` counts only with its
+    attribution text."""
+    if license_spec is None:
+        return None
+    declared = getattr(license_spec, "redistribution", None)
+    if declared == "allowed":
+        attribution = getattr(license_spec, "attribution", None)
+        if not isinstance(attribution, str) or not attribution.strip():
+            return UNCONFIRMED_ALLOWED
+    return declared if isinstance(declared, str) else None
 
 
 def source_verdict(source: SourceRef, lookup: TermsLookup) -> SourceVerdict:
@@ -105,6 +127,13 @@ def source_verdict(source: SourceRef, lookup: TermsLookup) -> SourceVerdict:
         declared = lookup(dataset_id)
     except LookupError:
         return SourceVerdict(dataset_id, "unknown", "the dataset is not in the kpubdata catalog")
+    if declared == UNCONFIRMED_ALLOWED:
+        return SourceVerdict(
+            dataset_id,
+            "unknown",
+            "the dataset says redistribution: allowed without the attribution text "
+            "that shows its terms were confirmed",
+        )
     if declared is None or declared not in _VERDICTS:
         return SourceVerdict(dataset_id, "unknown", "the dataset declares no redistribution terms")
     return SourceVerdict(
@@ -268,12 +297,14 @@ def sources_of(specs: Sequence[BuildSpec | None]) -> tuple[SourceRef, ...]:
 
 
 __all__ = [
+    "UNCONFIRMED_ALLOWED",
     "BuildVerdict",
     "PublishTermsIssue",
     "SourceVerdict",
     "TermsLookup",
     "Verdict",
     "build_verdict",
+    "declared_terms",
     "forbidden_response",
     "has_non_commercial_marker",
     "is_public",
