@@ -148,7 +148,9 @@ jobs:
       # 없었다 — CUBRID 배포는 존재하지 않는 이미지를 pull 하려 했다.
       #
       # 기본 이미지와 다른 점은 cubrid extra 하나뿐이다. sqlalchemy-cubrid 는 순수
-      # 파이썬이라 C 툴체인 없이 설치된다(Dockerfile 주석 참고).
+      # 파이썬이라 C 툴체인 없이 설치된다(Dockerfile 주석 참고). build-arg 는 Dockerfile 의
+      # 기본값을 통째로 덮어쓰므로 기본 이미지의 extra(publish, auth)를 여기에 다시 적는다 —
+      # auth 가 빠지면 이 이미지는 OIDC_ISSUER 를 설정한 배포에서 기동하지 못한다(#992).
       - name: Build and publish the CUBRID-profile image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
@@ -156,7 +158,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            EXTRAS=publish cubrid
+            EXTRAS=publish auth cubrid
           tags: ghcr.io/kpubdata-lab/kpubdata-builder:cubrid
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

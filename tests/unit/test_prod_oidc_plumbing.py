@@ -35,6 +35,28 @@ def test_the_default_image_installs_the_auth_extra() -> None:
     assert "publish" in match.group(1).split()
 
 
+def test_every_image_variant_keeps_the_default_images_extras() -> None:
+    """A build-arg replaces the Dockerfile's default whole, so a variant must repeat it.
+
+    The CUBRID image was built with ``EXTRAS=publish cubrid``: no ``auth``, so the one
+    image a CUBRID deployment can pull could not start with OIDC configured (#992).
+    """
+    dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    default = re.search(r'^ARG EXTRAS="?([^"\n]*)"?$', dockerfile, re.MULTILINE)
+    assert default
+    workflow = (_ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
+    variants = re.findall(r"^\s*EXTRAS=(.*)$", workflow, re.MULTILINE)
+
+    assert variants
+    missing = [
+        (variant, extra)
+        for variant in variants
+        for extra in default.group(1).split()
+        if extra not in variant.split()
+    ]
+    assert missing == []
+
+
 def test_the_auth_extra_is_what_provides_pyjwt() -> None:
     text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
