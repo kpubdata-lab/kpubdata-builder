@@ -106,8 +106,8 @@ def parse_trusted_proxies(raw: str) -> tuple[_Network, ...]:
             # The position, not the text: a variable set by mistake to something else
             # must not end up in the log.
             _logger.warning(
-                "%s: ignoring entry %d — not an address or CIDR block",
-                TRUSTED_PROXIES_ENV,
+                "KPUBDATA_BUILDER_TRUSTED_PROXIES: ignoring entry %d — not an address "
+                "or CIDR block",
                 position,
             )
     return tuple(networks)
