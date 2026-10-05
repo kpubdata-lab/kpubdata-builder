@@ -51,6 +51,8 @@ services:
       # MAX_BUILDS 는 두 경로를 합친 상한이고, 식이 곱하는 수가 바로 이 값이다.
       KPUBDATA_BUILDER_MAX_BUILDS: ${KPUBDATA_BUILDER_MAX_BUILDS:-2}
       KPUBDATA_BUILDER_MAX_PREVIEWS: ${KPUBDATA_BUILDER_MAX_PREVIEWS:-1}
+      # 동기 POST /build 가 build 자리를 기다리는 상한(초). 넘으면 429 build_queue_full (#1040).
+      KPUBDATA_BUILDER_BUILD_WAIT_SECONDS: ${KPUBDATA_BUILDER_BUILD_WAIT_SECONDS:-30}
       KPUBDATA_BUILDER_MAX_WORKERS: ${KPUBDATA_BUILDER_MAX_WORKERS:-10}
       KPUBDATA_DUCKDB_THREADS: ${KPUBDATA_DUCKDB_THREADS:-1}
       # 64MB 에서는 20행짜리 빌드도 ResourceLimitError 로 실패한다(실측). 그 아래로

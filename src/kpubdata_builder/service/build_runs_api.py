@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +45,7 @@ from ..warehouse import TableCatalog
 from . import ownership as ownership_module
 from . import request_credentials
 from .auth import Principal
+from .build_slots import BuildSlots
 from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
 from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
 from .redaction import redact_json_secrets, redact_secret_text
@@ -108,10 +108,14 @@ class BuildRunsApiService:
         build_index: BuildIndex,
         store: ArtifactStore,
         async_builds: AsyncBuildExecutor,
-        build_slots: threading.BoundedSemaphore,
+        build_slots: BuildSlots,
+        build_wait_seconds: float | None = None,
     ) -> None:
         # One slot per build that may run at once, whichever way it arrived (#1028).
         self._build_slots = build_slots
+        # How long a synchronous build waits for one before it is turned away (#1040).
+        # None waits without a bound.
+        self._build_wait_seconds = build_wait_seconds
         self._output_root = output_root
         self._api_version = api_version
         self._load_validated = load_validated
@@ -203,7 +207,21 @@ class BuildRunsApiService:
         # job on a worker — so this is the one place that bounds how many run at once
         # (#1028). The memory budget multiplies by that number; without the shared slot
         # the two paths each had their own pool and twice as many could run.
-        self._build_slots.acquire()
+        #
+        # An async worker took its slot before it marked the job running, so a waiting
+        # job stays queued; it is not asked for a second one. A synchronous build takes
+        # it here, on its request thread, and waits only so long: past that the thread
+        # is given back and the caller is told to come again (#1040).
+        takes_slot = not self._build_slots.held_by_current_thread()
+        if takes_slot and not self._build_slots.acquire(timeout=self._build_wait_seconds):
+            self._close_client(client)
+            return ServiceResponse(
+                429,
+                {
+                    "error": "every build slot is in use; try again shortly",
+                    "code": "build_queue_full",
+                },
+            )
         try:
             result = run_build(
                 spec_or_error,
@@ -226,7 +244,8 @@ class BuildRunsApiService:
                 secret_values=tuple(provider_keys.values()),
             )
         finally:
-            self._build_slots.release()
+            if takes_slot:
+                self._build_slots.release()
             self._close_client(client)
         secret_values = tuple(provider_keys.values())
         if secret_values:

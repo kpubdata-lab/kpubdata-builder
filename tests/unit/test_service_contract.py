@@ -728,7 +728,8 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "runAnalysis": {200, 400, 403, 404, 409, 429, 504},
     "validateSpec": {200, 400},
     "previewBuild": {200, 400, 403, 502, 503},
-    "createBuild": {200, 400, 403, 409, 502},
+    # 429: no build slot within the wait bound (#1040).
+    "createBuild": {200, 400, 403, 409, 429, 502},
     "submitBuild": {200, 202, 400, 403, 409, 429, 500},
     "getBuildJob": {200, 400, 403, 404},
     "cancelBuildJob": {200, 400, 403, 404, 409},

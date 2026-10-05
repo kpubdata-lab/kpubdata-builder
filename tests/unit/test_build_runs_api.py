@@ -6,13 +6,13 @@ mapping can be tested without assembling the whole service.
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import pytest
 
 from kpubdata_builder.events import BuildEventStore
 from kpubdata_builder.service.build_runs_api import BuildRunsApiService
+from kpubdata_builder.service.build_slots import BuildSlots
 from kpubdata_builder.service.jobs import AsyncBuildExecutor
 from kpubdata_builder.service.providers import ProviderCredentialConflictError
 from kpubdata_builder.service.responses import ServiceResponse
@@ -45,7 +45,7 @@ def _service(tmp_path: Path, open_client: object) -> BuildRunsApiService:
         build_index=make_build_index(tmp_path),
         store=make_artifact_store(tmp_path),
         async_builds=executor,
-        build_slots=threading.BoundedSemaphore(1),
+        build_slots=BuildSlots(1),
     )
 
 

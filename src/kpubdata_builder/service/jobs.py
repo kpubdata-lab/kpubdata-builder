@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 from ..spec import JsonValue
+from .build_slots import BuildSlots
 
 _logger = logging.getLogger(__name__)
 
@@ -538,7 +539,11 @@ class AsyncBuildExecutor:
         max_queue_size: int = 10,
         max_terminal_jobs: int = _DEFAULT_MAX_TERMINAL_JOBS,
         on_cancelled: Callable[[str], None] | None = None,
+        build_slots: BuildSlots | None = None,
     ) -> None:
+        # Shared with the synchronous build path (#1028). A worker takes its slot before
+        # the job is marked running, so a job waiting for one stays queued (#1040).
+        self._build_slots = build_slots
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="kpubdata-build"
         )
@@ -666,6 +671,23 @@ class AsyncBuildExecutor:
         artifact. Termination event (``run_cancelled``) already recorded by cancel
         request that created this transition.
         """
+        if self._build_slots is not None:
+            # No timeout: this is the queue. A job cancelled while it waits is still
+            # ``queued``; ``begin_run`` below refuses it and the slot goes straight back.
+            self._build_slots.acquire()
+        try:
+            self._run_with_slot(spec_yaml, run_id, created_by, runner)
+        finally:
+            if self._build_slots is not None:
+                self._build_slots.release()
+
+    def _run_with_slot(
+        self,
+        spec_yaml: str,
+        run_id: str,
+        created_by: str | None,
+        runner: BuildJobRunner,
+    ) -> None:
         if not self.registry.begin_run(run_id):
             return
         try:

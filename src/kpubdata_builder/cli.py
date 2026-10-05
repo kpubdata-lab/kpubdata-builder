@@ -853,6 +853,7 @@ def _run_serve(
         provider key and the installed kpubdata cannot keep the operator's out (#990).
     """
     from .service import BuilderService
+    from .service.app import DEFAULT_BUILD_WAIT_SECONDS
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
     # Priority: --max-workers flag > KPUBDATA_BUILDER_MAX_WORKERS env > default.
@@ -879,6 +880,19 @@ def _run_serve(
         max_previews = int(env_previews) if env_previews else None
     if max_previews is not None and max_previews < 1:
         raise SystemExit(f"max_previews must be >= 1, got {max_previews}")
+    # How long a synchronous build waits for a slot before 429 build_queue_full (#1040).
+    # KPUBDATA_BUILDER_BUILD_WAIT_SECONDS; 0 turns a build away at once when none is free.
+    env_wait = os.environ.get("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS")
+    try:
+        build_wait_seconds = float(env_wait) if env_wait else DEFAULT_BUILD_WAIT_SECONDS
+    except ValueError:
+        raise SystemExit(
+            f"KPUBDATA_BUILDER_BUILD_WAIT_SECONDS must be a number, got {env_wait!r}"
+        ) from None
+    if build_wait_seconds < 0:
+        raise SystemExit(
+            f"KPUBDATA_BUILDER_BUILD_WAIT_SECONDS must be >= 0, got {build_wait_seconds}"
+        )
 
     # Priority: --warehouse flag > KPUBDATA_BUILDER_WAREHOUSE env > none. Without this
     # the HTTP service could not reach the materialise-only end state at all: the
@@ -917,6 +931,7 @@ def _run_serve(
         async_max_workers=max_builds,
         max_concurrent_builds=max_builds,
         max_concurrent_previews=max_previews,
+        build_wait_seconds=build_wait_seconds,
         warehouse_root=Path(warehouse) if warehouse is not None else None,
     )
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
