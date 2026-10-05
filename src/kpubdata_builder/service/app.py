@@ -1459,8 +1459,9 @@ def _dispatch_impl(
     if isinstance(principal, AuthError):
         # Count only 401 (invalid credentials) — 403 is valid token with authz
         # failure (not worth throttling), 503 is JWKS transient outage (not client
-        # fault).
-        if principal.status_code == 401:
+        # fault). An expired token is a 401 too, but its signature verified: it is
+        # not a guess, and counting it lets ordinary expiry reach the limit (#1031).
+        if principal.status_code == 401 and not principal.expired:
             service._auth_throttle.record_failure(client_id)
         return ServiceResponse(
             principal.status_code, {"error": principal.reason, "code": principal.code}
