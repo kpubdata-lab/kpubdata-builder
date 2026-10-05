@@ -122,7 +122,7 @@ def check_active_run_access(
 
 
 def check_existing_run_access(
-    service: BuilderService, run_id: str, principal: Principal
+    service: BuilderService, run_id: str, principal: Principal, *, used_status: int = 409
 ) -> ServiceResponse | None:
     """If the caller-specified run_id **already exists**, verify ownership (#635).
 
@@ -160,12 +160,27 @@ def check_existing_run_access(
     # id is not free: the event store says who submitted it, and that person can still
     # read why it ended (#996). Someone else building under the id would read those
     # events while their job runs, and hand their own failure to the first submitter
-    # if it is interrupted in turn (#1025). The submitter may use the id again — that
-    # is what the interrupted run's message asks for.
+    # if it is interrupted in turn (#1025).
+    #
+    # Nor is it free to its own submitter (#1042): a run id is one attempt. A second
+    # build under it would append its events after the first attempt's ``run_failed``,
+    # and each attempt's ending would be read as the other's state. A retry takes a new
+    # id — the same answer a completed run's id gets.
     submission = service._event_store.submission(run_id)
-    if submission is not None and not ownership_module.ownership_allows(
+    if submission is None:
+        # run_id does not exist yet — new build.
+        return None
+    if not ownership_module.ownership_allows(
         created_by=submission.created_by, owner_id=submission.owner_id, principal=principal
     ):
         return ServiceResponse(403, {"error": "forbidden: not run owner"})
-    # run_id does not exist yet, or is the caller's own interrupted run — new build.
-    return None
+    # ``used_status``: 409 where the route's 409 is an error body (``POST /builds``, like
+    # a completed run's id). ``POST /build`` declares its 409 as a build response, so it
+    # asks for 400 — the id cannot be used for this request.
+    return ServiceResponse(
+        used_status,
+        {
+            "error": "run_id already ended; submit the retry under a new run_id",
+            "run_id": run_id,
+        },
+    )

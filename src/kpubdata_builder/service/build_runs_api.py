@@ -547,7 +547,8 @@ class BuildRunsApiService:
 
         A restart leaves such a run: ``mark_interrupted_runs`` records its failure in
         the event store only (#683), so neither the registry nor a manifest knows it
-        and the owner polling it got 404 instead of "submit it again" (#996). The
+        and the owner polling it got 404 instead of "submit it again" (#996; under a
+        new run id, #1042). The
         submission record gives the run's start, the terminal event its end and reason.
         Only a failed or cancelled ending is reported from here — a run that finished
         has a manifest, and that path is the authority for it.
@@ -667,7 +668,8 @@ class BuildRunsApiService:
                     event="run_failed",
                     status="fail",
                     message=f"{INTERRUPTED_CODE}: the server restarted and the job's "
-                    "provider keys, held only in memory, are gone; submit it again",
+                    "provider keys, held only in memory, are gone; submit it again "
+                    "under a new run_id",
                 )
             )
             marked.append(run_id)
