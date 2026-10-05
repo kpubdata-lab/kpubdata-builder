@@ -409,9 +409,12 @@ _BuildListEntry = dict[str, str | None]
 #   declared in the contract; they were answered since 1.19.0/1.20.0 (#994, additive).
 # 1.81.0 -> 1.82.0: a synchronous POST /build that gets no build slot within the wait
 #   bound answers 429 build_queue_full (#1040, additive).
-# 1.82.0 -> 1.83.0: per-user upload limits in a multi-user deployment — POST /uploads
+# 1.82.0 -> 1.83.0: a run_id is one attempt — the id of a run that ended without a
+#   manifest is refused to its submitter too: 409 on POST /builds, 400 on POST /build
+#   (#1042, additive).
+# 1.83.0 -> 1.84.0: per-user upload limits in a multi-user deployment — POST /uploads
 #   may answer 409 upload_quota_exceeded (#1045, additive).
-API_CONTRACT_VERSION = "1.83.0"
+API_CONTRACT_VERSION = "1.84.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

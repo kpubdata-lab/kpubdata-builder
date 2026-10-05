@@ -91,7 +91,8 @@ def route(
         # Passing someone else's run_id would overwrite that run's output and return results
         # in response. Async POST /builds applies the same rule (#991).
         if run_id is not None:
-            denied = check_existing_run_access(service, run_id, principal)
+            # 400 for an id that already ended: this route's 409 is a build response.
+            denied = check_existing_run_access(service, run_id, principal, used_status=400)
             if denied is not None:
                 return denied
         return service.build(
