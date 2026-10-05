@@ -125,15 +125,15 @@ LLM 전송 경로에는 스크러빙이 있다 (`features/assistant/scrub.ts`) �
 
 ## 3. master key 는 ciphertext 와 같은 호스트에 있다
 
-OCI 배포(`deploy.yml` → `ops/deploy/app-01-rollout.sh:17`)는
-`KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` 를 VM 의 `.env`(chmod 600)에 렌더한다.
+단일 VM 배포는 `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` 를 VM 의 `.env`(chmod 600)에 둔다
+(자동 배포 워크플로 `deploy.yml` 이 그렇게 렌더했고, 2026-10-05 에 제거된 뒤로는 손으로 둔다).
 credential SQLite 도 같은 VM 의 볼륨에 있다. 즉 **그 호스트의 파일 두 개를 읽을 수
 있는 사람은 모든 사용자의 키를 복호화할 수 있다.** 암호화는 DB 파일만 유출되는
 경우를 막고, 호스트 유출은 막지 않는다. 11번(backup)의 "ciphertext 와 master key 를
 같은 곳에 백업하지 말 것" 은 호스트 자체에 대해서도 이미 성립하지 않는다.
 
-`deploy.yml` 은 secret 을 원격 커맨드라인이 아니라 `bash -s` 의 stdin 으로 넘긴다 —
-`ps` 로 보이지 않게 하려는 것이고, 실제로 인자에 남지 않는다.
+제거된 `deploy.yml` 은 secret 을 원격 커맨드라인이 아니라 `bash -s` 의 stdin 으로 넘겼다 —
+`ps` 로 보이지 않게 하려는 것이었다. 배포를 다시 자동화한다면 같은 방식을 지켜야 한다.
 
 ## 17. GitHub Actions 로그·artifact
 

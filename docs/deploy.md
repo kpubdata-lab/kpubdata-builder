@@ -291,14 +291,16 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 | Studio(프론트엔드) | Cloudflare Pages 정적 배포 | studio 저장소 (`VITE_BUILDER_API_URL`=app-01) |
 | Builder(백엔드) | OCI `app-01` Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
 | 상태 | `app-01` 로컬 블록 볼륨 `/data` | `builder-data` 볼륨 (네트워크 FS 금지, §6) |
-| CI/CD | GitHub Actions → GHCR → SSH | `.github/workflows/deploy.yml` |
+| CI/CD | GitHub Actions → GHCR (이미지까지) | `.github/workflows/docker.yml` — VM 으로의 자동 배포는 없다(아래) |
 
 배포 산출물:
 
 - `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy 스택. migration/ETL/DB 없음.
 - `ops/caddy/Caddyfile` — Cloudflare → Caddy → `builder:8000` 리버스 프록시.
 - `.env.app.example` — VM-local `.env` 템플릿(placeholder secret만). `.env`는 커밋 금지.
-- `.github/workflows/deploy.yml` — 이미지 빌드/푸시 후 `app-01`에 SSH 배포 + `/healthz` 체크.
+- `app-01` 로의 자동 배포 워크플로(`deploy.yml`)와 rollout 스크립트는 **제거됐다**(2026-10-05). `app-01` 에
+  배포하지 않기로 했고, 그 워크플로는 `main` 에 머지될 때마다 실행돼 SSH 단계에서 실패하고 있었다.
+  이미지는 `docker.yml` 이 GHCR 에 올린다. VM 에 올리려면 이 절의 compose 를 손으로 실행한다.
 
 app-01 최초 준비:
 

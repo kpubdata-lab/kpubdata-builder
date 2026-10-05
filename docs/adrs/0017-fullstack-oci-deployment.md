@@ -1,6 +1,6 @@
 # ADR 0017 — 풀스택 배포 토폴로지: OCI 단일 VM(Builder) + Cloudflare Pages(Studio)
 
-- 상태: 제안됨(Proposed) — **ADR 0016 수용 이후 범위 축소됨**
+- 상태: 제안됨(Proposed) — **ADR 0016 수용 이후 범위 축소됨**. 2026-10-05: `app-01` 에 배포하지 않기로 해서 자동 배포 워크플로(`.github/workflows/deploy.yml`)와 `ops/deploy/app-01-rollout.sh` 를 제거했다. 아래 본문의 그 두 산출물은 더 이상 저장소에 없다.
 - 관련 이슈: —
 - 관련 문서: [ADR 0006 — 서비스 인증 & 배포(Docker)](./0006-service-auth-and-deployment.md), [ADR 0010 — ArtifactStore 상태 백엔드](./0010-artifactstore-state-backend.md), [ADR 0016 — CUBRID 상태 백엔드](./0016-cubrid-state-backend.md), [배포 가이드](../deploy.md), [BOUNDARY.md](../BOUNDARY.md)
 - 참고: `our-tax` [ADR-0005 OCI Split-Topology](https://github.com/kpubdata-lab/our-tax/blob/main/docs/adr/0005-oci-split-topology.md)
