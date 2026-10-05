@@ -15,23 +15,38 @@ toward the limit.
 Default is generous, unreachable by normal clients (60 failures within 60 seconds). To
 adjust or disable, use ``KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT`` (≤0 disables).
 
-**Client identification is TCP peer address.** ``X-Forwarded-For`` is forgeable, so we
-don't read it. So if Builder is behind a reverse proxy that doesn't preserve client IP,
-all requests share one bucket — in such deployments, better to gate throttle at proxy
-layer and disable it here (see deploy.md).
+**Client identification is TCP peer address**, unless the deployment names its reverse
+proxy. ``X-Forwarded-For`` is forgeable, so it is not read by default: behind a proxy
+every user then arrives from the proxy's address and shares one bucket (#1031).
+``KPUBDATA_BUILDER_TRUSTED_PROXIES`` (comma-separated addresses or CIDR blocks) says
+which peers are proxies. Only when the TCP peer is one of them is the header read, and
+then from the right: the rightmost address that is not itself a trusted proxy is the
+client — the part of the header the trusted proxy wrote, not the part the client sent.
+
+**An expired token is not a failure.** Its signature verified; it is only old, and the
+client's next step is to refresh it. Counting it let ordinary expiry across the users
+behind one proxy lock everyone out (#1031). The caller leaves it out.
 """
 
 from __future__ import annotations
 
+import ipaddress
+import logging
 import math
 import os
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+
+_logger = logging.getLogger(__name__)
 
 _LIMIT_ENV = "KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT"
 _WINDOW_ENV = "KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS"
+TRUSTED_PROXIES_ENV = "KPUBDATA_BUILDER_TRUSTED_PROXIES"
+
+_Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+_Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 _DEFAULT_LIMIT = 60
 _DEFAULT_WINDOW_SECONDS = 60.0
@@ -63,6 +78,61 @@ def _positive_float_env(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _address(text: str | None) -> _Address | None:
+    """``text`` as an address, an IPv4-mapped IPv6 one as its IPv4; None if it is not one."""
+    if not text:
+        return None
+    try:
+        address = ipaddress.ip_address(text.strip())
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def parse_trusted_proxies(raw: str) -> tuple[_Network, ...]:
+    """The networks ``raw`` names. An entry that is not an address or CIDR block is
+    dropped with a warning: startup does not fail, and what is left trusts less, not
+    more."""
+    networks: list[_Network] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            _logger.warning(
+                "%s: ignoring %r — not an address or CIDR block", TRUSTED_PROXIES_ENV, entry
+            )
+    return tuple(networks)
+
+
+def client_identity(
+    peer: str | None, forwarded_for: Sequence[str], trusted: Sequence[_Network]
+) -> str | None:
+    """Who to count a request against: the TCP peer, or the client a trusted proxy names.
+
+    ``forwarded_for`` is every ``X-Forwarded-For`` header value, in order. It is read only
+    when ``peer`` is in ``trusted``, and from the right, skipping trusted proxies: each
+    proxy appends the address it saw, so what a client put in the header itself sits to
+    the left of what the trusted proxy wrote and is never reached. If the proxy wrote
+    nothing usable, the peer is the identity — as without the setting.
+    """
+    peer_address = _address(peer)
+    if peer_address is None or not any(peer_address in network for network in trusted):
+        return peer
+    hops = [hop for value in forwarded_for for hop in value.split(",")]
+    for hop in reversed(hops):
+        address = _address(hop)
+        if address is None:
+            return peer
+        if not any(address in network for network in trusted):
+            return str(address)
+    return peer
+
+
 class AuthFailureThrottle:
     """In-process throttle counting authentication failures per-client in sliding window.
 
@@ -78,6 +148,7 @@ class AuthFailureThrottle:
         window_seconds: float | None = None,
         max_clients: int = _DEFAULT_MAX_CLIENTS,
         time_source: Callable[[], float] = time.monotonic,
+        trusted_proxies: Sequence[_Network] | None = None,
     ) -> None:
         self._limit = limit if limit is not None else _positive_int_env(_LIMIT_ENV, _DEFAULT_LIMIT)
         self._window = (
@@ -87,6 +158,11 @@ class AuthFailureThrottle:
         )
         self._max_clients = max_clients
         self._now = time_source
+        self._trusted_proxies = (
+            tuple(trusted_proxies)
+            if trusted_proxies is not None
+            else parse_trusted_proxies(os.environ.get(TRUSTED_PROXIES_ENV, ""))
+        )
         self._failures: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
@@ -94,6 +170,10 @@ class AuthFailureThrottle:
     def enabled(self) -> bool:
         """If limit ≤0, disabled — all calls become no-op."""
         return self._limit > 0
+
+    def client_id(self, peer: str | None, forwarded_for: Sequence[str] = ()) -> str | None:
+        """The identity to count this request against (see :func:`client_identity`)."""
+        return client_identity(peer, forwarded_for, self._trusted_proxies)
 
     def retry_after(self, client_id: str | None) -> int | None:
         """If client should be blocked now, return remaining wait time (seconds, ceiling).
@@ -160,4 +240,9 @@ class AuthFailureThrottle:
             del self._failures[oldest]
 
 
-__all__ = ["AuthFailureThrottle"]
+__all__ = [
+    "TRUSTED_PROXIES_ENV",
+    "AuthFailureThrottle",
+    "client_identity",
+    "parse_trusted_proxies",
+]
