@@ -12,7 +12,10 @@ from kpubdata_builder.service import BuilderService
 from kpubdata_builder.service import publish_api as publish_api_module
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.redistribution import (
+    UNCONFIRMED_ALLOWED,
+    TermsLookup,
     build_verdict,
+    declared_terms,
     has_non_commercial_marker,
     is_public,
     kpubdata_terms,
@@ -603,3 +606,77 @@ def test_the_cli_reads_the_destination_visibility_too(
     assert exit_code == 2
     assert code in capsys.readouterr().err
     assert spy.calls == []
+
+
+# ------------------------------------------------- allowed, but not confirmed (#1030)
+
+
+class _Licence:
+    def __init__(self, redistribution: str | None, attribution: object = None) -> None:
+        self.redistribution = redistribution
+        self.attribution = attribution
+
+
+@pytest.mark.parametrize("attribution", [None, "", "   ", 0, True])
+def test_allowed_without_the_attribution_text_is_not_read_as_allowed(attribution: object) -> None:
+    assert declared_terms(_Licence("allowed", attribution)) == UNCONFIRMED_ALLOWED
+
+
+def test_allowed_with_its_attribution_text_is_allowed() -> None:
+    assert declared_terms(_Licence("allowed", "한국환경공단, 공공누리 제1유형")) == "allowed"
+
+
+@pytest.mark.parametrize("declared", ["non_commercial", "forbidden", "unknown", None])
+def test_the_other_terms_are_read_as_declared(declared: str | None) -> None:
+    # Only ``allowed`` grants something that needs confirming; the rest already restrict.
+    assert declared_terms(_Licence(declared)) == declared
+    assert declared_terms(None) is None
+
+
+def test_an_unconfirmed_allowed_source_is_unknown_and_says_why() -> None:
+    source = SourceRef(provider="datago", dataset="air_station")
+    verdict = build_verdict(
+        _spec(source), cast("TermsLookup", _terms(**{"datago.air_station": UNCONFIRMED_ALLOWED}))
+    )
+
+    assert verdict.verdict == "unknown"
+    assert verdict.sources[0].reason == (
+        "the dataset says redistribution: allowed without the attribution text "
+        "that shows its terms were confirmed"
+    )
+
+
+def test_one_unconfirmed_source_restricts_a_build_of_confirmed_ones() -> None:
+    verdict = build_verdict(
+        _spec(
+            SourceRef(provider="datago", dataset="air_quality"),
+            SourceRef(provider="datago", dataset="air_station"),
+        ),
+        cast(
+            "TermsLookup",
+            _terms(**{"datago.air_quality": "allowed", "datago.air_station": UNCONFIRMED_ALLOWED}),
+        ),
+    )
+
+    assert verdict.verdict == "unknown"
+
+
+def test_a_public_publish_of_an_unconfirmed_allowed_source_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _with_credentials(monkeypatch, "huggingface")
+    spy = _SpyPublisher("huggingface")
+    monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
+    service = _service(tmp_path, terms=UNCONFIRMED_ALLOWED)
+    _build(service, "r1", LICENSED_SPEC_YAML)
+
+    public = _publish(service, "r1", options={"private": False})
+
+    assert public.status_code == 409
+    assert "redistribution_unknown" in _blocker_codes(public)
+    redistribution = cast(dict[str, JsonValue], public.body["redistribution"])
+    sources = cast(list[dict[str, JsonValue]], redistribution["sources"])
+    assert "without the attribution text" in str(sources[0]["reason"])
+    assert spy.calls == []
+    # Undecided terms still allow a private publish, as every other ``unknown`` does.
+    assert _publish(service, "r1", options={"private": True}).status_code == 200
