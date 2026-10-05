@@ -1474,6 +1474,155 @@ class TestReceiptReconcile:
         assert "reconcile_succeeded" in actions
 
 
+class TestPublishRecoveryConformance:
+    """The publish recovery routes answer what the contract declares (#994).
+
+    The four routes were in the contract's prose only until 1.77.0, so nothing compared
+    their bodies with a schema. Each test sends a real request and checks the status is
+    declared and the body fits.
+    """
+
+    _RECEIPT = "/builds/{run_id}/publish/receipt"
+    _RECONCILE = "/builds/{run_id}/publish/reconcile"
+    _AUDIT = "/builds/{run_id}/publish/audit"
+    _QUERY = "target=huggingface&destination=kpubdata%2Fair-quality"
+    _BODY: dict[str, JsonValue] = {"target": "huggingface", "destination": "kpubdata/air-quality"}
+
+    def _unknown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_id: str
+    ) -> BuilderService:
+        return TestReceiptReconcile()._unknown_receipt_service(tmp_path, monkeypatch, run_id)
+
+    def test_an_unknown_receipt(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        service = self._unknown(tmp_path, monkeypatch, "rc-unknown")
+
+        resp = dispatch(
+            service, "GET", "/builds/rc-unknown/publish/receipt", None, query=self._QUERY
+        )
+
+        assert resp.status_code == 200
+        _assert_conforms(resp, self._RECEIPT, "GET")
+
+    def test_a_succeeded_receipt_carries_its_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _with_credentials(monkeypatch, "huggingface")
+        monkeypatch.setitem(
+            publish_api_module.PUBLISHER_REGISTRY, "huggingface", _SpyPublisher("huggingface")
+        )
+        service = _service(tmp_path)
+        _build(service, "rc-done", LICENSED_SPEC_YAML)
+        assert _publish(service, "rc-done").status_code == 200
+
+        receipt = dispatch(
+            service, "GET", "/builds/rc-done/publish/receipt", None, query=self._QUERY
+        )
+        reconciled = dispatch(service, "POST", "/builds/rc-done/publish/reconcile", self._BODY)
+
+        assert receipt.status_code == 200
+        assert receipt.body["state"] == "succeeded"
+        assert "result" in receipt.body
+        _assert_conforms(receipt, self._RECEIPT, "GET")
+        assert reconciled.status_code == 200
+        assert reconciled.body["reconciled"] is False
+        _assert_conforms(reconciled, self._RECONCILE, "POST")
+
+    def test_a_missing_receipt(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _with_credentials(monkeypatch, "huggingface")
+        service = _service(tmp_path)
+        _build(service, "rc-none", LICENSED_SPEC_YAML)
+
+        for method, path, template, body, query in (
+            ("GET", "/builds/rc-none/publish/receipt", self._RECEIPT, None, self._QUERY),
+            ("DELETE", "/builds/rc-none/publish/receipt", self._RECEIPT, None, self._QUERY),
+            ("POST", "/builds/rc-none/publish/reconcile", self._RECONCILE, self._BODY, ""),
+        ):
+            resp = dispatch(service, method, path, body, query=query)
+
+            assert resp.status_code == 404
+            assert resp.body["code"] == "receipt_not_found"
+            _assert_conforms(resp, template, method)
+
+    def test_a_missing_query_parameter(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+
+        for method in ("GET", "DELETE"):
+            resp = dispatch(
+                service, method, "/builds/rc-bad/publish/receipt", None, query="target=huggingface"
+            )
+
+            assert resp.status_code == 400
+            _assert_conforms(resp, self._RECEIPT, method)
+
+    @pytest.mark.parametrize(
+        ("remote", "status", "state"),
+        [(True, 200, "succeeded"), (False, 200, "reset"), (None, 503, None)],
+        ids=["remote-exists", "remote-absent", "remote-unreadable"],
+    )
+    def test_a_reconcile(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        remote: bool | None,
+        status: int,
+        state: str | None,
+    ) -> None:
+        service = self._unknown(tmp_path, monkeypatch, "rc-reconcile")
+        monkeypatch.setattr(
+            service._publish_api, "_probe_remote_publish_target", lambda *_args: remote
+        )
+
+        resp = dispatch(service, "POST", "/builds/rc-reconcile/publish/reconcile", self._BODY)
+
+        assert resp.status_code == status
+        assert resp.body.get("state") == state
+        _assert_conforms(resp, self._RECONCILE, "POST")
+
+    def test_a_reconcile_with_an_unknown_field(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        service = self._unknown(tmp_path, monkeypatch, "rc-field")
+
+        resp = dispatch(
+            service,
+            "POST",
+            "/builds/rc-field/publish/reconcile",
+            {**self._BODY, "options": {}},
+        )
+
+        assert resp.status_code == 400
+        _assert_conforms(resp, self._RECONCILE, "POST")
+
+    def test_a_reset_and_the_history_it_leaves(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        service = self._unknown(tmp_path, monkeypatch, "rc-reset")
+
+        reset = dispatch(
+            service, "DELETE", "/builds/rc-reset/publish/receipt", None, query=self._QUERY
+        )
+        audit = dispatch(service, "GET", "/builds/rc-reset/publish/audit", None)
+
+        assert reset.status_code == 200
+        _assert_conforms(reset, self._RECEIPT, "DELETE")
+        assert audit.status_code == 200
+        assert [entry["action"] for entry in audit.body["entries"]] == ["manual_reset"]
+        _assert_conforms(audit, self._AUDIT, "GET")
+
+    def test_a_body_the_contract_does_not_describe_fails_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Negative: the conformance check is not vacuous for these routes."""
+        service = self._unknown(tmp_path, monkeypatch, "rc-negative")
+        resp = dispatch(
+            service, "GET", "/builds/rc-negative/publish/receipt", None, query=self._QUERY
+        )
+        broken = ServiceResponse(200, {**resp.body, "state": "lost"})
+
+        with pytest.raises(AssertionError, match="drifts from contract"):
+            _assert_conforms(broken, self._RECEIPT, "GET")
+
+
 class TestOpenApiConformance:
     """dispatch() wire  OpenAPI    (ADR-0005 )."""
 
