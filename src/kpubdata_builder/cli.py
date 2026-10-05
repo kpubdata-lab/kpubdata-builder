@@ -197,6 +197,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max concurrent request threads (default: 10, or KPUBDATA_BUILDER_MAX_WORKERS).",
     )
     serve_cmd.add_argument(
+        "--max-builds",
+        type=int,
+        default=None,
+        help=(
+            "Max builds running at once, async jobs and synchronous POST /build together "
+            "(default: KPUBDATA_BUILDER_MAX_BUILDS, else the request thread count)."
+        ),
+    )
+    serve_cmd.add_argument(
+        "--max-previews",
+        type=int,
+        default=None,
+        help=(
+            "Max previews running at once; further ones wait "
+            "(default: KPUBDATA_BUILDER_MAX_PREVIEWS, else no limit)."
+        ),
+    )
+    serve_cmd.add_argument(
         "--warehouse",
         default=None,
         metavar="DIR",
@@ -805,6 +823,8 @@ def _run_serve(
     host: str,
     port: int,
     max_workers: int | None,
+    max_builds: int | None = None,
+    max_previews: int | None = None,
     warehouse: str | None = None,
     replay: bool = False,
     replay_dir: str | None = None,
@@ -817,6 +837,10 @@ def _run_serve(
         port: Binding port.
         max_workers: Max concurrent request threads. If None, use KPUBDATA_BUILDER_MAX_WORKERS env,
             else default (10) (#374).
+        max_builds: Max builds running at once, on either path (#1028). If None, use
+            KPUBDATA_BUILDER_MAX_BUILDS env, else ``max_workers``.
+        max_previews: Max previews running at once (#1028). If None, use
+            KPUBDATA_BUILDER_MAX_PREVIEWS env, else no limit.
         warehouse: Table catalog root (#703). If None, use KPUBDATA_BUILDER_WAREHOUSE env,
             else no catalog — builds then end at Gold and commit no snapshot.
         replay: Serve provider responses from the bundled fixtures (#837).
@@ -837,6 +861,24 @@ def _run_serve(
         max_workers = int(env_workers) if env_workers else _DEFAULT_MAX_WORKERS
     if max_workers < 1:
         raise SystemExit(f"max_workers must be >= 1, got {max_workers}")
+
+    # How many builds run at once is its own setting (#1028). One value used to size
+    # both the request threads and the async build workers, so lowering it to bound
+    # builds starved every other request, and synchronous builds on the request
+    # threads ran on top of the async ones. Priority: --max-builds flag >
+    # KPUBDATA_BUILDER_MAX_BUILDS env > the request thread count (what a deployment that
+    # only set MAX_WORKERS had as its async worker count).
+    if max_builds is None:
+        env_builds = os.environ.get("KPUBDATA_BUILDER_MAX_BUILDS")
+        max_builds = int(env_builds) if env_builds else max_workers
+    if max_builds < 1:
+        raise SystemExit(f"max_builds must be >= 1, got {max_builds}")
+    # Priority: --max-previews flag > KPUBDATA_BUILDER_MAX_PREVIEWS env > no limit.
+    if max_previews is None:
+        env_previews = os.environ.get("KPUBDATA_BUILDER_MAX_PREVIEWS")
+        max_previews = int(env_previews) if env_previews else None
+    if max_previews is not None and max_previews < 1:
+        raise SystemExit(f"max_previews must be >= 1, got {max_previews}")
 
     # Priority: --warehouse flag > KPUBDATA_BUILDER_WAREHOUSE env > none. Without this
     # the HTTP service could not reach the materialise-only end state at all: the
@@ -872,13 +914,16 @@ def _run_serve(
     service = BuilderService(
         output_root=Path(output_dir),
         client_factory=_create_client,
-        async_max_workers=max_workers,
+        async_max_workers=max_builds,
+        max_concurrent_builds=max_builds,
+        max_concurrent_previews=max_previews,
         warehouse_root=Path(warehouse) if warehouse is not None else None,
     )
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
         f"serving kpubdata-builder on http://{host}:{port} "
-        f"(output: {output_dir}, max_workers: {max_workers}, "
+        f"(output: {output_dir}, max_workers: {max_workers}, max_builds: {max_builds}, "
+        f"max_previews: {max_previews if max_previews is not None else 'unlimited'}, "
         f"warehouse: {warehouse or 'none'})",
         flush=True,
     )
@@ -1396,6 +1441,8 @@ def dispatch(args: argparse.Namespace) -> int:
             host=args.host,
             port=args.port,
             max_workers=args.max_workers,
+            max_builds=args.max_builds,
+            max_previews=args.max_previews,
             warehouse=args.warehouse,
             replay=args.replay,
             replay_dir=args.replay_dir,

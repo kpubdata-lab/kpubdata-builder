@@ -148,7 +148,8 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | 실행 단위 | 상한 | 설정 |
 | :--- | :--- | :--- |
 | HTTP worker thread | 기본 10 | `KPUBDATA_BUILDER_MAX_WORKERS` / `serve --max-workers` |
-| 비동기 build worker thread | HTTP 와 같은 값, queued 10 | 같은 설정 |
+| 동시 build (동기 `POST /build` + 비동기 job **합계**) | 기본은 HTTP worker 수, queued 10 | `KPUBDATA_BUILDER_MAX_BUILDS` / `serve --max-builds` (#1028) |
+| 동시 preview | 기본 무제한(요청 스레드가 상한) | `KPUBDATA_BUILDER_MAX_PREVIEWS` / `serve --max-previews` (#1028) |
 | build 하나 안의 source fetch thread | **build 당** 최대 4 (`_MAX_PARALLEL_SOURCES`) | 코드 상수 |
 | query child process | 기본 2 | `KPUBDATA_QUERY_MAX_CONCURRENCY` |
 | query child 하나의 메모리 | **기본 무제한**. 설정하면 child 의 address space 를 제한해 초과한 질의만 실패(`400 query_failed`)하고 서버와 다른 요청은 계속된다 | `KPUBDATA_QUERY_MAX_MEMORY_MB` |
@@ -172,7 +173,7 @@ DuckDB 의 세 설정은 **연결 하나당** 상한이다(ADR 0021 D9, #701). �
 config 로 넘기면 값은 보이지만 지켜지지 않았다(4 MB quota 에서 400 MB 넘게 썼다).
 
 ```text
-DuckDB 연결 수   = async_build_workers × 4 (+ preview 1, composition 1)
+DuckDB 연결 수   = KPUBDATA_BUILDER_MAX_BUILDS × 4 + KPUBDATA_BUILDER_MAX_PREVIEWS + composition 1
 DuckDB thread    = DuckDB 연결 수 × KPUBDATA_DUCKDB_THREADS
 DuckDB 메모리    = DuckDB 연결 수 × KPUBDATA_DUCKDB_MEMORY_LIMIT        (RSS 에 더한다)
 임시 디스크      = DuckDB 연결 수 × KPUBDATA_DUCKDB_MAX_TEMP_SIZE       (run 디렉터리의 _duckdb_tmp)
@@ -180,12 +181,19 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 프로세스 수      = 1 + KPUBDATA_QUERY_MAX_CONCURRENCY
 ```
 
-**1 vCPU / 2 GiB 예시** (`infra/main.bicep` 기본 크기). HTTP worker 와 async build worker 는 같은 설정
-(`KPUBDATA_BUILDER_MAX_WORKERS`)을 받으므로, 그 값을 2 로 낮춰 동시 build 를 둘로 묶고 나머지를 맞춘다.
+**동시 build 수는 요청 스레드 수와 따로 정한다** (#1028). 예전에는 `KPUBDATA_BUILDER_MAX_WORKERS`
+하나가 HTTP worker 와 비동기 build worker 를 함께 정했다. 그 값을 2 로 두면 동기 `POST /build` 가 요청
+스레드에서 2개, 비동기 job 이 2개 — build 4개가 돌 수 있었고, 나머지 요청 전부가 스레드 2개를 나눠 썼다.
+지금은 `KPUBDATA_BUILDER_MAX_BUILDS` 가 두 경로를 합친 상한이다: 한도에 닿으면 동기 build 는 자리가 날
+때까지 기다리고 비동기 job 은 큐에서 기다린다. `KPUBDATA_BUILDER_MAX_PREVIEWS` 를 주면 preview 도 그 수까지만
+함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 `MAX_WORKERS` 값을 따른다 — 그 값만 설정해 둔
+배포의 비동기 worker 수는 그대로이고, 이제 그 수가 두 경로 합계의 상한이다.
+
+**1 vCPU / 2 GiB 예시** (`infra/main.bicep` 기본 크기). 동시 build 를 둘로 묶고 나머지를 맞춘다.
 
 | 항목 | 설정 | 합 |
 | :--- | :--- | :--- |
-| HTTP worker / async build worker | `KPUBDATA_BUILDER_MAX_WORKERS=2` | 각 2 |
+| 동시 build | `KPUBDATA_BUILDER_MAX_BUILDS=2` | 2 (동기·비동기 합계) |
 | DuckDB 연결 (build 2 × source 4 = 8) | `KPUBDATA_DUCKDB_THREADS=1`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=96MB`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE=1GB` | thread 8, 메모리 768 MB, 임시 디스크 8 GB |
 | query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 프로세스 2, query 메모리 768 MB |
 | Polars thread | `POLARS_MAX_THREADS=1` | — |
@@ -202,7 +210,7 @@ build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 �
 
 | 항목 | 기본값 | 합 |
 | :--- | :--- | :--- |
-| DuckDB 연결 (build 2 × source 4 + preview 1 + composition 1 = 10) | `KPUBDATA_BUILDER_MAX_WORKERS=2`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=128MB` | 1280 MB |
+| DuckDB 연결 (build 2 × source 4 + preview 1 + composition 1 = 10) | `KPUBDATA_BUILDER_MAX_BUILDS=2`, `KPUBDATA_BUILDER_MAX_PREVIEWS=1`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=128MB` | 1280 MB |
 | query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 768 MB |
 | 기본 프로세스·HTTP·여유 | 검사가 쓰는 고정값 | 400 MB |
 | **합** | | **2448 MB ≤ 3072 MB** |
@@ -211,7 +219,7 @@ build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 �
 `the table needs more memory or temporary disk than this deployment allows` 로 실패한다(parity
 시나리오로 실측, `96MB` 부터 통과). 그래서 운영 기본값은 `128MB` 이고, 위 "1 vCPU / 2 GiB 예시"의
 `96MB` 는 여유가 거의 없는 하한이다. 2 GiB 호스트에 맞추려면 `KPUBDATA_DUCKDB_MEMORY_LIMIT` 을 더
-내리지 말고 `KPUBDATA_BUILDER_MAX_WORKERS` 나 query 예산을 줄인다. warehouse 는
+내리지 말고 `KPUBDATA_BUILDER_MAX_BUILDS` 나 query 예산을 줄인다. warehouse 는
 `KPUBDATA_BUILDER_WAREHOUSE=/data/warehouse` 로 켜져 있다 — 없으면 `/warehouse/*` 가
 `warehouse_not_configured` 로 답한다.
 

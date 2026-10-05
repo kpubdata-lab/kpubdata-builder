@@ -21,8 +21,8 @@ _ENV_EXAMPLE = _ROOT / ".env.app.example"
 
 #: Sources a build fetches at once (``_MAX_PARALLEL_SOURCES``), each with a connection.
 _SOURCES_PER_BUILD = 4
-#: Connections outside builds: one preview, one composition.
-_EXTRA_CONNECTIONS = 2
+#: One composition, outside the builds' and previews' own connections.
+_COMPOSITION_CONNECTIONS = 1
 #: The server process, HTTP threads and headroom (docs/deploy.md §9).
 _BASE_MB = 400
 
@@ -52,8 +52,12 @@ def _compose_bytes(value: str) -> int:
 
 def required_bytes(environment: dict[str, Any]) -> int:
     """The memory the service's own settings can ask for at once."""
-    workers = int(_default(environment["KPUBDATA_BUILDER_MAX_WORKERS"]))
-    connections = workers * _SOURCES_PER_BUILD + _EXTRA_CONNECTIONS
+    # The two limits the service enforces (#1028): builds on both paths together, and
+    # previews. The request thread count is not in the formula — it used to stand in
+    # for the build count, which it never bounded.
+    builds = int(_default(environment["KPUBDATA_BUILDER_MAX_BUILDS"]))
+    previews = int(_default(environment["KPUBDATA_BUILDER_MAX_PREVIEWS"]))
+    connections = builds * _SOURCES_PER_BUILD + previews + _COMPOSITION_CONNECTIONS
     duckdb = connections * _duckdb_bytes(_default(environment["KPUBDATA_DUCKDB_MEMORY_LIMIT"]))
     query = int(_default(environment["KPUBDATA_QUERY_MEMORY_BUDGET_MB"])) * 2**20
     return duckdb + query + _BASE_MB * 2**20
@@ -96,7 +100,8 @@ def test_the_old_512m_limit_fails_the_check(builder: dict[str, Any]) -> None:
 def test_the_default_duckdb_limit_alone_overruns_a_small_container() -> None:
     """With no DuckDB limit set a connection may take 1GB: ten of them need over 10 GB."""
     environment = {
-        "KPUBDATA_BUILDER_MAX_WORKERS": "2",
+        "KPUBDATA_BUILDER_MAX_BUILDS": "2",
+        "KPUBDATA_BUILDER_MAX_PREVIEWS": "1",
         "KPUBDATA_DUCKDB_MEMORY_LIMIT": "1GB",
         "KPUBDATA_QUERY_MEMORY_BUDGET_MB": "768",
     }
@@ -104,12 +109,38 @@ def test_the_default_duckdb_limit_alone_overruns_a_small_container() -> None:
     assert required_bytes(environment) > _compose_bytes("3G")
 
 
+def test_four_builds_do_not_fit_the_budget_made_for_two(builder: dict[str, Any]) -> None:
+    """What #1028 found: with one setting for both pools, two synchronous and two async
+    builds ran together. The formula must say that does not fit, or it guards nothing."""
+    environment = {**builder["environment"], "KPUBDATA_BUILDER_MAX_BUILDS": "4"}
+    limit = _compose_bytes(_default(builder["deploy"]["resources"]["limits"]["memory"]))
+
+    assert required_bytes(environment) > limit
+
+
+def test_the_request_pool_is_not_what_limits_builds(builder: dict[str, Any]) -> None:
+    """The request threads keep their default; the build count is its own, smaller
+    setting. tests/unit/test_build_slots.py checks the service enforces that count on
+    both paths, from the same variables."""
+    environment = builder["environment"]
+
+    assert int(_default(environment["KPUBDATA_BUILDER_MAX_WORKERS"])) == 10
+    assert int(_default(environment["KPUBDATA_BUILDER_MAX_BUILDS"])) < 10
+
+
 def test_the_env_example_names_every_budget_variable(builder: dict[str, Any]) -> None:
     text = _ENV_EXAMPLE.read_text(encoding="utf-8")
     overridable = [
         name
         for name, value in builder["environment"].items()
-        if name.startswith(("KPUBDATA_DUCKDB_", "KPUBDATA_QUERY_")) and _DEFAULT.match(str(value))
+        if name.startswith(
+            (
+                "KPUBDATA_DUCKDB_",
+                "KPUBDATA_QUERY_",
+                "KPUBDATA_BUILDER_MAX_",
+            )
+        )
+        and _DEFAULT.match(str(value))
     ]
 
     assert overridable
