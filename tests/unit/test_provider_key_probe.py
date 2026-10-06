@@ -184,7 +184,10 @@ def test_a_probe_that_raises_answers_502_without_its_text(
     with caplog.at_level(logging.DEBUG):
         response = _post(_service(tmp_path, probe))
 
-    assert (response.status_code, response.body) == (502, {"error": "probe unavailable"})
+    assert (response.status_code, response.body) == (
+        502,
+        {"error": "probe unavailable", "code": "probe_unavailable"},
+    )
     assert probe.closed == 1
 
 

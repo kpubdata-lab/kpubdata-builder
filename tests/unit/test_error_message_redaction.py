@@ -76,7 +76,7 @@ class TestCatalogFailure:
             response = _service(tmp_path).catalog()
 
         assert response.status_code == 502
-        assert response.body == {"error": "catalog unavailable"}
+        assert response.body == {"error": "catalog unavailable", "code": "catalog_unavailable"}
         assert "serviceKey" not in str(response.body)
         # The operator still sees which request failed — but not the key (#686). This
         # line used to require the key in the log, pinning the leak it should catch.

@@ -266,7 +266,9 @@ class SpecApiService:
             # Upstream exception strings may carry request URLs, and URLs carry
             # API keys as query parameters (same reason as providers_service).
             logger.exception("provider catalog unavailable")
-            return ServiceResponse(502, {"error": "catalog unavailable"})
+            return ServiceResponse(
+                502, {"error": "catalog unavailable", "code": "catalog_unavailable"}
+            )
         finally:
             self._close_client(client)
 
@@ -360,7 +362,9 @@ class SpecApiService:
         except (ProviderCredentialConflictError, ValueError) as exc:
             return ServiceResponse(400, {"error": str(exc)})
         except Exception:
-            return ServiceResponse(502, {"error": "provider client unavailable"})
+            return ServiceResponse(
+                502, {"error": "provider client unavailable", "code": "provider_client_unavailable"}
+            )
         try:
             result = preview_build(
                 spec_or_error,

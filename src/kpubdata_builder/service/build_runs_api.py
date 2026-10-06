@@ -203,7 +203,9 @@ class BuildRunsApiService:
         except (ProviderCredentialConflictError, ValueError) as exc:
             return ServiceResponse(400, {"error": str(exc)})
         except Exception:
-            return ServiceResponse(502, {"error": "provider client unavailable"})
+            return ServiceResponse(
+                502, {"error": "provider client unavailable", "code": "provider_client_unavailable"}
+            )
         # Every build passes here — the synchronous route on a request thread, an async
         # job on a worker — so this is the one place that bounds how many run at once
         # (#1028). The memory budget multiplies by that number; without the shared slot

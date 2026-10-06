@@ -90,7 +90,9 @@ class ProvidersService:
             # data.go.kr variants ship API keys as query parameters — returning
             # them as-is in responses leaks others' keys in error messages.
             _logger_exception("provider catalog unavailable")
-            return ServiceResponse(502, {"error": "catalog unavailable"})
+            return ServiceResponse(
+                502, {"error": "catalog unavailable", "code": "catalog_unavailable"}
+            )
         finally:
             self._close_client(client)
 
@@ -224,7 +226,7 @@ class ProvidersService:
         except Exception:
             # An exception's text may hold the request URL, and with it the key.
             _logger_exception("provider probe failed")
-            return ServiceResponse(502, {"error": "probe unavailable"})
+            return ServiceResponse(502, {"error": "probe unavailable", "code": "probe_unavailable"})
         return ServiceResponse(200, result)
 
     def _remember(self, owner_id: str, result: ProviderTestResult) -> None:
