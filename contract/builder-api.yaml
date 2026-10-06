@@ -394,8 +394,10 @@ paths:
         배포 모드와 무관하게 쓰지 않는다. 키도 결과도 저장하지 않으며, 응답에는 키에서
         유도한 값이 없다. 데이터셋마다 한 번 호출한다(15초, 재시도·캐시 없음). 45초가
         지나면 새 호출을 시작하지 않고, 닿지 못한 데이터셋은 `not_probed` 에 적는다.
-        replay 모드의 Builder(데모·개발용)는 provider 를 호출하지 않고 기록된 응답을
-        재생하므로, 어떤 키에도 `available` 로 답한다 — 키에 대해 아무것도 말하지 않는다.
+        replay 모드의 Builder(데모·개발용)에서 이 결과는 키에 대해 아무것도 말하지 않는다:
+        기록이 맞는 데이터셋은 키와 무관하게 재생된 응답으로 답하고(`available`), 기록이
+        있지만 요청이 맞지 않으면 `params_invalid`, 기록이 없는 데이터셋은 실제 provider 를
+        호출한다.
       parameters:
         - $ref: "#/components/parameters/ProviderKey"
         - $ref: "#/components/parameters/ProviderName"
