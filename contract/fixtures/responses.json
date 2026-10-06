@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.86.0",
+  "contract_version": "1.87.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -404,6 +404,88 @@
         "checked_at": "2026-08-15T09:30:00+00:00",
         "error_category": "auth",
         "response_code": 401
+      },
+      "broken_path": "$.provider"
+    },
+    {
+      "operation_id": "probeProviderKey",
+      "method": "POST",
+      "path": "/providers/{provider}/probe",
+      "status": 200,
+      "example": "Probed",
+      "current": {
+        "provider": "datago",
+        "probed_at": "2026-10-06T09:30:00+00:00",
+        "complete": true,
+        "datasets": [
+          {
+            "dataset": "apt_trade",
+            "service_id": "RTMSDataSvcAptTradeDev",
+            "status": "available",
+            "detail": "",
+            "http_status": 200
+          },
+          {
+            "dataset": "apt_rent",
+            "service_id": "RTMSDataSvcAptRent",
+            "status": "application_required",
+            "detail": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+            "http_status": 200
+          }
+        ],
+        "not_probed": []
+      },
+      "with_additive_fields": {
+        "provider": "datago",
+        "probed_at": "2026-10-06T09:30:00+00:00",
+        "complete": true,
+        "datasets": [
+          {
+            "dataset": "apt_trade",
+            "service_id": "RTMSDataSvcAptTradeDev",
+            "status": "available",
+            "detail": "",
+            "http_status": 200,
+            "future_optional_field": "added by a later minor contract version"
+          },
+          {
+            "dataset": "apt_rent",
+            "service_id": "RTMSDataSvcAptRent",
+            "status": "application_required",
+            "detail": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+            "http_status": 200,
+            "future_optional_field": "added by a later minor contract version"
+          }
+        ],
+        "not_probed": [],
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.datasets[0]",
+        "$.datasets[1]",
+        "$"
+      ],
+      "required_type_broken": {
+        "provider": 12345,
+        "probed_at": "2026-10-06T09:30:00+00:00",
+        "complete": true,
+        "datasets": [
+          {
+            "dataset": "apt_trade",
+            "service_id": "RTMSDataSvcAptTradeDev",
+            "status": "available",
+            "detail": "",
+            "http_status": 200
+          },
+          {
+            "dataset": "apt_rent",
+            "service_id": "RTMSDataSvcAptRent",
+            "status": "application_required",
+            "detail": "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+            "http_status": 200
+          }
+        ],
+        "not_probed": []
       },
       "broken_path": "$.provider"
     },

@@ -18,6 +18,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from typing import cast
 
+from kpubdata_builder.service import provider_probe, request_credentials
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.ownership import multi_user_mode
 from kpubdata_builder.service.provider_tests import ProviderTestLog
@@ -58,6 +59,8 @@ class ProvidersService:
         provider_test_operation: ProviderTestOperation,
         provider_test_timeout: float,
         test_log: Callable[[], ProviderTestLog | None] = lambda: None,
+        open_probe: provider_probe.OpenProbe = provider_probe.open_kpubdata_probe,
+        probe_datasets: provider_probe.ListDatasets = provider_probe.spec_dataset_ids,
     ) -> None:
         """Args:
         test_log: Where each principal's last test per provider is kept (#842); None
@@ -69,6 +72,8 @@ class ProvidersService:
         self._provider_test_operation = provider_test_operation
         self._provider_test_timeout = provider_test_timeout
         self._test_log = test_log
+        self._open_probe = open_probe
+        self._probe_datasets = probe_datasets
 
     # --- Internal queries -------------------------------------------------
 
@@ -156,6 +161,56 @@ class ProvidersService:
         finally:
             if client is not None:
                 self._close_client(client)
+
+    def probe_provider(
+        self,
+        provider: str,
+        body: Mapping[str, JsonValue] | None,
+        *,
+        principal: Principal,
+    ) -> ServiceResponse:
+        """Say what the key this request carries can reach, per dataset (#802).
+
+        Uses the ``X-Provider-Key`` header's key and no other; stores nothing.
+        """
+        del principal  # any authenticated caller; nothing is read or written for them
+        descriptor = self.known_provider(provider)
+        if isinstance(descriptor, ServiceResponse):
+            return descriptor
+        parsed = provider_probe.parse_probe_body(body)
+        if isinstance(parsed, str):
+            return ServiceResponse(400, {"error": parsed, "code": "invalid_request"})
+        key = request_credentials.current_key(provider)
+        if key is None:
+            return ServiceResponse(
+                400,
+                {
+                    "error": "send the key to probe in the X-Provider-Key header "
+                    f"('{provider}=<key>'); a stored key is not used",
+                    "code": "provider_key_required",
+                },
+            )
+        available = list(self._probe_datasets(provider))
+        if parsed.datasets is None:
+            dataset_ids = available
+        else:
+            dataset_ids = [f"{provider}.{name}" for name in parsed.datasets]
+            unknown = sorted(set(dataset_ids) - set(available))
+            if unknown:
+                names = ", ".join(item.removeprefix(f"{provider}.") for item in unknown)
+                return ServiceResponse(
+                    400,
+                    {"error": f"cannot probe: {names}", "code": "invalid_request"},
+                )
+        try:
+            result = provider_probe.run_probe(
+                provider, key, dataset_ids, open_probe=self._open_probe
+            )
+        except Exception:
+            # An exception's text may hold the request URL, and with it the key.
+            _logger_exception("provider probe failed")
+            return ServiceResponse(502, {"error": "probe unavailable"})
+        return ServiceResponse(200, result)
 
     def _remember(self, owner_id: str, result: ProviderTestResult) -> None:
         """Keep the result as the last test; a store failure never fails the test."""
