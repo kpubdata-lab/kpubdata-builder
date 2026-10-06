@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.99.0"
+  version: "1.100.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.100.0 lets a build retry only a run that has ended (#1103): `retry_of` naming the caller's own run that is `queued`, `running` or `cancelling` is refused with `retry_of_in_progress` — 409 on `POST /builds`, 400 on `POST /build` — and the body carries `retry_of` and that run's `status`; nothing is made of the refused build. A run with a manifest, a job that is `succeeded`, `failed` or `cancelled`, and a run a restart interrupted can be retried, as before. Someone who may not read the named run still gets the answer reading it gives, whatever its state. A retry no longer continues from a checkpoint older than `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS` (a day unless set; a checkpoint is as old as its first record, and taking one over does not make it new): it fetches that source from the start. The manifest says so in `checkpoints_not_reused` — per source `checkpoint_from`, `reason` (`expired` or `spec_changed`) and `collected_at` — and `reproducibility.resumed_sources.*` gains `collected_at` for a checkpoint that was continued from (additive).
+
     v1.99.0 lets a retry continue from the checkpoint of the run it retries (#1071, additive): a build with `retry_of` whose spec is the one the retried run was built from takes over that run's `param_grid` checkpoint and fetches only the combinations it lacked — it fetched everything again before. The manifest's `reproducibility.resumed_sources` entry names the run in `checkpoint_from`, and the source's `source_fetch_started` event says so in its `message`. A changed spec, or a retried run with no checkpoint, starts from nothing as before. The retried run's files are not changed.
 
     v1.98.0 says which provider's key each provider calls with (#1085, additive): `ProviderSummary` gains `key_provider` — the provider's own name, or the provider it shares a key with (`localdata`, `lofin` and `semas` report `datago`). A client that sends only the keys a request needs had to keep its own copy of that table.
@@ -1023,6 +1025,9 @@ paths:
             `X-Provider-Key` 에 그 키가 없으면 `provider_credential_required` 이고
             `providers` 가 그 provider 들을 적는다(#1070) — `POST /builds` 와 같은 답이며
             아무것도 가져오지 않는다.
+            `retry_of` 가 가리키는 요청자 자신의 run 이 아직 끝나지 않았으면(`queued`,
+            `running`, `cancelling`) `retry_of_in_progress` 이고 body 에 `retry_of` 와 그
+            run 의 `status` 가 온다(#1103). 이 route 의 409 는 build 응답이라 400 이다.
           content:
             application/json:
               schema:
@@ -1657,6 +1662,9 @@ paths:
             run_id가 이미 완료된 run(`run_id_completed`, #1065), 또는 매니페스트 없이 끝난
             run(재시작으로 중단된 run, `run_id_ended`, #1042). `run_id` 는 한 번의 시도다 —
             재시도는 새 `run_id` 로 보낸다.
+            `retry_of` 가 가리키는 요청자 자신의 run 이 아직 끝나지 않았으면(`queued`,
+            `running`, `cancelling`) `retry_of_in_progress` 이고 body 에 `retry_of` 와 그
+            run 의 `status` 가 온다(#1103) — 끝나기를 기다리거나 먼저 취소한다.
           content:
             application/json:
               schema:
@@ -4984,6 +4992,9 @@ components:
             JWKS could not be fetched, so the credentials were not judged.
             `server_overloaded`(#1000, 503) — too many requests in flight; the response
             carries `Retry-After`.
+            `retry_of_in_progress`(#1103, 409 on `POST /builds`, 400 on `POST /build`) —
+            the run named in `retry_of` has not ended; the body carries `retry_of` and
+            that run's `status`.
         redistribution:
           description: >-
             `code: redistribution_forbidden`일 때만 온다(#688): 판정과 source별 이유.
@@ -6820,7 +6831,10 @@ components:
             The earlier run this build retries (#1042). A `run_id` is one attempt and is
             not reused once it ended, so a retry is a new run that points back. The named
             run must be one the caller may read — otherwise the answer is the one reading
-            it would give (404 or 403) — and cannot be the run itself. Recorded on the
+            it would give (404 or 403) — and cannot be the run itself. It must have ended
+            (#1103): a run with a manifest, a job that is `succeeded`, `failed` or
+            `cancelled`, or a run a restart interrupted. One that is `queued`, `running`
+            or `cancelling` is refused with `retry_of_in_progress`. Recorded on the
             job (`BuildJob.retry_of`) and in the manifest (`retry_of`).
 
     VersionResponse:
@@ -7834,6 +7848,30 @@ components:
                       Present when the checkpoint was the one of the run this run
                       retries (`retry_of`, #1071): that run's id. Absent when the run
                       resumed its own checkpoint.
+                  collected_at:
+                    type: string
+                    format: date-time
+                    description: >-
+                      Present with `checkpoint_from` (#1103): when the oldest record of
+                      the checkpoint taken over was fetched. Taking a checkpoint over
+                      does not change it, so a retry of a retry still gives the first
+                      fetch.
+        checkpoints_not_reused:
+          type: object
+          description: >-
+            Present only on a retry that left a checkpoint of the run it retries where
+            it was (#1103): source key -> why. This run fetched those sources from the
+            start. `expired` — the checkpoint's oldest record is older than
+            `max_age_seconds` (`KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`).
+            `spec_changed` — the retried run was built from a different spec.
+          additionalProperties:
+            type: object
+            required: [checkpoint_from, reason, collected_at]
+            properties:
+              checkpoint_from: {type: string}
+              reason: {type: string, enum: [expired, spec_changed]}
+              collected_at: {type: string, format: date-time}
+              max_age_seconds: {type: number, minimum: 0}
         pii_masking:
           type: object
           description: >-

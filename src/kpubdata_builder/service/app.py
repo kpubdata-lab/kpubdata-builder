@@ -450,7 +450,11 @@ _BuildListEntry = dict[str, str | None]
 # 1.98.0 -> 1.99.0: a retry takes over the checkpoint of the run it retries; the
 #   manifest names that run in reproducibility.resumed_sources.*.checkpoint_from
 #   (#1071, additive).
-API_CONTRACT_VERSION = "1.99.0"
+# 1.99.0 -> 1.100.0: retry_of naming a run that has not ended is refused with
+#   retry_of_in_progress (409 on POST /builds, 400 on POST /build); a retry leaves a
+#   checkpoint older than KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS and the manifest
+#   says so in checkpoints_not_reused (#1103).
+API_CONTRACT_VERSION = "1.100.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
