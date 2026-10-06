@@ -445,7 +445,9 @@ _BuildListEntry = dict[str, str | None]
 #   answers 404 and is not built from (#1067, additive).
 # 1.96.0 -> 1.97.0: POST /build answers 400 provider_credential_required too, as
 #   POST /builds does (#1070, additive).
-API_CONTRACT_VERSION = "1.97.0"
+# 1.97.0 -> 1.98.0: ProviderSummary.key_provider — whose key a provider calls with
+#   (#1085, additive).
+API_CONTRACT_VERSION = "1.98.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

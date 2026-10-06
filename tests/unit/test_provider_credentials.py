@@ -164,6 +164,7 @@ def test_providers_service_keeps_available_provider_when_krx_pandas_is_missing(
             "provider": "datago",
             "requires_credential": True,
             "configured": False,
+            "key_provider": "datago",
             "last_test": None,
         }
     ]
