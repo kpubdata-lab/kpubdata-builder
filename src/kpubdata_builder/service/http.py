@@ -543,7 +543,8 @@ def serve(
     Args:
         service: BuilderService to expose.
         host: Bind host.
-        port: Bind port.
+        port: Bind port. ``0`` lets the operating system choose one; the address is then
+            printed as ``listening on http://<host>:<port>``.
         max_workers: Maximum concurrent request-handling threads.
     """
     # Validate OIDC config on startup (fail-closed, #385). No-op if OIDC disabled.
@@ -570,6 +571,10 @@ def serve(
     server = BoundedThreadingHTTPServer(
         (host, port), make_handler(service), max_workers=max_workers
     )
+    if port == 0:
+        # The operating system chose the port; say which, so whoever started the
+        # process can reach it without a race for a port picked beforehand.
+        print(f"listening on http://{host}:{server.server_port}", flush=True)
 
     def _shutdown(_signum: int, _frame: object) -> None:
         # Must shutdown from separate thread so serve_forever block unblocks (http.server

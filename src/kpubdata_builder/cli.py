@@ -183,7 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--port",
         type=int,
         default=8000,
-        help="Bind port (default: 8000).",
+        help="Bind port (default: 8000). 0 lets the operating system choose; the port is "
+        "then printed as 'listening on http://<host>:<port>'.",
     )
     serve_cmd.add_argument(
         "--output-dir",
