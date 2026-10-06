@@ -83,12 +83,22 @@ def warehouse_workspace(owner_id: str | None) -> str:
 
 
 def _has_grandfathered_full_access(principal: Principal) -> bool:
-    """Dev/service principal have unconditional full run access (#679 onwards).
+    """Whether the principal reads every owner's runs where ownership is enforced.
+
+    Only ``dev``: local development with authentication off. ``serve`` refuses that
+    together with enforced ownership (#1081), so it exists there only for code that
+    builds the service directly — tests.
+
+    ``service`` — the deployment's ``X-API-Key`` — had the same access (#679 onwards).
+    ADR 0012's decision of 2026-10-01 is that it is like an administrator: it sees run
+    metadata through the administration routes, and another user's run data is not
+    there for it (#1072). It still owns the runs it made itself, like any principal.
+    Where ownership is not enforced — a single-user deployment — nothing here is asked.
 
     We do not use ``Principal.is_admin``. Including OIDC admins here would implicitly
     confirm "admins see other users' data" without a decision (#679).
     """
-    return principal.kind in ("dev", "service")
+    return principal.kind == "dev"
 
 
 def ownership_allows(
