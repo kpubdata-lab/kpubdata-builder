@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.90.0"
+  version: "1.91.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.91.0 makes a run id one attempt on the synchronous build as well (#1065): `POST /build` answers 400 for the caller's own `run_id` when a run completed under it (`run_id_completed`; it was built over before), when an async job is running under it (`run_id_in_progress`; it was built over too) and when an async job ended under it (`run_id_ended`). `POST /builds` gives its existing 409 for a completed run the code `run_id_completed`. A new `run_id` builds as before.
+
     v1.90.0 declares `X-Provider-Key` on `GET /providers` (additive). In a multi-user deployment the list's `configured` already came from the keys the request carries — nothing else holds one there — so a caller that sent none got `false` for every provider that needs a key. Send the keys you hold to read whether each provider is covered, including a provider that shares another's key (`localdata`, `lofin` and `semas` use `datago`'s). Nothing about the response changes, and nothing calls a provider.
 
     v1.89.0 gives three 502s a stable `code` (additive): `catalog_unavailable` where the runtime provider catalog cannot be read (`GET /catalog`, every `/providers` route), `provider_client_unavailable` where a provider client cannot be made with the requester's credential (`POST /preview`, `POST /build`), and `probe_unavailable` where a key probe could not run (`POST /providers/{provider}/probe`). The status and the `error` sentence are unchanged.
@@ -970,6 +972,9 @@ paths:
             잘못된 요청(spec 누락/검증 실패, run_id 타입/경로 안전성 오류 등). 매니페스트 없이
             끝난 run(재시작으로 중단된 run)의 `run_id` 를 다시 쓴 경우도 여기다(#1042) —
             `run_id` 는 한 번의 시도이고, 재시도는 새 `run_id` 로 보낸다.
+            같은 규칙이 완료된 run 의 `run_id`(`run_id_completed`)와 아직 실행 중이거나
+            registry 에 남은 비동기 job 의 `run_id`(`run_id_in_progress`, 끝났으면
+            `run_id_ended`)에도 적용된다(#1065). 요청자 자신의 run 이어도 마찬가지다.
           content:
             application/json:
               schema:
@@ -1597,8 +1602,9 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           description: >-
-            run_id가 이미 완료된 run, 또는 매니페스트 없이 끝난 run(재시작으로 중단된
-            run, #1042). `run_id` 는 한 번의 시도다 — 재시도는 새 `run_id` 로 보낸다.
+            run_id가 이미 완료된 run(`run_id_completed`, #1065), 또는 매니페스트 없이 끝난
+            run(재시작으로 중단된 run, `run_id_ended`, #1042). `run_id` 는 한 번의 시도다 —
+            재시도는 새 `run_id` 로 보낸다.
           content:
             application/json:
               schema:

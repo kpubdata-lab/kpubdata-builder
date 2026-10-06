@@ -121,8 +121,17 @@ def check_active_run_access(
     return ServiceResponse(404, {"error": f"run not found: {run_id}"})
 
 
+def _run_id_taken(status: int, run_id: str, code: str, error: str) -> ServiceResponse:
+    return ServiceResponse(status, {"error": error, "code": code, "run_id": run_id})
+
+
 def check_existing_run_access(
-    service: BuilderService, run_id: str, principal: Principal, *, used_status: int = 409
+    service: BuilderService,
+    run_id: str,
+    principal: Principal,
+    *,
+    used_status: int = 409,
+    synchronous: bool = False,
 ) -> ServiceResponse | None:
     """If the caller-specified run_id **already exists**, verify ownership (#635).
 
@@ -144,6 +153,16 @@ def check_existing_run_access(
         if ownership_module.ownership_allows(
             created_by=created_by, owner_id=owner_id, principal=principal
         ):
+            if synchronous:
+                # A run id is one attempt on this route too (#1065): building under a
+                # completed run's id would write over its output. ``POST /builds`` answers
+                # the same from its submit step, where the build index is read.
+                return _run_id_taken(
+                    used_status,
+                    run_id,
+                    "run_id_completed",
+                    "run_id already completed; build under a new run_id",
+                )
             return None
         # Stays 403 in every deployment (#796 hides reads, not this): a build that
         # names a taken run id is refused whatever the answer, and a 404 to a write
@@ -154,7 +173,24 @@ def check_existing_run_access(
         if ownership_module.ownership_allows(
             created_by=snapshot.created_by, owner_id=snapshot.owner_id, principal=principal
         ):
-            return None
+            if not synchronous:
+                # ``POST /builds`` hands the caller their own job back (#991).
+                return None
+            # The synchronous route has no job to hand back, and would build over the
+            # one that is running or has ended under this id (#1065).
+            if snapshot.status in ("succeeded", "failed", "cancelled"):
+                return _run_id_taken(
+                    used_status,
+                    run_id,
+                    "run_id_ended",
+                    "run_id already ended; submit the retry under a new run_id",
+                )
+            return _run_id_taken(
+                used_status,
+                run_id,
+                "run_id_in_progress",
+                "a build is running under this run_id; build under a new run_id",
+            )
         return ServiceResponse(403, {"error": "forbidden: not run owner"})
     # A run a restart interrupted has neither a manifest nor a registry entry, but its
     # id is not free: the event store says who submitted it, and that person can still

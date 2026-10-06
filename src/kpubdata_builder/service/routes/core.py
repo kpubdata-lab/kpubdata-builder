@@ -93,7 +93,9 @@ def route(
         # in response. Async POST /builds applies the same rule (#991).
         if run_id is not None:
             # 400 for an id that already ended: this route's 409 is a build response.
-            denied = check_existing_run_access(service, run_id, principal, used_status=400)
+            denied = check_existing_run_access(
+                service, run_id, principal, used_status=400, synchronous=True
+            )
             if denied is not None:
                 return denied
         retry_of = optional_retry_of(body)

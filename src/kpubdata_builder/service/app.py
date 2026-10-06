@@ -428,7 +428,10 @@ _BuildListEntry = dict[str, str | None]
 #   provider_client_unavailable, probe_unavailable (additive).
 # 1.89.0 -> 1.90.0: GET /providers declares the X-Provider-Key header it already reads —
 #   in a multi-user deployment `configured` comes only from the request's keys (additive).
-API_CONTRACT_VERSION = "1.90.0"
+# 1.90.0 -> 1.91.0: POST /build refuses the caller's own completed, running or ended
+#   run_id (400 run_id_completed / run_id_in_progress / run_id_ended); the POST /builds
+#   409 for a completed run carries run_id_completed (#1065).
+API_CONTRACT_VERSION = "1.91.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
