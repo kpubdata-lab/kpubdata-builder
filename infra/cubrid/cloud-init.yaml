@@ -1,10 +1,11 @@
 #cloud-config
-# KPubData Builder — OCI Compute VM cloud-init (Oracle Linux / Ubuntu).
+# KPubData Builder — VM cloud-init (Ubuntu 계열 기준; 특정 클라우드를 전제하지 않는다).
 # Docker + compose 설치, 블록 볼륨 마운트, compose 기동까지 부트스트랩한다.
 # 이미지 pull(GHCR private 시)·시크릿(.env)은 별도 주입 후 `docker compose up -d` 한다.
 #
-# 전제: 별도 Block Volume 을 인스턴스에 attach 하고 /dev/oracleoci/oraclevdb 로 노출(iSCSI/PV).
-# 실제 디바이스 경로는 OCI 콘솔의 attach 방식에 따라 다르니 확인 후 아래 device 를 맞출 것.
+# 전제: 데이터 디스크를 VM 에 붙여 둔다. 장치 경로는 클라우드와 붙이는 방식마다 다르므로
+# 아래 두 줄의 DEV 를 실제 경로로 바꾼다. 바꾸지 않으면(`/dev/CHANGE-ME` 는 블록 장치가
+# 아니므로) 포맷도 마운트도 하지 않는다 — 엉뚱한 디스크를 포맷하지 않기 위한 기본값이다.
 
 package_update: true
 
@@ -25,8 +26,8 @@ runcmd:
   # docker compose plugin (배포판에 따라 별도 설치 필요할 수 있음)
   - [sh, -c, "docker compose version || apt-get install -y docker-compose-plugin || true"]
   # 블록 볼륨 마운트(최초 1회 포맷). DEVICE 는 실제 attach 경로로 교체할 것.
-  - [sh, -c, "DEV=/dev/oracleoci/oraclevdb; if [ -b \"$DEV\" ] && ! blkid \"$DEV\"; then mkfs.ext4 -F \"$DEV\"; fi"]
+  - [sh, -c, "DEV=/dev/CHANGE-ME; if [ -b \"$DEV\" ] && ! blkid \"$DEV\"; then mkfs.ext4 -F \"$DEV\"; fi"]
   - [sh, -c, "mkdir -p /mnt/blockvol"]
-  - [sh, -c, "DEV=/dev/oracleoci/oraclevdb; if [ -b \"$DEV\" ]; then grep -q /mnt/blockvol /etc/fstab || echo \"$DEV /mnt/blockvol ext4 defaults,_netdev,nofail 0 2\" >> /etc/fstab; mount -a; fi"]
+  - [sh, -c, "DEV=/dev/CHANGE-ME; if [ -b \"$DEV\" ]; then grep -q /mnt/blockvol /etc/fstab || echo \"$DEV /mnt/blockvol ext4 defaults,_netdev,nofail 0 2\" >> /etc/fstab; mount -a; fi"]
   - [sh, -c, "mkdir -p /mnt/blockvol/data /mnt/blockvol/cubrid"]
   - [sh, -c, "mkdir -p /opt/kpubdata-builder"]

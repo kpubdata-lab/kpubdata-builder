@@ -1,4 +1,4 @@
-# docker-compose.prod.app.yml — OCI 단일 VM(app-01) 프로덕션 스택.
+# docker-compose.prod.app.yml — VM 한 대 프로덕션 스택. 특정 클라우드를 전제하지 않는다.
 #
 # ADR 0017(풀스택 배포 토폴로지)에 따라 Builder는 단일 app VM에서 Docker로
 # 운영한다. our-tax의 split-topology(ADR-0005)와 달리 별도 DB VM(db-01)이나
@@ -6,7 +6,7 @@
 # /data 볼륨(매니페스트 + 파생 SQLite 인덱스, ADR 0003/0010)만으로 상태를
 # 영속화하기 때문이다.
 #
-# app-01에서의 사용:
+# VM 에서의 사용:
 #   cp .env.app.example .env
 #   # .env 편집 (KPUBDATA_BUILDER_API_KEY, ALLOWED_ORIGINS, CREDENTIAL_MASTER_KEY, ...)
 #   docker compose -f docker-compose.prod.app.yml up -d

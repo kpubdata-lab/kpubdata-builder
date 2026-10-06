@@ -1,6 +1,6 @@
 # ADR 0017 — 풀스택 배포 토폴로지: OCI 단일 VM(Builder) + Cloudflare Pages(Studio)
 
-- 상태: 제안됨(Proposed) — **ADR 0016 수용 이후 범위 축소됨**. 2026-10-05: `app-01` 에 배포하지 않기로 해서 자동 배포 워크플로(`.github/workflows/deploy.yml`)와 `ops/deploy/app-01-rollout.sh` 를 제거했다. 아래 본문의 그 두 산출물은 더 이상 저장소에 없다.
+- 상태: 제안됨(Proposed) — **ADR 0016 수용 이후 범위 축소됨**. 2026-10-05: `app-01` 에 배포하지 않기로 해서 자동 배포 워크플로(`.github/workflows/deploy.yml`)와 `ops/deploy/app-01-rollout.sh` 를 제거했다. 아래 본문의 그 두 산출물은 더 이상 저장소에 없다. 2026-10-06: 이 토폴로지는 **특정 클라우드를 전제하지 않는다**(kpubdata#812) — Docker Compose 가 도는 Linux VM 한 대면 된다. 본문의 `OCI`·`app-01` 은 처음 계획한 대상을 가리키는 기록으로 남기고, 저장소의 다른 문서·디렉터리·주석에서는 그 이름을 뺐다(`infra/oci/` → `infra/cubrid/`).
 - 관련 이슈: —
 - 관련 문서: [ADR 0006 — 서비스 인증 & 배포(Docker)](./0006-service-auth-and-deployment.md), [ADR 0010 — ArtifactStore 상태 백엔드](./0010-artifactstore-state-backend.md), [ADR 0016 — CUBRID 상태 백엔드](./0016-cubrid-state-backend.md), [배포 가이드](../deploy.md), [BOUNDARY.md](../BOUNDARY.md)
 - 참고: `our-tax` [ADR-0005 OCI Split-Topology](https://github.com/kpubdata-lab/our-tax/blob/main/docs/adr/0005-oci-split-topology.md)
@@ -23,7 +23,7 @@
 > | 프로파일 | 상태 백엔드 | compose |
 > |---|---|---|
 > | `sqlite` (기본) | `/data` 매니페스트 + 파생 SQLite 인덱스 | `docker-compose.prod.app.yml` |
-> | `cubrid` (ADR 0016) | CUBRID(manifest 정본) + `/data` 아티팩트 | `infra/oci/docker-compose.yml` |
+> | `cubrid` (ADR 0016) | CUBRID(manifest 정본) + `/data` 아티팩트 | `infra/cubrid/docker-compose.yml` |
 >
 > 즉 이 ADR은 **"ADR 0016 위의 SQLite 프로파일 + 공통 배포 토폴로지"**로 읽는다.
 > CUBRID 프로파일을 쓰는 배포는 DB 호스팅(동일 VM 컨테이너 vs 별도 `db-01`)을

@@ -3,7 +3,7 @@
 Abstracts artifact workspace access and manifest document ownership. Approved design (ADR 0016):
 
 - **Artifact bytes** (parquet/CSV/HF layout etc) on both backends use local filesystem
-  (OCI block volume) — ``query/engine.py`` lazy scans actual paths in separate
+  (a disk attached to the VM) — ``query/engine.py`` lazy scans actual paths in separate
   process via ``pl.scan_parquet``
   lazy scans actual paths, so file paths needed; putting large files in RDBMS BLOB is
   antipattern, no shared object store benefit with single replica. Therefore,
