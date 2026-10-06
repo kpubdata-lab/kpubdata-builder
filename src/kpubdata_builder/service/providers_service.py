@@ -184,13 +184,17 @@ class ProvidersService:
         parsed = provider_probe.parse_probe_body(body)
         if isinstance(parsed, str):
             return ServiceResponse(400, {"error": parsed, "code": "invalid_request"})
-        key = request_credentials.current_key(provider)
+        # The same order a build resolves a request's key in: under the provider's own
+        # name, then under the name of the provider whose key it shares (#1066).
+        slot = CredentialResolver.client_key_slot(provider)
+        key = request_credentials.current_key(provider) or request_credentials.current_key(slot)
         if key is None:
+            names = f"'{provider}=<key>'" if slot == provider else f"'{slot}=<key>'"
             return ServiceResponse(
                 400,
                 {
                     "error": "send the key to probe in the X-Provider-Key header "
-                    f"('{provider}=<key>'); a stored key is not used",
+                    f"({names}); a stored key is not used",
                     "code": "provider_key_required",
                 },
             )
