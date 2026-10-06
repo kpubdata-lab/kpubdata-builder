@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.83.0",
+  "contract_version": "1.84.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5125,6 +5125,33 @@
       "operation_id": "createBuild",
       "method": "POST",
       "path": "/build",
+      "status": 400,
+      "example": "RunIdEnded",
+      "current": {
+        "error": "run_id already ended; submit the retry under a new run_id",
+        "code": "run_id_ended",
+        "run_id": "air-quality-20260815"
+      },
+      "with_additive_fields": {
+        "error": "run_id already ended; submit the retry under a new run_id",
+        "code": "run_id_ended",
+        "run_id": "air-quality-20260815",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "run_id_ended",
+        "run_id": "air-quality-20260815"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
       "status": 429,
       "example": "BuildQueueFull",
       "current": {
@@ -5297,6 +5324,33 @@
       ],
       "required_type_broken": {
         "error": 12345
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
+      "status": 409,
+      "example": "RunIdEnded",
+      "current": {
+        "error": "run_id already ended; submit the retry under a new run_id",
+        "code": "run_id_ended",
+        "run_id": "air-quality-20260815"
+      },
+      "with_additive_fields": {
+        "error": "run_id already ended; submit the retry under a new run_id",
+        "code": "run_id_ended",
+        "run_id": "air-quality-20260815",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "run_id_ended",
+        "run_id": "air-quality-20260815"
       },
       "broken_path": "$.error"
     },

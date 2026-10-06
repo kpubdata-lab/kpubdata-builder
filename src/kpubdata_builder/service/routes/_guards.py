@@ -181,6 +181,27 @@ def check_existing_run_access(
         used_status,
         {
             "error": "run_id already ended; submit the retry under a new run_id",
+            "code": "run_id_ended",
             "run_id": run_id,
         },
     )
+
+
+def check_retry_of(
+    service: BuilderService,
+    run_id: str | None,
+    retry_of: str | None,
+    principal: Principal,
+) -> ServiceResponse | None:
+    """Whether a build may say it retries ``retry_of`` (#1042).
+
+    The link is a claim about another run, and it is shown back — on the job, in the
+    manifest. So the named run must be one the caller may read: anyone else gets exactly
+    what reading that run would give them, and learns nothing new from the attempt. A run
+    cannot retry itself.
+    """
+    if retry_of is None:
+        return None
+    if run_id is not None and run_id == retry_of:
+        return ServiceResponse(400, {"error": "'retry_of' must name another run"})
+    return check_active_run_access(service, retry_of, principal)

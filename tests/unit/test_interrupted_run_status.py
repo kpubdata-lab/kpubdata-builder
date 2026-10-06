@@ -209,6 +209,7 @@ def test_another_user_cannot_submit_under_the_interrupted_run_id(
 
 _USED = {
     "error": "run_id already ended; submit the retry under a new run_id",
+    "code": "run_id_ended",
     "run_id": "in-flight",
 }
 
@@ -302,3 +303,157 @@ def test_the_submission_record_is_written_once_and_read_back(tmp_path: Path) -> 
     assert found.submitted_at == "2026-10-04T12:00:00+00:00"
     assert store.submission("r2") is None
     assert store.terminal_event("r1") is None
+
+
+# --- retry_of: the new attempt points at the earlier one (#1042) ---
+
+
+def _submit_retry(service: BuilderService, run_id: str, retry_of: object) -> ServiceResponse:
+    response = dispatch(
+        service,
+        "POST",
+        "/builds",
+        {"spec": _SPEC, "run_id": run_id, "retry_of": retry_of},
+        provider_key_headers=["datago=key"],
+    )
+    assert isinstance(response, ServiceResponse)
+    return response
+
+
+def _wait_for_end(service: BuilderService, run_id: str) -> dict[str, object]:
+    service._async_builds._executor.shutdown(wait=True)
+    return dict(_get(service, f"/builds/{run_id}").body)
+
+
+def test_a_retry_names_the_run_it_retries_on_the_job_and_in_the_manifest(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    _as(monkeypatch, _ALICE)
+
+    accepted = _submit_retry(restarted, "second-try", "in-flight")
+
+    assert accepted.status_code == 202
+    assert accepted.body["retry_of"] == "in-flight"
+    ended = _wait_for_end(restarted, "second-try")
+    assert ended["status"] == "succeeded"
+    assert ended["retry_of"] == "in-flight"
+    manifest = json.loads((tmp_path / "second-try" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["retry_of"] == "in-flight"
+    # After a restart the registry is empty; the manifest still says it.
+    again = BuilderService(output_root=tmp_path, client_factory=_factory())
+    assert _get(again, "/builds/second-try").body["retry_of"] == "in-flight"
+    # The earlier attempt is as it ended: nothing was added to it.
+    earlier = _get(restarted, "/builds/in-flight").body
+    assert (earlier["status"], earlier["code"]) == ("failed", "credentials_required")
+    assert "retry_of" not in earlier
+
+
+def test_a_run_that_retries_nothing_says_nothing(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    _as(monkeypatch, _ALICE)
+
+    accepted = _submit(restarted, "fresh")
+
+    assert "retry_of" not in accepted.body
+    assert "retry_of" not in _wait_for_end(restarted, "fresh")
+    manifest = json.loads((tmp_path / "fresh" / "manifest.json").read_text(encoding="utf-8"))
+    assert "retry_of" not in manifest
+
+
+def test_the_synchronous_route_records_the_link_too(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+
+    _as(monkeypatch, _ALICE)
+
+    response = dispatch(
+        restarted,
+        "POST",
+        "/build",
+        {"spec": _SPEC, "run_id": "sync-retry", "retry_of": "in-flight"},
+        provider_key_headers=["datago=key"],
+    )
+
+    assert isinstance(response, ServiceResponse)
+    assert response.status_code == 200
+    manifest = json.loads((tmp_path / "sync-retry" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["retry_of"] == "in-flight"
+
+
+def test_another_users_run_cannot_be_named_and_reads_as_missing(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The link is shown back, so naming a run is a way to ask about it: the answer is
+    # the one reading it gives, and the same as for a run that does not exist.
+    _as(monkeypatch, _BOB)
+
+    theirs = _submit_retry(restarted, "bobs-try", "in-flight")
+    missing = _submit_retry(restarted, "bobs-other-try", "never-existed")
+
+    assert theirs.status_code == missing.status_code == 404
+    assert restarted._async_builds.get("bobs-try") is None
+    assert restarted._event_store.submission("bobs-try") is None
+
+
+@pytest.mark.parametrize("bad", ["", "   ", 7, "../elsewhere", "a/b"])
+def test_a_retry_of_that_is_not_a_run_id_is_refused(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch, bad: object
+) -> None:
+    _as(monkeypatch, _ALICE)
+
+    response = _submit_retry(restarted, "bad-link", bad)
+
+    assert response.status_code == 400
+    assert restarted._async_builds.get("bad-link") is None
+
+
+def test_a_run_cannot_retry_itself(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as(monkeypatch, _ALICE)
+
+    response = _submit_retry(restarted, "loop", "loop")
+
+    assert response.status_code == 400
+    assert response.body == {"error": "'retry_of' must name another run"}
+
+
+def test_a_null_retry_of_is_the_same_as_none(
+    restarted: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as(monkeypatch, _ALICE)
+
+    accepted = _submit_retry(restarted, "explicit-null", None)
+
+    assert accepted.status_code == 202
+    assert "retry_of" not in accepted.body
+
+
+def test_a_store_made_before_the_column_gains_it_and_keeps_its_rows(tmp_path: Path) -> None:
+    import datetime as dt
+    import sqlite3
+
+    from kpubdata_builder.events import BuildEventStore
+
+    store = BuildEventStore(tmp_path)
+    at = dt.datetime(2026, 10, 4, 12, 0, tzinfo=dt.timezone.utc)
+    store.record_submission("old", owner_id="oidc:alice", created_by="alice", submitted_at=at)
+    database = tmp_path / "_build_events.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE run_submissions DROP COLUMN retry_of")
+
+    reopened = BuildEventStore(tmp_path)
+    reopened.record_submission(
+        "new", owner_id="oidc:alice", created_by="alice", submitted_at=at, retry_of="old"
+    )
+
+    old, new = reopened.submission("old"), reopened.submission("new")
+    assert old is not None and new is not None
+    assert (old.owner_id, old.retry_of) == ("oidc:alice", None)
+    assert new.retry_of == "old"

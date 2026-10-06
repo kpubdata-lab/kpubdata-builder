@@ -140,6 +140,7 @@ class BuildRunsApiService:
         owner_id: str | None = None,
         manifest_owner_id: str | None = None,
         credential_owner_id: str | None = None,
+        retry_of: str | None = None,
         principal: Principal | None = None,
         cancellation: CancellationProbe | None = None,
     ) -> ServiceResponse:
@@ -231,6 +232,7 @@ class BuildRunsApiService:
                 created_by=created_by,
                 owner_id=owner_id,
                 manifest_owner_id=manifest_owner_id,
+                retry_of=retry_of,
                 upload_repository=self._upload_repository_for(spec_or_error),
                 event_store=self._event_store(),
                 cancellation=cancellation,
@@ -376,6 +378,7 @@ class BuildRunsApiService:
         created_by: str | None = None,
         owner_id: str | None = None,
         job_credentials: JobCredentials | None = None,
+        retry_of: str | None = None,
     ) -> ServiceResponse:
         """Queue async build job and return initial state (#482).
 
@@ -436,6 +439,7 @@ class BuildRunsApiService:
                 owner_id=owner_id,
                 created_by=created_by,
                 submitted_at=submitted_at,
+                retry_of=retry_of,
             )
             if job_credentials is not None:
                 job_credentials.bind(resolved_run_id, owner_id, request_credentials.current_keys())
@@ -483,6 +487,7 @@ class BuildRunsApiService:
                 created_by=created_by,
                 owner_id=owner_id,
                 dataset_id=_declared_dataset_id(spec_yaml),
+                retry_of=retry_of,
                 runner=runner,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
@@ -568,6 +573,8 @@ class BuildRunsApiService:
         }
         if submission.created_by is not None:
             body["created_by"] = submission.created_by
+        if submission.retry_of is not None:
+            body["retry_of"] = submission.retry_of
         if terminal.event == "run_failed":
             message = terminal.message or "the run did not finish"
             body["error"] = message
@@ -605,6 +612,10 @@ class BuildRunsApiService:
         created_by = manifest.get("created_by")
         if isinstance(created_by, str):
             body["created_by"] = created_by
+        # The retry link reads the same after the registry has let the job go (#1042).
+        retry_of = manifest.get("retry_of")
+        if isinstance(retry_of, str):
+            body["retry_of"] = retry_of
         # error not carried. manifest error strings may contain paths (#664 same
         # reason), detail already provided by ``GET /builds/{run_id}/manifest`` —
         # no reason to re-expose here.

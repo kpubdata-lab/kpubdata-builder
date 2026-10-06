@@ -78,6 +78,8 @@ class RunSubmission:
     owner_id: str | None
     created_by: str | None
     submitted_at: str
+    #: The earlier run this one retries (#1042), when the submitter named one.
+    retry_of: str | None = None
 
 
 class BuildEventStore:
@@ -128,6 +130,14 @@ class BuildEventStore:
                 )
             self._conn.execute(_CREATE_TABLE_SQL)
             self._conn.execute(_CREATE_SUBMISSIONS_SQL)
+            # ``retry_of`` came later (#1042). The table only gains a column: rows are
+            # never rewritten, and a store made before it reads the column as NULL.
+            columns = {
+                str(row[1])
+                for row in self._conn.execute("PRAGMA table_info(run_submissions)").fetchall()
+            }
+            if "retry_of" not in columns:
+                self._conn.execute("ALTER TABLE run_submissions ADD COLUMN retry_of TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_build_events_run_seq ON build_events(run_id, seq)"
             )
@@ -179,22 +189,35 @@ class BuildEventStore:
         return replace(event, seq=seq)
 
     def record_submission(
-        self, run_id: str, *, owner_id: str | None, created_by: str | None, submitted_at: datetime
+        self,
+        run_id: str,
+        *,
+        owner_id: str | None,
+        created_by: str | None,
+        submitted_at: datetime,
+        retry_of: str | None = None,
     ) -> None:
         """Remember who submitted ``run_id`` (#996). A second submission of the id is ignored."""
         if submitted_at.tzinfo is None or submitted_at.utcoffset() is None:
             raise ValueError("submitted_at must be timezone-aware")
         with self._transaction():
             self._conn.execute(
-                "INSERT OR IGNORE INTO run_submissions (run_id, owner_id, created_by, submitted_at)"
-                " VALUES (?, ?, ?, ?)",
-                (run_id, owner_id, created_by, submitted_at.astimezone(timezone.utc).isoformat()),
+                "INSERT OR IGNORE INTO run_submissions"
+                " (run_id, owner_id, created_by, submitted_at, retry_of) VALUES (?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    owner_id,
+                    created_by,
+                    submitted_at.astimezone(timezone.utc).isoformat(),
+                    retry_of,
+                ),
             )
 
     def submission(self, run_id: str) -> RunSubmission | None:
         """The recorded submitter of ``run_id``, or None when it was never recorded."""
         row = self._conn.execute(
-            "SELECT owner_id, created_by, submitted_at FROM run_submissions WHERE run_id = ?",
+            "SELECT owner_id, created_by, submitted_at, retry_of FROM run_submissions"
+            " WHERE run_id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -204,6 +227,7 @@ class BuildEventStore:
             owner_id=None if row[0] is None else str(row[0]),
             created_by=None if row[1] is None else str(row[1]),
             submitted_at=str(row[2]),
+            retry_of=None if row[3] is None else str(row[3]),
         )
 
     def terminal_event(self, run_id: str) -> BuildEvent | None:

@@ -14,9 +14,10 @@ from ._guards import (
     check_active_run_access,
     check_existing_run_access,
     check_ownership,
+    check_retry_of,
     check_run_exists,
 )
-from ._parsing import optional_run_id, spec_from_body
+from ._parsing import optional_retry_of, optional_run_id, spec_from_body
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -47,8 +48,18 @@ def route(
             denied = check_existing_run_access(service, run_id, principal)
             if denied is not None:
                 return denied
+        retry_of = optional_retry_of(body)
+        if isinstance(retry_of, ServiceResponse):
+            return retry_of
+        denied = check_retry_of(service, run_id, retry_of, principal)
+        if denied is not None:
+            return denied
         return service.submit_build(
-            spec, run_id=run_id, created_by=principal.label, owner_id=principal.owner_id
+            spec,
+            run_id=run_id,
+            created_by=principal.label,
+            owner_id=principal.owner_id,
+            retry_of=retry_of,
         )
 
     # The sole cancel endpoint as specified in ADR 0008 (#481). Do not add aliases.

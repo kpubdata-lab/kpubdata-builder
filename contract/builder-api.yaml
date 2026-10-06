@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.83.0"
+  version: "1.84.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.84.0 lets a build point at the run it retries (#1042, additive): `retry_of` on `POST /build` and `POST /builds`, shown on `BuildJob.retry_of` and in the manifest. The refusal of a run id that already ended carries `code: run_id_ended`, and both routes name it as an example.
     v1.83.0 makes a `run_id` one attempt (#1042, kpubdata#812): the id of a run that ended without a manifest — one a restart interrupted — is refused to its own submitter too — with 409 on `POST /builds`, as a completed run's id is, and with 400 on `POST /build`, whose 409 is a build response with a different body.
     v1.82.0 bounds how long a synchronous `POST /build` waits for a build slot (#1040, additive): past `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` it answers 429 `build_queue_full`, the code `POST /builds` already gives for a full queue, without having fetched anything.
     v1.81.0 declares the publish recovery routes the service has answered since v1.19.0 and v1.20.0 (#994, additive): `GET` and `DELETE /builds/{run_id}/publish/receipt`, `POST /builds/{run_id}/publish/reconcile` and `GET /builds/{run_id}/publish/audit` were described only in this text, so a client had no schema to check them against. Nothing on the wire changed.
@@ -873,6 +874,12 @@ paths:
                   summary: 경로 구분자를 포함한 run_id
                   value:
                     error: run_id must be a path-safe single segment
+                RunIdEnded:
+                  summary: The run id names a run that already ended (#1042)
+                  value:
+                    error: run_id already ended; submit the retry under a new run_id
+                    code: run_id_ended
+                    run_id: air-quality-20260815
         "403":
           description: >-
             Refused before any provider request. `provider_credential_required` (#786):
@@ -1489,6 +1496,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                RunIdEnded:
+                  summary: The run id names a run a restart interrupted
+                  value:
+                    error: run_id already ended; submit the retry under a new run_id
+                    code: run_id_ended
+                    run_id: air-quality-20260815
         "429":
           description: async build queue가 가득 참 (`build_queue_full`, #1000)
           content:
@@ -6612,6 +6626,14 @@ components:
         run_id:
           type: string
           description: 명시 시 비어있지 않은 경로 안전한 단일 세그먼트여야 한다
+        retry_of:
+          type: [string, "null"]
+          description: >-
+            The earlier run this build retries (#1042). A `run_id` is one attempt and is
+            not reused once it ended, so a retry is a new run that points back. The named
+            run must be one the caller may read — otherwise the answer is the one reading
+            it would give (404 or 403) — and cannot be the run itself. Recorded on the
+            job (`BuildJob.retry_of`) and in the manifest (`retry_of`).
 
     VersionResponse:
       type: object
@@ -7946,6 +7968,11 @@ components:
             queued or running; its provider keys were held only in memory (#683), so
             it cannot go on — submit it again under a new `run_id`. The interrupted
             run's id is not reused: a `run_id` is one attempt (#1042).
+        retry_of:
+          type: string
+          description: >-
+            The earlier run this one was submitted as a retry of (#1042). Present only
+            when the submitter named one.
 
     BuildsResponse:
       type: object

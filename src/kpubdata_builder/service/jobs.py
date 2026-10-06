@@ -172,6 +172,8 @@ class BuildJobSnapshot:
     #: ``owner_id`` — ``to_body()`` does not expose it. None when the spec could not
     #: be read; the run then simply does not show as in progress for any table.
     dataset_id: str | None = None
+    #: The earlier run this one retries (#1042). On the wire, unlike the two above.
+    retry_of: str | None = None
 
     def to_body(self) -> dict[str, JsonValue]:
         body: dict[str, JsonValue] = {
@@ -186,6 +188,8 @@ class BuildJobSnapshot:
             body["response"] = self.response
         if self.error is not None:
             body["error"] = self.error
+        if self.retry_of is not None:
+            body["retry_of"] = self.retry_of
         return body
 
 
@@ -238,6 +242,7 @@ class AsyncBuildJobRegistry:
         created_by: str | None,
         owner_id: str | None = None,
         dataset_id: str | None = None,
+        retry_of: str | None = None,
     ) -> BuildJobSnapshot:
         now = _utc_now_text()
         snapshot = BuildJobSnapshot(
@@ -248,6 +253,7 @@ class AsyncBuildJobRegistry:
             created_by=created_by,
             owner_id=owner_id,
             dataset_id=dataset_id,
+            retry_of=retry_of,
         )
         with self._lock:
             self._jobs[run_id] = snapshot
@@ -262,6 +268,7 @@ class AsyncBuildJobRegistry:
         owner_id: str | None = None,
         max_queued: int,
         dataset_id: str | None = None,
+        retry_of: str | None = None,
     ) -> tuple[str, BuildJobSnapshot | None]:
         """Check existence/queue capacity/create in **single lock scope** (#482 follow-up).
 
@@ -287,6 +294,7 @@ class AsyncBuildJobRegistry:
                 created_by=created_by,
                 owner_id=owner_id,
                 dataset_id=dataset_id,
+                retry_of=retry_of,
             )
             self._jobs[run_id] = snapshot
             self._cancellations[run_id] = RunCancellation()
@@ -581,6 +589,7 @@ class AsyncBuildExecutor:
         on_accept: Callable[[], None] | None = None,
         on_enqueue_failure: Callable[[], None] | None = None,
         dataset_id: str | None = None,
+        retry_of: str | None = None,
     ) -> BuildJobSubmitResult:
         """Queue job. If "existing"/"queue_full", new submission not counted, so
         ``on_accept`` not called.
@@ -621,6 +630,7 @@ class AsyncBuildExecutor:
             owner_id=owner_id,
             max_queued=self._max_queue_size,
             dataset_id=dataset_id,
+            retry_of=retry_of,
         )
         if outcome == "existing":
             return BuildJobSubmitResult(status="existing", snapshot=snapshot)
@@ -759,6 +769,8 @@ def _transition(
         # Carried through every transition: a table shows its refresh as running only
         # if the running snapshot still knows which table it belongs to (#781).
         dataset_id=current.dataset_id,
+        # And so is the retry link: it is a fact about the run, not about one state (#1042).
+        retry_of=current.retry_of,
     )
 
 

@@ -44,3 +44,17 @@ def optional_run_id(body: Mapping[str, JsonValue] | None) -> str | None | Servic
     except ValueError as exc:
         return ServiceResponse(400, {"error": str(exc)})
     return run_id
+
+
+def optional_retry_of(body: Mapping[str, JsonValue] | None) -> str | None | ServiceResponse:
+    """The earlier run a build says it retries (#1042), when the body names one."""
+    if body is None or "retry_of" not in body or body["retry_of"] is None:
+        return None
+    retry_of = body["retry_of"]
+    if not isinstance(retry_of, str) or not retry_of.strip():
+        return ServiceResponse(400, {"error": "'retry_of' must be a non-empty string"})
+    try:
+        validate_path_segment(retry_of, field_name="retry_of")
+    except ValueError as exc:
+        return ServiceResponse(400, {"error": str(exc)})
+    return retry_of

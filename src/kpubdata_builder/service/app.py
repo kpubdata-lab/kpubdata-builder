@@ -20,6 +20,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -412,7 +413,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.82.0 -> 1.83.0: a run_id is one attempt — the id of a run that ended without a
 #   manifest is refused to its submitter too: 409 on POST /builds, 400 on POST /build
 #   (#1042, additive).
-API_CONTRACT_VERSION = "1.83.0"
+# 1.83.0 -> 1.84.0: retry_of on both build routes, on BuildJob and in the manifest; the
+#   used-run-id refusal carries code run_id_ended (#1042, additive).
+API_CONTRACT_VERSION = "1.84.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1021,6 +1024,7 @@ class BuilderService:
         owner_id: str | None = None,
         manifest_owner_id: str | None = None,
         credential_owner_id: str | None = None,
+        retry_of: str | None = None,
         principal: Principal | None = None,
         cancellation: CancellationProbe | None = None,
     ) -> ServiceResponse:
@@ -1032,6 +1036,7 @@ class BuilderService:
             owner_id=owner_id,
             manifest_owner_id=manifest_owner_id,
             credential_owner_id=credential_owner_id,
+            retry_of=retry_of,
             principal=principal,
             cancellation=cancellation,
         )
@@ -1043,6 +1048,7 @@ class BuilderService:
         run_id: str | None = None,
         created_by: str | None = None,
         owner_id: str | None = None,
+        retry_of: str | None = None,
     ) -> ServiceResponse:
         """Queue an async build job (#482).
 
@@ -1056,6 +1062,7 @@ class BuilderService:
             created_by=created_by,
             owner_id=owner_id,
             job_credentials=(self._job_credentials if ownership_module.multi_user_mode() else None),
+            retry_of=retry_of,
         )
 
     def build_status(self, run_id: str) -> ServiceResponse:
@@ -1134,9 +1141,14 @@ class BuilderService:
         # Multi-user mode (#683): the keys bound at submission, taken once and dropped
         # whichever way the job ends — success, failure or cancellation.
         keys = self._job_credentials.take(run_id, manifest_owner_id)
+        # The retry link the job was submitted with (#1042), for its manifest. Passed
+        # only when there is one, so an override of ``build`` written before it still
+        # runs every job that is not a retry.
+        retry_of = snapshot.retry_of if snapshot is not None else None
+        build = self.build if retry_of is None else partial(self.build, retry_of=retry_of)
         try:
             with request_credentials.request_scope(keys):
-                return self.build(
+                return build(
                     spec_yaml,
                     run_id=run_id,
                     created_by=created_by,
