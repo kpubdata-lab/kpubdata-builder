@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import io
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
+from typing import BinaryIO
 
 from kpubdata_builder.ingestion import IngestionError
 from kpubdata_builder.ingestion.tabular_ingest import iter_tabular_batches
@@ -62,6 +63,52 @@ def upload_metadata_body(
         # a spec that names it no longer builds.
         "expires_at": upload_expires_at(metadata, limits),
     }
+
+
+class ExpiringUploads:
+    """An upload repository in which an upload past retention is not there (#1067).
+
+    The contract says an upload is deleted at ``expires_at`` (#1047), and it was deleted
+    only when the service started or its owner uploaded again — until then it was still
+    read, and still built from. Every read here first deletes what of that owner's is
+    past retention, so the answer is the contract's whether or not the purge has run.
+    Everything else goes to the repository unchanged.
+    """
+
+    def __init__(
+        self,
+        repository: UploadRepository,
+        limits: Callable[[], UploadLimits | None] = resolve_upload_limits,
+    ) -> None:
+        self._repository = repository
+        self._limits = limits
+
+    def drop_expired(self, owner_id: str) -> int:
+        """Delete ``owner_id``'s uploads past retention; how many went."""
+        limits = self._limits()
+        cutoff = limits.cutoff() if limits is not None else None
+        if cutoff is None:
+            return 0
+        return self._repository.purge_created_before(cutoff, owner_id=owner_id)
+
+    def get_metadata(self, owner_id: str, upload_id: str) -> UploadMetadata | None:
+        self.drop_expired(owner_id)
+        return self._repository.get_metadata(owner_id, upload_id)
+
+    def get_content(self, owner_id: str, upload_id: str) -> bytes | None:
+        self.drop_expired(owner_id)
+        return self._repository.get_content(owner_id, upload_id)
+
+    def open_content(self, owner_id: str, upload_id: str) -> BinaryIO | None:
+        self.drop_expired(owner_id)
+        return self._repository.open_content(owner_id, upload_id)
+
+    def list_for_owner(self, owner_id: str) -> Sequence[UploadMetadata]:
+        self.drop_expired(owner_id)
+        return self._repository.list_for_owner(owner_id)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._repository, name)
 
 
 class UploadsService:
@@ -171,10 +218,33 @@ class UploadsService:
         """Return safe metadata-only for upload owned by current principal (content excluded)."""
         if principal.owner_id is None:
             return ServiceResponse(403, {"error": "stable principal is required"})
-        metadata = self._repository().get_metadata(principal.owner_id, upload_id)
+        # Past retention it is not there, whether or not the purge has run yet (#1067).
+        metadata = self._current().get_metadata(principal.owner_id, upload_id)
         if metadata is None:
             return ServiceResponse(404, {"error": f"upload not found: {upload_id}"})
         return ServiceResponse(200, upload_metadata_body(metadata, self._limits()))
+
+    def list_uploads(self, *, principal: Principal) -> ServiceResponse:
+        """The current principal's uploads, metadata only, newest first (#1067).
+
+        An owner at a limit is told to delete an upload they no longer need, and had no
+        way to learn an upload's id.
+        """
+        if principal.owner_id is None:
+            return ServiceResponse(403, {"error": "stable principal is required"})
+        limits = self._limits()
+        uploads = sorted(
+            self._current().list_for_owner(principal.owner_id),
+            key=lambda item: (item.created_at, item.upload_id),
+            reverse=True,
+        )
+        return ServiceResponse(
+            200,
+            {"uploads": [upload_metadata_body(item, limits) for item in uploads]},
+        )
+
+    def _current(self) -> ExpiringUploads:
+        return ExpiringUploads(self._repository(), self._limits)
 
     def delete_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
         """Delete only uploads owned by current principal."""

@@ -341,10 +341,10 @@ def test_the_date_is_the_moment_the_purge_takes_the_upload(
     assert service.purge_expired_uploads() == 0
 
     _age(service, upload_id, days=31)
-    past = _get_upload(service, upload_id)
-    assert datetime.fromisoformat(str(past.body["expires_at"])) < datetime.now(timezone.utc)
-    assert service.purge_expired_uploads() == 1
+    # Past the date the upload is not there for a read either (#1067): the read is what
+    # removes it now, so the purge finds nothing left to take.
     assert _get_upload(service, upload_id).status_code == 404
+    assert service.purge_expired_uploads() == 0
 
 
 def test_nothing_expires_when_retention_is_off(
