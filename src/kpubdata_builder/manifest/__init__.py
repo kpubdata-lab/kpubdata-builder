@@ -8,6 +8,7 @@ Key components:
     - SourceProvenance / build_source_provenance / compute_data_checksum: Detailed provenance (#12)
     - manifest_writer / write_manifest: Disk recording functions
     - status_from_manifest: Single rule for reading run terminal state from recorded manifest (#481)
+    - run_status_from_manifest: The outcome a caller is told, a failed table commit included (#1106)
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from .provenance import (
     summarize_reported_totals,
 )
 from .schema_summary import FieldSummary, SchemaSummary, build_schema_summary
-from .status import status_from_manifest
+from .status import run_status_from_manifest, status_from_manifest
 from .writer import manifest_writer, write_manifest
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "compute_inputs_fingerprint",
     "manifest_writer",
     "snapshot_coverage",
+    "run_status_from_manifest",
     "status_from_manifest",
     "summarize_reported_totals",
     "write_manifest",

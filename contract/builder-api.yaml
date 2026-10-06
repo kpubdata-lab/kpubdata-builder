@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.99.0"
+  version: "1.102.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.102.0 lists a run whose table was not committed as `failed` (#1106). Such a build produced its artifacts — its manifest says `status: ok` and records the refused commit in `warehouse_failures` (#788) — while the request answered 409 and `GET /builds/{run_id}` said `failed` (#997); `GET /builds` and `GET /admin/runs` showed the same run as `ok`. `BuildSummary.status` and the admin list now give the run's outcome, `failed`, from the index and from the filesystem alike. The manifest is unchanged. An index written before this version keeps `ok` for such a run until `kpubdata-builder rebuild-index` reads the manifests again.
+
     v1.99.0 lets a retry continue from the checkpoint of the run it retries (#1071, additive): a build with `retry_of` whose spec is the one the retried run was built from takes over that run's `param_grid` checkpoint and fetches only the combinations it lacked — it fetched everything again before. The manifest's `reproducibility.resumed_sources` entry names the run in `checkpoint_from`, and the source's `source_fetch_started` event says so in its `message`. A changed spec, or a retried run with no checkpoint, starts from nothing as before. The retried run's files are not changed.
 
     v1.98.0 says which provider's key each provider calls with (#1085, additive): `ProviderSummary` gains `key_provider` — the provider's own name, or the provider it shares a key with (`localdata`, `lofin` and `semas` report `datago`). A client that sends only the keys a request needs had to keep its own copy of that table.
@@ -8149,6 +8151,10 @@ components:
             빌드 상태. `cancelled`(#481)는 협력적 취소로 종료된 run이며 부분
             산출물과 partial manifest가 함께 남는다 — 성공한 빌드로 취급하면
             안 된다.
+            산출물은 모두 만들었지만 warehouse table commit 이 거부된 run
+            (manifest `warehouse_failures`, #788)은 `failed` 다(#1106) — 그 요청의 409,
+            `GET /builds/{run_id}` 의 `failed` 와 같은 답이다. manifest 의 `status` 는
+            그대로 `ok` 이고 사유는 `warehouse_failures` 에 있다.
         started_at:
           type: [string, "null"]
           description: 빌드 시작 시각 (ISO 8601 또는 null)

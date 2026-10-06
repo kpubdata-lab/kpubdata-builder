@@ -33,13 +33,13 @@ import yaml
 from typing_extensions import assert_never
 
 from ..events import BuildEvent, BuildEventStore
-from ..manifest import status_from_manifest
+from ..manifest import run_status_from_manifest
 from ..pipeline import CancellationProbe, run_build
 from ..spec import BuildSpec, JsonValue
 from ..stages._path_safety import validate_path_segment
 from ..stages.bronze.build import SourceClient
 from ..store.artifacts import ArtifactStore
-from ..store.build_index import BuildIndex
+from ..store.build_index import BuildIndex, BuildStatus
 from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
 from . import ownership as ownership_module
@@ -342,7 +342,9 @@ class BuildRunsApiService:
             finished_at = manifest_data.get("finished_at")
             self._build_index.insert_or_replace(
                 run_id=result.context.run_id,
-                status=result.status,  # type: ignore[arg-type]
+                # The run's outcome as the manifest gives it (#1106): ``failed`` when a
+                # table was not committed, as this response's 409 and the job say.
+                status=_index_status(manifest_data),
                 started_at=started_at,
                 finished_at=finished_at,
                 spec_digest=result.spec_digest,
@@ -595,15 +597,13 @@ class BuildRunsApiService:
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
             return None
-        manifest_status = status_from_manifest(manifest)
-        status = "succeeded" if manifest_status == "ok" else manifest_status
         # A build whose artifacts are complete but whose table was not committed
         # answers 409 (#788), so its job ended ``failed`` while the registry held it.
         # The manifest says ``ok`` for the build and records the commit failure apart;
         # read alone it turned the same run into ``succeeded`` after an eviction or a
-        # restart (#997). One run has one status.
-        if status == "succeeded" and manifest.get("warehouse_failures"):
-            status = "failed"
+        # restart (#997). One run has one status, and one function reads it (#1106).
+        manifest_status = run_status_from_manifest(manifest)
+        status = "succeeded" if manifest_status == "ok" else manifest_status
         started = manifest.get("started_at")
         finished = manifest.get("finished_at")
         body: dict[str, JsonValue] = {
@@ -738,6 +738,14 @@ class BuildRunsApiService:
             )
         except Exception:
             logger.error("failed to record run_cancelled event (run_id=%s)", run_id, exc_info=True)
+
+
+def _index_status(manifest: dict[str, object]) -> BuildStatus:
+    """The index's status for a finished run: its outcome as the manifest gives it."""
+    status = run_status_from_manifest(manifest)
+    if status == "failed":
+        return "failed"
+    return "cancelled" if status == "cancelled" else "ok"
 
 
 __all__ = ["BuildRunsApiService", "OpenClient"]

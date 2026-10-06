@@ -46,4 +46,26 @@ def status_from_manifest(manifest: dict[str, object], *, fallback_status: str | 
     return "cancelled" if fallback_status == "cancelled" else "ok"
 
 
-__all__ = ["status_from_manifest"]
+def run_status_from_manifest(
+    manifest: dict[str, object], *, fallback_status: str | None = None
+) -> str:
+    """The state a caller is told a run ended in (``ok``/``failed``/``cancelled``) (#1106).
+
+    ``status_from_manifest`` says whether the **build** produced its artifacts. A build
+    can do that and still fail: its table was not committed (``warehouse_failures``,
+    #788). The request that ran it answered 409 and its job ended ``failed`` (#997),
+    while the build list, reading the manifest's ``ok`` alone, showed the same run as
+    succeeded. This is the one reading for every place that reports a run's outcome —
+    the list, the index it is served from, the admin list, the job status restored
+    from a manifest — so they cannot disagree.
+
+    What decides whether the artifacts can be used — publishing, retention, the drift
+    baseline — keeps asking ``status_from_manifest``: the files of such a run are whole.
+    """
+    status = status_from_manifest(manifest, fallback_status=fallback_status)
+    if status == "ok" and manifest.get("warehouse_failures"):
+        return "failed"
+    return status
+
+
+__all__ = ["run_status_from_manifest", "status_from_manifest"]

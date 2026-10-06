@@ -22,7 +22,7 @@ from typing import cast
 from urllib.parse import unquote
 
 from kpubdata_builder.events import BuildEventStore
-from kpubdata_builder.manifest import status_from_manifest
+from kpubdata_builder.manifest import run_status_from_manifest
 from kpubdata_builder.service import events as events_service
 from kpubdata_builder.service import ownership as ownership_module
 from kpubdata_builder.service.auth import Principal
@@ -362,7 +362,9 @@ class BuildArtifactsApiService:
                     # manifest.json is SSOT so derive status rule in one place only
                     # (#481) — cancelled run may have empty errors, so presence check alone
                     # wrongly reports ok.
-                    "status": status_from_manifest(manifest),
+                    # The run's outcome, a failed table commit included (#1106): the
+                    # same reading the index and ``GET /builds/{run_id}`` give.
+                    "status": run_status_from_manifest(manifest),
                     "started_at": manifest.get("started_at"),
                     "finished_at": manifest.get("finished_at"),
                     "created_by": manifest.get("created_by"),
