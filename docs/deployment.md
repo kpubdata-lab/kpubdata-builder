@@ -27,7 +27,7 @@
 | `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES` | `POST /uploads`가 받는 최대 본문 크기(바이트). 초과분은 413 | 코드 기본값 | 선택 |
 | `KPUBDATA_BUILDER_UPLOAD_MAX_FILES` | 다중 사용자 배포에서 사용자 한 명이 가질 수 있는 업로드 수(#1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `50` | 선택 |
 | `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES` | 다중 사용자 배포에서 사용자 한 명의 업로드 합계 크기(바이트, #1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔 | `1073741824` (1 GiB) | 선택 |
-| `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS` | 다중 사용자 배포에서 업로드를 보관하는 일수(#1045). 지난 업로드는 서비스가 뜰 때와 그 사용자가 다음에 업로드할 때 **삭제된다** — 그것을 가리키는 저장 스펙의 다음 빌드는 업로드를 찾지 못한다. `0` 이면 끔 | `30` | 선택 |
+| `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS` | 다중 사용자 배포에서 업로드를 보관하는 일수(#1045). 지난 업로드는 서비스가 뜰 때, 그 사용자가 다음에 업로드할 때, 그리고 그 사용자가 자기 업로드를 **읽을 때**(조회·목록·preview·build, #1067) **삭제된다**. 그래서 이 값을 **줄이면** 그 순간부터 사용자가 목록을 여는 것만으로 새 기한을 넘긴 업로드가 지워진다 — 그것을 가리키는 저장 스펙의 다음 빌드는 업로드를 찾지 못한다. `0` 이면 끔 | `30` | 선택 |
 | `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES` | `kind: url` source가 가져오는 최대 응답 크기(바이트). SSRF 방어의 일부(#498) | 코드 기본값 | 선택 |
 | `OIDC_JWKS_URL` | JWKS 엔드포인트를 직접 지정한다. 미설정 시 issuer의 discovery 문서에서 찾는다 | 미설정 | 선택 |
 | `OIDC_JWKS_TTL` | JWKS 캐시 수명(초). 만료되면 다음 Bearer 인증이 다시 가져온다 | `3600` | 선택 |
