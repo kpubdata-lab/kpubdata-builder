@@ -11,8 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Protocol, cast
 
-from kpubdata import Client, Operation
-from kpubdata.config import KPubDataConfig
+from kpubdata import Client, KPubDataConfig, Operation
 from kpubdata.core.models import DatasetRef
 from kpubdata.exceptions import (
     AuthError,

@@ -62,31 +62,9 @@ _VERIFY_REASON = (
     "and transport; kpubdata has no public verify API (kpubdata#667). Signatures are "
     "pinned by tests/unit/test_kpubdata_internal_surface.py."
 )
-_SPEC_LOOKUP_REASON = (
-    "Looks up a SpecDefinition by id; the public Client returns DatasetRef, not the "
-    "spec model verify needs (kpubdata#667)."
-)
-_CONFIG_REASON = (
-    "Reads the operator's provider key the way kpubdata resolves it from the "
-    "environment; Client does not expose key resolution publicly (kpubdata#667)."
-)
 
 #: (path, module, name) -> reason. ``name`` is "" for ``import module``.
 ALLOWLIST: dict[tuple[str, str, str], str] = {
-    (
-        "src/kpubdata_builder/logging_redaction.py",
-        "kpubdata.transport._sensitive",
-        "SENSITIVE_PARAM_KEYS",
-    ): (
-        "The one canonical list of credential parameter names; Builder keeps no copy "
-        "so the two cannot drift. Needs a public export (kpubdata#667)."
-    ),
-    ("src/kpubdata_builder/service/providers.py", "kpubdata.config", "KPubDataConfig"): (
-        _CONFIG_REASON
-    ),
-    ("src/kpubdata_builder/verify/runner.py", "kpubdata.config", "KPubDataConfig"): (
-        _VERIFY_REASON
-    ),
     ("src/kpubdata_builder/verify/runner.py", "kpubdata.core.executor", "SpecExecutor"): (
         _VERIFY_REASON
     ),
@@ -112,14 +90,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("src/kpubdata_builder/verify/runner.py", "kpubdata.transport.http", "HttpTransport"): (
         _VERIFY_REASON
     ),
-    ("src/kpubdata_builder/agent/monitor.py", "kpubdata.core.spec", "find_spec"): (
-        _SPEC_LOOKUP_REASON
-    ),
-    ("src/kpubdata_builder/agent/pipeline.py", "kpubdata.core.spec", "find_spec"): (
-        _SPEC_LOOKUP_REASON
-    ),
-    ("src/kpubdata_builder/cli.py", "kpubdata.core.spec", "find_spec"): _SPEC_LOOKUP_REASON,
-    ("src/kpubdata_builder/cli.py", "kpubdata.core.spec", "discover_specs"): (_SPEC_LOOKUP_REASON),
 }
 
 

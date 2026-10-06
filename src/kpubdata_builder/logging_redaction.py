@@ -28,7 +28,7 @@ from collections import Counter
 from collections.abc import Iterable
 from urllib.parse import quote, quote_plus
 
-from kpubdata.transport._sensitive import SENSITIVE_PARAM_KEYS
+from kpubdata import SENSITIVE_PARAM_KEYS
 
 REDACTED = "[REDACTED]"
 

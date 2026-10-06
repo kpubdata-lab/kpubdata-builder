@@ -97,7 +97,7 @@ def check_approval(dataset_id: str, *, api_key: str | None = None) -> str:
     Returns:
         Status string: HEALTHY, NEEDS_APPLICATION, INVALID_KEY, etc.
     """
-    from kpubdata.core.spec import find_spec
+    from kpubdata import find_spec
 
     from kpubdata_builder.verify import verify_dataset
 

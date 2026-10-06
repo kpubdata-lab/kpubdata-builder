@@ -474,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
 #: Why a client that must not use the operator's keys cannot be built (#990).
 ENV_KEYS_UNSUPPORTED = (
     "the installed kpubdata cannot keep the environment's provider keys out of a client "
-    "(Client has no env_keys option; it was added after 0.8.0), so a request without its "
+    "(Client has no env_keys option; it came with 0.9.0), so a request without its "
     "own key would run on the operator's. Install a kpubdata release that has it, or "
     "turn KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL and multi-user mode off."
 )
@@ -485,7 +485,8 @@ def client_keeps_environment_keys_out() -> bool:
 
     kpubdata 0.8.0 has no such option and accepts any keyword without an error, so
     passing ``env_keys=False`` to it does nothing and says nothing. Asking the signature
-    is the only way to know the option is honoured.
+    is the only way to know the option is honoured. Builder's pin is the 0.9 line, which
+    has it; the check stays for an environment that installed something older anyway.
     """
     import inspect
 
@@ -1347,7 +1348,7 @@ def _run_verify(
         page_size: Records per test request.
         hashes_path: Optional path to previous schema hashes YAML.
     """
-    from kpubdata.core.spec import discover_specs, find_spec
+    from kpubdata import discover_specs, find_spec
 
     from .verify import runner as _verify_runner
 

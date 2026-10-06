@@ -119,7 +119,7 @@ def verify_dataset(
     # ``tests/unit/test_kpubdata_internal_surface.py`` pins this list,
     # so upgrade breaks in CI, not at runtime. When starting to use new internal symbols,
     # add them to that list too.
-    from kpubdata.config import KPubDataConfig
+    from kpubdata import KPubDataConfig
     from kpubdata.core.executor import (
         SpecExecutor,
         check_payload_error,

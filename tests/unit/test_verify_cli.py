@@ -12,7 +12,7 @@ from kpubdata_builder.verify.models import CheckName, CheckResult, DatasetStatus
 # All tests in this module patch the verify.runner module which is imported
 # lazily inside _run_verify via ``from .verify import runner as _verify_runner``.
 _RUNNER_MOD = "kpubdata_builder.verify.runner"
-_SPEC_MOD = "kpubdata.core.spec"
+_SPEC_MOD = "kpubdata"
 
 
 class TestVerifyParser:
