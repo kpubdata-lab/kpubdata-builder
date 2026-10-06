@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.93.0"
+  version: "1.94.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.94.0 refuses a build that cannot have its key (#1070, additive): in a multi-user deployment `POST /builds` answers 400 `provider_credential_required`, naming the `providers`, when the spec calls a provider that requires a key and the request's `X-Provider-Key` carries none for it — it was accepted with 202 and failed later. A job whose keys are no longer held when it starts (it waited in the queue past their lifetime) ends `failed` with `code: credentials_required`, as a run interrupted by a restart does, instead of running without a key.
+
     v1.93.0 narrows where a malformed `X-Provider-Key` header is an error (#1073): 400 `invalid_provider_key` is answered only by the operations that declare the parameter. Every other route — `GET /healthz`, `GET /version`, the lists — ignores the header and answers as if it were absent; they answered 400 before. The rule that a key cannot contain a comma is written down.
 
     v1.92.0 bounds the wait for a preview slot (#1068, additive): with `KPUBDATA_BUILDER_MAX_PREVIEWS` set, `POST /preview` waited for a slot with no bound; it now waits up to `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` and then answers 429 `preview_queue_full`. That setting must be a finite number of seconds, zero or more — `nan` and `inf` were accepted at start-up and then hung or failed the request that had to wait.
@@ -1594,7 +1596,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/BuildJob"
         "400":
-          description: 잘못된 spec/run_id
+          description: >-
+            잘못된 spec/run_id. 다중 사용자 배포에서, spec 이 부르는 provider 가 키를
+            요구하는데 요청의 `X-Provider-Key` 에 그 키가 없으면
+            `provider_credential_required` 이고 `providers` 가 그 provider 들을 적는다
+            (#1070) — 접수되지 않으며 run 이 만들어지지 않는다.
           content:
             application/json:
               schema:

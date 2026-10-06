@@ -188,6 +188,10 @@ class BuildJobSnapshot:
             body["response"] = self.response
         if self.error is not None:
             body["error"] = self.error
+            # The one failure a client acts on by its code (#996, #1070): the job's
+            # keys are gone and submitting again works.
+            if self.error.startswith("credentials_required:"):
+                body["code"] = "credentials_required"
         if self.retry_of is not None:
             body["retry_of"] = self.retry_of
         return body

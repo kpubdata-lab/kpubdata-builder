@@ -28,7 +28,7 @@ from urllib.parse import urlsplit
 from ..spec import JsonValue
 from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
-from .app import BuilderService, FileResponse, dispatch
+from .app import BuilderService, FileResponse, dispatch, refuse_before_body
 from .auth import validate_dev_mode, validate_oidc_config
 from .publish_credentials import PUBLISH_CREDENTIAL_HEADER
 from .request_credentials import PROVIDER_KEY_HEADER
@@ -254,6 +254,24 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             if length > max_body_bytes:
                 self._write(413, {"error": "request body too large"})
                 return
+            # Throttle and authenticate before reading a body (#1069): an upload is up to
+            # 20 MiB, and a request with no token made the server read all of it first.
+            # The refused request's body stays unread, so the connection is closed.
+            client_id = service._auth_throttle.client_id(
+                self.client_address[0] if self.client_address else None,
+                self.headers.get_all("X-Forwarded-For") or [],
+            )
+            if length:
+                refusal = refuse_before_body(
+                    service,
+                    api_key=self.headers.get("X-API-Key"),
+                    bearer_token=self.headers.get("Authorization"),
+                    client_id=client_id,
+                )
+                if refusal is not None:
+                    self.close_connection = True
+                    self._write(refusal.status_code, refusal.body)
+                    return
             # Read body: timeout or incomplete read is handled as JSON 400 instead of
             # dropped connection (#219).
             if length:
@@ -306,10 +324,7 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                     # unless that peer is a proxy the deployment names: only then is
                     # X-Forwarded-For read, and only the part that proxy wrote — a
                     # header from anyone else can be forged (#1031).
-                    client_id=service._auth_throttle.client_id(
-                        self.client_address[0] if self.client_address else None,
-                        self.headers.get_all("X-Forwarded-For") or [],
-                    ),
+                    client_id=client_id,
                 )
             except Exception:
                 _logger.error(

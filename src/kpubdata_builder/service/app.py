@@ -436,7 +436,10 @@ _BuildListEntry = dict[str, str | None]
 #   frees within the wait bound (#1068, additive).
 # 1.92.0 -> 1.93.0: a malformed X-Provider-Key header is refused only by the operations
 #   that declare the parameter; other routes ignore it (#1073).
-API_CONTRACT_VERSION = "1.93.0"
+# 1.93.0 -> 1.94.0: POST /builds answers 400 provider_credential_required when the
+#   request carries no key for a provider the spec calls; a job whose keys are gone when
+#   it starts ends as credentials_required (#1070, additive).
+API_CONTRACT_VERSION = "1.94.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1188,6 +1191,38 @@ class BuilderService:
         )
         return client, provider_keys
 
+    def providers_missing_a_key(self, spec_yaml: str) -> tuple[str, ...]:
+        """The providers ``spec_yaml`` calls that need a key the current request or job
+        does not carry — in a multi-user deployment, where that is the only key (#1070).
+
+        Empty in a single-user deployment, for a spec that cannot be read (its own error
+        is reported where it always was) and when the provider catalog cannot be read
+        (the build then finds out, as before).
+        """
+        if not ownership_module.multi_user_mode():
+            return ()
+        spec = self._load_validated(spec_yaml)
+        if isinstance(spec, ServiceResponse):
+            return ()
+        names = tuple(
+            dict.fromkeys(
+                source.provider
+                for source in spec.sources
+                if source.kind == "public_api" and source.provider
+            )
+        )
+        if not names:
+            return ()
+        descriptors = self._providers_service.runtime_providers()
+        if isinstance(descriptors, ServiceResponse):
+            return ()
+        needs_key = {item.name for item in descriptors if item.requires_credential}
+        return tuple(
+            name
+            for name in names
+            if name in needs_key and self._credential_resolver.resolve(None, name).value is None
+        )
+
     def _run_build_job(
         self,
         spec_yaml: str,
@@ -1219,6 +1254,13 @@ class BuilderService:
         build = self.build if retry_of is None else partial(self.build, retry_of=retry_of)
         try:
             with request_credentials.request_scope(keys):
+                # The keys were there when the job was submitted (#1070) and are not
+                # now: it waited in the queue longer than a job's keys are kept. Without
+                # this the build ran keyless and failed as an ordinary provider error,
+                # which tells the user neither the cause nor that submitting again works.
+                missing = self.providers_missing_a_key(spec_yaml)
+                if missing:
+                    return self._build_runs.fail_for_missing_keys(run_id, missing)
                 return build(
                     spec_yaml,
                     run_id=run_id,
@@ -1543,6 +1585,68 @@ def dispatch(
         service._latency_recorder.record(elapsed_ms)
 
 
+def _admit(
+    service: BuilderService,
+    *,
+    api_key: str | None,
+    bearer_token: str | None,
+    client_id: str | None,
+) -> Principal | ServiceResponse:
+    """The throttle and the authentication gate: who is asking, or the refusal.
+
+    A client with accumulated authentication failures is cut off before authentication
+    is attempted, so it incurs no key comparison or signature verification.
+    """
+    retry_after = service._auth_throttle.retry_after(client_id)
+    if retry_after is not None:
+        return ServiceResponse(
+            429,
+            {
+                "error": "too many failed authentication attempts",
+                "code": "auth_throttled",
+                "retry_after_seconds": retry_after,
+            },
+        )
+
+    # Authentication gate (#384): return 401 if Principal cannot be obtained.
+    principal = authenticate(api_key=api_key, bearer_token=bearer_token)
+    if isinstance(principal, AuthError):
+        # Count only 401 (invalid credentials) — 403 is valid token with authz
+        # failure (not worth throttling), 503 is JWKS transient outage (not client
+        # fault). An expired token is a 401 too, but its signature verified: it is
+        # not a guess, and counting it lets ordinary expiry reach the limit (#1031).
+        if principal.status_code == 401 and not principal.expired:
+            service._auth_throttle.record_failure(client_id)
+        return ServiceResponse(
+            principal.status_code, {"error": principal.reason, "code": principal.code}
+        )
+
+    # Successful authentication clears failure record — normal client that received
+    # a few 401s due to token expiry doesn't get throttled during subsequent normal
+    # use.
+    service._auth_throttle.record_success(client_id)
+    return principal
+
+
+def refuse_before_body(
+    service: BuilderService,
+    *,
+    api_key: str | None,
+    bearer_token: str | None,
+    client_id: str | None,
+) -> ServiceResponse | None:
+    """The refusal a request with a body gets before the body is read, or None (#1069).
+
+    The HTTP layer read the whole body — up to the upload limit, 20 MiB by default — and
+    only then authenticated, so a request with no token made the server hold that much
+    and the failure throttle applied after the cost was paid. This is the same gate
+    ``dispatch`` applies, run first. A request it lets through is authenticated again
+    by ``dispatch``; a refused one is counted once, here, and never reaches it.
+    """
+    admitted = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
+    return admitted if isinstance(admitted, ServiceResponse) else None
+
+
 def _dispatch_impl(
     service: BuilderService,
     method: str,
@@ -1574,36 +1678,9 @@ def _dispatch_impl(
     if method == "GET" and path == "/healthz":
         return ServiceResponse(200, {"status": "ok"})
 
-    # Cut off clients with accumulated authentication failures before attempting
-    # authentication.
-    retry_after = service._auth_throttle.retry_after(client_id)
-    if retry_after is not None:
-        return ServiceResponse(
-            429,
-            {
-                "error": "too many failed authentication attempts",
-                "code": "auth_throttled",
-                "retry_after_seconds": retry_after,
-            },
-        )
-
-    # Authentication gate (#384): return 401 if Principal cannot be obtained.
-    principal = authenticate(api_key=api_key, bearer_token=bearer_token)
-    if isinstance(principal, AuthError):
-        # Count only 401 (invalid credentials) — 403 is valid token with authz
-        # failure (not worth throttling), 503 is JWKS transient outage (not client
-        # fault). An expired token is a 401 too, but its signature verified: it is
-        # not a guess, and counting it lets ordinary expiry reach the limit (#1031).
-        if principal.status_code == 401 and not principal.expired:
-            service._auth_throttle.record_failure(client_id)
-        return ServiceResponse(
-            principal.status_code, {"error": principal.reason, "code": principal.code}
-        )
-
-    # Successful authentication clears failure record — normal client that received
-    # a few 401s due to token expiry doesn't get throttled during subsequent normal
-    # use.
-    service._auth_throttle.record_success(client_id)
+    principal = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
+    if isinstance(principal, ServiceResponse):
+        return principal
 
     # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
     # administrator; a rejected one is shut out even when a list admits them.
@@ -1631,4 +1708,11 @@ def _dispatch_impl(
     return ServiceResponse(404, {"error": f"not found: {method} {path}"})
 
 
-__all__ = ["API_CONTRACT_VERSION", "BuilderService", "ServiceResponse", "FileResponse", "dispatch"]
+__all__ = [
+    "API_CONTRACT_VERSION",
+    "BuilderService",
+    "FileResponse",
+    "ServiceResponse",
+    "dispatch",
+    "refuse_before_body",
+]

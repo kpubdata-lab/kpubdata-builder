@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
+from http.client import HTTPMessage
 from http.server import HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -1463,6 +1464,14 @@ class TestHttpUploads:
             assert response.status == 200
 
 
+def _headers(values: dict[str, str]) -> HTTPMessage:
+    """Request headers as the HTTP server parses them, for a handler built by hand."""
+    message = HTTPMessage()
+    for name, value in values.items():
+        message[name] = value
+    return message
+
+
 class TestHttpRobustness:
     """#218 (JSON 500 handler) and #219 (DoS hardening) verification."""
 
@@ -1831,7 +1840,8 @@ class TestHttpRobustness:
 
         h = object.__new__(_PatchedHandler)
         h.rfile = slow_rfile
-        h.headers = {"Content-Length": "10"}  # type: ignore[assignment]
+        h.headers = _headers({"Content-Length": "10"})
+        h.client_address = ("127.0.0.1", 0)
         h._dispatch("POST")
 
         assert len(captured) == 1
@@ -1856,7 +1866,8 @@ class TestHttpRobustness:
 
         h = object.__new__(_PatchedHandler)
         h.rfile = truncated_rfile
-        h.headers = {"Content-Length": "10"}  # type: ignore[assignment]
+        h.headers = _headers({"Content-Length": "10"})
+        h.client_address = ("127.0.0.1", 0)
         h._dispatch("POST")
 
         assert len(captured) == 1
