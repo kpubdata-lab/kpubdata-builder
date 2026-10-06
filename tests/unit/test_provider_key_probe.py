@@ -346,9 +346,65 @@ def test_the_real_client_does_not_fall_back_to_the_environment(
     the environment, so no call is made."""
     monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", _OPERATOR)
 
-    with provider_probe.open_kpubdata_probe("localdata", _KEY) as probe_one:
+    with provider_probe.open_kpubdata_probe("seoul", _KEY) as probe_one:
         outcome = probe_one("datago.apt_trade")
 
     assert outcome is not None
     assert outcome.status == "auth_unknown"
+    assert upstream.requests == []
+
+
+# --- A provider that calls with another provider's key (#1066) ---
+
+
+def test_a_provider_that_shares_datagos_key_is_probed_with_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream
+) -> None:
+    """``localdata`` calls with ``datago``'s key. The user holds it as ``datago=<key>``."""
+    monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", _OPERATOR)
+
+    response = _post(_real_service(tmp_path), {"datasets": ["bakery"]}, provider="localdata")
+
+    assert response.status_code == 200
+    dataset = _only_dataset(response)
+    assert dataset["dataset"] == "bakery"
+    # It was called, with the header's key — not left at "no key to try".
+    assert dataset["status"] != "auth_unknown"
+    assert len(upstream.requests) == 1
+    sent = str(upstream.requests[0].url) + repr(upstream.requests[0].headers.raw)
+    assert _KEY in sent
+    assert _OPERATOR not in sent
+
+
+def test_the_key_may_also_come_under_the_probed_providers_own_name(
+    tmp_path: Path, upstream: _Upstream
+) -> None:
+    response = _post(
+        _real_service(tmp_path),
+        {"datasets": ["bakery"]},
+        provider="localdata",
+        headers=(f"localdata={_KEY}",),
+    )
+
+    assert response.status_code == 200
+    assert _only_dataset(response)["status"] != "auth_unknown"
+    assert len(upstream.requests) == 1 and _KEY in str(upstream.requests[0].url)
+
+
+def test_another_providers_key_is_not_taken_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream
+) -> None:
+    """Negative: a ``seoul`` key is not ``datago``'s, and the operator's is not tried."""
+    monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", _OPERATOR)
+
+    response = _post(
+        _real_service(tmp_path),
+        {"datasets": ["bakery"]},
+        provider="localdata",
+        headers=(f"seoul={_KEY}",),
+    )
+
+    assert response.status_code == 400
+    assert response.body["code"] == "provider_key_required"
+    assert "datago=<key>" in str(response.body["error"])
     assert upstream.requests == []

@@ -70,10 +70,18 @@ def spec_dataset_ids(provider: str) -> list[str]:
 
 @contextmanager
 def open_kpubdata_probe(provider: str, key: str) -> Iterator[ProbeOne]:
-    """A kpubdata client holding ``key`` for ``provider`` and nothing else."""
+    """A kpubdata client holding ``key`` for ``provider`` and nothing else.
+
+    kpubdata looks a key up under the name of the provider that owns it: ``localdata``,
+    ``lofin`` and ``semas`` call with ``datago``'s. Given under the probed provider's own
+    name, the key was never found and every dataset answered ``auth_unknown`` (#1066).
+    """
     from kpubdata import Client
 
-    client = Client(provider_keys={provider: key}, cache=False, env_keys=False)
+    from .providers import CredentialResolver
+
+    slot = CredentialResolver.client_key_slot(provider)
+    client = Client(provider_keys={slot: key}, cache=False, env_keys=False)
     # A provider that puts the key in a path or echoes it would otherwise reach the log.
     logging_redaction.register(client, (key,))
     try:
