@@ -159,8 +159,10 @@ class BuildEventRecorder:
 
     # --- source fetch (#498 resolver boundary: common to public_api/file/url) ---
 
-    def source_fetch_started(self, source_key: str) -> None:
-        self._record("source_fetch_started", "ok", source_key=source_key)
+    def source_fetch_started(self, source_key: str, *, message: str | None = None) -> None:
+        """``message`` says where a fetch that does not start from nothing continues
+        from — the checkpoint of the run this one retries (#1071)."""
+        self._record("source_fetch_started", "ok", source_key=source_key, message=message)
 
     def source_fetch_progress(self, source_key: str, *, done: int, total: int) -> None:
         """One ``param_grid`` combination fetched (#648).
