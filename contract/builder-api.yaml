@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.92.0"
+  version: "1.93.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.93.0 narrows where a malformed `X-Provider-Key` header is an error (#1073): 400 `invalid_provider_key` is answered only by the operations that declare the parameter. Every other route — `GET /healthz`, `GET /version`, the lists — ignores the header and answers as if it were absent; they answered 400 before. The rule that a key cannot contain a comma is written down.
+
     v1.92.0 bounds the wait for a preview slot (#1068, additive): with `KPUBDATA_BUILDER_MAX_PREVIEWS` set, `POST /preview` waited for a slot with no bound; it now waits up to `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` and then answers 429 `preview_queue_full`. That setting must be a finite number of seconds, zero or more — `nan` and `inf` were accepted at start-up and then hung or failed the request that had to wait.
 
     v1.91.0 makes a run id one attempt on the synchronous build as well (#1065): `POST /build` answers 400 for the caller's own `run_id` when a run completed under it (`run_id_completed`; it was built over before), when an async job is running under it (`run_id_in_progress`; it was built over too) and when an async job ended under it (`run_id_ended`). `POST /builds` gives its existing 409 for a completed run the code `run_id_completed`. A new `run_id` builds as before.
@@ -4754,7 +4756,10 @@ components:
         request or the job it submits, `<provider>=<key>`, repeated or comma-separated.
         Held in memory until the request ends, or the async job ends, is cancelled or
         its TTL passes; never stored, logged or returned. A malformed header answers
-        400 `invalid_provider_key` on any route. A single-user deployment ignores it
+        400 `invalid_provider_key` on the operations that declare this parameter, and is
+        ignored on every other route (#1073) — the request then carries no key. A key
+        cannot contain a comma, which separates entries; the part after it is read as
+        another entry and the header is malformed. A single-user deployment ignores it
         and keeps its stored and server keys. Declared on the operations that call a
         provider (#994), and on `GET /providers`, whose `configured` reports whether the
         request carries a key that covers each provider.

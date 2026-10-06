@@ -8,6 +8,7 @@ contract. These compare the declarations with what the code actually sends.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,10 @@ import pytest
 import yaml
 
 from kpubdata_builder.service.http import _overloaded_response
-from kpubdata_builder.service.request_credentials import PROVIDER_KEY_HEADER
+from kpubdata_builder.service.request_credentials import (
+    PROVIDER_KEY_HEADER,
+    route_reads_provider_keys,
+)
 
 _CONTRACT = Path(__file__).resolve().parents[2] / "contract" / "builder-api.yaml"
 
@@ -73,6 +77,25 @@ def test_it_is_declared_on_exactly_the_operations_that_read_the_key(
     }
 
     assert declaring == _PROVIDER_OPERATIONS | _KEY_READING_OPERATIONS
+
+
+def test_a_malformed_header_is_refused_on_exactly_those_operations(
+    contract: dict[str, Any],
+) -> None:
+    """``route_reads_provider_keys`` is a list kept by hand; this holds it to the
+    contract, in both directions (#1073)."""
+    reference = {"$ref": "#/components/parameters/ProviderKey"}
+    disagree: list[str] = []
+    for template, item in contract["paths"].items():
+        path = re.sub(r"\{[^}]+\}", "x", template)
+        for method, operation in item.items():
+            if method not in ("get", "post", "put", "delete", "patch"):
+                continue
+            declared = reference in operation.get("parameters", [])
+            if route_reads_provider_keys(method.upper(), path) != declared:
+                disagree.append(f"{method.upper()} {template}")
+
+    assert disagree == []
 
 
 def test_the_overload_response_is_the_declared_one(contract: dict[str, Any]) -> None:

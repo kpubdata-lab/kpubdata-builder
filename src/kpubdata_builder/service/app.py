@@ -434,7 +434,9 @@ _BuildListEntry = dict[str, str | None]
 #   409 for a completed run carries run_id_completed (#1065).
 # 1.91.0 -> 1.92.0: POST /preview answers 429 preview_queue_full when no preview slot
 #   frees within the wait bound (#1068, additive).
-API_CONTRACT_VERSION = "1.92.0"
+# 1.92.0 -> 1.93.0: a malformed X-Provider-Key header is refused only by the operations
+#   that declare the parameter; other routes ignore it (#1073).
+API_CONTRACT_VERSION = "1.93.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1506,7 +1508,12 @@ def dispatch(
         try:
             request_keys = request_credentials.parse_provider_key_headers(provider_key_headers)
         except ValueError as exc:
-            return ServiceResponse(400, {"error": str(exc), "code": "invalid_provider_key"})
+            # Only a route that would use a key refuses the request for it (#1073). A
+            # browser that built the header wrong once used to fail every call it made —
+            # the version check, the lists, the health check — though none reads a key.
+            if request_credentials.route_reads_provider_keys(method, path):
+                return ServiceResponse(400, {"error": str(exc), "code": "invalid_provider_key"})
+            request_keys = {}
         # Publish credentials for this request only (#925): the X-Publish-Credential
         # header, read by publish in a multi-user deployment and forgotten when the
         # request ends. The error message never carries a value.
