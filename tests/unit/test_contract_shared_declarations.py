@@ -29,6 +29,13 @@ _PROVIDER_OPERATIONS = {
     "probeProviderKey",
 }
 
+#: The operations that read the requester's key without calling a provider. In a
+#: multi-user deployment the request is the only place a key lives, so the provider
+#: list can only say what is covered when it sees the key.
+_KEY_READING_OPERATIONS = {
+    "listProviders",
+}
+
 
 @pytest.fixture(scope="module")
 def contract() -> dict[str, Any]:
@@ -55,7 +62,7 @@ def test_the_provider_key_header_is_a_declared_parameter(contract: dict[str, Any
     )
 
 
-def test_it_is_declared_on_exactly_the_operations_that_call_a_provider(
+def test_it_is_declared_on_exactly_the_operations_that_read_the_key(
     contract: dict[str, Any],
 ) -> None:
     reference = {"$ref": "#/components/parameters/ProviderKey"}
@@ -65,7 +72,7 @@ def test_it_is_declared_on_exactly_the_operations_that_call_a_provider(
         if reference in operation.get("parameters", [])
     }
 
-    assert declaring == _PROVIDER_OPERATIONS
+    assert declaring == _PROVIDER_OPERATIONS | _KEY_READING_OPERATIONS
 
 
 def test_the_overload_response_is_the_declared_one(contract: dict[str, Any]) -> None:
