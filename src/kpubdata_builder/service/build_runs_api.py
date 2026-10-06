@@ -689,6 +689,34 @@ class BuildRunsApiService:
             marked.append(run_id)
         return tuple(marked)
 
+    def fail_for_missing_keys(self, run_id: str, providers: tuple[str, ...]) -> ServiceResponse:
+        """End a job whose provider keys are gone before it could start (#1070).
+
+        The same ``credentials_required`` a run interrupted by a restart ends with: the
+        cause is the same — the keys were held in memory and are no longer — and so is
+        what to do. The ``run_failed`` event is recorded here because the build, which
+        records it otherwise, never starts.
+        """
+        message = (
+            f"{INTERRUPTED_CODE}: the provider key for {', '.join(providers)} is no longer "
+            "held — the job waited longer than its keys are kept; submit it again under "
+            "a new run_id"
+        )
+        try:
+            self._event_store().append(
+                BuildEvent(
+                    seq=0,
+                    timestamp=datetime.now(tz=timezone.utc),
+                    run_id=run_id,
+                    event="run_failed",
+                    status="fail",
+                    message=message,
+                )
+            )
+        except Exception:  # noqa: BLE001 - the job still has to end
+            logger.exception("could not record run_failed for %s", run_id)
+        return ServiceResponse(409, {"error": message, "code": INTERRUPTED_CODE})
+
     def record_run_cancelled(self, run_id: str) -> None:
         """Record cancelled terminal event (#481). Failure not re-raised.
 

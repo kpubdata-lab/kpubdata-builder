@@ -436,7 +436,10 @@ _BuildListEntry = dict[str, str | None]
 #   frees within the wait bound (#1068, additive).
 # 1.92.0 -> 1.93.0: a malformed X-Provider-Key header is refused only by the operations
 #   that declare the parameter; other routes ignore it (#1073).
-API_CONTRACT_VERSION = "1.93.0"
+# 1.93.0 -> 1.94.0: POST /builds answers 400 provider_credential_required when the
+#   request carries no key for a provider the spec calls; a job whose keys are gone when
+#   it starts ends as credentials_required (#1070, additive).
+API_CONTRACT_VERSION = "1.94.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1188,6 +1191,38 @@ class BuilderService:
         )
         return client, provider_keys
 
+    def providers_missing_a_key(self, spec_yaml: str) -> tuple[str, ...]:
+        """The providers ``spec_yaml`` calls that need a key the current request or job
+        does not carry — in a multi-user deployment, where that is the only key (#1070).
+
+        Empty in a single-user deployment, for a spec that cannot be read (its own error
+        is reported where it always was) and when the provider catalog cannot be read
+        (the build then finds out, as before).
+        """
+        if not ownership_module.multi_user_mode():
+            return ()
+        spec = self._load_validated(spec_yaml)
+        if isinstance(spec, ServiceResponse):
+            return ()
+        names = tuple(
+            dict.fromkeys(
+                source.provider
+                for source in spec.sources
+                if source.kind == "public_api" and source.provider
+            )
+        )
+        if not names:
+            return ()
+        descriptors = self._providers_service.runtime_providers()
+        if isinstance(descriptors, ServiceResponse):
+            return ()
+        needs_key = {item.name for item in descriptors if item.requires_credential}
+        return tuple(
+            name
+            for name in names
+            if name in needs_key and self._credential_resolver.resolve(None, name).value is None
+        )
+
     def _run_build_job(
         self,
         spec_yaml: str,
@@ -1219,6 +1254,13 @@ class BuilderService:
         build = self.build if retry_of is None else partial(self.build, retry_of=retry_of)
         try:
             with request_credentials.request_scope(keys):
+                # The keys were there when the job was submitted (#1070) and are not
+                # now: it waited in the queue longer than a job's keys are kept. Without
+                # this the build ran keyless and failed as an ordinary provider error,
+                # which tells the user neither the cause nor that submitting again works.
+                missing = self.providers_missing_a_key(spec_yaml)
+                if missing:
+                    return self._build_runs.fail_for_missing_keys(run_id, missing)
                 return build(
                     spec_yaml,
                     run_id=run_id,
