@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.101.0"
+  version: "1.102.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.102.0 judges a credential header after authentication and only where it is read (#1105). A malformed `X-Publish-Credential` answered 400 `invalid_publish_credential` on every route; it is now answered only by the operations that declare the parameter (the five under `/builds/{run_id}/publish`) and ignored elsewhere, as a malformed `X-Provider-Key` has been since v1.93.0. On the operations that do read a header, the 400 for a malformed one — `invalid_publish_credential` or `invalid_provider_key` — now comes after the authentication gate: a request with no or wrong credentials gets its 401 (and is counted by the failure throttle), and `GET /healthz` answers whatever the headers hold.
+
     v1.101.0 lists a run whose table was not committed as `failed` (#1106). Such a build produced its artifacts — its manifest says `status: ok` and records the refused commit in `warehouse_failures` (#788) — while the request answered 409 and `GET /builds/{run_id}` said `failed` (#997); `GET /builds` and `GET /admin/runs` showed the same run as `ok`. `BuildSummary.status` and the admin list now give the run's outcome, `failed`, from the index and from the filesystem alike. The manifest is unchanged. An index written before this version keeps `ok` for such a run until `kpubdata-builder rebuild-index` reads the manifests again.
 
     v1.100.0 lets a build retry only a run that has ended (#1103): `retry_of` naming the caller's own run that is `queued`, `running` or `cancelling` is refused with `retry_of_in_progress` — 409 on `POST /builds`, 400 on `POST /build` — and the body carries `retry_of` and that run's `status`; nothing is made of the refused build. A run with a manifest, a job that is `succeeded`, `failed` or `cancelled`, and a run a restart interrupted can be retried, as before. Someone who may not read the named run still gets the answer reading it gives, whatever its state. A retry no longer continues from a checkpoint older than `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS` (a day unless set; a checkpoint is as old as its first record, and taking one over does not make it new): it fetches that source from the start. The manifest says so in `checkpoints_not_reused` — per source `checkpoint_from`, `reason` (`expired` or `spec_changed`) and `collected_at` — and `reproducibility.resumed_sources.*` gains `collected_at` for a checkpoint that was continued from (additive).
@@ -4823,7 +4825,9 @@ components:
         Multi-user deployment only (#925): the requester's own publish credential for this
         request, `<VARIABLE>=<value>` with `HF_TOKEN`, `KAGGLE_USERNAME` or `KAGGLE_KEY`,
         repeated or comma-separated. Never stored. A single-user deployment ignores it and
-        keeps its stored and server credentials.
+        keeps its stored and server credentials. A malformed header answers 400
+        `invalid_publish_credential` on the operations that declare this parameter, to an
+        authenticated caller, and is ignored on every other route (#1105).
       schema:
         type: string
     RunId:

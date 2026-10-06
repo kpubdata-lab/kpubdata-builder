@@ -107,6 +107,26 @@ def parse_publish_credential_headers(values: Iterable[str]) -> dict[str, str]:
     return parsed
 
 
+def route_reads_publish_credentials(method: str, path: str) -> bool:
+    """Whether the route uses the request's publish credentials — the operations the
+    contract declares ``X-Publish-Credential`` on (a test holds the two together).
+
+    A malformed header is an error only there (#1105). Elsewhere the request carries no
+    publish credential, exactly as if the header were absent.
+    """
+    parts = path.strip("/").split("/")
+    if len(parts) < 3 or parts[0] != "builds" or parts[2] != "publish":
+        return False
+    operation = "/".join(parts[3:])
+    return (method, operation) in (
+        ("POST", ""),
+        ("POST", "reconcile"),
+        ("GET", "readiness"),
+        ("GET", "receipt"),
+        ("DELETE", "receipt"),
+    )
+
+
 @contextmanager
 def request_scope(values: Mapping[str, str] | None) -> Iterator[None]:
     """Make ``values`` the current request's publish credentials until the block ends."""
