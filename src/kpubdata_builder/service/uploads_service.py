@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import threading
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 from kpubdata_builder.ingestion import IngestionError
 from kpubdata_builder.ingestion.tabular_ingest import iter_tabular_batches
@@ -28,7 +29,27 @@ from kpubdata_builder.uploads import UploadMetadata, UploadRepository
 RepositoryProvider = Callable[[], UploadRepository]
 
 
-def upload_metadata_body(metadata: UploadMetadata) -> dict[str, JsonValue]:
+def upload_expires_at(metadata: UploadMetadata, limits: UploadLimits | None) -> str | None:
+    """When the upload will be deleted (#1047), or None when nothing will delete it.
+
+    ``created_at`` plus the retention period in force — the same boundary the purge
+    uses (``UploadLimits.cutoff``). None in a single-user deployment and when retention
+    is off. Read at answer time: an operator who changes the period changes the date.
+    """
+    if limits is None or limits.retention_days is None:
+        return None
+    try:
+        created = datetime.fromisoformat(metadata.created_at)
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (created + timedelta(days=limits.retention_days)).isoformat(timespec="seconds")
+
+
+def upload_metadata_body(
+    metadata: UploadMetadata, limits: UploadLimits | None = None
+) -> dict[str, JsonValue]:
     """Convert UploadMetadata to wire JSON (#498). Content is never included."""
     return {
         "upload_id": metadata.upload_id,
@@ -37,6 +58,9 @@ def upload_metadata_body(metadata: UploadMetadata) -> dict[str, JsonValue]:
         "size_bytes": metadata.size_bytes,
         "original_filename": metadata.original_filename,
         "created_at": metadata.created_at,
+        # So the owner can see the end coming (#1047): past it the upload is deleted and
+        # a spec that names it no longer builds.
+        "expires_at": upload_expires_at(metadata, limits),
     }
 
 
@@ -133,7 +157,7 @@ class UploadsService:
                 )
             except ValueError as exc:
                 return ServiceResponse(400, {"error": str(exc)})
-        return ServiceResponse(200, upload_metadata_body(metadata))
+        return ServiceResponse(200, upload_metadata_body(metadata, limits))
 
     def purge_expired(self) -> int:
         """Delete every owner's uploads that are past retention; how many went (#1045)."""
@@ -150,7 +174,7 @@ class UploadsService:
         metadata = self._repository().get_metadata(principal.owner_id, upload_id)
         if metadata is None:
             return ServiceResponse(404, {"error": f"upload not found: {upload_id}"})
-        return ServiceResponse(200, upload_metadata_body(metadata))
+        return ServiceResponse(200, upload_metadata_body(metadata, self._limits()))
 
     def delete_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
         """Delete only uploads owned by current principal."""

@@ -290,3 +290,82 @@ def test_a_single_user_deployment_is_unchanged(
     found = dispatch(service, "GET", f"/uploads/{first}", None)
     assert isinstance(found, ServiceResponse)
     assert found.status_code == 200
+
+
+# --- expires_at: the owner can see the end coming (#1047) ---
+
+
+def _get_upload(service: BuilderService, upload_id: str) -> ServiceResponse:
+    response = dispatch(service, "GET", f"/uploads/{upload_id}", None)
+    assert isinstance(response, ServiceResponse)
+    return response
+
+
+def test_an_upload_says_when_it_expires(
+    multi_user: None, service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _as(monkeypatch, _ALICE)
+
+    created = _upload(service)
+
+    body = created.body
+    expires = datetime.fromisoformat(str(body["expires_at"]))
+    assert expires - datetime.fromisoformat(str(body["created_at"])) == timedelta(days=30)
+    # Reading it back says the same.
+    assert _get_upload(service, str(body["upload_id"])).body["expires_at"] == body["expires_at"]
+
+
+def test_the_date_follows_the_retention_period_in_force(
+    multi_user: None, service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RETENTION_DAYS_ENV, "7")
+    _as(monkeypatch, _ALICE)
+
+    body = _upload(service).body
+
+    expires = datetime.fromisoformat(str(body["expires_at"]))
+    assert expires - datetime.fromisoformat(str(body["created_at"])) == timedelta(days=7)
+
+
+def test_the_date_is_the_moment_the_purge_takes_the_upload(
+    multi_user: None, service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What the field promises and what the purge does are the same boundary."""
+    _as(monkeypatch, _ALICE)
+    upload_id = str(_upload(service).body["upload_id"])
+
+    _age(service, upload_id, days=29)
+    still_there = _get_upload(service, upload_id)
+    assert still_there.status_code == 200
+    assert datetime.fromisoformat(str(still_there.body["expires_at"])) > datetime.now(timezone.utc)
+    assert service.purge_expired_uploads() == 0
+
+    _age(service, upload_id, days=31)
+    past = _get_upload(service, upload_id)
+    assert datetime.fromisoformat(str(past.body["expires_at"])) < datetime.now(timezone.utc)
+    assert service.purge_expired_uploads() == 1
+    assert _get_upload(service, upload_id).status_code == 404
+
+
+def test_nothing_expires_when_retention_is_off(
+    multi_user: None, service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RETENTION_DAYS_ENV, "0")
+    _as(monkeypatch, _ALICE)
+
+    body = _upload(service).body
+
+    assert "expires_at" in body
+    assert body["expires_at"] is None
+
+
+def test_nothing_expires_in_a_single_user_deployment(
+    service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ENFORCE_OWNERSHIP", raising=False)
+    monkeypatch.delenv("OIDC_ISSUER", raising=False)
+
+    body = _upload(service).body
+
+    assert body["expires_at"] is None
+    assert _get_upload(service, str(body["upload_id"])).body["expires_at"] is None

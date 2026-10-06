@@ -417,7 +417,9 @@ _BuildListEntry = dict[str, str | None]
 #   may answer 409 upload_quota_exceeded (#1045, additive).
 # 1.84.0 -> 1.85.0: retry_of on both build routes, on BuildJob and in the manifest; the
 #   used-run-id refusal carries code run_id_ended (#1042, additive).
-API_CONTRACT_VERSION = "1.85.0"
+# 1.85.0 -> 1.86.0: UploadMetadata.expires_at — when the retention period deletes the
+#   upload, or null (#1047, additive).
+API_CONTRACT_VERSION = "1.86.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

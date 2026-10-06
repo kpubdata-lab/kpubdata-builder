@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.85.0",
+  "contract_version": "1.86.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -533,7 +533,8 @@
         "encoding": "utf-8",
         "size_bytes": 1024,
         "original_filename": "trades.csv",
-        "created_at": "2026-08-16T09:00:00+00:00"
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "expires_at": "2026-09-15T09:00:00+00:00"
       },
       "with_additive_fields": {
         "upload_id": "upl_0123456789abcdef0123456789abcdef",
@@ -542,6 +543,7 @@
         "size_bytes": 1024,
         "original_filename": "trades.csv",
         "created_at": "2026-08-16T09:00:00+00:00",
+        "expires_at": "2026-09-15T09:00:00+00:00",
         "future_optional_field": "added by a later minor contract version"
       },
       "additive_paths": [
@@ -553,7 +555,8 @@
         "encoding": "utf-8",
         "size_bytes": 1024,
         "original_filename": "trades.csv",
-        "created_at": "2026-08-16T09:00:00+00:00"
+        "created_at": "2026-08-16T09:00:00+00:00",
+        "expires_at": "2026-09-15T09:00:00+00:00"
       },
       "broken_path": "$.upload_id"
     },
