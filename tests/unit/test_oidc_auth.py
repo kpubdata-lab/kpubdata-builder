@@ -869,3 +869,53 @@ class TestKeycloakAccessToken:
 
         assert isinstance(result, AuthError)
         assert result.reason == "email not verified"
+
+
+class TestRequestWithoutAToken:
+    """What a request with no token is told depends on what the deployment takes."""
+
+    def test_an_oidc_only_deployment_asks_for_a_token(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It said "api key not configured", which names a key this deployment has none of."""
+        monkeypatch.delenv("KPUBDATA_BUILDER_API_KEY", raising=False)
+
+        result = authenticate()
+
+        assert isinstance(result, AuthError)
+        assert (result.reason, result.code) == (
+            "sign-in required: send a bearer token",
+            "unauthorized",
+        )
+
+    def test_an_api_key_sent_there_is_told_the_same(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KPUBDATA_BUILDER_API_KEY", raising=False)
+
+        result = authenticate(api_key="anything")
+
+        assert isinstance(result, AuthError)
+        assert result.reason == "sign-in required: send a bearer token"
+
+    def test_a_deployment_that_also_takes_an_api_key_still_checks_it(
+        self, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Negative: with a key configured the key path answers as before."""
+        monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "expected-value")
+
+        assert isinstance(authenticate(api_key="expected-value"), Principal)
+        wrong = authenticate(api_key="other-value")
+        assert isinstance(wrong, AuthError)
+        assert wrong.reason == "invalid api key"
+
+    def test_without_oidc_the_answer_is_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Negative: a single-user deployment with no key set is still told so."""
+        monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
+        monkeypatch.delenv("KPUBDATA_BUILDER_API_KEY", raising=False)
+        monkeypatch.delenv("OIDC_ISSUER", raising=False)
+
+        result = authenticate()
+
+        assert isinstance(result, AuthError)
+        assert result.reason == "api key not configured"

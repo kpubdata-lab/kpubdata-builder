@@ -556,6 +556,12 @@ def authenticate(
             return _verify_bearer_token(bearer_token[7:].strip())
         return AuthError(reason="malformed authorization header")
 
+    if _oidc_issuers() and not os.environ.get(_API_KEY_ENV):
+        # A deployment that signs users in and has no API key at all: the request lacks a
+        # token, and "api key not configured" would send its reader looking for a key
+        # this deployment does not use.
+        return AuthError(reason="sign-in required: send a bearer token")
+
     return _verify_api_key(api_key)
 
 
