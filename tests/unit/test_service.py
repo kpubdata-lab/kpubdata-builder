@@ -2358,7 +2358,7 @@ class TestCatalog:
             ).catalog()
 
         assert response.status_code == 502
-        assert response.body == {"error": "catalog unavailable"}
+        assert response.body == {"error": "catalog unavailable", "code": "catalog_unavailable"}
         # Not swallowed — diagnostic info goes to logs.
         assert "internal_datago" in caplog.text
 

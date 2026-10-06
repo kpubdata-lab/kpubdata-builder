@@ -424,7 +424,9 @@ _BuildListEntry = dict[str, str | None]
 #   X-Provider-Key header can reach, per dataset; nothing is stored (#802, additive).
 # 1.87.0 -> 1.88.0: POST /providers/{provider}/probe answers 429 probe_rate_limited —
 #   one probe per user at a time, and an interval per provider (#1059, additive).
-API_CONTRACT_VERSION = "1.88.0"
+# 1.88.0 -> 1.89.0: the 502s that had only a sentence carry a code — catalog_unavailable,
+#   provider_client_unavailable, probe_unavailable (additive).
+API_CONTRACT_VERSION = "1.89.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

@@ -68,7 +68,10 @@ def test_a_client_that_cannot_be_opened_maps_to_a_status(
     assert response.status_code == status
     if status == 502:
         # The factory's own message never reaches the caller.
-        assert response.body == {"error": "provider client unavailable"}
+        assert response.body == {
+            "error": "provider client unavailable",
+            "code": "provider_client_unavailable",
+        }
 
 
 def test_a_spec_that_does_not_validate_is_returned_as_is(tmp_path: Path) -> None:
