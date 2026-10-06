@@ -70,6 +70,9 @@ def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuilderService:
     for name in ("KPUBDATA_DATAGO_API_KEY", "DATAGO_API_KEY", "KPUBDATA_API_KEY"):
         monkeypatch.setenv(name, _OPERATOR)
     monkeypatch.setenv("KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL", "true")
+    # The cross-repo job replays recorded fixtures instead of calling HTTP; this test
+    # needs the HTTP path it observes.
+    monkeypatch.delenv("KPUBDATA_REPLAY_DIR", raising=False)
     repository = SQLiteCredentialRepository(
         tmp_path / "credentials.sqlite3", AesGcmCredentialCipher(b"k" * 32)
     )
