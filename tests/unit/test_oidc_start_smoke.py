@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import json
 import os
-import socket
+import queue
+import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -29,6 +31,7 @@ from pathlib import Path
 import pytest
 
 _ISSUER = "https://idp.invalid/realms/kpubdata"
+_LISTENING = re.compile(r"listening on http://127\.0\.0\.1:(\d+)")
 _START = "from kpubdata_builder.cli import main; raise SystemExit(main())"
 _PROFILE = {
     "OIDC_ISSUER": _ISSUER,
@@ -54,13 +57,8 @@ def _environment(overrides: dict[str, str]) -> dict[str, str]:
     return environment
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
-def _serve(tmp_path: Path, port: int, environment: dict[str, str]) -> subprocess.Popen[str]:
+def _serve(tmp_path: Path, environment: dict[str, str]) -> subprocess.Popen[str]:
+    """Start ``serve`` on a port the operating system chooses."""
     return subprocess.Popen(
         [
             sys.executable,
@@ -70,7 +68,7 @@ def _serve(tmp_path: Path, port: int, environment: dict[str, str]) -> subprocess
             "--host",
             "127.0.0.1",
             "--port",
-            str(port),
+            "0",
             "--output-dir",
             str(tmp_path),
         ],
@@ -79,6 +77,33 @@ def _serve(tmp_path: Path, port: int, environment: dict[str, str]) -> subprocess
         stderr=subprocess.STDOUT,
         text=True,
     )
+
+
+def _announced_port(process: subprocess.Popen[str], seconds: float = 60) -> int:
+    """The port ``serve`` says it listens on; fails with its output if it says none."""
+    assert process.stdout is not None
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def read() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=read, daemon=True).start()
+    seen: list[str] = []
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+        except queue.Empty:
+            pytest.fail(f"serve announced no port within {seconds:.0f} seconds:\n{''.join(seen)}")
+        if line is None:
+            pytest.fail(f"serve exited before announcing a port:\n{''.join(seen)}")
+        seen.append(line)
+        found = _LISTENING.search(line)
+        if found:
+            return int(found.group(1))
 
 
 def _get(port: int, path: str, token: str | None = None) -> tuple[int, dict[str, object]]:
@@ -94,23 +119,10 @@ def _get(port: int, path: str, token: str | None = None) -> tuple[int, dict[str,
 
 @pytest.fixture()
 def served(tmp_path: Path) -> Iterator[int]:
-    """The port of a ``serve`` process started with the profile, once it answers."""
-    port = _free_port()
-    process = _serve(tmp_path, port, _environment(_PROFILE))
+    """The port of a ``serve`` process started with the profile."""
+    process = _serve(tmp_path, _environment(_PROFILE))
     try:
-        deadline = time.monotonic() + 60
-        while True:
-            if process.poll() is not None:
-                output = process.stdout.read() if process.stdout else ""
-                pytest.fail(f"serve exited with {process.returncode} before answering:\n{output}")
-            try:
-                _get(port, "/healthz")
-                break
-            except (urllib.error.URLError, ConnectionError):
-                if time.monotonic() > deadline:
-                    pytest.fail("serve did not answer within 60 seconds")
-                time.sleep(0.2)
-        yield port
+        yield _announced_port(process)
     finally:
         process.terminate()
         try:
@@ -149,8 +161,7 @@ def test_an_incomplete_profile_does_not_start(tmp_path: Path, missing: str) -> N
     """Negative: without an audience, or with nobody who could let a user in, ``serve``
     exits instead of serving."""
     profile = {name: value for name, value in _PROFILE.items() if name != missing}
-    port = _free_port()
-    process = _serve(tmp_path, port, _environment(profile))
+    process = _serve(tmp_path, _environment(profile))
     try:
         output, _ = process.communicate(timeout=60)
     finally:
