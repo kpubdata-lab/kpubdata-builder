@@ -11,6 +11,7 @@ from .store import (
     MAX_UPLOAD_BYTES_ENV,
     SQLiteUploadRepository,
     UploadRepository,
+    UploadUsage,
     generate_upload_id,
     resolve_max_upload_bytes,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "SQLiteUploadRepository",
     "UploadMetadata",
     "UploadRepository",
+    "UploadUsage",
     "generate_upload_id",
     "resolve_max_upload_bytes",
 ]

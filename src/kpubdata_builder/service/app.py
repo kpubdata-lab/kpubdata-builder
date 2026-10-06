@@ -412,7 +412,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.82.0 -> 1.83.0: a run_id is one attempt — the id of a run that ended without a
 #   manifest is refused to its submitter too: 409 on POST /builds, 400 on POST /build
 #   (#1042, additive).
-API_CONTRACT_VERSION = "1.83.0"
+# 1.83.0 -> 1.84.0: per-user upload limits in a multi-user deployment — POST /uploads
+#   may answer 409 upload_quota_exceeded (#1045, additive).
+API_CONTRACT_VERSION = "1.84.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -849,6 +851,19 @@ class BuilderService:
     def delete_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
         """Delete only current principal's upload."""
         return self._uploads_service.delete_upload(upload_id, principal=principal)
+
+    def purge_expired_uploads(self) -> int:
+        """Delete uploads past the retention period, every owner's (#1045).
+
+        Called when the service starts. A workspace that never took an upload has no
+        store, and none is created just to find nothing in it (#498).
+        """
+        if (
+            self._upload_repository_override is None
+            and not (self._output_root / ".service" / "uploads.sqlite3").exists()
+        ):
+            return 0
+        return self._uploads_service.purge_expired()
 
     def query(
         self, body: Mapping[str, JsonValue] | None, *, principal: Principal

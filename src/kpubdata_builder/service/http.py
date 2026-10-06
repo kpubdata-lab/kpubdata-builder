@@ -562,6 +562,11 @@ def serve(
         _logger.warning(
             "marked %d interrupted run(s) failed as credentials_required", len(interrupted)
         )
+    # Uploads past the retention period go now (#1045); an owner's are also dropped
+    # whenever they upload. Only a multi-user deployment keeps a retention period.
+    expired = service.purge_expired_uploads()
+    if expired:
+        _logger.info("deleted %d upload(s) past the retention period", expired)
     server = BoundedThreadingHTTPServer(
         (host, port), make_handler(service), max_workers=max_workers
     )
