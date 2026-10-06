@@ -835,6 +835,46 @@ class TestSyncBuildRespectsRunOwnership:
         finally:
             release.set()
 
+    def test_a_synchronous_build_is_refused_after_the_job_under_the_run_id_ended(
+        self, tmp_path: Path
+    ) -> None:
+        """The third branch (#1065): the job failed and wrote no manifest, and is still in
+        the registry. Its id is not free for a synchronous build either."""
+
+        class _FailingJobService(BuilderService):
+            def _run_build_job(
+                self,
+                spec_yaml: str,
+                run_id: str,
+                created_by: str | None,
+                cancellation: CancellationProbe,
+            ) -> ServiceResponse:
+                return ServiceResponse(500, {"error": "the job failed before it wrote anything"})
+
+        service = _FailingJobService(
+            output_root=tmp_path, client_factory=lambda **_: _FakeClient({}), async_max_workers=1
+        )
+        submitted = dispatch(
+            service, "POST", "/builds", {"spec": VALID_SPEC_YAML, "run_id": "run1"}
+        )
+        assert submitted.status_code == 202
+        for _ in range(200):
+            snapshot = service._async_builds.get("run1")
+            if snapshot is not None and snapshot.status == "failed":
+                break
+            threading.Event().wait(0.02)
+        else:
+            raise AssertionError("the job did not end")
+        assert not (tmp_path / "run1" / "manifest.json").exists()
+
+        resp = dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
+
+        assert isinstance(resp, ServiceResponse)
+        assert resp.status_code == 400
+        assert (resp.body["code"], resp.body["run_id"]) == ("run_id_ended", "run1")
+        # Nothing was built under it.
+        assert not (tmp_path / "run1" / "manifest.json").exists()
+
     def test_the_asynchronous_refusal_of_a_completed_run_id_has_a_code(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
