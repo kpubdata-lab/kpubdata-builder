@@ -1,4 +1,4 @@
-# Caddyfile — app-01 공개 진입 리버스 프록시 (ADR 0016).
+# Caddyfile — 공개 진입 리버스 프록시 (ADR 0016).
 #
 # Cloudflare(proxied DNS, SSL Full(strict)) → Caddy(80/443) → builder:8000.
 # APP_DOMAIN / BACKEND_UPSTREAM은 compose에서 환경변수로 주입한다.

@@ -64,7 +64,7 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 ### 6.1 CUBRID 상태 백엔드 (ADR 0016)
 
 기본 백엔드는 sqlite/local(무외부의존)이다. 조직 요구로 CUBRID 를 쓰려면
-(OCI Compute VM + Docker 단일 인스턴스 전제):
+(VM 한 대 + Docker 단일 인스턴스 전제):
 
 ```bash
 # 이미지에 CUBRID extra 포함
@@ -87,8 +87,7 @@ docker run --rm -p 8000:8000 \
   RDBMS 에 넣지 않기 위함(ADR 0016). 따라서 `/data` 볼륨 마운트는 CUBRID 백엔드에서도 필수다.
 - serve 시작 시 `KPUBDATA_BUILDER_CUBRID_URL` 미설정·드라이버 미설치면 fail-closed 로 기동을 거부한다.
 - 마이그레이션(FS→CUBRID)·정본 이전·리스크는 [ADR 0016](./adrs/0016-cubrid-state-backend.md) 참조.
-- CUBRID 는 OCI 관리형 서비스가 없으므로 같은 VM 에 컨테이너로 함께 띄운다(예: docker-compose,
-  `infra/oci/` 참조).
+- CUBRID 는 같은 VM 에 컨테이너로 함께 띄운다(docker-compose, `infra/cubrid/` 참조).
 
 ## 7. 헬스체크·종료
 
@@ -287,19 +286,20 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 포함되는 파일이 바뀌어야 재스캔이 의미 있음). 문서·테스트 전용 변경은 스캔을
 트리거하지 않으므로 기능 PR과 독립적인 신호를 유지한다.
 
-## 12. OCI 단일 VM 프로덕션 배포 (ADR 0017)
+## 12. 단일 VM 프로덕션 배포 (ADR 0017)
 
-풀스택(Studio 프론트엔드 + Builder 백엔드)을 OCI에 배포하는 참조 토폴로지는
-[ADR 0017](./adrs/0017-fullstack-oci-deployment.md)에 정의되어 있다. 핵심은 our-tax의
+풀스택(Studio 프론트엔드 + Builder 백엔드)을 VM 한 대에 배포하는 참조 토폴로지는
+[ADR 0017](./adrs/0017-fullstack-oci-deployment.md)에 정의되어 있다. 특정 클라우드를 전제하지 않는다
+(kpubdata#812) — Docker Compose 가 도는 Linux VM 이면 된다. 핵심은 our-tax의
 split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM + `/data` 볼륨**만
 쓴다는 점이다 — Builder는 매니페스트(source of truth) + 파생 SQLite 인덱스를 파일로
 영속화하기 때문이다(§6, ADR 0003/0010).
 
 | 구성 요소 | 호스팅 | 산출물 |
 | :--- | :--- | :--- |
-| Studio(프론트엔드) | Cloudflare Pages 정적 배포 | studio 저장소 (`VITE_BUILDER_API_URL`=app-01) |
-| Builder(백엔드) | OCI `app-01` Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
-| 상태 | `app-01` 로컬 블록 볼륨 `/data` | `builder-data` 볼륨 (네트워크 FS 금지, §6) |
+| Studio(프론트엔드) | Cloudflare Pages 정적 배포 | studio 저장소 (`VITE_BUILDER_API_URL`=Builder 의 공개 주소) |
+| Builder(백엔드) | VM 의 Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
+| 상태 | VM 에 붙인 디스크 `/data` | `builder-data` 볼륨 (네트워크 FS 금지, §6) |
 | CI/CD | GitHub Actions → GHCR (이미지까지) | `.github/workflows/docker.yml` — VM 으로의 자동 배포는 없다(아래) |
 
 배포 산출물:
@@ -307,11 +307,11 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 - `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy 스택. migration/ETL/DB 없음.
 - `ops/caddy/Caddyfile` — Cloudflare → Caddy → `builder:8000` 리버스 프록시.
 - `.env.app.example` — VM-local `.env` 템플릿(placeholder secret만). `.env`는 커밋 금지.
-- `app-01` 로의 자동 배포 워크플로(`deploy.yml`)와 rollout 스크립트는 **제거됐다**(2026-10-05). `app-01` 에
-  배포하지 않기로 했고, 그 워크플로는 `main` 에 머지될 때마다 실행돼 SSH 단계에서 실패하고 있었다.
+- 자동 배포 워크플로(`deploy.yml`)와 rollout 스크립트는 **제거됐다**(2026-10-05). 그 워크플로가
+  대상으로 하던 VM 에 배포하지 않기로 했고, 그 워크플로는 `main` 에 머지될 때마다 실행돼 SSH 단계에서 실패하고 있었다.
   이미지는 `docker.yml` 이 GHCR 에 올린다. VM 에 올리려면 이 절의 compose 를 손으로 실행한다.
 
-app-01 최초 준비:
+VM 최초 준비:
 
 ```bash
 cp .env.app.example .env   # 값 채우고 chmod 600
@@ -375,7 +375,7 @@ KPUBDATA_BUILDER_TRUSTED_PROXIES=172.18.0.0/16
 ## 관련
 
 - [ADR 0006](./adrs/0006-service-auth-and-deployment.md) — 인증·배포(fail-closed, Docker)
-- [ADR 0017](./adrs/0017-fullstack-oci-deployment.md) — 풀스택 배포 토폴로지(OCI 단일 VM + Cloudflare Pages, 제안됨)
+- [ADR 0017](./adrs/0017-fullstack-oci-deployment.md) — 풀스택 배포 토폴로지(단일 VM + Cloudflare Pages, 제안됨)
 - ADR 0009(PR #398) — 사용자 인증(Google OIDC, 제안됨)
 - ADR 0010(PR #399) — 상태 백엔드 분리(제안됨)
 - [ADR 0008](./adrs/0008-async-build-job-model.md) — 비동기 build job 모델(제안됨)
