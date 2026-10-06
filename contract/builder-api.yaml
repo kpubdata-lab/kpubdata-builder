@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.89.0"
+  version: "1.90.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.90.0 declares `X-Provider-Key` on `GET /providers` (additive). In a multi-user deployment the list's `configured` already came from the keys the request carries — nothing else holds one there — so a caller that sent none got `false` for every provider that needs a key. Send the keys you hold to read whether each provider is covered, including a provider that shares another's key (`localdata`, `lofin` and `semas` use `datago`'s). Nothing about the response changes, and nothing calls a provider.
+
     v1.89.0 gives three 502s a stable `code` (additive): `catalog_unavailable` where the runtime provider catalog cannot be read (`GET /catalog`, every `/providers` route), `provider_client_unavailable` where a provider client cannot be made with the requester's credential (`POST /preview`, `POST /build`), and `probe_unavailable` where a key probe could not run (`POST /providers/{provider}/probe`). The status and the `error` sentence are unchanged.
 
     v1.88.0 bounds how often one user can probe a provider key (#1059, additive): `POST /providers/{provider}/probe` answers 429 `probe_rate_limited` with `retry_after_seconds` while a probe of the same user is still running, and until `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS` (default 60; `0` turns the interval off) has passed since that user's last probe of the same provider ended. A refused probe calls nothing at the provider. Another user is not affected. The bounds are in memory, per process, and hold in every deployment mode.
@@ -282,6 +284,8 @@ paths:
     get:
       operationId: listProviders
       summary: 런타임 Provider와 현재 principal의 configured 상태 조회
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
       responses:
         "200":
           description: Provider 목록. credential 원문과 owner_id는 포함하지 않는다.
@@ -4734,7 +4738,8 @@ components:
         its TTL passes; never stored, logged or returned. A malformed header answers
         400 `invalid_provider_key` on any route. A single-user deployment ignores it
         and keeps its stored and server keys. Declared on the operations that call a
-        provider (#994).
+        provider (#994), and on `GET /providers`, whose `configured` reports whether the
+        request carries a key that covers each provider.
       schema:
         type: string
     PublishCredential:
@@ -6968,7 +6973,10 @@ components:
           type: boolean
         configured:
           type: boolean
-          description: user credential, server default, 또는 무인증 Provider이면 true
+          description: >-
+            user credential, server default, 또는 무인증 Provider이면 true. In a multi-user
+            deployment only the request's `X-Provider-Key` counts: without the header every
+            provider that needs a key reads `false`.
         last_test:
           description: >-
             This principal's last connection test of the provider (#842); null when it

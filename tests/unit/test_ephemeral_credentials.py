@@ -196,6 +196,47 @@ def test_saving_a_credential_is_refused(
     assert _files_hold(tmp_path, _CANARY) == []
 
 
+def _listed(
+    service: BuilderService, monkeypatch: pytest.MonkeyPatch, headers: tuple[str, ...]
+) -> dict[str, bool]:
+    monkeypatch.setattr(app_module, "authenticate", lambda **_: _ALICE)
+    monkeypatch.setattr(
+        service._providers_service,
+        "runtime_providers",
+        lambda: (
+            ProviderDescriptor("datago", True),
+            ProviderDescriptor("localdata", True),
+            ProviderDescriptor("seoul", True),
+            ProviderDescriptor("keyless", False),
+        ),
+    )
+    response = dispatch(service, "GET", "/providers", None, provider_key_headers=headers)
+    assert isinstance(response, ServiceResponse)
+    assert response.status_code == 200, response.body
+    providers = cast(list[dict[str, object]], response.body["providers"])
+    return {cast(str, item["provider"]): cast(bool, item["configured"]) for item in providers}
+
+
+def test_the_provider_list_reads_the_keys_the_request_carries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, multi_user: None
+) -> None:
+    """Studio decides whether Add Data may go on from this list.
+
+    Without the header the request is the only place a key could have been, so every
+    provider that needs one reads unconfigured — even with the operator's key in the
+    environment. With it, a provider that shares datago's key is covered by datago's.
+    """
+    service = BuilderService(output_root=tmp_path, client_factory=_Recorder())
+
+    without = _listed(service, monkeypatch, ())
+    with_key = _listed(service, monkeypatch, (f"datago={_CANARY}",))
+
+    assert without == {"datago": False, "localdata": False, "seoul": False, "keyless": True}
+    assert with_key == {"datago": True, "localdata": True, "seoul": False, "keyless": True}
+    assert current_keys() == {}
+    assert _files_hold(tmp_path, _CANARY) == []
+
+
 # ------------------------------------------------------------------- async jobs
 
 

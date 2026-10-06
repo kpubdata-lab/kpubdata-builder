@@ -426,7 +426,9 @@ _BuildListEntry = dict[str, str | None]
 #   one probe per user at a time, and an interval per provider (#1059, additive).
 # 1.88.0 -> 1.89.0: the 502s that had only a sentence carry a code — catalog_unavailable,
 #   provider_client_unavailable, probe_unavailable (additive).
-API_CONTRACT_VERSION = "1.89.0"
+# 1.89.0 -> 1.90.0: GET /providers declares the X-Provider-Key header it already reads —
+#   in a multi-user deployment `configured` comes only from the request's keys (additive).
+API_CONTRACT_VERSION = "1.90.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
