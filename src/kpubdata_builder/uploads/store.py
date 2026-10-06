@@ -36,6 +36,7 @@ import sqlite3
 import tempfile
 import threading
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Protocol
@@ -110,6 +111,14 @@ def _sanitize_display_filename(original_filename: str | None) -> str | None:
     return basename[:_MAX_DISPLAY_FILENAME_LENGTH] or None
 
 
+@dataclass(frozen=True)
+class UploadUsage:
+    """What one owner holds: the number of uploads and the bytes they take."""
+
+    files: int
+    total_bytes: int
+
+
 class UploadRepository(Protocol):
     """Upload repository abstraction keyed by owner_id + upload_id."""
 
@@ -138,6 +147,15 @@ class UploadRepository(Protocol):
     def delete(self, owner_id: str, upload_id: str) -> bool: ...
 
     def list_for_owner(self, owner_id: str) -> Sequence[UploadMetadata]: ...
+
+    def usage_for_owner(self, owner_id: str) -> UploadUsage:
+        """How many uploads the owner holds and their total size (#1045)."""
+        ...
+
+    def purge_created_before(self, cutoff: datetime, *, owner_id: str | None = None) -> int:
+        """Delete uploads created before ``cutoff`` — one owner's, or everyone's — and
+        return how many (#1045)."""
+        ...
 
 
 class SQLiteUploadRepository:
@@ -416,6 +434,32 @@ class SQLiteUploadRepository:
         with contextlib.suppress(OSError, ValueError):
             self._blob_file(relative).unlink(missing_ok=True)
 
+    def usage_for_owner(self, owner_id: str) -> UploadUsage:
+        self._validate_owner_id(owner_id)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM uploads WHERE owner_id = ?",
+                (owner_id,),
+            ).fetchone()
+        return UploadUsage(files=int(row[0]), total_bytes=int(row[1]))
+
+    def purge_created_before(self, cutoff: datetime, *, owner_id: str | None = None) -> int:
+        # ``created_at`` is ISO-8601 UTC at second precision, written by ``put`` — the
+        # same form compares as text.
+        boundary = cutoff.astimezone(timezone.utc).isoformat(timespec="seconds")
+        clause = "created_at < ?" + (" AND owner_id = ?" if owner_id is not None else "")
+        arguments: tuple[str, ...] = (boundary,) if owner_id is None else (boundary, owner_id)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT upload_id, blob_path FROM uploads WHERE {clause}",  # noqa: S608
+                arguments,
+            ).fetchall()
+            connection.execute(f"DELETE FROM uploads WHERE {clause}", arguments)  # noqa: S608
+        for row in rows:
+            if row[1] is not None:
+                self._remove_blob(str(row[1]))
+        return len(rows)
+
     def list_for_owner(self, owner_id: str) -> Sequence[UploadMetadata]:
         self._validate_owner_id(owner_id)
         with self._lock, self._connect() as connection:
@@ -443,6 +487,7 @@ __all__ = [
     "MAX_UPLOAD_BYTES_ENV",
     "SQLiteUploadRepository",
     "UploadRepository",
+    "UploadUsage",
     "generate_upload_id",
     "resolve_max_upload_bytes",
 ]
