@@ -26,6 +26,7 @@ _PROVIDER_OPERATIONS = {
     "submitBuild",
     "getProviderStatus",
     "testProviderConnection",
+    "probeProviderKey",
 }
 
 

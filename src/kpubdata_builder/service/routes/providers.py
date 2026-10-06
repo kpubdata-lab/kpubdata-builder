@@ -40,6 +40,8 @@ def route(
         return service.provider_status(provider, principal=principal)
     if method == "POST" and operation == "test":
         return service.provider_status(provider, principal=principal)
+    if method == "POST" and operation == "probe":
+        return service.probe_provider(provider, body, principal=principal)
     if method == "GET" and operation == "credential":
         return service.provider_credential(provider, principal=principal)
     if method == "PUT" and operation == "credential":

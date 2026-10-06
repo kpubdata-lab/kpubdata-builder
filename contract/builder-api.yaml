@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.86.0"
+  version: "1.87.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.87.0 adds `POST /providers/{provider}/probe` (#802, additive): what the key in the request's `X-Provider-Key` header can reach, per source dataset, in kpubdata's probe vocabulary (`available`, `application_required`, `params_invalid` …) with the provider service each dataset belongs to. Only the request's key is used — a stored credential or one in the server's environment is never tried, in either deployment mode — and nothing is stored. Without the header the answer is 400 `provider_key_required`. One call is made per dataset; after 45 seconds no further dataset is started, and those not reached are named in `not_probed` with `complete: false`.
+
     v1.86.0 says when an upload expires (#1047, additive): `UploadMetadata.expires_at`, `created_at` plus the retention period in force, or `null` when nothing will delete the upload.
     v1.85.0 lets a build point at the run it retries (#1042, additive): `retry_of` on `POST /build` and `POST /builds`, shown on `BuildJob.retry_of` and in the manifest. The refusal of a run id that already ended carries `code: run_id_ended`, and both routes name it as an example.
     v1.84.0 adds per-user upload limits in a multi-user deployment (#1045, additive): `POST /uploads` answers 409 `upload_quota_exceeded` when the owner's file count or total size would pass the limit, and uploads past the retention period are deleted.
@@ -380,6 +382,66 @@ paths:
           description: 알려지지 않은 Provider
         "502":
           description: 런타임 Provider 카탈로그 조회 실패
+
+  /providers/{provider}/probe:
+    post:
+      operationId: probeProviderKey
+      summary: 요청에 실린 키로 무엇이 되는지 데이터셋별로 확인 (#802)
+      description: >-
+        `X-Provider-Key` 헤더의 키만 쓴다. 저장된 credential 이나 서버 환경변수의 키는
+        배포 모드와 무관하게 쓰지 않는다. 키도 결과도 저장하지 않으며, 응답에는 키에서
+        유도한 값이 없다. 데이터셋마다 한 번 호출한다(15초, 재시도·캐시 없음). 45초가
+        지나면 새 호출을 시작하지 않고, 닿지 못한 데이터셋은 `not_probed` 에 적는다.
+      parameters:
+        - $ref: "#/components/parameters/ProviderKey"
+        - $ref: "#/components/parameters/ProviderName"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderProbeRequest"
+      responses:
+        "200":
+          description: 데이터셋별 probe 결과
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderProbeResponse"
+              examples:
+                Probed:
+                  summary: 하나는 바로 쓸 수 있고 하나는 활용신청이 필요함
+                  value:
+                    provider: datago
+                    probed_at: "2026-10-06T09:30:00+00:00"
+                    complete: true
+                    datasets:
+                      - dataset: apt_trade
+                        service_id: RTMSDataSvcAptTradeDev
+                        status: available
+                        detail: ""
+                        http_status: 200
+                      - dataset: apt_rent
+                        service_id: RTMSDataSvcAptRent
+                        status: application_required
+                        detail: "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"
+                        http_status: 200
+                    not_probed: []
+        "400":
+          description: >-
+            `provider_key_required` — 이 provider 의 키가 `X-Provider-Key` 헤더에 없다.
+            `invalid_request` — body 가 `datasets` 외의 필드를 갖거나, `datasets` 가 비었거나
+            probe 할 수 없는 데이터셋을 가리킨다. `invalid_provider_key` — 헤더 형식 오류.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: 알려지지 않은 Provider
+        "502":
+          description: 런타임 Provider 카탈로그 조회 실패, 또는 probe 를 실행할 수 없음
 
   /providers/{provider}/credential:
     get:
@@ -6982,6 +7044,71 @@ components:
           minimum: 100
           maximum: 599
           description: kpubdata가 구조적으로 신뢰 가능한 status를 제공한 경우에만 포함
+
+    ProviderProbeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        datasets:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: string
+          description: >-
+            Dataset names within the provider (as `GET /catalog` lists them). Omitted:
+            every dataset of the provider that can be probed.
+
+    ProviderProbeResponse:
+      type: object
+      required: [provider, probed_at, complete, datasets, not_probed]
+      properties:
+        provider:
+          type: string
+        probed_at:
+          type: string
+          format: date-time
+        complete:
+          type: boolean
+          description: False when `not_probed` names a dataset.
+        datasets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderProbeDataset"
+        not_probed:
+          type: array
+          items:
+            type: string
+          description: >-
+            Datasets nothing was observed about: the time budget ran out before their
+            call, or they have no spec to probe with.
+
+    ProviderProbeDataset:
+      type: object
+      required: [dataset, service_id, status, detail, http_status]
+      properties:
+        dataset:
+          type: string
+          description: Dataset name within the provider.
+        service_id:
+          type: string
+          description: >-
+            The provider service the dataset belongs to. An application at the provider
+            is granted per service, so datasets of one service share a verdict.
+        status:
+          type: string
+          description: >-
+            One of kpubdata's `PROBE_STATUSES` (ADR 0005 there): `available`,
+            `auth_unknown`, `application_required`, `params_invalid`, `rate_limited`,
+            `temporarily_unavailable`, `network_error`, `insufficient_metadata`,
+            `retired`. Not an enum here: a kpubdata release may add one, and a client
+            should show an unknown status as it is.
+        detail:
+          type: string
+          description: What the provider said, with no key in it. May be empty.
+        http_status:
+          type: [integer, "null"]
+          description: The HTTP status of the one call, where it was observed.
 
     StructuredProblem:
       type: object

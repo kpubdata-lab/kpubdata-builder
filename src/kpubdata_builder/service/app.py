@@ -51,7 +51,7 @@ from ..warehouse import TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
-from . import pii_reads, publish_credentials, request_credentials
+from . import pii_reads, provider_probe, publish_credentials, request_credentials
 from . import publish as publish_service
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
@@ -419,7 +419,9 @@ _BuildListEntry = dict[str, str | None]
 #   used-run-id refusal carries code run_id_ended (#1042, additive).
 # 1.85.0 -> 1.86.0: UploadMetadata.expires_at — when the retention period deletes the
 #   upload, or null (#1047, additive).
-API_CONTRACT_VERSION = "1.86.0"
+# 1.86.0 -> 1.87.0: POST /providers/{provider}/probe — what the key in the request's
+#   X-Provider-Key header can reach, per dataset; nothing is stored (#802, additive).
+API_CONTRACT_VERSION = "1.87.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -450,6 +452,8 @@ class BuilderService:
         upload_repository: UploadRepository | None = None,
         provider_test_operation: ProviderTestOperation = default_provider_test,
         provider_test_timeout: float | None = None,
+        open_probe: provider_probe.OpenProbe = provider_probe.open_kpubdata_probe,
+        probe_datasets: provider_probe.ListDatasets = provider_probe.spec_dataset_ids,
         async_max_workers: int = 10,
         async_max_queue_size: int = 10,
         max_concurrent_builds: int | None = None,
@@ -523,6 +527,8 @@ class BuilderService:
             provider_test_operation=self._provider_test_operation,
             provider_test_timeout=self._provider_test_timeout,
             test_log=lambda: self._provider_tests(),
+            open_probe=open_probe,
+            probe_datasets=probe_datasets,
         )
         # Upload repository initialized only when needed (#498) — pass lambda,
         # not property value directly (#498) — calling property on every request
@@ -812,6 +818,16 @@ class BuilderService:
     def provider_status(self, provider: str, *, principal: Principal) -> ServiceResponse:
         """Perform lightweight connection test with current principal's credential."""
         return self._providers_service.provider_status(provider, principal=principal)
+
+    def probe_provider(
+        self,
+        provider: str,
+        body: Mapping[str, JsonValue] | None,
+        *,
+        principal: Principal,
+    ) -> ServiceResponse:
+        """Say what the key this request carries can reach, per dataset (#802)."""
+        return self._providers_service.probe_provider(provider, body, principal=principal)
 
     def provider_credential(self, provider: str, *, principal: Principal) -> ServiceResponse:
         """Return saved credential metadata for current principal without plaintext."""
