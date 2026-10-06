@@ -105,4 +105,4 @@ publish 경로는 아직 이 규칙을 따르지 않는다 — #925.
 - `dev` 는 dev 모드(인증 우회)에만 있다. 다중 사용자 배포에서는 허용하지 않는다 —
   `multi_user_mode()` 와 dev 모드가 함께 켜지면 기동이 실패한다
 
-구현 상태는 #679 가 맡는다. 그 전까지 `service` 는 run 데이터에 전체 접근한다(#854).
+**구현됨 (#1072, #1081).** `ownership._has_grandfathered_full_access` 가 `dev` 만 남긴다: 소유권이 강제되는 배포에서 `service`(`X-API-Key`)는 자기가 만든 run 만 읽고, 남의 run 의 데이터·산출물에는 없는 run 과 같은 답(404)을 받는다. 메타데이터는 관리 경로(`GET /admin/runs` 등, `is_admin`)로 본다. dev 모드와 `ENFORCE_OWNERSHIP`·OIDC 의 조합은 `serve` 가 기동을 거절한다. 소유권을 강제하지 않는 단일 사용자 배포는 그대로다.

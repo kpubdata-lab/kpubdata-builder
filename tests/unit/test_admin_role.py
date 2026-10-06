@@ -223,14 +223,12 @@ class TestOwnershipIsNotWidened:
             is False
         )
 
-    @pytest.mark.parametrize("kind", ["dev", "service"])
-    def test_grandfathered_principals_keep_full_access(
-        self, kind: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """#679 pre-existing permission. Removing breaks single-user deployment and API key-based
-        Studio deployment breaks."""
+    def test_the_dev_principal_keeps_full_access(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Local development with authentication off. ``serve`` refuses it together with
+        enforced ownership (#1081); it is reached here only by code that builds the service
+        directly."""
         monkeypatch.setenv("ENFORCE_OWNERSHIP", "true")
-        principal = Principal(kind=kind, owner_id=f"{kind}:x", is_admin=True)
+        principal = Principal(kind="dev", owner_id="dev:x", is_admin=True)
         assert (
             ownership_module.ownership_allows(
                 created_by="oidc:someone",
@@ -238,6 +236,29 @@ class TestOwnershipIsNotWidened:
                 principal=principal,
             )
             is True
+        )
+
+    def test_the_service_principal_no_longer_has_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ADR 0012, 2026-10-01 (#1072): the API key is like an administrator — metadata
+        through the administration routes, and nobody else's run data. It had full access
+        here since #679."""
+        monkeypatch.setenv("ENFORCE_OWNERSHIP", "true")
+        principal = Principal(kind="service", owner_id="service:x", is_admin=True)
+        someone_else = compute_owner_id("oidc", "https://idp", "someone-else")
+        assert (
+            ownership_module.ownership_allows(
+                created_by="oidc:someone", owner_id=someone_else, principal=principal
+            )
+            is False
+        )
+        # Its own runs are its own, and where ownership is not enforced nothing is asked.
+        assert ownership_module.ownership_allows(
+            created_by=None, owner_id="service:x", principal=principal
+        )
+        monkeypatch.delenv("ENFORCE_OWNERSHIP", raising=False)
+        monkeypatch.delenv("OIDC_ISSUER", raising=False)
+        assert ownership_module.ownership_allows(
+            created_by="oidc:someone", owner_id=someone_else, principal=principal
         )
 
     def test_ordinary_user_still_reaches_own_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
