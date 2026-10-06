@@ -783,9 +783,11 @@ class TestSyncBuildRespectsRunOwnership:
 
         assert resp.status_code == 403
 
-    def test_the_owner_can_rebuild_their_own_run(
+    def test_the_owner_cannot_build_again_under_a_completed_run_id(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A run id is one attempt on the synchronous route too (#1065). It used to
+        build over the completed run's output."""
         monkeypatch.setenv(_OWNERSHIP_ENV, "true")
         service = _service(tmp_path, threading.Event())
 
@@ -793,9 +795,60 @@ class TestSyncBuildRespectsRunOwnership:
         assert (
             dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
         ).status_code < 400
+        manifest = (tmp_path / "run1" / "manifest.json").read_bytes()
         resp = dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
 
-        assert resp.status_code < 400
+        assert isinstance(resp, ServiceResponse)
+        assert resp.status_code == 400
+        assert resp.body["code"] == "run_id_completed"
+        assert resp.body["run_id"] == "run1"
+        assert (tmp_path / "run1" / "manifest.json").read_bytes() == manifest
+
+    def test_a_synchronous_build_is_refused_while_the_run_id_is_running(
+        self, tmp_path: Path
+    ) -> None:
+        """The submitter's own running job is not an invitation to build over it (#1065)."""
+        entered = threading.Event()
+        release = threading.Event()
+        service = _BlockingBuildService(output_root=tmp_path, entered=entered, release=release)
+        try:
+            submitted = dispatch(
+                service, "POST", "/builds", {"spec": VALID_SPEC_YAML, "run_id": "run1"}
+            )
+            assert submitted.status_code == 202
+            assert entered.wait(timeout=5)
+            before = service._event_store.list_for_run("run1", limit=100, tail=False)
+
+            resp = dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
+
+            assert isinstance(resp, ServiceResponse)
+            assert resp.status_code == 400
+            assert resp.body["code"] == "run_id_in_progress"
+            # Nothing was added to the running run's events, and it is still running.
+            assert service._event_store.list_for_run("run1", limit=100, tail=False) == before
+            assert service.build_status("run1").body["status"] == "running"
+            # The asynchronous route still hands the submitter their own job back.
+            again = dispatch(
+                service, "POST", "/builds", {"spec": VALID_SPEC_YAML, "run_id": "run1"}
+            )
+            assert again.status_code in (200, 202)
+        finally:
+            release.set()
+
+    def test_the_asynchronous_refusal_of_a_completed_run_id_has_a_code(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        service = _service(tmp_path, threading.Event())
+        self._as(monkeypatch, "owner-a")
+        assert (
+            dispatch(service, "POST", "/build", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
+        ).status_code < 400
+
+        resp = dispatch(service, "POST", "/builds", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
+
+        assert isinstance(resp, ServiceResponse)
+        assert (resp.status_code, resp.body["code"]) == (409, "run_id_completed")
 
     def test_a_new_run_id_is_not_blocked(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

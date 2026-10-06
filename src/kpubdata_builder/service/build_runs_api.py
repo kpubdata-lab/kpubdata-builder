@@ -409,6 +409,7 @@ class BuildRunsApiService:
                 409,
                 {
                     "error": "run_id already completed",
+                    "code": "run_id_completed",
                     "run_id": resolved_run_id,
                 },
             )
