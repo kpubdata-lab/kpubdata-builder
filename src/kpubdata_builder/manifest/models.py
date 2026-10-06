@@ -103,6 +103,9 @@ class BuildManifest:
     inputs_fingerprint: str | None = None
     created_by: str | None = None
     owner_id: str | None = None
+    #: The earlier run this one retries (#1042): a run id is one attempt, so a retry is a
+    #: new run that points back. None for a run that retries nothing.
+    retry_of: str | None = None
     quality_results: dict[str, tuple[QualityCheckResult, ...]] = field(default_factory=dict)
     schema_drift: dict[str, tuple[SchemaDriftFinding, ...]] = field(default_factory=dict)
     drift_evaluation: dict[str, tuple[DriftEvaluation, ...]] = field(default_factory=dict)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import partial
 from typing import TYPE_CHECKING
 
 from ...pipeline import DEFAULT_PREVIEW_SEED
@@ -10,8 +11,8 @@ from ...spec import JsonValue
 from ...tabular import DEFAULT_PREVIEW_LIMIT
 from ..auth import Principal
 from ..responses import ServiceResponse
-from ._guards import check_existing_run_access
-from ._parsing import optional_run_id, spec_from_body
+from ._guards import check_existing_run_access, check_retry_of
+from ._parsing import optional_retry_of, optional_run_id, spec_from_body
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -95,7 +96,17 @@ def route(
             denied = check_existing_run_access(service, run_id, principal, used_status=400)
             if denied is not None:
                 return denied
-        return service.build(
+        retry_of = optional_retry_of(body)
+        if isinstance(retry_of, ServiceResponse):
+            return retry_of
+        denied = check_retry_of(service, run_id, retry_of, principal)
+        if denied is not None:
+            return denied
+        # ``retry_of`` is passed only when the request named one: a service that overrides
+        # ``build`` with the signature it had before #1042 keeps working for every other
+        # request.
+        build = service.build if retry_of is None else partial(service.build, retry_of=retry_of)
+        return build(
             spec,
             run_id=run_id,
             created_by=principal.label,

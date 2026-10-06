@@ -126,6 +126,9 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
     # additive (#648): only when a source resumed from a checkpoint.
     if manifest.reproducibility is not None:
         payload["reproducibility"] = dict(manifest.reproducibility)
+    # additive (#1042): only on a run submitted as a retry of an earlier one.
+    if manifest.retry_of is not None:
+        payload["retry_of"] = manifest.retry_of
     serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
