@@ -33,11 +33,17 @@ held in memory or packed into one JSON line::
   records that, so the R1 comparison can leave the run out.
 
 The checkpoint is removed once Bronze is written; a later rebuild starts fresh.
+
+**A checkpoint has an age** (#1103). Its records were fetched when its fragments were
+written, and a retry that takes it over publishes them as part of a new build. Past
+``KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`` — a day unless set — a retry leaves the
+checkpoint where it is and fetches from the start; the manifest says so.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 from collections.abc import Iterable, Mapping, Sequence
@@ -51,6 +57,41 @@ from .models import CallTotal
 from .writer import Scrub, encode_record
 
 INDEX_NAME = "index.jsonl"
+
+CHECKPOINT_MAX_AGE_ENV = "KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS"
+#: A day: long enough to retry after a provider's daily quota has reset, short enough
+#: that a build does not publish last week's records as this run's fetch.
+DEFAULT_CHECKPOINT_MAX_AGE_SECONDS = 86_400.0
+
+
+def checkpoint_max_age_seconds() -> float:
+    """How old a checkpoint a retry may take over; the default when unset or unreadable.
+
+    ``0`` means a retry never continues from a checkpoint.
+    """
+    raw = os.environ.get(CHECKPOINT_MAX_AGE_ENV, "").strip()
+    if not raw:
+        return DEFAULT_CHECKPOINT_MAX_AGE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_CHECKPOINT_MAX_AGE_SECONDS
+    return value if value >= 0 and math.isfinite(value) else DEFAULT_CHECKPOINT_MAX_AGE_SECONDS
+
+
+def collected_since(directory: Path) -> float | None:
+    """When the oldest fragment of a source's checkpoint was written, as a timestamp.
+
+    The oldest, not the newest: a checkpoint is as old as its first records. Copying a
+    checkpoint keeps its files' times, so a retry of a retry still answers with the
+    first fetch. None when the directory holds no fragment.
+    """
+    times = [
+        item.stat().st_mtime
+        for item in directory.iterdir()
+        if item.is_file() and not item.is_symlink() and item.name != INDEX_NAME
+    ]
+    return min(times) if times else None
 
 
 class Fragment:

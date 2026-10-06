@@ -245,21 +245,60 @@ def refuse_missing_provider_keys(service: BuilderService, spec_yaml: str) -> Ser
     )
 
 
+#: The states a job has ended in. A run named in ``retry_of`` is in one of them, has a
+#: manifest, or was interrupted by a restart (#1103).
+RETRIABLE_JOB_STATUSES = ("succeeded", "failed", "cancelled")
+
+
 def check_retry_of(
     service: BuilderService,
     run_id: str | None,
     retry_of: str | None,
     principal: Principal,
+    *,
+    in_progress_status: int = 409,
 ) -> ServiceResponse | None:
-    """Whether a build may say it retries ``retry_of`` (#1042).
+    """Whether a build may say it retries ``retry_of`` (#1042, #1103).
 
     The link is a claim about another run, and it is shown back — on the job, in the
     manifest. So the named run must be one the caller may read: anyone else gets exactly
     what reading that run would give them, and learns nothing new from the attempt. A run
     cannot retry itself.
+
+    And the named run must have **ended** (#1103). A retry takes over what that run had
+    fetched (#1071); from a run still being written it would copy a checkpoint its
+    writer is appending to, and two builds of one spec would then spend the provider's
+    quota side by side. Ended means one of:
+
+    - a manifest exists — the run finished, whatever its outcome;
+    - its job is ``succeeded``, ``failed`` or ``cancelled`` (``RETRIABLE_JOB_STATUSES``);
+    - only its submission is recorded: a restart interrupted it, and nothing runs it.
+
+    ``queued``, ``running`` and ``cancelling`` are refused with ``retry_of_in_progress``.
+    The state is asked after ownership, so it is told only to someone who could read it
+    from ``GET /builds/{run_id}`` anyway.
+
+    ``in_progress_status``: 409 where the route's 409 is an error body (``POST /builds``).
+    ``POST /build`` declares its 409 as a build response, so it asks for 400.
     """
     if retry_of is None:
         return None
     if run_id is not None and run_id == retry_of:
         return ServiceResponse(400, {"error": "'retry_of' must name another run"})
-    return check_active_run_access(service, retry_of, principal)
+    denied = check_active_run_access(service, retry_of, principal)
+    if denied is not None:
+        return denied
+    # The job is read before the manifest: a job that is writing its manifest is still
+    # ``running``, and the file alone would say it had ended.
+    snapshot = service._async_builds.get(retry_of)
+    if snapshot is None or snapshot.status in RETRIABLE_JOB_STATUSES:
+        return None
+    return ServiceResponse(
+        in_progress_status,
+        {
+            "error": "the run named in 'retry_of' has not ended; wait for it or cancel it first",
+            "code": "retry_of_in_progress",
+            "retry_of": retry_of,
+            "status": snapshot.status,
+        },
+    )

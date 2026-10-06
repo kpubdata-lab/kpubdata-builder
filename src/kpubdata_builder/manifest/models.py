@@ -121,6 +121,10 @@ class BuildManifest:
     #: Present only when a source resumed from a checkpoint (#648): the run is not
     #: reproducible, and the R1 comparison leaves it out.
     reproducibility: dict[str, JsonValue] | None = None
+    #: Sources of a retry whose checkpoint in the retried run was left where it was
+    #: (#1103) — too old, or made from a different spec — so this run fetched them from
+    #: the start: source → ``checkpoint_from``, ``reason``, ``collected_at``.
+    checkpoints_not_reused: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
     #: What made ``inputs_fingerprint`` (#867); None when there is no fingerprint.
     inputs_fingerprint_algorithm: str | None = None
     #: What made the ratio splits (#871, ``stages.gold.split``); None without them.

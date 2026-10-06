@@ -105,7 +105,7 @@ def route(
         retry_of = optional_retry_of(body)
         if isinstance(retry_of, ServiceResponse):
             return retry_of
-        denied = check_retry_of(service, run_id, retry_of, principal)
+        denied = check_retry_of(service, run_id, retry_of, principal, in_progress_status=400)
         if denied is not None:
             return denied
         # The same refusal ``POST /builds`` gives (#1070), before anything is fetched.

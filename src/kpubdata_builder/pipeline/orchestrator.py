@@ -26,9 +26,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import shutil
+import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -80,6 +82,7 @@ from ..stages._path_safety import (
     validate_path_segment,
 )
 from ..stages.bronze.build import SourceClient
+from ..stages.bronze.checkpoint import checkpoint_max_age_seconds, collected_since
 from ..stages.bronze.models import BronzeArtifact, utc_now
 from ..stages.bronze.persist import persist_bronze_artifact
 from ..stages.bronze.resolve import build_bronze_artifact_for_source, source_identity
@@ -295,46 +298,102 @@ def _output_source_key(source: SourceRef) -> str:
     return source.alias if source.alias else _fetch_source_key(source)
 
 
+#: Why a retry did not continue from the checkpoint of the run it retries (#1103).
+CHECKPOINT_SPEC_CHANGED = "spec_changed"
+CHECKPOINT_EXPIRED = "expired"
+
+
+@dataclass(frozen=True)
+class _InheritedCheckpoints:
+    """What a retry took over from the run it retries, and what it left (#1071, #1103)."""
+
+    #: Sources whose checkpoint was copied into this run.
+    copied: frozenset[str] = frozenset()
+    #: Source → when the oldest record of its checkpoint was fetched (ISO 8601, UTC).
+    collected_at: Mapping[str, str] = field(default_factory=dict)
+    #: Source → why its checkpoint was left: this run fetches that source from the start.
+    not_reused: Mapping[str, Mapping[str, JsonValue]] = field(default_factory=dict)
+
+
+def _iso(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(timespec="seconds")
+
+
 def _inherit_checkpoints(
-    output_root: Path, run_id: str, retry_of: str | None, spec_digest: str
-) -> frozenset[str]:
-    """Copy the checkpoints of the run this one retries; the sources that got one (#1071).
+    output_root: Path,
+    run_id: str,
+    retry_of: str | None,
+    spec_digest: str,
+    *,
+    now: float | None = None,
+) -> _InheritedCheckpoints:
+    """Copy the checkpoints of the run this one retries; say what was taken and left (#1071).
 
     A checkpoint resumes "a rebuild of the same run id" (#648), and a run id is one
     attempt (#1042): the retry of an interrupted 1,500-combination fetch has a new id
     and fetched everything again, spending the provider's daily quota twice.
 
     Copied only when the retried run was built from **the same spec** — its snapshot's
-    digest equals this run's. A changed spec starts from nothing: a checkpoint is its
-    source's records, and nothing says they are still what the new spec asks for. That
-    the requester may name ``retry_of`` at all is the service's check, made before the
-    build starts (``check_retry_of``): another owner's run is refused there.
+    digest equals this run's, so the same provider, dataset and parameters. A changed
+    spec starts from nothing: a checkpoint is its source's records, and nothing says
+    they are still what the new spec asks for. And only while the checkpoint is **young
+    enough** (#1103, ``checkpoint_max_age_seconds``): its records are published as part
+    of this build, and one fetched long ago is not what a build made now should hold.
+    A checkpoint left for either reason is reported, so the run says it fetched that
+    source from the start instead of looking as though there had been nothing to use.
+
+    That the requester may name ``retry_of`` at all, and that the named run has ended,
+    are the service's checks, made before the build starts (``check_retry_of``): another
+    owner's run and a run still being written are refused there.
 
     The retried run's files are read and never changed. The copies are this run's own:
     each is still matched combination by combination when it is loaded, and removed
     once Bronze is written, as any checkpoint is.
     """
     if retry_of is None or retry_of == run_id:
-        return frozenset()
+        return _InheritedCheckpoints()
     try:
         validate_path_segment(retry_of, field_name="retry_of")
         previous = output_root / retry_of
         ensure_within(output_root, previous, label="retried run directory")
         snapshot = previous / BUILDSPEC_SNAPSHOT_FILENAME
-        if not snapshot.is_file() or compute_spec_digest(snapshot.read_bytes()) != spec_digest:
-            return frozenset()
         source_root = previous / _CHECKPOINT_DIRNAME
-        if not source_root.is_dir() or source_root.is_symlink():
-            return frozenset()
+        if not snapshot.is_file() or not source_root.is_dir() or source_root.is_symlink():
+            return _InheritedCheckpoints()
+        # Only a source's checkpoint directory; never a link, which could point outside
+        # the retried run.
+        entries = [
+            entry
+            for entry in sorted(source_root.iterdir())
+            if entry.is_dir() and not entry.is_symlink()
+        ]
+        since = {entry.name: collected_since(entry) for entry in entries}
+        collected_at = {name: _iso(when) for name, when in since.items() if when is not None}
+        if compute_spec_digest(snapshot.read_bytes()) != spec_digest:
+            return _InheritedCheckpoints(
+                not_reused={
+                    entry.name: _left(retry_of, CHECKPOINT_SPEC_CHANGED, collected_at[entry.name])
+                    for entry in entries
+                    if since[entry.name] is not None
+                }
+            )
+        max_age = checkpoint_max_age_seconds()
+        moment = time.time() if now is None else now
         target_root = output_root / run_id / _CHECKPOINT_DIRNAME
         copied: set[str] = set()
-        for entry in sorted(source_root.iterdir()):
-            # Only a source's checkpoint directory; never a link, which could point
-            # outside the retried run.
-            if not entry.is_dir() or entry.is_symlink():
-                continue
+        not_reused: dict[str, Mapping[str, JsonValue]] = {}
+        for entry in entries:
             target = _source_work_path(output_root / run_id, _CHECKPOINT_DIRNAME, entry.name)
             if target.exists():
+                continue
+            when = since[entry.name]
+            if when is None:
+                continue  # no fragment: nothing was fetched for this source
+            if moment - when > max_age:
+                not_reused[entry.name] = {
+                    **_left(retry_of, CHECKPOINT_EXPIRED, collected_at[entry.name]),
+                    "max_age_seconds": max_age,
+                }
                 continue
             target_root.mkdir(parents=True, exist_ok=True)
             # Regular files only. ``copytree`` would follow a link to a file and copy
@@ -345,12 +404,43 @@ def _inherit_checkpoints(
                 if item.is_file() and not item.is_symlink():
                     shutil.copy2(item, target / item.name)
             copied.add(entry.name)
-        return frozenset(copied)
+        return _InheritedCheckpoints(
+            copied=frozenset(copied),
+            collected_at={name: collected_at[name] for name in copied},
+            not_reused=not_reused,
+        )
     except (OSError, ValueError):
         # Nothing to continue from is not a reason to fail the retry: it fetches again.
         logger.warning("could not take over the checkpoint of run %s", retry_of, exc_info=True)
         shutil.rmtree(output_root / run_id / _CHECKPOINT_DIRNAME, ignore_errors=True)
-        return frozenset()
+        return _InheritedCheckpoints()
+
+
+def _left(retry_of: str, reason: str, collected_at: str) -> dict[str, JsonValue]:
+    """The manifest entry for one source's checkpoint a retry did not continue from."""
+    return {"checkpoint_from": retry_of, "reason": reason, "collected_at": collected_at}
+
+
+def _fetch_note(inherited: _InheritedCheckpoints, retry_of: str | None, key: str) -> str | None:
+    """What the fetch-start event says about the retried run's checkpoint, if anything."""
+    if retry_of is None:
+        return None
+    if key in inherited.copied:
+        return f"continuing from the checkpoint of run {retry_of}"
+    left = inherited.not_reused.get(key)
+    if left is None:
+        return None
+    return _NOT_REUSED_MESSAGES[str(left["reason"])].format(run=retry_of)
+
+
+_NOT_REUSED_MESSAGES = {
+    CHECKPOINT_EXPIRED: (
+        "fetching from the start: the checkpoint of run {run} is too old to continue"
+    ),
+    CHECKPOINT_SPEC_CHANGED: (
+        "fetching from the start: the checkpoint of run {run} was made from a different spec"
+    ),
+}
 
 
 def _source_work_path(run_dir: Path, dirname: str, output_key: str, *, suffix: str = "") -> Path:
@@ -553,7 +643,7 @@ def _run_source_pipeline(
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
     secret_values: tuple[str, ...] = (),
-    checkpoint_from: str | None = None,
+    fetch_note: str | None = None,
 ) -> _SourcePipelineResult:
     """Execute one source Bronze → Silver → Gold and persist outputs.
 
@@ -616,14 +706,7 @@ def _run_source_pipeline(
         # source fetch share this call as execution boundary (#496) —
         # public_api/file/url all use identical event vocabulary.
         recorder.stage_started(output_key, "bronze")
-        recorder.source_fetch_started(
-            output_key,
-            message=(
-                f"continuing from the checkpoint of run {checkpoint_from}"
-                if checkpoint_from is not None
-                else None
-            ),
-        )
+        recorder.source_fetch_started(output_key, message=fetch_note)
 
         def after_combination(done: int, total: int) -> None:
             # Each finished combination is a safe boundary (#648): report it, then stop
@@ -1494,9 +1577,7 @@ def run_build(
         spec, output_root=context.output_root, run_id=context.run_id
     )
     # A retry takes over what the run it retries had already fetched (#1071).
-    inherited_checkpoints = _inherit_checkpoints(
-        context.output_root, context.run_id, retry_of, spec_digest
-    )
+    inherited = _inherit_checkpoints(context.output_root, context.run_id, retry_of, spec_digest)
     # The revision each table has *now*, before anything is fetched (#787). Committing
     # against it makes a refresh another build finished meanwhile a conflict: the
     # older data loses instead of replacing the newer snapshot.
@@ -1529,9 +1610,7 @@ def run_build(
             capture_silver=_output_source_key(source) in composition_aliases,
             cancellation=cancellation,
             secret_values=secret_values,
-            checkpoint_from=(
-                retry_of if _output_source_key(source) in inherited_checkpoints else None
-            ),
+            fetch_note=_fetch_note(inherited, retry_of, _output_source_key(source)),
         )
 
     # Per-source fetch/stage mostly waits on network I/O, so concurrent
@@ -1575,9 +1654,12 @@ def run_build(
                 "resumed_combinations": result.resumed[0],
                 "total_combinations": result.resumed[1],
             }
-            if retry_of is not None and result.outcome.source_key in inherited_checkpoints:
-                # Whose fetch those combinations came from (#1071).
+            if retry_of is not None and result.outcome.source_key in inherited.copied:
+                # Whose fetch those combinations came from (#1071), and since when (#1103).
                 resumed_sources[result.outcome.source_key]["checkpoint_from"] = retry_of
+                resumed_sources[result.outcome.source_key]["collected_at"] = inherited.collected_at[
+                    result.outcome.source_key
+                ]
         if result.gold_selection is not None:
             gold_selection[result.outcome.source_key] = result.gold_selection
         if result.pii_declared is not None:
@@ -1803,6 +1885,7 @@ def run_build(
         gold_selection={key: value.body() for key, value in gold_selection.items()},
         pii_masking={key: value.body() for key, value in pii_masking.items()},
         reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,
+        checkpoints_not_reused={key: dict(value) for key, value in inherited.not_reused.items()},
         artifacts=_artifact_digests(
             context,
             [o.source_key for o in outcomes if o.status == "ok"]

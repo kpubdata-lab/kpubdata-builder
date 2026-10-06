@@ -126,6 +126,11 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
     # additive (#648): only when a source resumed from a checkpoint.
     if manifest.reproducibility is not None:
         payload["reproducibility"] = dict(manifest.reproducibility)
+    # additive (#1103): only on a retry that left a checkpoint of the run it retries.
+    if manifest.checkpoints_not_reused:
+        payload["checkpoints_not_reused"] = {
+            key: dict(value) for key, value in manifest.checkpoints_not_reused.items()
+        }
     # additive (#1042): only on a run submitted as a retry of an earlier one.
     if manifest.retry_of is not None:
         payload["retry_of"] = manifest.retry_of
