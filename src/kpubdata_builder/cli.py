@@ -12,6 +12,7 @@ Key functions:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 from collections.abc import Sequence
@@ -891,9 +892,11 @@ def _run_serve(
         raise SystemExit(
             f"KPUBDATA_BUILDER_BUILD_WAIT_SECONDS must be a number, got {env_wait!r}"
         ) from None
-    if build_wait_seconds < 0:
+    # ``nan < 0`` is false, so a plain sign check let ``nan`` and ``inf`` through; with
+    # every slot taken one never returned and the other raised OverflowError (#1068).
+    if not math.isfinite(build_wait_seconds) or build_wait_seconds < 0:
         raise SystemExit(
-            f"KPUBDATA_BUILDER_BUILD_WAIT_SECONDS must be >= 0, got {build_wait_seconds}"
+            f"KPUBDATA_BUILDER_BUILD_WAIT_SECONDS must be a finite number >= 0, got {env_wait!r}"
         )
 
     # Priority: --warehouse flag > KPUBDATA_BUILDER_WAREHOUSE env > none. Without this

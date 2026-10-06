@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.91.0"
+  version: "1.92.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.92.0 bounds the wait for a preview slot (#1068, additive): with `KPUBDATA_BUILDER_MAX_PREVIEWS` set, `POST /preview` waited for a slot with no bound; it now waits up to `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` and then answers 429 `preview_queue_full`. That setting must be a finite number of seconds, zero or more — `nan` and `inf` were accepted at start-up and then hung or failed the request that had to wait.
+
     v1.91.0 makes a run id one attempt on the synchronous build as well (#1065): `POST /build` answers 400 for the caller's own `run_id` when a run completed under it (`run_id_completed`; it was built over before), when an async job is running under it (`run_id_in_progress`; it was built over too) and when an async job ended under it (`run_id_ended`). `POST /builds` gives its existing 409 for a completed run the code `run_id_completed`. A new `run_id` builds as before.
 
     v1.90.0 declares `X-Provider-Key` on `GET /providers` (additive). In a multi-user deployment the list's `configured` already came from the keys the request carries — nothing else holds one there — so a caller that sent none got `false` for every provider that needs a key. Send the keys you hold to read whether each provider is covered, including a provider that shares another's key (`localdata`, `lofin` and `semas` use `datago`'s). Nothing about the response changes, and nothing calls a provider.
@@ -899,6 +901,16 @@ paths:
                   summary: 양수가 아닌 preview limit
                   value:
                     error: "'limit' must be a positive integer"
+        "429":
+          description: >-
+            Every preview slot is in use (`preview_queue_full`, #1068). With
+            `KPUBDATA_BUILDER_MAX_PREVIEWS` set, a preview waits for a slot up to
+            `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` — the bound a synchronous build waits
+            for its slot — and is then turned away having fetched nothing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           description: >-
             Refused before any provider request. `provider_credential_required` (#786):

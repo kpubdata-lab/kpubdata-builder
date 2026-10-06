@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import os
 import threading
 import time
@@ -431,7 +432,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.90.0 -> 1.91.0: POST /build refuses the caller's own completed, running or ended
 #   run_id (400 run_id_completed / run_id_in_progress / run_id_ended); the POST /builds
 #   409 for a completed run carries run_id_completed (#1065).
-API_CONTRACT_VERSION = "1.91.0"
+# 1.91.0 -> 1.92.0: POST /preview answers 429 preview_queue_full when no preview slot
+#   frees within the wait bound (#1068, additive).
+API_CONTRACT_VERSION = "1.92.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -610,8 +613,11 @@ class BuilderService:
             max_concurrent_builds if max_concurrent_builds is not None else async_max_workers
         )
         self._build_slots = BuildSlots(self.max_concurrent_builds)
-        if build_wait_seconds is not None and build_wait_seconds < 0:
-            raise ValueError("build_wait_seconds must be >= 0")
+        if build_wait_seconds is not None and (
+            not math.isfinite(build_wait_seconds) or build_wait_seconds < 0
+        ):
+            raise ValueError("build_wait_seconds must be a finite number >= 0")
+        self._slot_wait_seconds = build_wait_seconds
         # Previews run on request threads and each may open a DuckDB connection. With no
         # limit (None) they are bounded only by the request pool, as before; a deployment
         # that budgets memory names the number its budget counts (#1028).
@@ -1043,12 +1049,30 @@ class BuilderService:
             return self._spec_api.preview(
                 spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
             )
-        # A preview past the limit waits its turn rather than being refused: it is a
-        # short read, and the caller is a person looking at a form.
-        with self._preview_slots:
+        # A preview past the limit waits its turn rather than being refused at once: it
+        # is a short read, and the caller is a person looking at a form. It waits no
+        # longer than a build does for its slot (#1068) — with no bound, previews behind
+        # a stuck one each held a request thread for as long as it stayed stuck.
+        wait = self._slot_wait_seconds
+        acquired = (
+            self._preview_slots.acquire()
+            if wait is None
+            else self._preview_slots.acquire(timeout=wait)
+        )
+        if not acquired:
+            return ServiceResponse(
+                429,
+                {
+                    "error": "every preview slot is in use; try again shortly",
+                    "code": "preview_queue_full",
+                },
+            )
+        try:
             return self._spec_api.preview(
                 spec_yaml, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
             )
+        finally:
+            self._preview_slots.release()
 
     def _load_validated(self, spec_yaml: str) -> BuildSpec | ServiceResponse:
         """Parse and validate spec_yaml; return error ServiceResponse on failure."""
