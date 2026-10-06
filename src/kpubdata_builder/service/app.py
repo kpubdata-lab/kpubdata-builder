@@ -439,7 +439,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.93.0 -> 1.94.0: POST /builds answers 400 provider_credential_required when the
 #   request carries no key for a provider the spec calls; a job whose keys are gone when
 #   it starts ends as credentials_required (#1070, additive).
-API_CONTRACT_VERSION = "1.94.0"
+# 1.94.0 -> 1.95.0: a verified token with an unverified e-mail answers 401
+#   email_not_verified, not unauthorized (#1074, additive).
+API_CONTRACT_VERSION = "1.95.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1615,7 +1617,7 @@ def _admit(
         # failure (not worth throttling), 503 is JWKS transient outage (not client
         # fault). An expired token is a 401 too, but its signature verified: it is
         # not a guess, and counting it lets ordinary expiry reach the limit (#1031).
-        if principal.status_code == 401 and not principal.expired:
+        if principal.counts_as_a_failed_attempt:
             service._auth_throttle.record_failure(client_id)
         return ServiceResponse(
             principal.status_code, {"error": principal.reason, "code": principal.code}

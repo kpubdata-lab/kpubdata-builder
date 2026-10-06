@@ -955,3 +955,157 @@ class TestRequestWithoutAToken:
 
         assert isinstance(result, AuthError)
         assert result.reason == "api key not configured"
+
+
+class TestSigningKeysPerIssuer:
+    """With several issuers, a token verifies against the keys of the issuer it claims
+    (#1074). The keys came from the first issuer only."""
+
+    _SECOND = "https://second-issuer.example.com"
+
+    @staticmethod
+    def _keypair() -> tuple[bytes, object]:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        return pem, key.public_key()
+
+    def _two_issuers(
+        self, monkeypatch: pytest.MonkeyPatch, first_public: object, second_public: object
+    ) -> list[str | None]:
+        """Two issuers, each with keys of its own; returns the issuers keys were asked for."""
+        import kpubdata_builder.service.auth as auth_module
+
+        monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
+        monkeypatch.setenv("OIDC_ISSUER", f"{_ISSUER},{self._SECOND}")
+        monkeypatch.setenv("OIDC_AUDIENCE", _AUDIENCE)
+        monkeypatch.delenv("OIDC_JWKS_URL", raising=False)
+        monkeypatch.setenv("OIDC_ALLOWED_EMAILS", "user@example.com")
+        asked: list[str | None] = []
+        keys = {None: first_public, _ISSUER: first_public, self._SECOND: second_public}
+
+        def client(issuer: str | None = None) -> _FakeJWKSClient:
+            asked.append(issuer)
+            return _FakeJWKSClient(keys[issuer])
+
+        monkeypatch.setattr(auth_module, "_get_jwks_client", client)
+        return asked
+
+    def test_a_token_from_the_second_issuer_verifies_with_its_keys(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first_pem, first_public = self._keypair()
+        second_pem, second_public = self._keypair()
+        asked = self._two_issuers(monkeypatch, first_public, second_public)
+
+        from_second = authenticate(
+            bearer_token=f"Bearer {_make_token(second_pem, iss=self._SECOND)}"
+        )
+        from_first = authenticate(bearer_token=f"Bearer {_make_token(first_pem, iss=_ISSUER)}")
+
+        assert isinstance(from_second, Principal)
+        assert isinstance(from_first, Principal)
+        assert asked == [self._SECOND, _ISSUER]
+
+    def test_a_token_signed_by_the_other_issuers_key_does_not_verify(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Negative: claiming the second issuer selects its keys, and only its key signs for it."""
+        first_pem, first_public = self._keypair()
+        _second_pem, second_public = self._keypair()
+        self._two_issuers(monkeypatch, first_public, second_public)
+
+        result = authenticate(bearer_token=f"Bearer {_make_token(first_pem, iss=self._SECOND)}")
+
+        assert isinstance(result, AuthError)
+        assert result.code == "unauthorized"
+
+    def test_an_issuer_that_is_not_configured_is_refused_without_asking_for_keys(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first_pem, first_public = self._keypair()
+        asked = self._two_issuers(monkeypatch, first_public, first_public)
+
+        token = _make_token(first_pem, iss="https://not-configured.example.com")
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, AuthError)
+        assert (result.reason, result.status_code) == ("invalid token", 401)
+        assert asked == []
+
+    def test_a_single_issuer_uses_its_one_set_of_keys_as_before(self, oidc_env: bytes) -> None:
+        """Negative: nothing is read from the token to choose keys when there is no choice."""
+        result = authenticate(bearer_token=f"Bearer {_make_token(oidc_env)}")
+
+        assert isinstance(result, Principal)
+
+    def test_each_issuer_gets_a_client_of_its_own(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import kpubdata_builder.service.auth as auth_module
+
+        monkeypatch.setattr(auth_module, "_issuer_jwks_clients", {})
+        monkeypatch.setattr(
+            auth_module, "_discover_jwks_uri", lambda issuer: f"{issuer}/protocol/certs"
+        )
+
+        first = auth_module._get_jwks_client(_ISSUER)
+        second = auth_module._get_jwks_client(self._SECOND)
+
+        assert first is not second
+        assert auth_module._get_jwks_client(_ISSUER) is first
+        assert getattr(second, "uri", None) == f"{self._SECOND}/protocol/certs"
+
+
+class TestUnverifiedEmail:
+    """A valid token whose e-mail is not verified is told apart from a failed sign-in (#1074)."""
+
+    def test_it_has_a_code_of_its_own(self, oidc_env: bytes) -> None:
+        token = _make_token(oidc_env, email_verified=False)
+
+        result = authenticate(bearer_token=f"Bearer {token}")
+
+        assert isinstance(result, AuthError)
+        assert (result.status_code, result.code, result.reason) == (
+            401,
+            "email_not_verified",
+            "email not verified",
+        )
+
+    def test_it_is_not_a_failed_attempt_and_a_bad_token_still_is(self, oidc_env: bytes) -> None:
+        unverified = authenticate(
+            bearer_token=f"Bearer {_make_token(oidc_env, email_verified=False)}"
+        )
+        expired = authenticate(bearer_token=f"Bearer {_make_token(oidc_env, exp=1)}")
+        wrong_audience = authenticate(
+            bearer_token=f"Bearer {_make_token(oidc_env, aud='someone-else')}"
+        )
+        garbage = authenticate(bearer_token="Bearer not-a-token")
+
+        assert isinstance(unverified, AuthError) and not unverified.counts_as_a_failed_attempt
+        assert isinstance(expired, AuthError) and not expired.counts_as_a_failed_attempt
+        assert isinstance(wrong_audience, AuthError) and wrong_audience.counts_as_a_failed_attempt
+        assert isinstance(garbage, AuthError) and garbage.counts_as_a_failed_attempt
+        assert wrong_audience.code == "unauthorized"
+
+    def test_repeating_it_never_reaches_the_throttle(
+        self, tmp_path: Path, oidc_env: bytes, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Through ``dispatch``: a user whose address is unverified is not cut off for it."""
+        from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
+
+        monkeypatch.setenv("KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT", "2")
+        service = BuilderService(output_root=tmp_path, client_factory=lambda **_kwargs: object())
+        token = f"Bearer {_make_token(oidc_env, email_verified=False)}"
+
+        answers = [
+            dispatch(service, "GET", "/version", None, bearer_token=token, client_id="10.0.0.9")
+            for _ in range(5)
+        ]
+
+        refused = [answer for answer in answers if isinstance(answer, ServiceResponse)]
+        assert len(refused) == 5
+        assert {(answer.status_code, answer.body["code"]) for answer in refused} == {
+            (401, "email_not_verified")
+        }
