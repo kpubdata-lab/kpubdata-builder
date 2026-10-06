@@ -401,3 +401,28 @@ def test_a_single_user_deployment_keeps_its_credentials(
     assert resolver.resolve("owner", "datago").value == "stored"
     service = BuilderService(output_root=tmp_path, client_factory=_Recorder())
     assert service.mark_interrupted_runs() == ()
+
+
+def test_the_provider_list_says_whose_key_each_provider_calls_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, multi_user: None
+) -> None:
+    """A client that sends only the keys a request needs kept its own copy of the table
+    (#1085). The list reports the one a build resolves by."""
+    service = BuilderService(output_root=tmp_path, client_factory=_Recorder())
+    monkeypatch.setattr(app_module, "authenticate", lambda **_: _ALICE)
+    names = ("datago", "localdata", "lofin", "semas", "seoul", "keyless")
+    monkeypatch.setattr(
+        service._providers_service,
+        "runtime_providers",
+        lambda: tuple(ProviderDescriptor(name, name != "keyless") for name in names),
+    )
+
+    response = dispatch(service, "GET", "/providers", None)
+
+    assert isinstance(response, ServiceResponse) and response.status_code == 200
+    providers = cast(list[dict[str, object]], response.body["providers"])
+    reported = {cast(str, item["provider"]): item["key_provider"] for item in providers}
+    # Not a second copy of the table: every entry is what the resolver itself answers.
+    assert reported == {name: CredentialResolver.client_key_slot(name) for name in names}
+    assert reported["localdata"] == reported["lofin"] == reported["semas"] == "datago"
+    assert (reported["datago"], reported["seoul"]) == ("datago", "seoul")

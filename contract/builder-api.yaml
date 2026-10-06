@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.97.0"
+  version: "1.98.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.98.0 says which provider's key each provider calls with (#1085, additive): `ProviderSummary` gains `key_provider` — the provider's own name, or the provider it shares a key with (`localdata`, `lofin` and `semas` report `datago`). A client that sends only the keys a request needs had to keep its own copy of that table.
+
     v1.97.0 gives the synchronous build the same refusal for a missing key (#1070, additive): in a multi-user deployment `POST /build` answers 400 `provider_credential_required`, naming the `providers`, when the request's `X-Provider-Key` carries no key for a provider the spec calls — as `POST /builds` does since 1.94.0. It used to run, call the provider without a key and fail as an ordinary provider error.
 
     v1.96.0 lets an owner list their uploads and stops serving one past retention (#1067, additive): `GET /uploads` returns the requester's uploads as metadata, newest first. An upload past its `expires_at` answers 404 on `GET /uploads/{upload_id}`, is not listed and is not read by a preview or build — it used to stay readable until the service restarted or its owner uploaded again.
@@ -7045,6 +7047,13 @@ components:
             user credential, server default, 또는 무인증 Provider이면 true. In a multi-user
             deployment only the request's `X-Provider-Key` counts: without the header every
             provider that needs a key reads `false`.
+        key_provider:
+          type: string
+          description: >-
+            The provider whose key this one calls with (#1085): its own name, or — for a
+            provider that shares another's key, as `localdata`, `lofin` and `semas` share
+            `datago`'s — that provider's. It is the name to send the key under in
+            `X-Provider-Key`; the key is also accepted under the provider's own name.
         last_test:
           description: >-
             This principal's last connection test of the provider (#842); null when it

@@ -125,6 +125,9 @@ class ProvidersService:
                     "provider": descriptor.name,
                     "requires_credential": descriptor.requires_credential,
                     "configured": configured,
+                    # Whose key this provider calls with (#1085): its own name, or the
+                    # provider it shares one with. From the one table a build resolves by.
+                    "key_provider": CredentialResolver.client_key_slot(descriptor.name),
                     "last_test": cast(JsonValue, last_tests.get(descriptor.name)),
                 }
             )
