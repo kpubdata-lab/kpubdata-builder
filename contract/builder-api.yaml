@@ -20,7 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
-    v1.88.0 bounds how often one user can probe a provider key (#1059, additive): `POST /providers/{provider}/probe` answers 429 `probe_rate_limited` with `retry_after_seconds` while a probe of the same user is still running, and until `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS` (default 30; `0` turns the interval off) has passed since that user's last probe of the same provider ended. A refused probe calls nothing at the provider. Another user is not affected. The bounds are in memory, per process, and hold in every deployment mode.
+    v1.88.0 bounds how often one user can probe a provider key (#1059, additive): `POST /providers/{provider}/probe` answers 429 `probe_rate_limited` with `retry_after_seconds` while a probe of the same user is still running, and until `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS` (default 60; `0` turns the interval off) has passed since that user's last probe of the same provider ended. A refused probe calls nothing at the provider. Another user is not affected. The bounds are in memory, per process, and hold in every deployment mode.
 
     v1.87.0 adds `POST /providers/{provider}/probe` (#802, additive): what the key in the request's `X-Provider-Key` header can reach, per source dataset, in kpubdata's probe vocabulary (`available`, `application_required`, `params_invalid` …) with the provider service each dataset belongs to. Only the request's key is used — a stored credential or one in the server's environment is never tried, in either deployment mode — and nothing is stored. Without the header the answer is 400 `provider_key_required`. One call is made per dataset; after 45 seconds no further dataset is started, and those not reached are named in `not_probed` with `complete: false`.
 
@@ -461,7 +461,7 @@ paths:
                   value:
                     error: this provider was probed a moment ago, or a probe of yours is still running; try again shortly
                     code: probe_rate_limited
-                    retry_after_seconds: 24
+                    retry_after_seconds: 54
         "502":
           description: 런타임 Provider 카탈로그 조회 실패, 또는 probe 를 실행할 수 없음
 

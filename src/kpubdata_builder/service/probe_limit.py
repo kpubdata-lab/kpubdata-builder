@@ -9,7 +9,7 @@ Two bounds, both per user and both in memory:
 - **One probe at a time.** A second one while the first runs is refused.
 - **An interval per provider.** After a probe of a provider ends, the same user's next
   probe of it is refused until ``KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`` has passed
-  (default 30; ``0`` turns the interval off and leaves the one-at-a-time bound).
+  (default 60; ``0`` turns the interval off and leaves the one-at-a-time bound).
 
 A refused probe calls nothing. Another user is not affected, and neither is the same user's
 probe of another provider once the first has ended. A restart forgets the state, which
@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 PROBE_INTERVAL_ENV = "KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS"
-DEFAULT_PROBE_INTERVAL_SECONDS = 30.0
+DEFAULT_PROBE_INTERVAL_SECONDS = 60.0
 
 
 def probe_interval_seconds() -> float:

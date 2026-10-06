@@ -164,6 +164,11 @@ def test_two_threads_of_one_user_cannot_both_probe() -> None:
     assert outcomes == ["first done"]
 
 
+def test_the_default_interval_is_the_recorded_decision() -> None:
+    """#1059: 60 seconds."""
+    assert DEFAULT_PROBE_INTERVAL_SECONDS == 60.0
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

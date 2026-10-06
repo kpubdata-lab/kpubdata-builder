@@ -5119,12 +5119,12 @@
       "current": {
         "error": "this provider was probed a moment ago, or a probe of yours is still running; try again shortly",
         "code": "probe_rate_limited",
-        "retry_after_seconds": 24
+        "retry_after_seconds": 54
       },
       "with_additive_fields": {
         "error": "this provider was probed a moment ago, or a probe of yours is still running; try again shortly",
         "code": "probe_rate_limited",
-        "retry_after_seconds": 24,
+        "retry_after_seconds": 54,
         "future_optional_field": "added by a later minor contract version"
       },
       "additive_paths": [
@@ -5133,7 +5133,7 @@
       "required_type_broken": {
         "error": 12345,
         "code": "probe_rate_limited",
-        "retry_after_seconds": 24
+        "retry_after_seconds": 54
       },
       "broken_path": "$.error"
     },
