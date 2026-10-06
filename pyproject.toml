@@ -28,11 +28,12 @@ classifiers = [
 ]
 dependencies = [
   # Builder depends on the kpubdata public API only (ADR 0007 in kpubdata,
-  # scripts/check_kpubdata_imports.py). 0.8.0 is breaking: code columns keep their
-  # leading zeros and come back as str (kpubdata#613), and it adds the licence and
-  # column-metadata fields #702, #688 and #689 wait on. Pin to the 0.8 line; compat
-  # policy: #213.
-  "kpubdata>=0.8.0,<0.9",
+  # scripts/check_kpubdata_imports.py). 0.9.0 is the first release with
+  # `Client(env_keys=False)`, which the multi-user mode needs to keep the operator's
+  # keys out of a request (#990, kpubdata#780), and it is breaking: unknown `Client`
+  # arguments are refused, HTTP 401 is `AuthError`, a total count of zero is `0`, and
+  # NODATA is an empty result on every path. Pin to the 0.9 line; compat policy: #213.
+  "kpubdata>=0.9.0,<0.10",
   "cryptography>=50,<51",
   # The tabular engine the DuckDB migration moves to (ADR 0021, #866). 1.2.0 is the first
   # release with every sandbox setting the query profile needs — allowed_paths,

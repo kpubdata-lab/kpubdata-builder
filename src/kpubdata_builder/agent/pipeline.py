@@ -81,7 +81,7 @@ def run_pipeline(
         [
             sys.executable,
             "-c",
-            "import sys; from kpubdata.core.spec import find_spec; "
+            "import sys; from kpubdata import find_spec; "
             "sys.exit(0 if find_spec(sys.argv[1]) is not None else 1)",
             dataset_id,
         ],
