@@ -175,21 +175,38 @@ class AuthError:
     # Set where the failure is made, so ``code`` does not depend on how ``reason`` is
     # worded.
     expired: bool = False
+    # The token verified — signature, issuer, audience, expiry — and its e-mail address
+    # is not verified at the identity provider (#1074). Not a guess at a credential.
+    email_unverified: bool = False
 
     @property
     def code(self) -> str:
         """A stable code for the failure, so a client does not branch on ``reason`` (#1000).
 
-        ``token_expired`` — the bearer token's ``exp`` has passed: get a new token and
-        send the request again. ``auth_unavailable`` — the JWKS could not be fetched
-        (503): the credentials were not judged, try again. ``unauthorized`` — every
-        other refusal: a missing or wrong API key, a token that does not verify.
+                ``token_expired`` — the bearer token's ``exp`` has passed: get a new token and
+        send the request again. ``email_not_verified`` — the token is valid and its
+                e-mail address is not verified: verify it at the identity provider (#1074).
+                ``auth_unavailable`` — the JWKS could not be fetched (503): the credentials were
+                not judged, try again. ``unauthorized`` — every other refusal: a missing or
+                wrong API key, a token that does not verify.
         """
         if self.status_code == 503:
             return "auth_unavailable"
         if self.expired:
             return "token_expired"
+        if self.email_unverified:
+            return "email_not_verified"
         return "unauthorized"
+
+    @property
+    def counts_as_a_failed_attempt(self) -> bool:
+        """Whether the failure throttle counts this refusal.
+
+        Only a 401 for credentials that did not verify. An expired token (#1031) and an
+        unverified e-mail (#1074) are 401s whose signature verified: they are not guesses,
+        and counting them lets an ordinary user reach the limit by doing nothing wrong.
+        """
+        return self.status_code == 401 and not self.expired and not self.email_unverified
 
 
 def _is_dev_mode() -> bool:
@@ -431,18 +448,61 @@ def validate_dev_mode() -> None:
         _logger.warning("%s is set but ignored while dev-mode is enabled.", _API_KEY_ENV)
 
 
-def _get_jwks_client() -> object:
-    """Create and cache PyJWKClient lazily (thread-safe)."""
+def _get_jwks_client(issuer: str | None = None) -> object:
+    """Create and cache PyJWKClient lazily (thread-safe).
+
+    Without ``issuer``: the deployment's one set of keys (``OIDC_JWKS_URL``, or the first
+    issuer's). With it: that issuer's keys, kept apart per issuer (#1074).
+    """
     global _jwks_client, _jwks_url_cached
     with _jwks_lock:
+        if issuer is not None:
+            url = _discover_jwks_uri(issuer)
+            cached = _issuer_jwks_clients.get(issuer)
+            if cached is None or cached[0] != url:
+                cached = (url, _new_jwks_client(url))
+                _issuer_jwks_clients[issuer] = cached
+            return cached[1]
         url = _oidc_jwks_url()
         if _jwks_client is None or _jwks_url_cached != url:
-            from jwt import PyJWKClient
-
-            ttl = int(os.environ.get(_OIDC_JWKS_TTL_ENV, "") or _DEFAULT_JWKS_TTL_SECONDS)
-            _jwks_client = PyJWKClient(url, cache_jwk_set=True, lifespan=ttl)
+            _jwks_client = _new_jwks_client(url)
             _jwks_url_cached = url
     return _jwks_client
+
+
+def _new_jwks_client(url: str) -> object:
+    from jwt import PyJWKClient
+
+    ttl = int(os.environ.get(_OIDC_JWKS_TTL_ENV, "") or _DEFAULT_JWKS_TTL_SECONDS)
+    return PyJWKClient(url, cache_jwk_set=True, lifespan=ttl)
+
+
+#: issuer -> (JWKS URL, client), for a deployment with more than one issuer.
+_issuer_jwks_clients: dict[str, tuple[str, object]] = {}
+
+
+def _jwks_client_for(token: str) -> object | None:
+    """The JWKS client holding the keys of the issuer ``token`` claims (#1074).
+
+    With one issuer, or an explicit ``OIDC_JWKS_URL``, there is one set of keys and it is
+    used as before. With several issuers the keys came from the **first** one only, so a
+    token from any other could never verify. The token's own ``iss`` — read unverified,
+    used for nothing but choosing among the configured issuers — now selects the keys;
+    the signature check that follows is what makes the claim count. None when the token
+    names an issuer that is not configured.
+
+    Raises:
+        jwt.PyJWTError: The token cannot be parsed.
+    """
+    import jwt
+
+    issuers = _oidc_issuers()
+    if len(issuers) <= 1 or os.environ.get(_OIDC_JWKS_URL_ENV, "").strip():
+        return _get_jwks_client()
+    claimed = jwt.decode(token, options={"verify_signature": False}).get("iss")
+    if not isinstance(claimed, str) or claimed not in issuers:
+        return None
+    return _get_jwks_client(claimed)
 
 
 #: Text PyJWT uses when "this kid not in JWKS". Only one exception type, so we
@@ -471,7 +531,11 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     from jwt import PyJWKClientError
 
     try:
-        client = _get_jwks_client()
+        client = _jwks_client_for(token)
+        if client is None:
+            # The token names an issuer this deployment does not accept. Refused here,
+            # before any request goes out for that issuer's keys.
+            return AuthError(reason="invalid token")
         signing_key = client.get_signing_key_from_jwt(token)  # type: ignore[attr-defined]
     except PyJWKClientError as exc:
         # "No signing key found" and "couldn't reach JWKS" are completely different
@@ -509,7 +573,7 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
         )
 
     if not payload.get("email_verified", False):
-        return AuthError(reason="email not verified")
+        return AuthError(reason="email not verified", email_unverified=True)
 
     # Allowlist check (#386). A principal on a configured list is admitted by sign-in
     # alone. One on no list is not refused here any more (#785): the service asks the
