@@ -11,7 +11,11 @@ from ...spec import JsonValue
 from ...tabular import DEFAULT_PREVIEW_LIMIT
 from ..auth import Principal
 from ..responses import ServiceResponse
-from ._guards import check_existing_run_access, check_retry_of
+from ._guards import (
+    check_existing_run_access,
+    check_retry_of,
+    refuse_missing_provider_keys,
+)
 from ._parsing import optional_retry_of, optional_run_id, spec_from_body
 from ._types import RouteResponse
 
@@ -104,6 +108,10 @@ def route(
         denied = check_retry_of(service, run_id, retry_of, principal)
         if denied is not None:
             return denied
+        # The same refusal ``POST /builds`` gives (#1070), before anything is fetched.
+        refused = refuse_missing_provider_keys(service, spec)
+        if refused is not None:
+            return refused
         # ``retry_of`` is passed only when the request named one: a service that overrides
         # ``build`` with the signature it had before #1042 keeps working for every other
         # request.

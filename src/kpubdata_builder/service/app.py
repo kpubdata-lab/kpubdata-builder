@@ -443,7 +443,9 @@ _BuildListEntry = dict[str, str | None]
 #   email_not_verified, not unauthorized (#1074, additive).
 # 1.95.0 -> 1.96.0: GET /uploads lists the requester's uploads; an upload past retention
 #   answers 404 and is not built from (#1067, additive).
-API_CONTRACT_VERSION = "1.96.0"
+# 1.96.0 -> 1.97.0: POST /build answers 400 provider_credential_required too, as
+#   POST /builds does (#1070, additive).
+API_CONTRACT_VERSION = "1.97.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

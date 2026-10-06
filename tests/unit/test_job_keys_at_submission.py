@@ -167,3 +167,59 @@ def test_a_job_whose_key_is_gone_when_it_starts_ends_as_credentials_required(
     events = service._event_store.list_for_run("job-2", limit=20, tail=False)
     assert [event.event for event in events][-1] == "run_failed"
     assert _CANARY not in str(status.body)
+
+
+# --- The synchronous route gives the same answer ---
+
+
+def _build(
+    service: BuilderService, spec: str, run_id: str, headers: tuple[str, ...] = ()
+) -> ServiceResponse:
+    response = dispatch(
+        service,
+        "POST",
+        "/build",
+        {"spec": spec, "run_id": run_id},
+        provider_key_headers=list(headers),
+    )
+    assert isinstance(response, ServiceResponse)
+    return response
+
+
+def test_a_synchronous_build_without_the_key_is_refused_the_same_way(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, multi_user: None
+) -> None:
+    """It ran, called the provider keyless and failed as an ordinary provider error."""
+    recorder = _Recorder()
+    service = _service(tmp_path, monkeypatch, recorder)
+
+    sync = _build(service, _SPEC, "sync-1")
+    queued = _submit(service, _SPEC, "async-1")
+
+    assert sync.status_code == 400
+    assert sync.body == queued.body
+    assert sync.body["code"] == "provider_credential_required"
+    assert sync.body["providers"] == ["datago"]
+    # Nothing was fetched and nothing was written under the id.
+    assert recorder.calls == []
+    assert not (tmp_path / "sync-1").exists()
+
+
+def test_a_synchronous_build_with_the_key_or_needing_none_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, multi_user: None
+) -> None:
+    """Negative: the refusal is for a missing key only."""
+    service = _service(tmp_path, monkeypatch, _Recorder())
+
+    assert _build(service, _SPEC, "sync-1", (f"datago={_CANARY}",)).status_code < 400
+    assert _build(service, _KEYLESS_SPEC, "sync-2").status_code < 400
+
+
+def test_a_single_user_synchronous_build_needs_no_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ENFORCE_OWNERSHIP", raising=False)
+    monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", "operator-env-value-1070")
+    service = _service(tmp_path, monkeypatch, _Recorder())
+
+    assert _build(service, _SPEC, "sync-1").status_code < 400

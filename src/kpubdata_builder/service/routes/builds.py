@@ -16,6 +16,7 @@ from ._guards import (
     check_ownership,
     check_retry_of,
     check_run_exists,
+    refuse_missing_provider_keys,
 )
 from ._parsing import optional_retry_of, optional_run_id, spec_from_body
 from ._types import RouteResponse
@@ -56,18 +57,9 @@ def route(
             return denied
         # A build that needs a key the request does not carry would be accepted, wait
         # and fail later with nothing to say why (#1070). Refused here, nothing is made.
-        missing = service.providers_missing_a_key(spec)
-        if missing:
-            names = ", ".join(missing)
-            return ServiceResponse(
-                400,
-                {
-                    "error": f"this build calls {names}, and the request carries no key "
-                    "for it; send it in the X-Provider-Key header",
-                    "code": "provider_credential_required",
-                    "providers": list(missing),
-                },
-            )
+        refused = refuse_missing_provider_keys(service, spec)
+        if refused is not None:
+            return refused
         return service.submit_build(
             spec,
             run_id=run_id,
