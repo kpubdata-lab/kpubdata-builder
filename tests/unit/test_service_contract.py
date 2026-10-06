@@ -731,7 +731,7 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "deleteAnalysis": {200, 404},
     "runAnalysis": {200, 400, 403, 404, 409, 429, 504},
     "validateSpec": {200, 400},
-    "previewBuild": {200, 400, 403, 502, 503},
+    "previewBuild": {200, 400, 403, 429, 502, 503},
     # 429: no build slot within the wait bound (#1040).
     "createBuild": {200, 400, 403, 409, 429, 502},
     "submitBuild": {200, 202, 400, 403, 409, 429, 500},

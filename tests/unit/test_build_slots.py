@@ -183,6 +183,68 @@ def test_previews_wait_for_a_slot_only_when_a_limit_is_set(
     assert statuses == [200, 200]
 
 
+def test_a_preview_that_gets_no_slot_in_time_is_turned_away(tmp_path: Path, gauge: _Gauge) -> None:
+    """With every preview slot taken, a preview waited with no bound (#1068)."""
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=_factory(gauge),
+        max_concurrent_previews=1,
+        build_wait_seconds=0.2,
+    )
+    answers: list[ServiceResponse] = []
+
+    def preview(name: str) -> None:
+        response = dispatch(service, "POST", "/preview", {"spec": _SPEC.format(name=name)})
+        assert isinstance(response, ServiceResponse)
+        answers.append(response)
+
+    first = _start(lambda: preview("p1"))
+    try:
+        gauge.wait_for(1)
+        started = time.monotonic()
+        preview("p2")
+        waited = time.monotonic() - started
+        (refused,) = answers
+    finally:
+        gauge.gate.set()
+        first.join(timeout=20)
+
+    assert (refused.status_code, refused.body["code"]) == (429, "preview_queue_full")
+    assert 0.15 <= waited < 5
+    # It fetched nothing, and the preview that held the slot finished as usual.
+    assert gauge.peak == 1
+    assert [answer.status_code for answer in answers] == [429, 200]
+    # The slot it never held was not released: the next preview still gets exactly one.
+    preview("p3")
+    assert answers[-1].status_code == 200
+
+
+def test_a_free_preview_slot_is_taken_without_waiting(tmp_path: Path, gauge: _Gauge) -> None:
+    """Negative: the bound is on waiting, not on previews."""
+    gauge.gate.set()
+    service = BuilderService(
+        output_root=tmp_path,
+        client_factory=_factory(gauge),
+        max_concurrent_previews=1,
+        build_wait_seconds=0,
+    )
+
+    for name in ("p1", "p2", "p3"):
+        response = dispatch(service, "POST", "/preview", {"spec": _SPEC.format(name=name)})
+        assert isinstance(response, ServiceResponse)
+        assert response.status_code == 200
+
+
+@pytest.mark.parametrize("wait", [float("nan"), float("inf"), -1.0])
+def test_the_service_refuses_a_wait_that_is_not_a_finite_duration(
+    tmp_path: Path, gauge: _Gauge, wait: float
+) -> None:
+    with pytest.raises(ValueError, match="finite number"):
+        BuilderService(
+            output_root=tmp_path, client_factory=_factory(gauge), build_wait_seconds=wait
+        )
+
+
 @pytest.mark.parametrize("bad", [{"max_concurrent_builds": 0}, {"max_concurrent_previews": 0}])
 def test_a_limit_below_one_is_refused(tmp_path: Path, gauge: _Gauge, bad: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="must be >= 1"):
@@ -402,8 +464,13 @@ def test_the_wait_bound_comes_from_the_environment(
     assert main(["serve", "--output-dir", str(tmp_path)]) == 0
     assert seen["wait"] == 5.0
 
+    # An empty value is not a refusal: the default is used, as the deployment guide says.
+    monkeypatch.setenv("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "")
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+    assert seen["wait"] == 30.0
 
-@pytest.mark.parametrize("value", ["soon", "-1"])
+
+@pytest.mark.parametrize("value", ["soon", "-1", "nan", "inf", "-inf", "NaN"])
 def test_serve_refuses_a_wait_bound_that_is_not_a_duration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, clean_env: None, value: str
 ) -> None:
