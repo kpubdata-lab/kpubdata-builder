@@ -380,6 +380,15 @@ def validate_oidc_config() -> None:
         )
 
 
+#: Read here rather than from ``ownership`` — that module imports this one.
+_OWNERSHIP_ENV = "ENFORCE_OWNERSHIP"
+
+
+def _ownership_enforced() -> bool:
+    # The same reading ``ownership.enforce_ownership`` gives the variable.
+    return os.environ.get(_OWNERSHIP_ENV, "").lower() in ("true", "1")
+
+
 def validate_dev_mode() -> None:
     """Called at server startup (serve). Prevent production accidents from dev-mode.
 
@@ -389,6 +398,9 @@ def validate_dev_mode() -> None:
 
     - If dev-mode is enabled, log a warning at startup - the fact that service is
       unauthenticated must be visible just from logs.
+    - If dev-mode and ``ENFORCE_OWNERSHIP`` are both set, fail to start (#1072). Either
+      of OIDC and ``ENFORCE_OWNERSHIP`` makes a deployment multi-user (ADR 0012), and
+      the dev principal has full access to every run.
     - If both dev-mode and OIDC are configured, fail to start. Configuring user
       authentication and then bypassing it entirely is never intentional in any
       environment; it is a classic production accident when a dev flag is left in
@@ -402,6 +414,13 @@ def validate_dev_mode() -> None:
             "refusing to start — dev-mode bypasses authentication entirely, so a "
             "deployment that configures user authentication must not set it "
             "(fail-closed, ADR 0006)."
+        )
+    if _ownership_enforced():
+        raise RuntimeError(
+            f"{_DEV_MODE_ENV} is enabled while {_OWNERSHIP_ENV} is set; refusing to start "
+            "— a deployment that keeps each user's runs apart serves more than one user, "
+            "and the dev principal reads every user's runs without authenticating "
+            "(fail-closed, ADR 0012 decision of 2026-10-01, #1072)."
         )
     _logger.warning(
         "%s is enabled: every request is accepted without authentication. "

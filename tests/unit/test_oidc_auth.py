@@ -399,6 +399,42 @@ class TestValidateDevMode:
             validate_dev_mode()
         assert any("ignored while dev-mode" in r.getMessage() for r in caplog.records)
 
+    @pytest.mark.parametrize("value", ["true", "1", "TRUE"])
+    def test_refuses_to_start_when_ownership_is_enforced(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        """No OIDC, but runs are kept apart per user: more than one user, and the dev
+        principal reads all of them (#1072)."""
+        monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
+        monkeypatch.delenv("OIDC_ISSUER", raising=False)
+        monkeypatch.setenv("ENFORCE_OWNERSHIP", value)
+        with pytest.raises(RuntimeError, match="refusing to start"):
+            validate_dev_mode()
+
+    @pytest.mark.parametrize("value", ["", "false", "0", "no"])
+    def test_single_user_dev_mode_still_starts(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, value: str
+    ) -> None:
+        """Negative: dev mode alone is one user and starts, with its warning."""
+        monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
+        monkeypatch.delenv("OIDC_ISSUER", raising=False)
+        monkeypatch.setenv("ENFORCE_OWNERSHIP", value)
+        with caplog.at_level(logging.WARNING):
+            validate_dev_mode()
+        assert any("without authentication" in r.getMessage() for r in caplog.records)
+
+    def test_the_two_readings_of_the_ownership_switch_agree(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``auth`` reads the variable itself (``ownership`` imports ``auth``)."""
+        from kpubdata_builder.service import auth as auth_module
+        from kpubdata_builder.service.ownership import enforce_ownership
+
+        monkeypatch.delenv("OIDC_ISSUER", raising=False)
+        for value in ("true", "1", "TRUE", "", "false", "0", "yes", " true"):
+            monkeypatch.setenv("ENFORCE_OWNERSHIP", value)
+            assert auth_module._ownership_enforced() == enforce_ownership(), repr(value)
+
     def test_refuses_to_start_when_oidc_is_also_configured(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

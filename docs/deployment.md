@@ -98,7 +98,7 @@ ADR 0006). 설정은 환경변수로 주입합니다 — `docker-entrypoint.sh`�
 | `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635) | 미설정 | OIDC 시 셋 중 하나 필수 |
 | `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
 | `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
-| `ENFORCE_OWNERSHIP` | `true`/`1`이면 run 소유권 강제 (C2, #389). `OIDC_ISSUER`가 있으면 값과 무관하게 켜진다(#635) | 미설정 | 선택 |
+| `ENFORCE_OWNERSHIP` | `true`/`1`이면 run 소유권 강제 (C2, #389). `OIDC_ISSUER`가 있으면 값과 무관하게 켜진다(#635). `KPUBDATA_BUILDER_DEV_MODE` 와 함께 켜면 `serve` 가 기동을 거절한다 — dev principal 은 인증 없이 모든 사용자의 run 을 읽는다(#1072) | 미설정 | 선택 |
 
 > **fail-closed (ADR 0006)**: 컨테이너는 `KPUBDATA_BUILDER_API_KEY`가 없으면 기동을
 > 거부합니다. `service/app.py`의 "키 미설정 = 인증 생략" 동작은 로컬 개발 편의 전용이며

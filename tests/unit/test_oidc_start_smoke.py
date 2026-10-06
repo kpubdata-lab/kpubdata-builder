@@ -171,3 +171,20 @@ def test_an_incomplete_profile_does_not_start(tmp_path: Path, missing: str) -> N
 
     assert process.returncode != 0
     assert "refusing to start" in output
+
+
+def test_dev_mode_with_ownership_enforced_does_not_start(tmp_path: Path) -> None:
+    """Negative, through the real command (#1072): the dev principal reads every user's
+    runs, so the combination exits instead of serving."""
+    environment = _environment({"KPUBDATA_BUILDER_DEV_MODE": "true", "ENFORCE_OWNERSHIP": "true"})
+    process = _serve(tmp_path, environment)
+    try:
+        output, _ = process.communicate(timeout=60)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+
+    assert process.returncode != 0
+    assert "refusing to start" in output
+    assert "ENFORCE_OWNERSHIP" in output
