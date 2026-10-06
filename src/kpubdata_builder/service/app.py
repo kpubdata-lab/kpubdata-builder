@@ -64,6 +64,7 @@ from .exports_api import ExportsApiService
 from .jobs import AsyncBuildExecutor
 from .monitoring_api import MonitoringApiService
 from .pii_reads import PiiLookup, client_pii_lookup
+from .probe_limit import ProbeLimiter
 from .profiles_api import ProfilesApiService
 from .provider_tests import ProviderTestLog
 from .providers import (
@@ -421,7 +422,9 @@ _BuildListEntry = dict[str, str | None]
 #   upload, or null (#1047, additive).
 # 1.86.0 -> 1.87.0: POST /providers/{provider}/probe — what the key in the request's
 #   X-Provider-Key header can reach, per dataset; nothing is stored (#802, additive).
-API_CONTRACT_VERSION = "1.87.0"
+# 1.87.0 -> 1.88.0: POST /providers/{provider}/probe answers 429 probe_rate_limited —
+#   one probe per user at a time, and an interval per provider (#1059, additive).
+API_CONTRACT_VERSION = "1.88.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -454,6 +457,7 @@ class BuilderService:
         provider_test_timeout: float | None = None,
         open_probe: provider_probe.OpenProbe = provider_probe.open_kpubdata_probe,
         probe_datasets: provider_probe.ListDatasets = provider_probe.spec_dataset_ids,
+        probe_limiter: ProbeLimiter | None = None,
         async_max_workers: int = 10,
         async_max_queue_size: int = 10,
         max_concurrent_builds: int | None = None,
@@ -529,6 +533,7 @@ class BuilderService:
             test_log=lambda: self._provider_tests(),
             open_probe=open_probe,
             probe_datasets=probe_datasets,
+            probe_limiter=probe_limiter,
         )
         # Upload repository initialized only when needed (#498) — pass lambda,
         # not property value directly (#498) — calling property on every request

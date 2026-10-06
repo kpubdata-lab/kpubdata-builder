@@ -21,6 +21,7 @@ from typing import cast
 from kpubdata_builder.service import provider_probe, request_credentials
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.ownership import multi_user_mode
+from kpubdata_builder.service.probe_limit import ProbeLimiter, ProbeRefused
 from kpubdata_builder.service.provider_tests import ProviderTestLog
 from kpubdata_builder.service.providers import (
     CredentialResolver,
@@ -61,6 +62,7 @@ class ProvidersService:
         test_log: Callable[[], ProviderTestLog | None] = lambda: None,
         open_probe: provider_probe.OpenProbe = provider_probe.open_kpubdata_probe,
         probe_datasets: provider_probe.ListDatasets = provider_probe.spec_dataset_ids,
+        probe_limiter: ProbeLimiter | None = None,
     ) -> None:
         """Args:
         test_log: Where each principal's last test per provider is kept (#842); None
@@ -74,6 +76,7 @@ class ProvidersService:
         self._test_log = test_log
         self._open_probe = open_probe
         self._probe_datasets = probe_datasets
+        self._probe_limiter = probe_limiter or ProbeLimiter()
 
     # --- Internal queries -------------------------------------------------
 
@@ -173,7 +176,6 @@ class ProvidersService:
 
         Uses the ``X-Provider-Key`` header's key and no other; stores nothing.
         """
-        del principal  # any authenticated caller; nothing is read or written for them
         descriptor = self.known_provider(provider)
         if isinstance(descriptor, ServiceResponse):
             return descriptor
@@ -203,8 +205,21 @@ class ProvidersService:
                     {"error": f"cannot probe: {names}", "code": "invalid_request"},
                 )
         try:
-            result = provider_probe.run_probe(
-                provider, key, dataset_ids, open_probe=self._open_probe
+            # Taken last: a request refused for its own content has cost the provider
+            # nothing and does not use up the user's turn (#1059).
+            with self._probe_limiter.probing(principal.owner_id or "", provider):
+                result = provider_probe.run_probe(
+                    provider, key, dataset_ids, open_probe=self._open_probe
+                )
+        except ProbeRefused as refused:
+            return ServiceResponse(
+                429,
+                {
+                    "error": "this provider was probed a moment ago, or a probe of yours "
+                    "is still running; try again shortly",
+                    "code": "probe_rate_limited",
+                    "retry_after_seconds": refused.retry_after_seconds,
+                },
             )
         except Exception:
             # An exception's text may hold the request URL, and with it the key.

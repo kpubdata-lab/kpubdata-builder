@@ -705,7 +705,7 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "listProviders": {200, 403, 502},
     "getProviderStatus": {200, 403, 404, 502},
     "testProviderConnection": {200, 403, 404, 502},
-    "probeProviderKey": {200, 400, 404, 502},
+    "probeProviderKey": {200, 400, 404, 429, 502},
     "getProviderCredential": {200, 403, 404, 502, 503},
     "putProviderCredential": {200, 400, 403, 404, 502, 503},
     "deleteProviderCredential": {200, 403, 404, 502, 503},

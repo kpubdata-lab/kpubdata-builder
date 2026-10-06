@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.87.0"
+  version: "1.88.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.88.0 bounds how often one user can probe a provider key (#1059, additive): `POST /providers/{provider}/probe` answers 429 `probe_rate_limited` with `retry_after_seconds` while a probe of the same user is still running, and until `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS` (default 30; `0` turns the interval off) has passed since that user's last probe of the same provider ended. A refused probe calls nothing at the provider. Another user is not affected. The bounds are in memory, per process, and hold in every deployment mode.
+
     v1.87.0 adds `POST /providers/{provider}/probe` (#802, additive): what the key in the request's `X-Provider-Key` header can reach, per source dataset, in kpubdata's probe vocabulary (`available`, `application_required`, `params_invalid` …) with the provider service each dataset belongs to. Only the request's key is used — a stored credential or one in the server's environment is never tried, in either deployment mode — and nothing is stored. Without the header the answer is 400 `provider_key_required`. One call is made per dataset; after 45 seconds no further dataset is started, and those not reached are named in `not_probed` with `complete: false`.
 
     v1.86.0 says when an upload expires (#1047, additive): `UploadMetadata.expires_at`, `created_at` plus the retention period in force, or `null` when nothing will delete the upload.
@@ -442,6 +444,22 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           description: 알려지지 않은 Provider
+        "429":
+          description: >-
+            `probe_rate_limited` (#1059) — 같은 사용자의 probe 가 아직 실행 중이거나, 같은
+            provider 를 방금 probe 했다. provider 는 호출되지 않았다. `retry_after_seconds`
+            뒤에 다시 시도한다(실행 중인 probe 가 있으면 그보다 길어질 수 있다).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                ProbeRateLimited:
+                  summary: 같은 provider 를 간격 안에 다시 probe 함
+                  value:
+                    error: this provider was probed a moment ago, or a probe of yours is still running; try again shortly
+                    code: probe_rate_limited
+                    retry_after_seconds: 24
         "502":
           description: 런타임 Provider 카탈로그 조회 실패, 또는 probe 를 실행할 수 없음
 

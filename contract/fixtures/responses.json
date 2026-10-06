@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.87.0",
+  "contract_version": "1.88.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5110,6 +5110,33 @@
     }
   ],
   "error_fixtures": [
+    {
+      "operation_id": "probeProviderKey",
+      "method": "POST",
+      "path": "/providers/{provider}/probe",
+      "status": 429,
+      "example": "ProbeRateLimited",
+      "current": {
+        "error": "this provider was probed a moment ago, or a probe of yours is still running; try again shortly",
+        "code": "probe_rate_limited",
+        "retry_after_seconds": 24
+      },
+      "with_additive_fields": {
+        "error": "this provider was probed a moment ago, or a probe of yours is still running; try again shortly",
+        "code": "probe_rate_limited",
+        "retry_after_seconds": 24,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "probe_rate_limited",
+        "retry_after_seconds": 24
+      },
+      "broken_path": "$.error"
+    },
     {
       "operation_id": "validateSpec",
       "method": "POST",
