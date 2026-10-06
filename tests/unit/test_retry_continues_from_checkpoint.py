@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -177,3 +178,28 @@ def test_a_link_in_the_retried_runs_checkpoint_is_not_followed(tmp_path: Path) -
 
     assert client.calls == ["c", "d"]
     assert not (tmp_path / "r2" / "_checkpoints" / "linked").exists()
+
+
+def test_a_link_to_a_file_inside_a_checkpoint_is_not_copied(tmp_path: Path) -> None:
+    """Neither a link to a file: its target could be anything on the machine."""
+    _interrupted(tmp_path)
+    (tmp_path / "secret.txt").write_text("not part of any checkpoint", encoding="utf-8")
+    (source_dir,) = [path for path in (tmp_path / "r1" / "_checkpoints").iterdir() if path.is_dir()]
+    (source_dir / "999999.jsonl").symlink_to(tmp_path / "secret.txt")
+    copied: list[str] = []
+    real_copy = shutil.copy2
+
+    def recording(source: Path, target: Path) -> object:
+        copied.append(Path(source).name)
+        return real_copy(source, target)
+
+    client = _Client()
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: client)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(shutil, "copy2", recording)
+        assert service.build(_SPEC, run_id="r2", retry_of="r1").status_code == 200
+
+    # The two finished combinations and their index were taken over; the link was not.
+    assert "999999.jsonl" not in copied
+    assert "index.jsonl" in copied and len(copied) == 3
+    assert client.calls == ["c", "d"]
