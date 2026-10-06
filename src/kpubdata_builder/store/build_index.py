@@ -548,7 +548,7 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
 
     import yaml
 
-    from ..manifest import status_from_manifest
+    from ..manifest import run_status_from_manifest
     from ..spec.serializer import BUILDSPEC_SNAPSHOT_FILENAME, compute_spec_digest
 
     if not output_root.exists():
@@ -569,7 +569,8 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
         # Since manifest.json is canonical, derived rules owned by manifest package (#481) —
         # cancelled run may have empty errors, so existing "errors presence" derivation alone
         # incorrectly promotes to success (ok) when rebuilding.
-        status = cast(BuildStatus, status_from_manifest(manifest))
+        # The run's outcome, a failed table commit included (#1106).
+        status = cast(BuildStatus, run_status_from_manifest(manifest))
         snapshot_path = run_dir / BUILDSPEC_SNAPSHOT_FILENAME
         spec_digest: str | None = None
         dataset_id: str | None = None

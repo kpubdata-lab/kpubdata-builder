@@ -454,7 +454,9 @@ _BuildListEntry = dict[str, str | None]
 #   retry_of_in_progress (409 on POST /builds, 400 on POST /build); a retry leaves a
 #   checkpoint older than KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS and the manifest
 #   says so in checkpoints_not_reused (#1103).
-API_CONTRACT_VERSION = "1.100.0"
+# 1.100.0 -> 1.101.0: GET /builds and GET /admin/runs list a run whose table was not
+#   committed as failed, as GET /builds/{run_id} does (#1106).
+API_CONTRACT_VERSION = "1.101.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
