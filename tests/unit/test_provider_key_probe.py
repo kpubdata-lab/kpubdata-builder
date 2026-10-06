@@ -281,6 +281,10 @@ class _Upstream:
 
 @pytest.fixture()
 def upstream(monkeypatch: pytest.MonkeyPatch) -> _Upstream:
+    # The cross-repo job replays recorded fixtures instead of calling HTTP; these tests
+    # need the HTTP path they observe.
+    monkeypatch.delenv("KPUBDATA_REPLAY_DIR", raising=False)
+    monkeypatch.delenv("KPUBDATA_MODE", raising=False)
     seen = _Upstream()
     real_client = httpx.Client
 
