@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.95.0"
+  version: "1.96.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.96.0 lets an owner list their uploads and stops serving one past retention (#1067, additive): `GET /uploads` returns the requester's uploads as metadata, newest first. An upload past its `expires_at` answers 404 on `GET /uploads/{upload_id}`, is not listed and is not read by a preview or build — it used to stay readable until the service restarted or its owner uploaded again.
+
     v1.95.0 tells an unverified e-mail apart from a failed sign-in (#1074, additive): a bearer token that verifies but whose e-mail address is not verified answers 401 with `code: email_not_verified`; it was `unauthorized`, the same as a token that does not verify. It is no longer counted by the authentication failure throttle, as an expired token is not. With several `OIDC_ISSUER` values, a token is verified against the keys of the issuer it claims; the keys used to come from the first issuer only.
 
     v1.94.0 refuses a build that cannot have its key (#1070, additive): in a multi-user deployment `POST /builds` answers 400 `provider_credential_required`, naming the `providers`, when the spec calls a provider that requires a key and the request's `X-Provider-Key` carries none for it — it was accepted with 202 and failed later. A job whose keys are no longer held when it starts (it waited in the queue past their lifetime) ends `failed` with `code: credentials_required`, as a run interrupted by a restart does, instead of running without a key.
@@ -594,6 +596,24 @@ paths:
           description: encrypted credential store가 구성되지 않음
 
   /uploads:
+    get:
+      operationId: listUploads
+      summary: 요청자 소유 업로드의 메타데이터 목록 (#1067, content 는 포함하지 않음)
+      description: >-
+        최신 것부터. 다른 사용자의 업로드는 섞이지 않는다. 보관 기한(`expires_at`)이
+        지난 업로드는 목록에 없다 — 기한이 지난 것은 `GET /uploads/{upload_id}` 에서도
+        404 이고 build 에서도 쓰이지 않는다.
+      responses:
+        "200":
+          description: 업로드 메타데이터 목록
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: stable principal을 확인할 수 없음
     post:
       operationId: createUpload
       summary: kind="file" source(#498)용 파일 업로드
@@ -6465,6 +6485,15 @@ components:
           description: >-
             입력 컬럼명. date_parts는 (year, month, day) 순서로 정확히 3개,
             join_key는 1개 이상.
+
+    UploadList:
+      type: object
+      required: [uploads]
+      properties:
+        uploads:
+          type: array
+          items:
+            $ref: "#/components/schemas/UploadMetadata"
 
     UploadMetadata:
       type: object

@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 from .. import __version__, logging_redaction
 from ..credentials import (
@@ -96,7 +96,7 @@ from .routes import uploads as uploads_route
 from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
-from .uploads_service import UploadsService
+from .uploads_service import ExpiringUploads, UploadsService
 from .user_ledger import UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
@@ -441,7 +441,9 @@ _BuildListEntry = dict[str, str | None]
 #   it starts ends as credentials_required (#1070, additive).
 # 1.94.0 -> 1.95.0: a verified token with an unverified e-mail answers 401
 #   email_not_verified, not unauthorized (#1074, additive).
-API_CONTRACT_VERSION = "1.95.0"
+# 1.95.0 -> 1.96.0: GET /uploads lists the requester's uploads; an upload past retention
+#   answers 404 and is not built from (#1067, additive).
+API_CONTRACT_VERSION = "1.96.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -780,7 +782,8 @@ class BuilderService:
         eagerly initialize SQLite per request, defeating laziness. Check need first.
         """
         if any(source.kind == "file" for source in spec.sources):
-            return self._upload_repository
+            # A build does not read an upload past retention either (#1067).
+            return cast(UploadRepository, ExpiringUploads(self._upload_repository))
         return None
 
     def _create_client(
@@ -893,6 +896,10 @@ class BuilderService:
     def get_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
         """Return safe metadata-only for current principal's upload (exclude content)."""
         return self._uploads_service.get_upload(upload_id, principal=principal)
+
+    def list_uploads(self, *, principal: Principal) -> ServiceResponse:
+        """The current principal's uploads, metadata only (#1067)."""
+        return self._uploads_service.list_uploads(principal=principal)
 
     def delete_upload(self, upload_id: str, *, principal: Principal) -> ServiceResponse:
         """Delete only current principal's upload."""

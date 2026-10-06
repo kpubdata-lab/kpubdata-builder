@@ -34,6 +34,8 @@ def handle(
 ) -> RouteResponse | None:
     if method == "POST" and path == "/uploads":
         return _handle_create(service, principal, query=query, raw_body=raw_body)
+    if method == "GET" and path == "/uploads":
+        return service.list_uploads(principal=principal)
 
     if path.startswith(_PREFIX) and "/" not in path[len(_PREFIX) :]:
         upload_id = path[len(_PREFIX) :]
