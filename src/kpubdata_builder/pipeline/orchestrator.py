@@ -337,7 +337,13 @@ def _inherit_checkpoints(
             if target.exists():
                 continue
             target_root.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(entry, target, symlinks=False)
+            # Regular files only. ``copytree`` would follow a link to a file and copy
+            # what it points at, wherever that is; a checkpoint holds none, so a link
+            # here is not part of one.
+            target.mkdir(parents=True)
+            for item in sorted(entry.iterdir()):
+                if item.is_file() and not item.is_symlink():
+                    shutil.copy2(item, target / item.name)
             copied.add(entry.name)
         return frozenset(copied)
     except (OSError, ValueError):
