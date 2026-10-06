@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.98.0"
+  version: "1.99.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.99.0 lets a retry continue from the checkpoint of the run it retries (#1071, additive): a build with `retry_of` whose spec is the one the retried run was built from takes over that run's `param_grid` checkpoint and fetches only the combinations it lacked — it fetched everything again before. The manifest's `reproducibility.resumed_sources` entry names the run in `checkpoint_from`, and the source's `source_fetch_started` event says so in its `message`. A changed spec, or a retried run with no checkpoint, starts from nothing as before. The retried run's files are not changed.
+
     v1.98.0 says which provider's key each provider calls with (#1085, additive): `ProviderSummary` gains `key_provider` — the provider's own name, or the provider it shares a key with (`localdata`, `lofin` and `semas` report `datago`). A client that sends only the keys a request needs had to keep its own copy of that table.
 
     v1.97.0 gives the synchronous build the same refusal for a missing key (#1070, additive): in a multi-user deployment `POST /build` answers 400 `provider_credential_required`, naming the `providers`, when the request's `X-Provider-Key` carries no key for a provider the spec calls — as `POST /builds` does since 1.94.0. It used to run, call the provider without a key and fail as an ordinary provider error.
@@ -7826,6 +7828,12 @@ components:
                 properties:
                   resumed_combinations: {type: integer, minimum: 1}
                   total_combinations: {type: integer, minimum: 1}
+                  checkpoint_from:
+                    type: string
+                    description: >-
+                      Present when the checkpoint was the one of the run this run
+                      retries (`retry_of`, #1071): that run's id. Absent when the run
+                      resumed its own checkpoint.
         pii_masking:
           type: object
           description: >-

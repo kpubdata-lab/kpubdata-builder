@@ -67,12 +67,18 @@ from ..spec import (
     JoinSpec,
     JsonValue,
     SourceRef,
+    compute_spec_digest,
     parse_spec,
     write_buildspec_snapshot,
 )
 from ..spec.fingerprints import SourceFingerprints, fingerprint_source
 from ..spec.validator import validate_spec
-from ..stages._path_safety import LEGACY_CHECKPOINT_SUFFIX, contained_child, ensure_within
+from ..stages._path_safety import (
+    LEGACY_CHECKPOINT_SUFFIX,
+    contained_child,
+    ensure_within,
+    validate_path_segment,
+)
 from ..stages.bronze.build import SourceClient
 from ..stages.bronze.models import BronzeArtifact, utc_now
 from ..stages.bronze.persist import persist_bronze_artifact
@@ -289,6 +295,58 @@ def _output_source_key(source: SourceRef) -> str:
     return source.alias if source.alias else _fetch_source_key(source)
 
 
+def _inherit_checkpoints(
+    output_root: Path, run_id: str, retry_of: str | None, spec_digest: str
+) -> frozenset[str]:
+    """Copy the checkpoints of the run this one retries; the sources that got one (#1071).
+
+    A checkpoint resumes "a rebuild of the same run id" (#648), and a run id is one
+    attempt (#1042): the retry of an interrupted 1,500-combination fetch has a new id
+    and fetched everything again, spending the provider's daily quota twice.
+
+    Copied only when the retried run was built from **the same spec** — its snapshot's
+    digest equals this run's. A changed spec starts from nothing: a checkpoint is its
+    source's records, and nothing says they are still what the new spec asks for. That
+    the requester may name ``retry_of`` at all is the service's check, made before the
+    build starts (``check_retry_of``): another owner's run is refused there.
+
+    The retried run's files are read and never changed. The copies are this run's own:
+    each is still matched combination by combination when it is loaded, and removed
+    once Bronze is written, as any checkpoint is.
+    """
+    if retry_of is None or retry_of == run_id:
+        return frozenset()
+    try:
+        validate_path_segment(retry_of, field_name="retry_of")
+        previous = output_root / retry_of
+        ensure_within(output_root, previous, label="retried run directory")
+        snapshot = previous / BUILDSPEC_SNAPSHOT_FILENAME
+        if not snapshot.is_file() or compute_spec_digest(snapshot.read_bytes()) != spec_digest:
+            return frozenset()
+        source_root = previous / _CHECKPOINT_DIRNAME
+        if not source_root.is_dir() or source_root.is_symlink():
+            return frozenset()
+        target_root = output_root / run_id / _CHECKPOINT_DIRNAME
+        copied: set[str] = set()
+        for entry in sorted(source_root.iterdir()):
+            # Only a source's checkpoint directory; never a link, which could point
+            # outside the retried run.
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            target = _source_work_path(output_root / run_id, _CHECKPOINT_DIRNAME, entry.name)
+            if target.exists():
+                continue
+            target_root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(entry, target, symlinks=False)
+            copied.add(entry.name)
+        return frozenset(copied)
+    except (OSError, ValueError):
+        # Nothing to continue from is not a reason to fail the retry: it fetches again.
+        logger.warning("could not take over the checkpoint of run %s", retry_of, exc_info=True)
+        shutil.rmtree(output_root / run_id / _CHECKPOINT_DIRNAME, ignore_errors=True)
+        return frozenset()
+
+
 def _source_work_path(run_dir: Path, dirname: str, output_key: str, *, suffix: str = "") -> Path:
     """Return ``<run_dir>/<dirname>/<output_key><suffix>``, proven to stay in the run (#916).
 
@@ -489,6 +547,7 @@ def _run_source_pipeline(
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
     secret_values: tuple[str, ...] = (),
+    checkpoint_from: str | None = None,
 ) -> _SourcePipelineResult:
     """Execute one source Bronze → Silver → Gold and persist outputs.
 
@@ -551,7 +610,14 @@ def _run_source_pipeline(
         # source fetch share this call as execution boundary (#496) —
         # public_api/file/url all use identical event vocabulary.
         recorder.stage_started(output_key, "bronze")
-        recorder.source_fetch_started(output_key)
+        recorder.source_fetch_started(
+            output_key,
+            message=(
+                f"continuing from the checkpoint of run {checkpoint_from}"
+                if checkpoint_from is not None
+                else None
+            ),
+        )
 
         def after_combination(done: int, total: int) -> None:
             # Each finished combination is a safe boundary (#648): report it, then stop
@@ -1421,6 +1487,10 @@ def run_build(
     _, spec_digest = write_buildspec_snapshot(
         spec, output_root=context.output_root, run_id=context.run_id
     )
+    # A retry takes over what the run it retries had already fetched (#1071).
+    inherited_checkpoints = _inherit_checkpoints(
+        context.output_root, context.run_id, retry_of, spec_digest
+    )
     # The revision each table has *now*, before anything is fetched (#787). Committing
     # against it makes a refresh another build finished meanwhile a conflict: the
     # older data loses instead of replacing the newer snapshot.
@@ -1453,6 +1523,9 @@ def run_build(
             capture_silver=_output_source_key(source) in composition_aliases,
             cancellation=cancellation,
             secret_values=secret_values,
+            checkpoint_from=(
+                retry_of if _output_source_key(source) in inherited_checkpoints else None
+            ),
         )
 
     # Per-source fetch/stage mostly waits on network I/O, so concurrent
@@ -1496,6 +1569,9 @@ def run_build(
                 "resumed_combinations": result.resumed[0],
                 "total_combinations": result.resumed[1],
             }
+            if retry_of is not None and result.outcome.source_key in inherited_checkpoints:
+                # Whose fetch those combinations came from (#1071).
+                resumed_sources[result.outcome.source_key]["checkpoint_from"] = retry_of
         if result.gold_selection is not None:
             gold_selection[result.outcome.source_key] = result.gold_selection
         if result.pii_declared is not None:

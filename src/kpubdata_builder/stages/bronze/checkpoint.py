@@ -5,6 +5,12 @@ one call failed near the end. Each finished combination is now kept under the ru
 directory; rebuilding the same run id resumes from it and fetches only the
 combinations that are missing.
 
+A run id is one attempt (#1042), so over HTTP "the same run id" no longer comes back:
+the retry of an interrupted run has an id of its own and names the first in
+``retry_of``. The orchestrator copies the retried run's checkpoint into the retry's
+directory before the fetch starts, when both were built from the same spec (#1071), and
+from there on everything below applies to the copy.
+
 The records and the bookkeeping are kept apart (#622), so a large combination is never
 held in memory or packed into one JSON line::
 
