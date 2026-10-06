@@ -41,6 +41,10 @@ _request_keys: ContextVar[Mapping[str, str] | None] = ContextVar(
 def parse_provider_key_headers(values: Iterable[str]) -> dict[str, str]:
     """``X-Provider-Key`` header values → ``{provider: key}``.
 
+    A key cannot contain a comma: the comma separates entries, so the part after it is
+    read as another ``<provider>=<key>`` and refused. Studio refuses such a key when it
+    is typed (``providerKeyProblem``), by the same rule.
+
     Raises:
         ValueError: A value is not ``<provider>=<key>``, or names a provider twice with
             different keys. The message never contains a key.
@@ -59,6 +63,23 @@ def parse_provider_key_headers(values: Iterable[str]) -> dict[str, str]:
                 raise ValueError(f"{PROVIDER_KEY_HEADER} gives {provider!r} two different keys")
             keys[provider] = key
     return keys
+
+
+def route_reads_provider_keys(method: str, path: str) -> bool:
+    """Whether the route uses the request's provider keys — the operations the contract
+    declares ``X-Provider-Key`` on (a test holds the two together).
+
+    A malformed header is an error only there (#1073). Elsewhere the request carries no
+    keys, exactly as if the header were absent.
+    """
+    if method == "POST" and path in ("/preview", "/build", "/builds"):
+        return True
+    if path == "/providers":
+        return method == "GET"
+    if path.startswith("/providers/"):
+        operation = path.rsplit("/", 1)[-1]
+        return (method, operation) in (("GET", "status"), ("POST", "test"), ("POST", "probe"))
+    return False
 
 
 @contextmanager

@@ -24,6 +24,7 @@ from kpubdata_builder.service.request_credentials import (
     parse_provider_key_headers,
     request_scope,
 )
+from kpubdata_builder.spec import JsonValue
 
 _CANARY = "canary-provider-value-683"
 _OPERATOR_VALUE = "operator-env-value-683"
@@ -108,13 +109,63 @@ def test_the_header_is_parsed_and_errors_never_echo_the_key() -> None:
         assert "a" not in str(exc.value).replace("datago", "").replace("same", "")
 
 
-def test_a_malformed_header_is_a_400(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/preview", {"spec": "x"}),
+        ("POST", "/build", {"spec": "x"}),
+        ("POST", "/builds", {"spec": "x"}),
+        ("GET", "/providers", None),
+        ("GET", "/providers/datago/status", None),
+        ("POST", "/providers/datago/test", None),
+        ("POST", "/providers/datago/probe", None),
+    ],
+)
+def test_a_malformed_header_is_a_400_where_a_key_is_read(
+    tmp_path: Path, method: str, path: str, body: dict[str, JsonValue] | None
+) -> None:
     service = BuilderService(output_root=tmp_path, client_factory=_Recorder())
 
-    response = dispatch(service, "GET", "/healthz", None, provider_key_headers=["nokey"])
+    response = dispatch(service, method, path, body, provider_key_headers=["nokey"])
 
     assert isinstance(response, ServiceResponse)
     assert (response.status_code, response.body["code"]) == (400, "invalid_provider_key")
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "expected"),
+    [
+        ("GET", "/healthz", 200),
+        ("GET", "/version", 200),
+        ("GET", "/builds", 200),
+        # A route under /providers that reads no request key.
+        ("GET", "/providers/datago/credential", None),
+    ],
+)
+def test_a_malformed_header_does_not_fail_a_route_that_reads_no_key(
+    tmp_path: Path, method: str, path: str, expected: int | None
+) -> None:
+    """It failed every route, the health check included (#1073)."""
+    service = BuilderService(output_root=tmp_path, client_factory=_Recorder())
+
+    with_header = dispatch(service, method, path, None, provider_key_headers=["nokey"])
+    without = dispatch(service, method, path, None)
+
+    assert isinstance(with_header, ServiceResponse) and isinstance(without, ServiceResponse)
+    # The header changes nothing: the answer is the one the route gives without it.
+    assert (with_header.status_code, with_header.body) == (without.status_code, without.body)
+    assert with_header.body.get("code") != "invalid_provider_key"
+    if expected is not None:
+        assert with_header.status_code == expected
+
+
+def test_a_key_with_a_comma_is_malformed() -> None:
+    """The comma separates entries, so the rest is read as an entry of its own. Studio
+    refuses such a key when it is typed, by the same rule."""
+    with pytest.raises(ValueError) as refused:
+        parse_provider_key_headers(["datago=first,second"])
+
+    assert "first" not in str(refused.value) and "second" not in str(refused.value)
 
 
 def test_the_request_scope_ends_with_the_request() -> None:
