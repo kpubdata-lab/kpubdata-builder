@@ -33,6 +33,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
+from .operations import find_operation
+
 #: The request header that carries provider keys: ``<provider>=<key>``, one per header
 #: or comma-separated. A key never travels in a URL, where proxies and logs keep it.
 PROVIDER_KEY_HEADER = "X-Provider-Key"
@@ -75,19 +77,13 @@ def parse_provider_key_headers(values: Iterable[str]) -> dict[str, str]:
 
 def route_reads_provider_keys(method: str, path: str) -> bool:
     """Whether the route uses the request's provider keys — the operations the contract
-    declares ``X-Provider-Key`` on (a test holds the two together).
+    declares ``X-Provider-Key`` on, read from the table generated from it (#1109).
 
     A malformed header is an error only there (#1073). Elsewhere the request carries no
     keys, exactly as if the header were absent.
     """
-    if method == "POST" and path in ("/preview", "/build", "/builds"):
-        return True
-    if path == "/providers":
-        return method == "GET"
-    if path.startswith("/providers/"):
-        operation = path.rsplit("/", 1)[-1]
-        return (method, operation) in (("GET", "status"), ("POST", "test"), ("POST", "probe"))
-    return False
+    operation = find_operation(method, path)
+    return operation is not None and operation.provider_key
 
 
 @contextmanager

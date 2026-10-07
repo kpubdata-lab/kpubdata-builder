@@ -83,8 +83,9 @@ def test_it_is_declared_on_exactly_the_operations_that_read_the_key(
 def test_a_malformed_header_is_refused_on_exactly_those_operations(
     contract: dict[str, Any],
 ) -> None:
-    """``route_reads_provider_keys`` is a list kept by hand; this holds it to the
-    contract, in both directions (#1073)."""
+    """``route_reads_provider_keys`` answers from the table generated from the contract
+    (#1109); this reads the contract itself and holds the answer to it, in both
+    directions (#1073)."""
     reference = {"$ref": "#/components/parameters/ProviderKey"}
     disagree: list[str] = []
     for template, item in contract["paths"].items():
@@ -102,8 +103,9 @@ def test_a_malformed_header_is_refused_on_exactly_those_operations(
 def test_a_malformed_publish_header_is_refused_on_exactly_the_declaring_operations(
     contract: dict[str, Any],
 ) -> None:
-    """``route_reads_publish_credentials`` is a list kept by hand; this holds it to the
-    contract, in both directions (#1105)."""
+    """``route_reads_publish_credentials`` answers from the table generated from the
+    contract (#1109); this reads the contract itself and holds the answer to it, in both
+    directions (#1105)."""
     reference = {"$ref": "#/components/parameters/PublishCredential"}
     disagree: list[str] = []
     declaring = 0

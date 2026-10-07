@@ -19,6 +19,17 @@ The single source of truth for KPubData Builder's (package `kpubdata-builder`) H
 - Studio checks the same major plus a per-feature minimum SemVer, not exact equality. It bumps its schema/client and minimum feature version only when it actually consumes a new operation.
 - Completing Epic #484 is the point to freeze the final contract and record it in the release manifest and tag, not to defer version changes during development.
 
+### The operations table (#1109)
+
+Which method and path is which `operationId`, and which operations read a credential header, is written once: in `contract/builder-api.yaml`. The contract is not shipped in the wheel, so `scripts/generate_operations.py` writes what the service needs of it into `src/kpubdata_builder/service/_contract_operations.py` — a module nobody edits — and `service/operations.py` answers "which operation is this request" from it. `route_reads_provider_keys` and `route_reads_publish_credentials` read their answer there; neither spells out a path any more.
+
+When an operation is added, removed or renamed in the contract, or gains or loses the `ProviderKey` / `PublishCredential` parameter, run `uv run python scripts/generate_operations.py` and commit the result. Two tests hold the pieces together:
+
+- `tests/unit/test_contract_operations.py` fails when the generated module is stale, and holds the table and the lookup to the contract.
+- `tests/unit/test_dispatch_answers_only_declared_operations.py` (#1054) asks the service itself: every declared operation is taken by a route, and no other method or assembled path is.
+
+Routing is still done by the route adapters, by hand. What an operation may answer (`_OPERATION_STATUS_CODES` in `tests/unit/test_service_contract.py`) is also still declared by hand: the contract says what is allowed, and only reading the code says what is returned.
+
 ### Client Compatibility Rules (#814)
 
 These are the rules the reading side follows. They pair with the server-side rules above.
