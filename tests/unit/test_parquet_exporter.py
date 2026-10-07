@@ -64,14 +64,24 @@ def test_empty_records_with_schema_keeps_columns(tmp_path: Path) -> None:
 
 
 def test_empty_records_without_schema_writes_readable_empty_file(tmp_path: Path) -> None:
-    # No schema and no records result in a readable Parquet file with 0 rows and 0 columns.
+    # No schema and no records: a file Builder reads back as 0 rows and 0 columns. DuckDB
+    # cannot write a Parquet file without a column, so it holds the placeholder the file's
+    # metadata marks as none (#876).
+    import duckdb
+
+    from kpubdata_builder.tabular.builder_kv import NO_COLUMNS
+    from kpubdata_builder.tabular.duckdb_load import load_parquet, parquet_columns
+
     artifact = ArtifactDataset.from_records(records=())
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
     result = ParquetExporter().export(artifact, target, tmp_path)
 
-    frame = pl.read_parquet(result.output_path)
-    assert frame.shape == (0, 0)
+    with duckdb.connect() as connection:
+        assert parquet_columns(connection, result.output_path).names == ()
+        loaded = load_parquet(connection, result.output_path, table="t")
+    assert (loaded.row_count, loaded.names) == (0, ())
+    assert pl.read_parquet(result.output_path).columns == [NO_COLUMNS]
 
 
 def test_returns_metadata_pointing_to_created_file(tmp_path: Path) -> None:
@@ -99,11 +109,13 @@ def test_wraps_write_failure_in_export_error(
     artifact = ArtifactDataset.from_records(records=({"id": "1"},))
     target = ExportTarget(kind="parquet", output_path="out/data.parquet")
 
-    def raise_os_error(self: pl.DataFrame, *args: object, **kwargs: object) -> None:
-        del self, args, kwargs
+    def raise_os_error(*args: object, **kwargs: object) -> None:
+        del args, kwargs
         raise OSError("disk full")
 
-    monkeypatch.setattr(pl.DataFrame, "write_parquet", raise_os_error)
+    import kpubdata_builder.exporters.parquet as parquet_module
+
+    monkeypatch.setattr(parquet_module, "write_records_parquet", raise_os_error)
 
     with pytest.raises(ExportError):
         ParquetExporter().export(artifact, target, tmp_path)

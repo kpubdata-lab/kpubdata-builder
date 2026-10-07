@@ -22,7 +22,7 @@ from kpubdata_builder.spec import (
 from kpubdata_builder.spec.models import SchemaContract
 from kpubdata_builder.stages.silver.build import build_silver_dataset
 from kpubdata_builder.tabular import PreviewSlice, SchemaInfo
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+from tests.support.polars_bridge import handle_from_frame, to_polars
 
 
 class _FakeResult:

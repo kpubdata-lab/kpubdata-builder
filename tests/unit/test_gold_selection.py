@@ -23,7 +23,7 @@ from kpubdata_builder.spec.models import CompositionSpec, GoldFilter, GoldSelect
 from kpubdata_builder.spec.serializer import canonical_spec_mapping, serialize_spec_bytes
 from kpubdata_builder.spec.validator import validate_spec
 from kpubdata_builder.stages.gold.select import GoldSelectionError, apply_gold_selection
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+from tests.support.polars_bridge import handle_from_frame, to_polars
 
 _BASE = """\
 dataset_id: gold.table

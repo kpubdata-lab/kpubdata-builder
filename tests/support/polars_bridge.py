@@ -22,9 +22,9 @@ from typing import Any
 import duckdb
 import polars as pl
 
-from .duckdb_load import Node, TableHandle
-from .duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation
-from .sql import quote_identifier
+from kpubdata_builder.tabular.duckdb_load import Node, TableHandle
+from kpubdata_builder.tabular.duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation
+from kpubdata_builder.tabular.sql import quote_identifier
 
 _FRAME = "polars_frame"
 
@@ -187,11 +187,11 @@ def handle_from_frame(
     """A DuckDB table holding ``frame`` — for callers that already hold a frame
     (library use, tests). The frame itself is kept as the handle's Polars view. Without
     ``connection`` a private one is opened through the runtime, and the handle closes it."""
-    from .duckdb_load import LoadedTable, canonical
+    from kpubdata_builder.tabular.duckdb_load import LoadedTable, canonical
 
     owns_connection = connection is None
     if connection is None:
-        from .duckdb_runtime import BuildProfile, connect
+        from kpubdata_builder.tabular.duckdb_runtime import BuildProfile, connect
 
         temp = workdir / ".duckdb_tmp"
         temp.mkdir(parents=True, exist_ok=True)

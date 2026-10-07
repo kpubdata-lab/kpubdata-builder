@@ -9,11 +9,9 @@ from kpubdata_builder.tabular import (
     PreviewSlice,
     SchemaInfo,
     TableStatistics,
-    compute_statistics,
-    generate_preview,
-    infer_schema,
 )
-from kpubdata_builder.tabular.convert import dataframe_to_records, records_to_dataframe
+from tests.support.polars_convert import dataframe_to_records, records_to_dataframe
+from tests.support.polars_engine import compute_statistics, generate_preview, infer_schema
 
 
 class TestInferSchema:

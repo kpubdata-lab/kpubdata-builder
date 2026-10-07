@@ -15,9 +15,9 @@ from kpubdata_builder.spec.models import GoldFilter, GoldSelection
 from kpubdata_builder.stages.gold.compose import build_composed_gold_package
 from kpubdata_builder.stages.gold.pii import PII_MASK_TOKEN, mask_columns
 from kpubdata_builder.stages.gold.select import GoldSelectionError, apply_gold_selection
-from kpubdata_builder.tabular.builder_parquet import builder_dtypes, read_builder_parquet
 from kpubdata_builder.tabular.duckdb_load import TableHandle
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+from tests.support.builder_parquet import builder_dtypes, read_builder_parquet
+from tests.support.polars_bridge import handle_from_frame, to_polars
 
 _SRC = Path(__file__).parents[2] / "src" / "kpubdata_builder" / "stages" / "gold"
 

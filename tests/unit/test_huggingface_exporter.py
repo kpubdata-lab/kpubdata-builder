@@ -145,12 +145,11 @@ def test_failing_export_leaves_no_temp_dir_behind(
 
     target = ExportTarget(kind="huggingface", output_path="hf/apt_trade")
 
-    def raise_tabular_error(records: object) -> None:
+    def raise_tabular_error(*args: object) -> None:
         raise TabularError("혼합 타입 컬럼")
 
-    # Must replace records_to_dataframe imported directly from huggingface module for patch to
-    # apply.
-    monkeypatch.setattr(hf_module, "records_to_dataframe", raise_tabular_error)
+    # Replaced where the huggingface module imported it, for the patch to apply.
+    monkeypatch.setattr(hf_module, "write_records_parquet", raise_tabular_error)
 
     with pytest.raises(ExportError):
         HuggingFaceExporter().export(_artifact(), target, tmp_path)

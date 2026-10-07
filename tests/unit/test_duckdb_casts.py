@@ -31,8 +31,8 @@ from kpubdata_builder.tabular.duckdb_casts import (
     zfill_expression,
     zfill_violations,
 )
-from kpubdata_builder.tabular.polars_helpers import cast_columns
 from kpubdata_builder.tabular.sql import quote_identifier
+from tests.support.polars_helpers import cast_columns
 
 TARGETS = (
     "int",

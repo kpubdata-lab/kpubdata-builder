@@ -27,7 +27,7 @@ from ..errors import ExportError
 from ..spec import ExportTarget
 from ..stages._atomic import atomic_replace_dir
 from ..stages._path_safety import safe_output_path
-from ..tabular.convert import records_to_dataframe
+from ._rows import write_records_parquet
 from .base import BaseExporter, ExportResult
 from .jsonl import write_jsonl
 
@@ -55,7 +55,7 @@ def _write_data_file(artifact: ArtifactDataset, data_dir: Path, fmt: str) -> Pat
             # The Gold table's own file: rows are not read into Python (#873).
             shutil.copyfile(source, data_path)
         else:
-            records_to_dataframe(list(artifact.data_source.iter_records())).write_parquet(data_path)
+            write_records_parquet(artifact, data_path)
     else:
         # allow_nan=False: NaN/Infinity are non-standard JSON tokens, so fail with
         # ValueError (#217).

@@ -170,6 +170,16 @@ def duckdb_version() -> tuple[int, int, int]:
     return major, minor, patch
 
 
+def artifact_writer() -> dict[str, str]:
+    """The engine that writes Gold tables, for a manifest's ``artifact_writer`` (#867).
+
+    The same rows written by another engine, or another version of this one, can be
+    different bytes; naming the writer next to the digest says why a digest moved.
+    Gold has been written by DuckDB since #870.
+    """
+    return {"name": "duckdb", "version": duckdb.__version__}
+
+
 def check_duckdb() -> None:
     """Refuse a DuckDB older than the floor, or one missing a sandbox setting.
 
@@ -279,6 +289,7 @@ def build_connection(
 
 
 __all__ = [
+    "artifact_writer",
     "clear_temp_root",
     "MAX_TEMP_SIZE_ENV",
     "MEMORY_LIMIT_ENV",

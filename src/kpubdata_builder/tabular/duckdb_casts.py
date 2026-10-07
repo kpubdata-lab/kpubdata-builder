@@ -1,6 +1,7 @@
 """Builder's cast rules, expressed in DuckDB SQL (#868, ADR 0021).
 
-``polars_helpers.cast_columns`` is the contract: a declared cast either converts a value
+The Polars engine's ``cast_columns`` (a test oracle since #876,
+``tests/support/polars_helpers.py``) is the contract: a declared cast either converts a value
 or turns it into null, and the Silver audit fails the build when a cast introduced a
 null (#188). DuckDB's own casts accept different inputs — ``CAST(' 12' AS BIGINT)`` is
 12, ``CAST(1.9 AS BIGINT)`` is 2 — so none is used bare. Every cast here is:
@@ -34,6 +35,8 @@ from dataclasses import dataclass
 import duckdb
 
 from .cast_names import (
+    FORMATTED_CASTS,
+    NAMED_TARGETS,
     TEXT_CASTS,
     YEAR_MONTH_COMPACT_RE2,
     YEAR_MONTH_DASHED_RE2,
@@ -59,21 +62,8 @@ _MAX_DAYS = 2932896
 _MIN_MICROS = _MIN_DAYS * 86_400_000_000
 _MAX_MICROS = (_MAX_DAYS + 1) * 86_400_000_000 - 1
 
-#: Named targets, as ``polars_helpers._NAMED_DTYPES`` spells them.
-_TARGETS: Mapping[str, str] = {
-    "bool": "boolean",
-    "boolean": "boolean",
-    "date": "date",
-    "datetime": "datetime",
-    "float": "float",
-    "float64": "float",
-    "int": "int",
-    "int64": "int",
-    "str": "string",
-    "string": "string",
-    "utf8": "string",
-}
-_FORMATTED: Mapping[str, str] = {"int_comma": "int", "float_comma": "float"}
+_TARGETS = NAMED_TARGETS
+_FORMATTED = FORMATTED_CASTS
 _TRUE = ("1", "t", "true", "y", "yes")
 _FALSE = ("0", "f", "false", "n", "no")
 

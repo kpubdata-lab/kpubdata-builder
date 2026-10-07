@@ -19,7 +19,7 @@ from kpubdata_builder.stages.silver.models import SilverDataset, ValidationResul
 from kpubdata_builder.stages.silver.preview import build_preview
 from kpubdata_builder.stages.silver.summarize import build_schema, build_statistics
 from kpubdata_builder.tabular.duckdb_load import TableHandle
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+from tests.support.polars_bridge import handle_from_frame
 
 _EVALUATOR = Path(__file__).parents[2] / "src" / "kpubdata_builder" / "quality" / "evaluator.py"
 

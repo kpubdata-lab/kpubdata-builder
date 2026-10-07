@@ -20,7 +20,7 @@ from typing import Any
 
 import polars as pl
 
-from kpubdata_builder.tabular.builder_parquet import read_builder_parquet
+from tests.support.builder_parquet import read_builder_parquet
 
 #: Keys whose values vary from run to run and are never compared.
 VOLATILE_KEYS = frozenset(

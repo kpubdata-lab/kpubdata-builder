@@ -18,7 +18,7 @@ from kpubdata_builder.query.result import to_wire
 from kpubdata_builder.query.sandbox import DATASET, open_sandbox
 from kpubdata_builder.query.security import UnsafeQueryError, validate_read_only_sql
 from kpubdata_builder.tabular.duckdb_runtime import BuildProfile
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+from tests.support.polars_bridge import handle_from_frame
 
 
 def _table(tmp_path: Path, frame: pl.DataFrame, name: str = "table.parquet") -> Path:

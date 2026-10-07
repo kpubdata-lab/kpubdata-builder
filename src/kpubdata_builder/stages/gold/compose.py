@@ -260,9 +260,7 @@ def build_composed_gold_package(
     left = left_table if left_table is not None else left_silver.table
     right = right_table if right_table is not None else right_silver.table
     if not left.shares_connection(right):
-        from ...tabular.polars_bridge import alongside
-
-        right = alongside(right, left)
+        right = right.copied_to(left, table=f"composed_right_{next(_names)}")
     _validate_join_keys(left, right, join)
 
     left = _nan_keys_to_null(left, [lc for lc, _ in join.keys])

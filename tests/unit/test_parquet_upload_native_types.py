@@ -150,3 +150,15 @@ def test_a_duration_value_is_refused_by_name() -> None:
 
     with pytest.raises(IngestionError, match="column 'took' holds duration values"):
         _refuse_untexted_values(batch)
+
+
+def test_an_interval_column_is_refused_by_name_not_read_as_no_rows(tmp_path: Path) -> None:
+    # The Polars reader panicked on a DuckDB INTERVAL column and gave no batches, so the
+    # build succeeded with an empty table (#876). DuckDB reads it as a duration.
+    response = _build(tmp_path, "SELECT 1 AS id, INTERVAL 1 DAY AS payload")
+
+    assert response.status_code != 200
+    assert response.body["outcomes"][0]["error"] == (
+        "column 'payload' holds duration values, which a parquet upload cannot carry: "
+        "write the column as text or a number before uploading"
+    )

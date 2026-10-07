@@ -310,7 +310,7 @@ class TestBuildSpecPathMatchesTheLegacyScript:
         from kpubdata_builder.spec.models import DerivedColumn
         from kpubdata_builder.stages.bronze.models import BronzeArtifact, utc_now
         from kpubdata_builder.stages.silver.normalize import normalize_table
-        from kpubdata_builder.tabular.polars_bridge import to_polars
+        from tests.support.polars_bridge import to_polars
 
         bronze = BronzeArtifact.from_records(
             source_key="datago.apt_trade",

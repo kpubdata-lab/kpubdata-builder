@@ -41,7 +41,6 @@ from kpubdata_builder.service.datasets import read_snapshot_spec
 from kpubdata_builder.service.ownership import PERSONAL_WORKSPACE
 from kpubdata_builder.spec import parse_spec
 from kpubdata_builder.spec.models import SchemaContract, SourceRef
-from kpubdata_builder.tabular.polars_engine import infer_schema
 from kpubdata_builder.tabular.semantics import (
     ColumnSemantics,
     SemanticHint,
@@ -55,6 +54,7 @@ from kpubdata_builder.tabular.wire import (
     mark_identifiers,
 )
 from kpubdata_builder.warehouse import materialize
+from tests.support.polars_engine import infer_schema
 
 from ._openapi import validate
 

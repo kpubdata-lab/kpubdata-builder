@@ -41,7 +41,7 @@ from kpubdata_builder.stages.gold.pii import (
     core_pii_columns,
     declared_pii_columns,
 )
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+from tests.support.polars_bridge import handle_from_frame, to_polars
 
 # Obviously fake numbers — the shape a licence-and-permit dataset's phone column has.
 _PHONES = ("010-0000-0000", "02-000-0000", "010-0000-0001")

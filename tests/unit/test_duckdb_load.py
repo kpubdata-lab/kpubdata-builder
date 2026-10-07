@@ -20,8 +20,8 @@ import pytest
 from kpubdata_builder.errors import TabularError
 from kpubdata_builder.ingestion.tabular_ingest import parse_tabular_bytes
 from kpubdata_builder.spec import JsonValue
-from kpubdata_builder.tabular.convert import records_to_dataframe
 from kpubdata_builder.tabular.duckdb_load import fetch_rows, load_records
+from tests.support.polars_convert import records_to_dataframe
 
 _KST = dt.timezone(dt.timedelta(hours=9))
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "duckdb_parity"
@@ -207,7 +207,7 @@ def test_struct_fields_differing_only_in_case_are_refused(tmp_path: Path) -> Non
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_schema_statistics_and_preview_match_polars(tmp_path: Path, name: str) -> None:
     from kpubdata_builder.tabular.duckdb_summary import preview_of, schema_of, statistics_of
-    from kpubdata_builder.tabular.polars_engine import (
+    from tests.support.polars_engine import (
         compute_statistics,
         generate_preview,
         infer_schema,
@@ -362,7 +362,7 @@ def test_the_loader_agrees_with_the_committed_baseline(
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_the_bridge_gives_the_frame_polars_built(tmp_path: Path, name: str) -> None:
     from kpubdata_builder.tabular.duckdb_load import TableHandle
-    from kpubdata_builder.tabular.polars_bridge import to_polars
+    from tests.support.polars_bridge import to_polars
 
     records = CASES[name]
     expected = records_to_dataframe([dict(r) for r in records])

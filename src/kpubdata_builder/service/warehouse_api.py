@@ -41,7 +41,7 @@ from kpubdata_builder.query.aggregate import (
     parse_aggregate_plan,
 )
 from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
-from kpubdata_builder.query.rows import check_plan, parse_rows_plan
+from kpubdata_builder.query.rows import check_plan, parse_rows_plan, table_dtypes
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
 from kpubdata_builder.service.auth import Principal
@@ -61,7 +61,6 @@ from kpubdata_builder.service.redistribution import (
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages._path_safety import ensure_within
-from kpubdata_builder.tabular.builder_parquet import read_builder_parquet_schema
 from kpubdata_builder.tabular.semantics import ColumnSemantics
 from kpubdata_builder.warehouse import (
     PinnedSnapshot,
@@ -303,7 +302,7 @@ class WarehouseApiService:
                 return _no_table_file()
 
             try:
-                check_plan(plan, read_builder_parquet_schema(table_path))
+                check_plan(plan, table_dtypes(table_path))
             except ValueError as exc:
                 return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
             try:
@@ -407,7 +406,7 @@ class WarehouseApiService:
                 return _no_table_file()
 
             try:
-                check_aggregate_plan(plan, read_builder_parquet_schema(table_path))
+                check_aggregate_plan(plan, table_dtypes(table_path))
             except ValueError as exc:
                 return ServiceResponse(400, {"error": str(exc), "code": "invalid_request"})
             try:

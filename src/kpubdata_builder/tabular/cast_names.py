@@ -1,13 +1,33 @@
 """Declared cast names and the audit record of a cast — engine-neutral (#869).
 
-These used to live in ``polars_helpers``, which imports Polars at module level; the
-DuckDB Silver reads them from here so that running it does not load Polars.
-``polars_helpers`` re-exports them.
+They lived in ``polars_helpers`` until the Polars engine went (#876).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+
+#: The type names a spec's ``casts`` and ``dtypes`` may declare, and the kind of value
+#: each one is: ``boolean``, ``date``, ``datetime``, ``float``, ``int`` or ``string``.
+NAMED_TARGETS: Mapping[str, str] = {
+    "bool": "boolean",
+    "boolean": "boolean",
+    "date": "date",
+    "datetime": "datetime",
+    "float": "float",
+    "float64": "float",
+    "int": "int",
+    "int64": "int",
+    "str": "string",
+    "string": "string",
+    "utf8": "string",
+}
+
+#: Casts that read a formatted number — source public data writes amounts with
+#: thousands separators ("120,000"), which a plain int cast turns into nulls, failing
+#: #188's data-loss guard — and the kind of value each gives.
+FORMATTED_CASTS: Mapping[str, str] = {"int_comma": "int", "float_comma": "float"}
 
 #: named cast collecting mixed notation strings into canonical text (#620). Separate from
 #: the named dtypes because it is a casting strategy, not a dtype.
@@ -46,6 +66,8 @@ class CastReport:
 
 
 __all__ = [
+    "FORMATTED_CASTS",
+    "NAMED_TARGETS",
     "TEXT_CASTS",
     "YEAR_MONTH_COMPACT",
     "YEAR_MONTH_COMPACT_RE2",

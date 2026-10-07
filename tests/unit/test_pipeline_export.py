@@ -7,7 +7,7 @@ import polars as pl
 from kpubdata_builder.pipeline.export import export_gold_package
 from kpubdata_builder.spec import ExportTarget
 from kpubdata_builder.stages.gold import ExportPlan, GoldPackage
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame
+from tests.support.polars_bridge import handle_from_frame
 
 
 def test_export_gold_package_executes_registered_targets(tmp_path: Path) -> None:

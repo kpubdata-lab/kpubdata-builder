@@ -18,7 +18,6 @@ import polars as pl
 import pytest
 import yaml
 
-from kpubdata_builder.tabular.polars_engine import infer_schema
 from kpubdata_builder.tabular.semantics import (
     ORIGIN_PRIORITY,
     ColumnSemantics,
@@ -31,6 +30,7 @@ from kpubdata_builder.tabular.semantics import (
     with_semantics,
 )
 from kpubdata_builder.tabular.wire import column_meta, encode_rows
+from tests.support.polars_engine import infer_schema
 
 from ._openapi import validate
 

@@ -19,7 +19,7 @@ from kpubdata_builder.stages.gold.split import (
     split_algorithm_of,
 )
 from kpubdata_builder.tabular.duckdb_load import TableHandle
-from kpubdata_builder.tabular.polars_bridge import handle_from_frame, to_polars
+from tests.support.polars_bridge import handle_from_frame, to_polars
 
 _SPLIT_PY = Path(__file__).parents[2] / "src" / "kpubdata_builder" / "stages" / "gold" / "split.py"
 _RATIOS = {"train": 0.7, "val": 0.2, "test": 0.1}

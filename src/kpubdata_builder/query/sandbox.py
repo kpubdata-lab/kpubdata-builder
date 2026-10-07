@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 
 import duckdb
 
-from ..tabular.builder_kv import KV_KEY, KV_NAMES_KEY
+from ..tabular.builder_kv import KV_KEY, KV_NAMES_KEY, NO_COLUMNS, NO_COLUMNS_KEY
 from ..tabular.duckdb_runtime import BuildProfile
 from ..tabular.sql import quote_identifier, quote_literal
 
@@ -77,9 +77,13 @@ def _kv(connection: duckdb.DuckDBPyConnection, path: str) -> dict[str, dict[str,
         "SELECT key, value FROM parquet_kv_metadata(?)", [path]
     ).fetchall():
         name = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+        raw = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        if name == NO_COLUMNS_KEY:
+            # A table without columns is written with a placeholder the file marks as none.
+            found[name] = {"": raw}
+            continue
         if name not in (KV_KEY, KV_NAMES_KEY):
             continue
-        raw = value.decode("utf-8") if isinstance(value, bytes) else str(value)
         decoded = json.loads(raw)
         if isinstance(decoded, dict):
             found[name] = {str(k): str(v) for k, v in decoded.items()}
@@ -135,10 +139,11 @@ def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Ite
                 dtypes.setdefault(str(name), "Null")
         renamed = kv.get(KV_NAMES_KEY, {})
         source = f"read_parquet({quote_literal(path)}, file_row_number = true)"
+        placeholder = kv.get(NO_COLUMNS_KEY, {}).get("") == "true"
         stored = [
             row[0]
             for row in connection.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
-            if row[0] != "file_row_number"
+            if row[0] != "file_row_number" and not (placeholder and row[0] == NO_COLUMNS)
         ]
         names = [renamed.get(physical, physical) for physical in stored]
         restored = [

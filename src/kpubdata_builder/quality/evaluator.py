@@ -33,6 +33,7 @@ import duckdb
 
 from ..spec.models import CompareColumnsRule, JsonValue, QualityPolicy, RangeRule
 from ..stages.silver.models import SilverDataset
+from ..tabular.cast_names import NAMED_TARGETS
 from ..tabular.duckdb_load import TableHandle, canonical, node_of
 from .models import QualityCheckResult, QualityStatus
 
@@ -48,20 +49,8 @@ _COMPARE_OPERATORS: dict[str, str] = {
     "lte": "<=",
 }
 _NUMERIC = frozenset({"int", "int128", "float", "decimal"})
-#: The dtype names a schema contract may declare, as ``tabular.polars_helpers`` reads them.
-_SCHEMA_DTYPES = (
-    "bool",
-    "boolean",
-    "date",
-    "datetime",
-    "float",
-    "float64",
-    "int",
-    "int64",
-    "str",
-    "string",
-    "utf8",
-)
+#: The dtype names a schema contract may declare (``tabular.cast_names``).
+_SCHEMA_DTYPES = tuple(NAMED_TARGETS)
 
 
 def _expected_dtype(spec: DtypeSpec) -> str:
@@ -72,10 +61,9 @@ def _expected_dtype(spec: DtypeSpec) -> str:
             supported = ", ".join(sorted(_SCHEMA_DTYPES))
             raise ValueError(f"Unsupported dtype: {spec!r}. Supported: {supported}")
         return canonical(node_of(normalized))
-    # A Polars dtype from a library caller: its name is the canonical one.
-    from ..tabular.polars_helpers import _resolve_dtype
-
-    return str(_resolve_dtype(spec))  # type: ignore[arg-type]
+    # A Polars dtype (or dtype class) from a library caller: its printed name is the
+    # canonical one, read without importing Polars.
+    return str(spec() if isinstance(spec, type) else spec)
 
 
 def _severity_status(violated: bool, severity: str) -> QualityStatus:

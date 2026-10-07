@@ -59,7 +59,7 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra publish --no-sources
+        run: uv sync --extra dev --extra publish --extra legacy-publish --no-sources
 
       # Whatever config was asked for — scheduled or dispatched by hand — must pass the
       # same licence rule the tests hold every config to (#792). The input is a free

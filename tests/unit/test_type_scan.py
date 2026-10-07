@@ -11,12 +11,9 @@ from kpubdata_builder.errors import TabularError
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages.bronze.models import BronzeArtifact
 from kpubdata_builder.stages.silver.normalize import normalize_table as _normalize_handle
-from kpubdata_builder.tabular.convert import (
-    RecordTypeScan,
-    check_case_fold_collisions,
-    records_to_dataframe,
-)
-from kpubdata_builder.tabular.polars_bridge import to_polars
+from kpubdata_builder.tabular.convert import RecordTypeScan, check_case_fold_collisions
+from tests.support.polars_bridge import to_polars
+from tests.support.polars_convert import records_to_dataframe
 
 
 def normalize_table(*args: Any, **kwargs: Any) -> pl.DataFrame:

@@ -19,10 +19,10 @@ from typing import Literal, overload
 
 import polars as pl
 
-from .cast_names import TEXT_CASTS as TEXT_CASTS
-from .cast_names import YEAR_MONTH_COMPACT as YEAR_MONTH_COMPACT
-from .cast_names import YEAR_MONTH_DASHED as YEAR_MONTH_DASHED
-from .cast_names import CastReport as CastReport
+from kpubdata_builder.tabular.cast_names import TEXT_CASTS as TEXT_CASTS
+from kpubdata_builder.tabular.cast_names import YEAR_MONTH_COMPACT as YEAR_MONTH_COMPACT
+from kpubdata_builder.tabular.cast_names import YEAR_MONTH_DASHED as YEAR_MONTH_DASHED
+from kpubdata_builder.tabular.cast_names import CastReport as CastReport
 
 DtypeSpec = str | pl.DataType | type[pl.DataType]
 

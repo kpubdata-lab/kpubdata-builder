@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-import polars as pl
+import duckdb
 
 from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
 from kpubdata_builder.query.models import QueryRequest, QueryStage
@@ -168,7 +168,7 @@ class QueryApiService:
         if withheld:
             try:
                 masked = masked_silver_table(context.table_path, withheld)
-            except (OSError, pl.exceptions.PolarsError):
+            except (OSError, ValueError, duckdb.Error):
                 # Fail closed: an unreadable table is not read unmasked.
                 return ServiceResponse(
                     400, {"error": "query execution failed", "code": "query_execution_failed"}

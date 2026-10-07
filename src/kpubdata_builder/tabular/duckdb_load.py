@@ -28,9 +28,11 @@ Internal column names keep source names that SQL cannot hold side by side (``Nam
 
 from __future__ import annotations
 
+import ast
 import datetime as dt
 import json
 import math
+import os
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -42,6 +44,7 @@ import duckdb
 
 from ..errors import TabularError
 from ..spec import JsonValue
+from .builder_kv import KV_KEY, KV_NAMES_KEY, NO_COLUMNS, NO_COLUMNS_KEY
 from .convert import RecordTypeScan, apply_read_as
 from .duckdb_runtime import ROW_SEQ_COLUMN, TabularRelation, reserve_row_seq
 from .sql import quote_identifier, quote_literal
@@ -380,8 +383,8 @@ class TableHandle:
     whoever opened it: a build's source pipeline or a preview closes its own
     (``owns_connection=False``); a handle that opened a private connection for a library
     caller closes it itself (``owns_connection=True``). After :meth:`close`, every
-    operation raises :class:`TableClosedError` — except reading a frame the Polars bridge
-    was asked to keep (``tabular.polars_bridge.to_polars(keep=True)``).
+    operation raises :class:`TableClosedError`; :attr:`cache` keeps what a caller asked to
+    keep past it.
     """
 
     def __init__(
@@ -397,7 +400,7 @@ class TableHandle:
         self._owns_connection = owns_connection
         self.table = table
         self.workdir = workdir
-        #: What a caller asked to keep past the connection (the bridge's frame).
+        #: What a caller asked to keep past the connection (a test's frame).
         self.cache: dict[str, object] = dict(cache or {})
 
     def __repr__(self) -> str:
@@ -523,6 +526,20 @@ class TableHandle:
             for value, count in batch:
                 yield str(value), int(count)
 
+    def copied_to(self, other: TableHandle, *, table: str) -> TableHandle:
+        """This table copied into ``other``'s connection as ``table`` — through a Parquet
+        file in this table's workdir, dtypes and order kept (``load_parquet``)."""
+        import tempfile
+
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=self.workdir, prefix=".copy-") as spill:
+            path = Path(spill) / "table.parquet"
+            self.write_parquet(path)
+            connection = other._open()
+            return TableHandle(
+                connection, load_parquet(connection, path, table=table), other.workdir
+            )
+
     def shares_connection(self, other: TableHandle) -> bool:
         """Whether ``other`` lives in this table's connection, so SQL can read both."""
         return self._connection is not None and self._connection is other._connection
@@ -582,12 +599,20 @@ class TableHandle:
         ``DECIMAL(38,0)`` — or as text when a value has more than 38 digits — never
         rounded. A zoned datetime is written as an instant (``TIMESTAMPTZ``).
 
-        Raises:
-            ValueError: The table has no columns.
+        A table with no columns is written with one placeholder column (see ``NO_COLUMNS``).
         """
         connection = self._open()
         if not self.table.physical:
-            raise ValueError("a table without columns cannot be written as Parquet")
+            # Parquet needs a column and DuckDB cannot write a file without one: a table
+            # with none keeps its rows under one placeholder column, which the file's
+            # metadata marks as no column at all (``NO_COLUMNS``, read by every reader).
+            metadata = f"{quote_literal(KV_KEY)}: '{{}}', {quote_literal(NO_COLUMNS_KEY)}: 'true'"
+            connection.execute(
+                f"COPY (SELECT CAST(NULL AS BOOLEAN) AS {quote_identifier(NO_COLUMNS)} "
+                f"FROM {self.table.relation.sql}) TO {quote_literal(str(path))} "
+                f"(FORMAT PARQUET, KV_METADATA {{{metadata}}})"
+            )
+            return
         parts = []
         # A name DuckDB cannot write as a column — empty, or one letter case away from
         # another — is written under its internal name and restored by the reader.
@@ -611,16 +636,16 @@ class TableHandle:
                 alias = physical
                 renamed[physical] = name
             parts.append(f"{column} AS {quote_identifier(alias)}")
-        # The Builder dtypes travel with the file (``builder_parquet``): DuckDB has no
+        # The Builder dtypes travel with the file (``load_parquet``): DuckDB has no
         # Parquet form for some of them (a Null column is written as INTEGER), and a
         # reader gives them back.
         options = "FORMAT PARQUET"
         if not physical_names:
             dtypes = json.dumps(dict(zip(self.table.names, self.table.dtypes, strict=True)))
-            metadata = f"'kpubdata_builder.dtypes': {quote_literal(dtypes)}"
+            metadata = f"{quote_literal(KV_KEY)}: {quote_literal(dtypes)}"
             if renamed:
                 names = json.dumps(renamed)
-                metadata += f", 'kpubdata_builder.names': {quote_literal(names)}"
+                metadata += f", {quote_literal(KV_NAMES_KEY)}: {quote_literal(names)}"
             options += f", KV_METADATA {{{metadata}}}"
         # DuckDB 1.2 takes no bound parameter as a COPY target or option: the path —
         # Builder's own, under the run — and the dtypes go in as quoted literals.
@@ -645,6 +670,245 @@ class TableHandle:
         return bool(row and row[0])
 
 
+def node_from_dtype(dtype: str) -> Node:
+    """The loader node for a Builder dtype — the inverse of :func:`canonical`.
+
+    Narrower spellings DuckDB or an older writer may report are widened to the node
+    that holds them: any integer up to 64 bits is ``int``, any float ``float``, any
+    datetime precision microseconds.
+
+    Raises:
+        ValueError: The dtype has no node.
+    """
+    parser = _DtypeParser(dtype)
+    node = parser.node()
+    if parser.pos != len(dtype):
+        raise ValueError(f"unexpected text in dtype {dtype!r} at {parser.pos}")
+    return node
+
+
+_SIMPLE_NODES: dict[str, Node] = {
+    "Null": ("null",),
+    "Boolean": ("bool",),
+    "Int128": ("int128",),
+    "String": ("str",),
+    "Utf8": ("str",),
+    "Categorical": ("str",),
+    "Date": ("date",),
+    "Time": ("time",),
+    "Binary": ("binary",),
+    **{
+        name: ("int",)
+        for name in ("Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64")
+    },
+    "Float32": ("float",),
+    "Float64": ("float",),
+}
+
+
+class _DtypeParser:
+    """A recursive-descent reader of Builder dtype strings (``canonical``)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.pos = 0
+
+    def _fail(self, what: str) -> ValueError:
+        return ValueError(f"{what} in dtype {self.text!r} at {self.pos}")
+
+    def _expect(self, token: str) -> None:
+        if not self.text.startswith(token, self.pos):
+            raise self._fail(f"expected {token!r}")
+        self.pos += len(token)
+
+    def _name(self) -> str:
+        start = self.pos
+        while self.pos < len(self.text) and (
+            self.text[self.pos].isalnum() or self.text[self.pos] == "_"
+        ):
+            self.pos += 1
+        return self.text[start : self.pos]
+
+    def _quoted(self) -> str:
+        """A Python string literal (``repr`` of a field name), escapes included."""
+        if self.pos >= len(self.text) or self.text[self.pos] not in "'\"":
+            raise self._fail("expected a quoted name")
+        quote = self.text[self.pos]
+        end = self.pos + 1
+        while end < len(self.text) and self.text[end] != quote:
+            end += 2 if self.text[end] == "\\" else 1
+        if end >= len(self.text):
+            raise self._fail("unterminated name")
+        literal, self.pos = self.text[self.pos : end + 1], end + 1
+        return str(ast.literal_eval(literal))
+
+    def _arguments(self) -> dict[str, str]:
+        """``(key=value, …)`` with scalar values, as text (a quoted value unquoted)."""
+        self._expect("(")
+        found: dict[str, str] = {}
+        while not self.text.startswith(")", self.pos):
+            key = self._name()
+            self._expect("=")
+            if self.text.startswith(("'", '"'), self.pos):
+                found[key] = self._quoted()
+            else:
+                start = self.pos
+                while self.pos < len(self.text) and self.text[self.pos] not in ",)":
+                    self.pos += 1
+                found[key] = self.text[start : self.pos].strip()
+            if self.text.startswith(", ", self.pos):
+                self.pos += 2
+        self._expect(")")
+        return found
+
+    def node(self) -> Node:
+        name = self._name()
+        if name in _SIMPLE_NODES:
+            return _SIMPLE_NODES[name]
+        if name == "Decimal":
+            return ("decimal", int(self._arguments().get("scale", "0")))
+        if name == "Datetime":
+            zone = self._arguments().get("time_zone", "None")
+            return ("datetime", None if zone == "None" else zone)
+        if name == "Duration":
+            self._arguments()
+            return ("duration",)
+        if name in ("List", "Array"):
+            self._expect("(")
+            inner = self.node()
+            if name == "Array" and self.text.startswith(",", self.pos):
+                # Array(inner, shape=…): the shape does not change the node.
+                self.pos = self.text.index(")", self.pos)
+            self._expect(")")
+            return ("list", inner)
+        if name == "Struct":
+            self._expect("({")
+            fields: dict[str, Node] = {}
+            while not self.text.startswith("})", self.pos):
+                field = self._quoted()
+                self._expect(": ")
+                fields[field] = self.node()
+                if self.text.startswith(", ", self.pos):
+                    self.pos += 2
+            self._expect("})")
+            return ("struct", fields)
+        raise ValueError(f"no loader node for dtype {self.text!r}")
+
+
+def _kv_metadata(connection: duckdb.DuckDBPyConnection, path: str) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for key, value in connection.execute(
+        "SELECT key, value FROM parquet_kv_metadata(?)", [path]
+    ).fetchall():
+        name = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+        found[name] = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+    return found
+
+
+@dataclass(frozen=True)
+class ParquetColumns:
+    """What a Builder Parquet file holds: each stored column, its real name, its dtype."""
+
+    stored: tuple[str, ...]
+    names: tuple[str, ...]
+    dtypes: tuple[str, ...]
+
+
+def parquet_columns(connection: duckdb.DuckDBPyConnection, path: Path | str) -> ParquetColumns:
+    """The columns of ``path`` with the Builder dtypes and names the file records.
+
+    A file without recorded dtypes (an older writer) gets its DuckDB types in Builder's
+    spelling, and Parquet's null logical type is ``Null``. The placeholder of a table
+    without columns (``NO_COLUMNS``) is not a column.
+    """
+    from .dtypes import canonical_dtype
+
+    location = os.fspath(path)
+    kv = _kv_metadata(connection, location)
+    recorded = json.loads(kv[KV_KEY]) if KV_KEY in kv else {}
+    renamed = json.loads(kv[KV_NAMES_KEY]) if KV_NAMES_KEY in kv else {}
+    if kv.get(NO_COLUMNS_KEY) == "true":
+        return ParquetColumns((), (), ())
+    nulls = {
+        str(name)
+        for name, logical in connection.execute(
+            "SELECT name, logical_type FROM parquet_schema(?)", [location]
+        ).fetchall()
+        if logical == "NullType()"
+    }
+    stored: list[str] = []
+    names: list[str] = []
+    dtypes: list[str] = []
+    for physical, storage, *_ in connection.execute(
+        "DESCRIBE SELECT * FROM read_parquet(?)", [location]
+    ).fetchall():
+        name = str(renamed.get(physical, physical))
+        stored.append(str(physical))
+        names.append(name)
+        if name in recorded:
+            dtypes.append(str(recorded[name]))
+        elif physical in nulls:
+            dtypes.append("Null")
+        elif str(storage) == "INTERVAL":
+            dtypes.append("Duration(time_unit='us')")
+        else:
+            dtypes.append(canonical_dtype(str(storage)))
+    return ParquetColumns(tuple(stored), tuple(names), tuple(dtypes))
+
+
+def load_parquet(
+    connection: duckdb.DuckDBPyConnection, path: Path | str, *, table: str
+) -> LoadedTable:
+    """A Builder Parquet file as a loaded table, its dtypes given back (#876).
+
+    The reverse of :meth:`TableHandle.write_parquet`: every column is stored the way
+    :func:`load_records` stores it (an Int128 as HUGEINT, a zoned datetime as UTC wall
+    time), and the file's row order is the row ordinal (ADR 0021 D8).
+    """
+    location = quote_literal(os.fspath(path))
+    columns = parquet_columns(connection, path)
+    nodes = tuple(node_from_dtype(dtype) for dtype in columns.dtypes)
+    physical = tuple(f"c{i}" for i in range(len(nodes)))
+    # The row ordinal is the file's row order. read_parquet names it ``file_row_number``
+    # and refuses a file that has a column of that name (any letter case) — then the
+    # file is copied into a table first, whose ``rowid`` is the same order (#876 review).
+    source = f"read_parquet({location}, file_row_number = true)"
+    ordinal = "file_row_number"
+    if any(name.lower() == "file_row_number" for name in columns.stored):
+        staging = TabularRelation(f"{table}__rows")
+        connection.execute(
+            f"CREATE OR REPLACE TEMP TABLE {staging.sql} AS SELECT * FROM read_parquet({location})"
+        )
+        source, ordinal = staging.sql, "rowid"
+    parts = [f"{ordinal} AS {quote_identifier(ROW_SEQ_COLUMN)}"]
+    for index, (stored, node) in enumerate(zip(columns.stored, nodes, strict=True)):
+        column = quote_identifier(stored)
+        if node[0] == "null":
+            expression = "CAST(NULL AS INTEGER)"
+        elif node[0] == "datetime" and node[1] is not None:
+            expression = f"timezone('UTC', {column})"
+        elif node[0] == "duration":
+            expression = f"CAST({column} AS BIGINT)"
+        else:
+            expression = f"CAST({column} AS {_physical(node, top=True)})"
+        parts.append(f"{expression} AS {quote_identifier(physical[index])}")
+    relation = TabularRelation(table)
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT {', '.join(parts)} FROM {source}"
+    )
+    if ordinal == "rowid":
+        connection.execute(f"DROP TABLE {source}")
+    counted = connection.execute(f"SELECT count(*) FROM {relation.sql}").fetchone()
+    return LoadedTable(
+        relation=relation,
+        names=columns.names,
+        physical=physical,
+        dtypes=tuple(canonical(n) for n in nodes),
+        row_count=int(counted[0]) if counted else 0,
+        nodes=nodes,
+    )
+
+
 def load_records(
     connection: duckdb.DuckDBPyConnection,
     records: Callable[[], Iterable[dict[str, JsonValue]]],
@@ -662,7 +926,7 @@ def load_records(
 
     Raises:
         TabularError: The records mix types, or risk integer precision, exactly as
-            ``records_to_dataframe`` would refuse them; or hold a type DuckDB cannot store.
+            the Polars engine refused them (``RecordTypeScan``); or hold a type DuckDB cannot store.
         ReservedColumnError: A source column is named ``_kpubdata_row_seq`` (any case).
     """
     scan = RecordTypeScan(read_as=read_as)
@@ -778,7 +1042,11 @@ __all__ = [
     "canonical",
     "derive_table",
     "fetch_rows",
+    "ParquetColumns",
+    "load_parquet",
     "load_records",
+    "node_from_dtype",
+    "parquet_columns",
     "node_of",
     "storage_type",
 ]

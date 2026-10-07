@@ -862,7 +862,6 @@ dependencies = [
     { name = "cryptography" },
     { name = "duckdb" },
     { name = "kpubdata" },
-    { name = "polars" },
     { name = "pyyaml" },
     { name = "sqlglot" },
     { name = "typing-extensions" },
@@ -879,6 +878,7 @@ cubrid = [
 dev = [
     { name = "build" },
     { name = "mypy" },
+    { name = "polars" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -893,6 +893,9 @@ docs = [
 ]
 huggingface = [
     { name = "huggingface-hub" },
+]
+legacy-publish = [
+    { name = "polars" },
 ]
 parquet = [
     { name = "pyarrow" },
@@ -916,7 +919,8 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9,<10" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<3" },
-    { name = "polars", specifier = ">=1.0,<2" },
+    { name = "polars", marker = "extra == 'dev'", specifier = ">=1.0,<2" },
+    { name = "polars", marker = "extra == 'legacy-publish'", specifier = ">=1.0,<2" },
     { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=15,<26" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'auth'", specifier = ">=2.9,<3" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'dev'", specifier = ">=2.9,<3" },
@@ -933,7 +937,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.7.0,<3" },
     { name = "xmltodict", marker = "extra == 'publish'", specifier = ">=0.13,<2" },
 ]
-provides-extras = ["docs", "parquet", "huggingface", "auth", "cubrid", "publish", "dev"]
+provides-extras = ["docs", "parquet", "huggingface", "auth", "cubrid", "publish", "legacy-publish", "dev"]
 
 [[package]]
 name = "librt"
