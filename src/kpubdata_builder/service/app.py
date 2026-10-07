@@ -473,7 +473,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.106.0 -> 1.107.0: a query-path request over the deployment's memory or spill limit
 #   answers 400 query_resource_limit with the fixed limit message instead of
 #   query_execution_failed (#961, additive).
-API_CONTRACT_VERSION = "1.107.0"
+# 1.107.0 -> 1.108.0: auth_unavailable (503, since 1.79.0) is declared once as the
+#   shared response AuthUnavailable; the wire is unchanged (#1109, additive).
+API_CONTRACT_VERSION = "1.108.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
