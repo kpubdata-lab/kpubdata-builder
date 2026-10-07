@@ -223,12 +223,15 @@ def check_existing_run_access(
     )
 
 
-def refuse_missing_provider_keys(service: BuilderService, spec_yaml: str) -> ServiceResponse | None:
+def refuse_missing_provider_keys(
+    service: BuilderService, spec_yaml: str, *, what: str = "build"
+) -> ServiceResponse | None:
     """The refusal for a build whose request carries no key for a provider it calls.
 
-    One answer for both build routes (#1070): asynchronous, where the build would be
-    accepted and fail later, and synchronous, where it failed in the same request as an
-    ordinary provider error that named neither the cause nor the header.
+    One answer for every route that calls a provider for a spec (#1070): the asynchronous
+    build, which would be accepted and fail later; the synchronous build and the preview
+    (``what="preview"``), which failed in the same request as an ordinary provider error
+    that named neither the cause nor the header.
     """
     missing = service.providers_missing_a_key(spec_yaml)
     if not missing:
@@ -237,7 +240,7 @@ def refuse_missing_provider_keys(service: BuilderService, spec_yaml: str) -> Ser
     return ServiceResponse(
         400,
         {
-            "error": f"this build calls {names}, and the request carries no key for it; "
+            "error": f"this {what} calls {names}, and the request carries no key for it; "
             "send it in the X-Provider-Key header",
             "code": "provider_credential_required",
             "providers": list(missing),

@@ -382,13 +382,15 @@ class BuildRunsApiService:
         created_by: str | None = None,
         owner_id: str | None = None,
         job_credentials: JobCredentials | None = None,
+        job_keys: Mapping[str, str] | None = None,
         retry_of: str | None = None,
     ) -> ServiceResponse:
         """Queue async build job and return initial state (#482).
 
         ``job_credentials`` (#683, multi-user mode): the request's provider keys are bound
         to the run id in memory as the job is accepted — before it can start — and
-        dropped if it is never queued.
+        dropped if it is never queued. ``job_keys`` are the ones to bind — the keys this
+        spec uses (#1070); without it, every key the request carries.
 
         ``runner`` is what the worker calls — ``BuilderService._run_build_job``, passed
         at submit time so a subclass override is the one that runs.
@@ -447,7 +449,11 @@ class BuildRunsApiService:
                 retry_of=retry_of,
             )
             if job_credentials is not None:
-                job_credentials.bind(resolved_run_id, owner_id, request_credentials.current_keys())
+                job_credentials.bind(
+                    resolved_run_id,
+                    owner_id,
+                    request_credentials.current_keys() if job_keys is None else job_keys,
+                )
 
         def _record_enqueue_failure() -> None:
             if job_credentials is not None:
