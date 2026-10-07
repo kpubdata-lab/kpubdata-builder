@@ -852,7 +852,8 @@ def _run_serve(
 
     Returns:
         int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when a setting
-        cannot be used as written (#1108), when the replay fixtures cannot be used, or
+        cannot be used as written (#1108), when a state store was written by a newer
+        release (#1096), when the replay fixtures cannot be used, or
         when the deployment requires each request's own provider key and the installed
         kpubdata cannot keep the operator's out (#990).
     """
@@ -942,15 +943,23 @@ def _run_serve(
         print(f"error: {ENV_KEYS_UNSUPPORTED}", file=sys.stderr)
         return 1
 
-    service = BuilderService(
-        output_root=Path(output_dir),
-        client_factory=_create_client,
-        async_max_workers=max_builds,
-        max_concurrent_builds=max_builds,
-        max_concurrent_previews=max_previews,
-        build_wait_seconds=build_wait_seconds,
-        warehouse_root=Path(warehouse) if warehouse is not None else None,
-    )
+    from .store.schema_version import UnsupportedSchemaVersionError
+
+    try:
+        service = BuilderService(
+            output_root=Path(output_dir),
+            client_factory=_create_client,
+            async_max_workers=max_builds,
+            max_concurrent_builds=max_builds,
+            max_concurrent_previews=max_previews,
+            build_wait_seconds=build_wait_seconds,
+            warehouse_root=Path(warehouse) if warehouse is not None else None,
+        )
+    except UnsupportedSchemaVersionError as exc:
+        # A state store a newer release wrote: said in one line, and left as it is
+        # (#1096). This is what a rolled-back deployment meets.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
         f"serving kpubdata-builder on http://{host}:{port} "

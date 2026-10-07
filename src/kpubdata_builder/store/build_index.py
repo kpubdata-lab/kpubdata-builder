@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
+from .schema_version import UnsupportedSchemaVersionError
+
 if TYPE_CHECKING:
     _BaseConn = sqlite3.Connection
 else:
@@ -43,6 +45,13 @@ BuildStatus = Literal["ok", "failed", "cancelled"]
 
 # Index filename
 _INDEX_FILENAME = "_builds.sqlite"
+
+#: What to do about an index a newer release wrote. The index is derived, so this
+#: release can make its own — but only when asked to.
+_NEWER_INDEX_REMEDY = (
+    "Run the release that wrote it, or rebuild the index for this release from the "
+    "run manifests with `kpubdata-builder rebuild-index`."
+)
 
 
 @dataclass(frozen=True)
@@ -155,10 +164,20 @@ class SqliteBuildIndex:
                 """
             )
             # Check schema version
-            cur = self._conn.execute("SELECT version FROM schema_version")
-            row = cur.fetchone()
-            current_version = row[0] if row else None
+            cur = self._conn.execute("SELECT MAX(version) FROM schema_version")
+            current_version = cur.fetchone()[0]
 
+            if current_version is not None and int(current_version) > SCHEMA_VERSION:
+                # An older index is dropped and made again below; a newer one is not
+                # (#1096). Dropping it would leave the release that wrote it with an
+                # empty index after this one stops, and nothing would say so.
+                raise UnsupportedSchemaVersionError(
+                    store="build index",
+                    location=str(self._index_path),
+                    found=int(current_version),
+                    supported=SCHEMA_VERSION,
+                    remedy=_NEWER_INDEX_REMEDY,
+                )
             if current_version != SCHEMA_VERSION:
                 # Create builds table (existing table DROP and recreate)
                 self._conn.execute("DROP TABLE IF EXISTS builds")
@@ -613,7 +632,8 @@ def _rebuild_sqlite(output_root: Path) -> int:
     """Build SQLite index fresh to .tmp, then atomically replace (#366).
 
     Existing index survives if scan fails. Atomic rename works only for single-file
-    SQLite, so separate from cubrid path.
+    SQLite, so separate from cubrid path. The existing index is never opened, so this
+    also replaces one a newer release wrote — the remedy its refusal names (#1096).
     """
     if not output_root.exists():
         return 0
@@ -666,7 +686,8 @@ def _rebuild_cubrid(output_root: Path) -> int:
     from .backend import get_engine
     from .build_index_cubrid import CubridBuildIndex
 
-    index = CubridBuildIndex(get_engine())
+    # The one place a newer index is replaced: the operator asked for it (#1096).
+    index = CubridBuildIndex(get_engine(), replace_newer=True)
     try:
         return index.rebuild(_iter_manifest_entries(output_root))
     finally:

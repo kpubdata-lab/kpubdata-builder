@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import cast
 
 from ..spec.models import JsonValue
+from ..store.schema_version import UnsupportedSchemaVersionError
 from .models import BuildEvent, EventName, EventStatus, StageName
 
 SCHEMA_VERSION = 1
@@ -68,6 +69,11 @@ CREATE TABLE IF NOT EXISTS run_submissions (
     submitted_at TEXT NOT NULL
 )
 """
+
+
+def events_store_path(output_root: Path) -> Path:
+    """Where the event store of ``output_root`` is, whether or not it exists yet."""
+    return output_root / _EVENTS_FILENAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +126,25 @@ class BuildEventStore:
                 )
                 """
             )
-            cur = self._conn.execute("SELECT version FROM schema_version")
-            if cur.fetchone() is None:
+            cur = self._conn.execute("SELECT MAX(version) FROM schema_version")
+            found = cur.fetchone()[0]
+            if found is not None and int(found) > SCHEMA_VERSION:
+                # Canonical and append-only: there is nothing to rebuild it from, so a
+                # store a newer release wrote is refused rather than read as this
+                # version's (#1096). Raised inside the transaction, so nothing above
+                # is kept.
+                raise UnsupportedSchemaVersionError(
+                    store="run event store",
+                    location=str(self._db_path),
+                    found=int(found),
+                    supported=SCHEMA_VERSION,
+                    remedy=(
+                        "Run the release that wrote it, or restore the output "
+                        "directory from a backup taken before the upgrade; the events "
+                        "cannot be rebuilt from anything else."
+                    ),
+                )
+            if found is None:
                 # v1 is first release — no destructive migration (DROP) needed. This store is
                 # append-only canonical (unlike BuildIndex), so schema change never DROPs existing
                 # event rows — future versions migrate only via ALTER/add new columns.
@@ -309,4 +332,4 @@ def _row_to_event(row: tuple[object, ...]) -> BuildEvent:
     )
 
 
-__all__ = ["SCHEMA_VERSION", "BuildEventStore", "RunSubmission"]
+__all__ = ["SCHEMA_VERSION", "BuildEventStore", "RunSubmission", "events_store_path"]
