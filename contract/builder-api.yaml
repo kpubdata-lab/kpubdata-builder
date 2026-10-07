@@ -8329,6 +8329,7 @@ components:
         - run_submitted
         - run_started
         - run_finished
+        - run_demo_drift_1004
         - run_failed
         - run_cancelled
         - source_fetch_started
