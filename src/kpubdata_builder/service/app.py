@@ -97,7 +97,7 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import ExpiringUploads, UploadsService
-from .user_ledger import UserLedger, admission_refusal
+from .user_ledger import LedgerUnavailableError, UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
 logger = logging.getLogger(__name__)
@@ -467,7 +467,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.104.0 -> 1.105.0: POST /builds answers 503 shutting_down once the server is
 #   stopping; queued jobs end failed (interrupted) unstarted and running ones are
 #   drained, then cancelled (#1118, additive).
-API_CONTRACT_VERSION = "1.105.0"
+# 1.105.0 -> 1.106.0: the sign-up ledger is read on every request and written only on
+#   change; last_seen_at refreshes hourly; 503 signup_ledger_unavailable when it cannot
+#   be read or a first sign-in cannot be recorded (#1121, additive).
+API_CONTRACT_VERSION = "1.106.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1784,8 +1787,22 @@ def _dispatch_impl(
     # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
     # administrator; a rejected one is shut out even when a list admits them.
     if principal.kind == "oidc" and principal.owner_id is not None:
-        entry = service._user_ledger().observe(principal)
-        refusal = admission_refusal(entry, principal)
+        try:
+            entry = service._user_ledger().observe(principal)
+        except LedgerUnavailableError:
+            # Not an admission and not a refusal (#1121): the ledger could not be read,
+            # or a first sign-in could not be recorded. An administrator is not held
+            # by the ledger and is let through to see what is wrong.
+            if not principal.is_admin:
+                return ServiceResponse(
+                    503,
+                    {
+                        "error": "sign-up status cannot be checked right now; try again shortly",
+                        "code": "signup_ledger_unavailable",
+                    },
+                )
+            entry = None
+        refusal = None if entry is None else admission_refusal(entry, principal)
         if refusal is not None:
             return ServiceResponse(403, refusal)
 

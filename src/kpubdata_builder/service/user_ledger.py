@@ -16,15 +16,29 @@ kept here. A user signing in through OIDC for the first time is recorded as
 The row key is ``owner_id``, an irreversible hash; the display name is what the
 administrator needs to recognise the person (their verified email). No token or
 credential is stored.
+
+A request reads the ledger and seldom writes it (#1121). Every authenticated request
+used to update ``last_seen_at``, so a disk that could not be written — full, read-only —
+answered every signed-in user with a 500, though nothing about them had changed:
+
+- **Read on every request, never cached.** A rejection takes effect on the user's next
+  request, and a ledger that cannot be read admits nobody (``LedgerUnavailableError``).
+- **Written when something changes**: a first sign-in, a pending user the list now
+  admits, a new display name — and ``last_seen_at`` at most once per
+  ``LAST_SEEN_REFRESH_SECONDS``, so it says when the user was last here to the hour.
+- **A failed write does not shut out a user the ledger already knows.** Their status was
+  read; what could not be saved is logged and saved by a later request. Only a first
+  sign-in, which has no row to read, fails — as ``LedgerUnavailableError``.
 """
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -33,6 +47,24 @@ from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.spec import JsonValue
 
 SignupStatus = Literal["pending", "approved", "rejected"]
+
+logger = logging.getLogger(__name__)
+
+#: How stale ``last_seen_at`` may get before a request writes it again (#1121).
+LAST_SEEN_REFRESH_SECONDS = 3600.0
+#: The policy the other SQLite stores follow (warehouse catalog, build index): readers
+#: are not blocked by a writer, and a writer waits for another instead of failing at
+#: once. Neither makes a full disk writable.
+_BUSY_TIMEOUT_MS = 30_000
+
+
+class LedgerUnavailableError(Exception):
+    """The ledger could not say whether this user is admitted.
+
+    Raised when it cannot be read, or when a first sign-in cannot be recorded. The
+    caller answers that the service cannot admit the user right now; it never lets them
+    in on the strength of a ledger it could not read. Carries no detail of the failure.
+    """
 
 
 @dataclass(frozen=True)
@@ -61,6 +93,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _last_seen_is_stale(last_seen_at: str, now: str) -> bool:
+    try:
+        elapsed = datetime.fromisoformat(now) - datetime.fromisoformat(last_seen_at)
+    except (TypeError, ValueError):
+        return True
+    return elapsed.total_seconds() >= LAST_SEEN_REFRESH_SECONDS
+
+
 class UserLedger:
     """SQLite ledger of OIDC users and their sign-up status."""
 
@@ -69,6 +109,9 @@ class UserLedger:
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
+            # Persistent, so set once: a request that only reads is not held up by one
+            # that writes.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS users ("
                 " user_id TEXT PRIMARY KEY, display_name TEXT, status TEXT NOT NULL,"
@@ -78,48 +121,115 @@ class UserLedger:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        with closing(sqlite3.connect(self._path, timeout=30)) as conn, conn:
-            yield conn
+        with closing(sqlite3.connect(self._path, timeout=_BUSY_TIMEOUT_MS / 1000)) as conn:
+            conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+            with conn:
+                yield conn
+
+    def _read(self, user_id: str) -> LedgerEntry | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        return None if row is None else LedgerEntry(*row)
+
+    def _write(self, statements: Sequence[tuple[str, tuple[object, ...]]]) -> None:
+        """Run ``statements`` in one transaction. The one place a request writes."""
+        with self._lock, self._connect() as conn:
+            for sql, parameters in statements:
+                conn.execute(sql, parameters)
 
     def observe(self, principal: Principal) -> LedgerEntry:
-        """Record a sign-in and return the user's entry, creating it on first sight."""
+        """The user's entry, created on first sight and written only when it changes.
+
+        Raises:
+            LedgerUnavailableError: The ledger could not be read, or this is a first
+                sign-in and it could not be recorded.
+        """
         if principal.owner_id is None:
             raise ValueError("an OIDC principal always has an owner_id")
+        user_id = principal.owner_id
+        try:
+            entry = self._read(user_id)
+        except sqlite3.Error as exc:
+            logger.error("sign-up ledger could not be read: %s", type(exc).__name__)
+            raise LedgerUnavailableError from exc
         now = _now()
-        with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM users WHERE user_id = ?", (principal.owner_id,)
-            ).fetchone()
-            if row is None:
-                auto = principal.admitted
-                conn.execute(
-                    "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        principal.owner_id,
-                        principal.display_name,
-                        "approved" if auto else "pending",
-                        now,
-                        now,
-                        now if auto else None,
-                        "allowlist" if auto else None,
-                    ),
-                )
-            else:
-                conn.execute(
+        if entry is None:
+            return self._record_first_sign_in(principal, now)
+
+        updated = entry
+        statements: list[tuple[str, tuple[object, ...]]] = []
+        if principal.display_name and principal.display_name != entry.display_name:
+            updated = replace(updated, display_name=principal.display_name)
+        admitted_since = entry.status == "pending" and principal.admitted
+        if updated is not entry or admitted_since or _last_seen_is_stale(entry.last_seen_at, now):
+            updated = replace(updated, last_seen_at=now)
+            statements.append(
+                (
                     "UPDATE users SET last_seen_at = ?, display_name = ? WHERE user_id = ?",
-                    (now, principal.display_name or row[1], principal.owner_id),
+                    (now, updated.display_name, user_id),
                 )
-                if row[2] == "pending" and principal.admitted:
-                    # Put on a list since signing up: the list admits them now.
-                    conn.execute(
-                        "UPDATE users SET status = 'approved', decided_at = ?,"
-                        " decided_by = 'allowlist' WHERE user_id = ?",
-                        (now, principal.owner_id),
+            )
+        if admitted_since:
+            # Put on a list since signing up: the list admits them now. Only while still
+            # pending — an administrator's decision made meanwhile is not overwritten.
+            updated = replace(updated, status="approved", decided_at=now, decided_by="allowlist")
+            statements.append(
+                (
+                    "UPDATE users SET status = 'approved', decided_at = ?,"
+                    " decided_by = 'allowlist' WHERE user_id = ? AND status = 'pending'",
+                    (now, user_id),
+                )
+            )
+        if not statements:
+            return entry
+        try:
+            self._write(statements)
+        except sqlite3.Error as exc:
+            # The user's status was read and stands. What could not be saved — when they
+            # were last seen, a new name, the list's admission — is saved by a later
+            # request; the list admits them on this one too.
+            logger.warning(
+                "sign-up ledger could not be written (%s); serving the entry as read",
+                type(exc).__name__,
+            )
+            return updated
+        if admitted_since:
+            # Read back: an administrator may have decided while this request ran.
+            try:
+                return self._read(user_id) or updated
+            except sqlite3.Error as exc:
+                raise LedgerUnavailableError from exc
+        return updated
+
+    def _record_first_sign_in(self, principal: Principal, now: str) -> LedgerEntry:
+        auto = principal.admitted
+        assert principal.owner_id is not None  # noqa: S101 - checked by the caller
+        try:
+            # OR IGNORE: two first requests of one user arrive together, and both read
+            # "no row" before either wrote.
+            self._write(
+                [
+                    (
+                        "INSERT OR IGNORE INTO users VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            principal.owner_id,
+                            principal.display_name,
+                            "approved" if auto else "pending",
+                            now,
+                            now,
+                            now if auto else None,
+                            "allowlist" if auto else None,
+                        ),
                     )
-            row = conn.execute(
-                "SELECT * FROM users WHERE user_id = ?", (principal.owner_id,)
-            ).fetchone()
-        return LedgerEntry(*row)
+                ]
+            )
+            entry = self._read(principal.owner_id)
+        except sqlite3.Error as exc:
+            logger.error("a first sign-in could not be recorded: %s", type(exc).__name__)
+            raise LedgerUnavailableError from exc
+        if entry is None:  # pragma: no cover - the row was just written
+            raise LedgerUnavailableError
+        return entry
 
     def decide(self, user_id: str, status: SignupStatus, *, by: str) -> LedgerEntry | None:
         """Set a user's status; None when no such user has signed in."""
@@ -161,4 +271,11 @@ def admission_refusal(entry: LedgerEntry, principal: Principal) -> dict[str, Jso
     }
 
 
-__all__ = ["LedgerEntry", "SignupStatus", "UserLedger", "admission_refusal"]
+__all__ = [
+    "LAST_SEEN_REFRESH_SECONDS",
+    "LedgerEntry",
+    "LedgerUnavailableError",
+    "SignupStatus",
+    "UserLedger",
+    "admission_refusal",
+]
