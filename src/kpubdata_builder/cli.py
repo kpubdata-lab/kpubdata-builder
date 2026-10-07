@@ -943,9 +943,15 @@ def _run_serve(
         print(f"error: {ENV_KEYS_UNSUPPORTED}", file=sys.stderr)
         return 1
 
+    from .store import bring_index_up_to_date
     from .store.schema_version import UnsupportedSchemaVersionError
 
     try:
+        # Before the service opens the index: an older one would be emptied there, and
+        # the server would answer as healthy with every earlier run missing (#1096).
+        indexed = bring_index_up_to_date(Path(output_dir))
+        if indexed:
+            print(f"rebuilt the build index from the manifests: {indexed} run(s)", flush=True)
         service = BuilderService(
             output_root=Path(output_dir),
             client_factory=_create_client,

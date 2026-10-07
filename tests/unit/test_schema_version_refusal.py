@@ -180,3 +180,126 @@ def test_serve_says_so_in_one_line_and_does_not_start(
     assert "Traceback" not in err
     assert started == []
     assert _dump(path) == before
+
+
+def _journal_mode(path: Path) -> str:
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        return str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+
+
+def _siblings(path: Path) -> set[str]:
+    return {item.name for item in path.parent.iterdir()}
+
+
+@pytest.mark.parametrize(
+    ("make", "open_store"),
+    [(_index_with_one_run, SqliteBuildIndex), (_events_with_one_submission, BuildEventStore)],
+)
+def test_refusal_does_not_change_the_journal_mode(
+    tmp_path: Path, make: object, open_store: object
+) -> None:
+    """The version is read before the connection that sets WAL is opened.
+
+    A release that keeps this store in another journal mode would otherwise find it
+    switched, with ``-wal`` and ``-shm`` files beside it, by a release that refused it.
+    """
+    path = make(tmp_path)  # type: ignore[operator]
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    _set_version(path, 99)
+    assert _journal_mode(path) == "delete"
+    files = _siblings(path)
+
+    with pytest.raises(UnsupportedSchemaVersionError):
+        open_store(tmp_path)  # type: ignore[operator]
+
+    assert _journal_mode(path) == "delete"
+    assert _siblings(path) == files
+
+
+def _write_run(root: Path, run_id: str, *, owner_id: str, errors: list[str]) -> None:
+    import json
+
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-01-01T10:00:00Z",
+                "finished_at": "2026-01-01T10:05:00Z",
+                "owner_id": owner_id,
+                "created_by": owner_id,
+                "errors": errors,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_older_index_is_rebuilt_from_the_manifests_before_serving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not left empty: the runs are in the index when the service is handed to serve."""
+    import kpubdata_builder.service.http as http_module
+
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+    _write_run(tmp_path, "run-failed", owner_id="oidc:b", errors=["boom"])
+    path = _index_with_one_run(tmp_path)
+    _set_version(path, INDEX_VERSION - 1)
+    seen: dict[str, object] = {}
+
+    def fake_serve(service: object, **_kwargs: object) -> None:
+        index = SqliteBuildIndex(tmp_path)
+        seen["ok"] = index.get("run-ok")
+        seen["failed"] = index.get("run-failed")
+        seen["stale"] = index.get("run-1")
+        index.close()
+
+    monkeypatch.setattr(http_module, "serve", fake_serve)
+
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+
+    ok, failed = seen["ok"], seen["failed"]
+    assert ok is not None and failed is not None
+    assert (ok.status, ok.owner_id) == ("ok", "oidc:a")  # type: ignore[attr-defined]
+    assert (failed.status, failed.owner_id) == ("failed", "oidc:b")  # type: ignore[attr-defined]
+    # The row with no manifest behind it is gone: the index is what the manifests say.
+    assert seen["stale"] is None
+    assert "rebuilt the build index from the manifests: 2 run(s)" in capsys.readouterr().out
+
+
+def test_missing_index_is_rebuilt_from_the_manifests(tmp_path: Path) -> None:
+    from kpubdata_builder.store import bring_index_up_to_date
+
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+
+    assert bring_index_up_to_date(tmp_path) == 1
+
+    index = SqliteBuildIndex(tmp_path)
+    assert index.get("run-ok") is not None
+    index.close()
+
+
+def test_current_index_is_left_alone(tmp_path: Path) -> None:
+    """No scan on an ordinary start, and a row is not dropped for lacking a manifest."""
+    from kpubdata_builder.store import bring_index_up_to_date
+
+    _index_with_one_run(tmp_path)
+
+    assert bring_index_up_to_date(tmp_path) is None
+
+    index = SqliteBuildIndex(tmp_path)
+    assert index.get("run-1") is not None
+    index.close()
+
+
+def test_newer_index_is_not_rebuilt_on_start(tmp_path: Path) -> None:
+    from kpubdata_builder.store import bring_index_up_to_date
+
+    path = _index_with_one_run(tmp_path)
+    _set_version(path, INDEX_VERSION + 1)
+    before = _dump(path)
+
+    assert bring_index_up_to_date(tmp_path) is None
+
+    assert _dump(path) == before

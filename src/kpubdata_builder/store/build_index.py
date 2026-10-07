@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from .schema_version import UnsupportedSchemaVersionError
+from .schema_version import UnsupportedSchemaVersionError, stored_version
 
 if TYPE_CHECKING:
     _BaseConn = sqlite3.Connection
@@ -133,7 +133,26 @@ class SqliteBuildIndex:
         self._output_root = output_root
         self._index_path = index_path if index_path is not None else output_root / _INDEX_FILENAME
         self._local = threading.local()
+        # Before the first ordinary connection, which sets the journal mode.
+        self._refuse_newer(stored_version(self._index_path))
         self._init_db()
+
+    def _refuse_newer(self, found: int | None) -> None:
+        """Refuse an index a newer release wrote (#1096).
+
+        An older index is dropped and made again; a newer one is not. Dropping it would
+        leave the release that wrote it with an empty index after this one stops, and
+        nothing would say so.
+        """
+        if found is None or found <= SCHEMA_VERSION:
+            return
+        raise UnsupportedSchemaVersionError(
+            store="build index",
+            location=str(self._index_path),
+            found=found,
+            supported=SCHEMA_VERSION,
+            remedy=_NEWER_INDEX_REMEDY,
+        )
 
     @property
     def _conn(self) -> sqlite3.Connection:
@@ -167,17 +186,7 @@ class SqliteBuildIndex:
             cur = self._conn.execute("SELECT MAX(version) FROM schema_version")
             current_version = cur.fetchone()[0]
 
-            if current_version is not None and int(current_version) > SCHEMA_VERSION:
-                # An older index is dropped and made again below; a newer one is not
-                # (#1096). Dropping it would leave the release that wrote it with an
-                # empty index after this one stops, and nothing would say so.
-                raise UnsupportedSchemaVersionError(
-                    store="build index",
-                    location=str(self._index_path),
-                    found=int(current_version),
-                    supported=SCHEMA_VERSION,
-                    remedy=_NEWER_INDEX_REMEDY,
-                )
+            self._refuse_newer(int(current_version) if current_version is not None else None)
             if current_version != SCHEMA_VERSION:
                 # Create builds table (existing table DROP and recreate)
                 self._conn.execute("DROP TABLE IF EXISTS builds")
@@ -714,6 +723,41 @@ def rebuild_index(output_root: Path) -> int:
     return _rebuild_sqlite(output_root)
 
 
+def bring_index_up_to_date(output_root: Path) -> int | None:
+    """Rebuild the index from the manifests when the one stored is not this release's.
+
+    ``serve`` calls this before it builds the service (#1096). Opening an older index
+    drops its table and makes it again, empty, and with no index at all an empty one is
+    made; the server then answered as healthy with every earlier run missing from its
+    lists until someone ran ``rebuild-index``. The manifests are canonical, so the
+    index is filled from them before the first request.
+
+    An index a newer release wrote is not touched here: opening it refuses.
+
+    Returns:
+        The number of runs indexed, or None when the stored index was already this
+        release's and nothing was done.
+    """
+    from .backend import storage_backend
+
+    if storage_backend() == "cubrid":
+        from .backend import get_engine
+        from .build_index_cubrid import stored_index_version
+
+        found = stored_index_version(get_engine())
+        if found is not None and found >= SCHEMA_VERSION:
+            return None
+        return _rebuild_cubrid(output_root)
+    index_path = output_root / _INDEX_FILENAME
+    found = stored_version(index_path)
+    if found is not None and found >= SCHEMA_VERSION:
+        return None
+    if found is None and index_path.exists():
+        # A file with no version in it: not ours to replace without being asked.
+        return None
+    return _rebuild_sqlite(output_root)
+
+
 def make_build_index(output_root: Path) -> BuildIndex:
     """Create ``BuildIndex`` implementation for selected backend (ADR 0016).
 
@@ -735,6 +779,7 @@ __all__ = [
     "BuildIndex",
     "SCHEMA_VERSION",
     "SqliteBuildIndex",
+    "bring_index_up_to_date",
     "make_build_index",
     "rebuild_index",
 ]

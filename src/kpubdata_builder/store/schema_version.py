@@ -12,6 +12,10 @@ store, which versions, and what can be done.
 
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
 
 class UnsupportedSchemaVersionError(RuntimeError):
     """A state store has a schema version this code cannot use."""
@@ -27,4 +31,24 @@ class UnsupportedSchemaVersionError(RuntimeError):
         )
 
 
-__all__ = ["UnsupportedSchemaVersionError"]
+def stored_version(path: Path) -> int | None:
+    """The schema version a SQLite store records, read without changing the file.
+
+    The connection is read-only and sets nothing, so a store this code then refuses
+    keeps its journal mode and gains no ``-wal`` or ``-shm`` file beside it: opening it
+    the ordinary way switches it to WAL before any version is looked at (#1096).
+
+    None when there is no file, no version in it, or it cannot be read this way — the
+    ordinary open then decides, and fails as it would have.
+    """
+    if not path.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+            row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    except sqlite3.Error:
+        return None
+    return int(row[0]) if row is not None and row[0] is not None else None
+
+
+__all__ = ["UnsupportedSchemaVersionError", "stored_version"]
