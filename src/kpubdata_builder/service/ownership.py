@@ -5,7 +5,9 @@ share this module — we do not duplicate comparison logic in each endpoint (#50
 
 Gating policy:
     - ``ENFORCE_OWNERSHIP`` off → always allow (backward compatible).
-    - dev/service principal → allow all runs (#679 onwards. see below).
+    - ``dev`` principal → allow all runs. ``service`` (the API key) owns only the runs it
+      made (#1072); one run (``ownership_allows``) and every list
+      (``lists_only_own_runs``, #1091) ask the same rule.
 
 **OIDC admins do not pass through here.** ``Principal.is_admin`` only opens admin
 endpoints (``routes/admin.py``), not other users' run artifacts. Whether admins can see
@@ -13,8 +15,8 @@ user data is still undecided (#679) — this product is BYOK, and the promise is
 received with your key belongs to you". We do not broaden authority with new principal
 kinds before a decision.
 
-Full access for dev/service has existed since #679, so we keep it. Removing it would break
-single-user deployments and API-key-based Studio deployments.
+A single-user deployment does not enforce ownership, so nothing here is asked there and
+the API key reads everything as before.
 
 Record comparison itself delegates to ``service.auth.principal_owns`` (#505 canonical:
 stable ``owner_id`` first, legacy ``created_by``/label fallback, fail-closed) — we keep
@@ -99,6 +101,23 @@ def _has_grandfathered_full_access(principal: Principal) -> bool:
     confirm "admins see other users' data" without a decision (#679).
     """
     return principal.kind == "dev"
+
+
+def lists_only_own_runs(principal: Principal | None, *, enforce: bool | None = None) -> bool:
+    """Whether a list answered to ``principal`` keeps only the runs it owns (#1091).
+
+    The lists — ``GET /builds``, the dataset views, monitoring — ask this, so they follow
+    the rule ``ownership_allows`` applies to one run: where ownership is enforced only
+    ``dev`` sees every owner's runs. The ``service`` principal (``X-API-Key``) used to
+    pass through here as well, because each list tested for an ``oidc`` principal rather
+    than asking this module; every run's metadata was in its lists although ADR 0012
+    (2026-10-01) gives it only its own runs, and the administration routes for the rest.
+
+    ``principal=None`` — a call from inside the process, not a request — is not filtered.
+    """
+    if enforce is None:
+        enforce = enforce_ownership()
+    return enforce and principal is not None and not _has_grandfathered_full_access(principal)
 
 
 def ownership_allows(

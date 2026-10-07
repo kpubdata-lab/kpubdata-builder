@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.105.0"
+  version: "1.106.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.106.0 stops writing the sign-up ledger on every request (#1121, additive). An OIDC user's ledger entry is read on each authenticated request and written only when it changes — a first sign-in, a new display name, an admission by the list — so `AdminUser.last_seen_at` is now refreshed at most once an hour rather than on every request. A rejection still takes effect on the user's next request. When the ledger cannot be read, or a first sign-in cannot be recorded, any authenticated operation answers 503 `signup_ledger_unavailable` to a caller who is not an administrator; it was an unstructured 500 for every signed-in user. A user the ledger already knows is served when only the write fails. No schema changes.
+
     v1.105.0 says what a stopping server does with async builds (#1118, additive). On SIGTERM the queued jobs end as `failed` without starting — `error` begins `interrupted:` and says to submit again under a new `run_id`; nothing was fetched or written — and `POST /builds` answers 503 `shutting_down`, recording nothing, so the same `run_id` can be sent again. Running jobs get `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS` to finish; one still running then is cancelled the way `POST /builds/{run_id}/cancel` cancels and ends `cancelled`. Before, queued jobs started during the shutdown and were killed with the process. No schema changes.
 
     v1.104.0 reads a refresh whose table was not committed as a failed refresh of the dataset (#1123). `GET /datasets`, `GET /datasets/{dataset_id}` and `GET /datasets/{dataset_id}/runs` read the manifest's build status, so such a run — `status: ok` with `warehouse_failures` (#788) — showed `status: ok`, `status_axes.refresh: succeeded`, and was the last success `status_axes.health` counted from, for a table that had not changed. They now say what `GET /builds` says since 1.101.0: the run and the dataset's `status` are `failed`, `refresh` is `failed`, the run is not a last success, and `completeness` is `unknown` — the run's rows are in its own artifacts and the table is what an earlier refresh left. No schema changes.
@@ -4680,6 +4682,10 @@ components:
         operation, before the operation runs. It is declared once there rather than on
         each operation: an operation has one 403 response, and many already use it for
         their own refusal, whose `Error.code` tells the two apart.
+        The same check can answer 503 `signup_ledger_unavailable` (an `Error`, #1121)
+        from every authenticated operation: the ledger could not be read, or a first
+        sign-in could not be recorded, so the caller is neither admitted nor refused —
+        trying again shortly is right. Administrators and API-key callers never get it.
 
   headers:
     RequestId:
@@ -4915,7 +4921,11 @@ components:
             (`decided_by: allowlist`). `rejected` shuts the user out even when a list
             admits them.
         first_seen_at: {type: string}
-        last_seen_at: {type: string}
+        last_seen_at:
+          type: string
+          description: >-
+            When the user last made a request, to the hour: it is written again only
+            once it is an hour old (#1121), not on every request.
         decided_at: {type: [string, "null"]}
         decided_by:
           type: [string, "null"]

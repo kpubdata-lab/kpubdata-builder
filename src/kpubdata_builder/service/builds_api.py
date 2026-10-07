@@ -46,15 +46,14 @@ def _apply_ownership(
 ) -> list[_BuildListEntry]:
     """Keep only own runs in list_builds response (#433, #505).
 
-    Filter only when ENFORCE_OWNERSHIP+oidc principal. Dev/service principals and
-    principal=None pass through (admin privilege + backward compatibility). Apply
-    to both index branch and filesystem fallback so fallback path doesn't bypass
-    filter.
+    Filter whenever ``ownership.lists_only_own_runs`` says so — every principal but
+    ``dev`` where ownership is enforced, the API key included (#1091). Apply to both
+    index branch and filesystem fallback so fallback path doesn't bypass filter.
 
     Each entry must carry internal-only "owner_id" key for decision — removed by
     ``_strip_internal_fields`` before response, so wire shape unchanged.
     """
-    if not (ownership_module.enforce_ownership() and principal and principal.kind == "oidc"):
+    if principal is None or not ownership_module.lists_only_own_runs(principal):
         return entries
     return [
         e
@@ -324,10 +323,10 @@ class BuildArtifactsApiService:
                 filtered = _strip_internal_fields(_apply_ownership(index_builds, principal))
                 return ServiceResponse(200, {"builds": cast(list[JsonValue], filtered)})
         except Exception:
-            # Index query failed. When ENFORCE_OWNERSHIP+oidc, other users' runs could
+            # Index query failed. Where the list is filtered, other users' runs could
             # leak via fallback, so return empty array fail-closed (#433). Normal mode
             # proceeds to filesystem fallback as before (ADR 0003).
-            if ownership_module.enforce_ownership() and principal and principal.kind == "oidc":
+            if ownership_module.lists_only_own_runs(principal):
                 logger.warning(
                     "build index query failed; returning empty list "
                     "(ownership enforced, fail-closed)",
