@@ -134,6 +134,64 @@ def test_the_overload_response_is_the_declared_one(contract: dict[str, Any]) -> 
     assert set(declared["headers"]) <= {name.decode() for name in headers}
 
 
+def test_the_auth_unavailable_response_is_the_declared_one(
+    contract: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every authenticated operation can answer it, so it is declared once (#1109) — and
+    what the service sends when the signing keys cannot be fetched is that declaration."""
+    import kpubdata_builder.service.auth as auth_module
+    from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
+
+    declared = contract["components"]["responses"]["AuthUnavailable"]
+    example = declared["content"]["application/json"]["examples"]["AuthUnavailable"]["value"]
+
+    class _Unreachable:
+        def get_signing_key_from_jwt(self, token: str) -> object:
+            raise ConnectionError("jwks endpoint unreachable")
+
+    monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
+    monkeypatch.setenv("OIDC_ISSUER", "https://idp.example")
+    monkeypatch.setenv("OIDC_AUDIENCE", "builder")
+    monkeypatch.setenv("OIDC_JWKS_URL", "http://localhost:0/jwks.json")
+    monkeypatch.setenv("KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT", "1")
+    monkeypatch.setattr(auth_module, "_get_jwks_client", lambda: _Unreachable())
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_kw: None)
+
+    answers = [
+        dispatch(service, method, path, None, bearer_token="Bearer a.b.c", client_id="10.0.0.9")
+        for method, path in (("GET", "/datasets"), ("POST", "/builds"), ("GET", "/version"))
+    ]
+
+    for answer in answers:
+        assert isinstance(answer, ServiceResponse)
+        assert answer.status_code == declared["x-status"] == 503
+        assert answer.body == example
+    # Three of them with a limit of one: it is not a failed attempt, so no 429 came.
+    assert [a.status_code for a in answers if isinstance(a, ServiceResponse)] == [503, 503, 503]
+
+
+def test_an_api_key_request_never_gets_auth_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative: a key needs no signing keys, so their being unreachable is not its concern."""
+    import kpubdata_builder.service.auth as auth_module
+    from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
+
+    def unreachable() -> object:
+        raise ConnectionError("jwks endpoint unreachable")
+
+    monkeypatch.delenv("KPUBDATA_BUILDER_DEV_MODE", raising=False)
+    monkeypatch.setenv("OIDC_ISSUER", "https://idp.example")
+    monkeypatch.setenv("OIDC_AUDIENCE", "builder")
+    monkeypatch.setenv("KPUBDATA_BUILDER_API_KEY", "the-right-key")
+    monkeypatch.setattr(auth_module, "_get_jwks_client", unreachable)
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_kw: None)
+
+    answer = dispatch(service, "GET", "/version", None, api_key="the-right-key")
+
+    assert isinstance(answer, ServiceResponse) and answer.status_code == 200
+
+
 def test_the_auth_throttle_response_is_the_declared_one(
     contract: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
