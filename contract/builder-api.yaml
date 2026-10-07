@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.103.0"
+  version: "1.104.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.104.0 reads a refresh whose table was not committed as a failed refresh of the dataset (#1123). `GET /datasets`, `GET /datasets/{dataset_id}` and `GET /datasets/{dataset_id}/runs` read the manifest's build status, so such a run — `status: ok` with `warehouse_failures` (#788) — showed `status: ok`, `status_axes.refresh: succeeded`, and was the last success `status_axes.health` counted from, for a table that had not changed. They now say what `GET /builds` says since 1.101.0: the run and the dataset's `status` are `failed`, `refresh` is `failed`, the run is not a last success, and `completeness` is `unknown` — the run's rows are in its own artifacts and the table is what an earlier refresh left. No schema changes.
+
     v1.103.0 gives the preview the build's refusal for a missing key (#1070, additive): in a multi-user deployment `POST /preview` answers 400 `provider_credential_required`, naming the `providers`, when the spec calls a provider that needs a key and `X-Provider-Key` carries none for it — the answer `POST /build` and `POST /builds` give. It was an ordinary provider error after the call was attempted. Nothing is fetched. The 403 with the same `code` is unchanged: that is a single-user deployment refusing the operator's key (#786). No schema changes.
 
     v1.102.0 judges a credential header after authentication and only where it is read (#1105). A malformed `X-Publish-Credential` answered 400 `invalid_publish_credential` on every route; it is now answered only by the operations that declare the parameter (the five under `/builds/{run_id}/publish`) and ignored elsewhere, as a malformed `X-Provider-Key` has been since v1.93.0. On the operations that do read a header, the 400 for a malformed one — `invalid_publish_credential` or `invalid_provider_key` — now comes after the authentication gate: a request with no or wrong credentials gets its 401 (and is counted by the failure throttle), and `GET /healthz` answers whatever the headers hold.
@@ -8907,20 +8909,24 @@ components:
           enum: [queued, running, succeeded, failed, cancelled, unknown]
           description: >-
             A queued or running async refresh this principal may see wins over the last
-            finished run's result.
+            finished run's result. A run whose table was not committed is `failed`
+            (#1123), as in `GET /builds`.
         completeness:
           type: string
           enum: [complete, partial, unknown]
           description: >-
             From the latest run's manifest — partial when marked partial or failed after
-            writing rows, complete when it succeeded.
+            writing rows, complete when it succeeded. `unknown` when that run's table was
+            not committed (#1123): the table still holds what an earlier refresh left,
+            which this run's manifest does not describe.
         health:
           type: string
           enum: [healthy, stale, degraded, unknown]
           description: >-
             `stale` when the last successful refresh is older than the spec's
             `refresh_cadence`, `healthy` when it is not, `unknown` without a declared
-            cadence or without any successful refresh (#781). `degraded` is not produced
+            cadence or without any successful refresh (#781). A refresh whose table was
+            not committed is not a successful one (#1123). `degraded` is not produced
             yet.
         access:
           type: string
