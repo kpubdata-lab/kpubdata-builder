@@ -236,6 +236,118 @@ jobs:
       - name: Run the DuckDB tests against the floor
         run: uv run --no-sync pytest tests/unit -k duckdb
 
+  # Studio main's contract drift test against the contract this change carries (#1004).
+  # Builder's own contract gates (check_contract_compat.py, test_service_contract.py)
+  # end inside this repository, so a change that breaks Studio's response schemas
+  # showed up only on Studio's next CI run. This runs the test Studio runs — the same
+  # file, with BUILDER_CONTRACT pointing here instead of at Builder main.
+  #
+  # The job always runs and is covered by `CI gate`; when neither `contract/` nor this
+  # job's own files changed, it only says so and passes. A change Studio can follow
+  # only after it merges (Studio develops against Builder main, ADR 0004) names the
+  # Studio issue in the pull request body — `Studio-Follow-Up:
+  # kpubdata-lab/kpubdata-studio#N` — and drift is then reported as a warning naming
+  # it (scripts/studio_drift_follow_up.py).
+  studio-drift:
+    name: Studio drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Did the contract change?
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${EVENT}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${BASE_REF}"
+          elif ! git fetch --no-tags --depth=1 origin "${BEFORE}"; then
+            echo "no earlier commit to compare with; running the drift test"
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          changed="$(git diff --name-only FETCH_HEAD HEAD -- contract \
+            .github/workflows/ci.yml scripts/studio_drift_follow_up.py)"
+          if [ -n "${changed}" ]; then
+            printf 'changed:\n%s\n' "${changed}"
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "the contract did not change; Studio drift is not checked"
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Studio follow-up named in the pull request
+        id: follow-up
+        if: steps.changed.outputs.run == 'true'
+        env:
+          # The body is read when the step runs, not from the event, so adding the line
+          # and re-running the job is enough — a re-run replays the original event.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "${PR_NUMBER}" ]; then
+            exit 0
+          fi
+          PR_BODY="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')"
+          export PR_BODY
+          number="$(python3 scripts/studio_drift_follow_up.py)"
+          if [ -z "${number}" ]; then
+            exit 0
+          fi
+          issue="$(gh api "repos/kpubdata-lab/kpubdata-studio/issues/${number}" \
+            --jq '[.state, (.pull_request != null)] | @tsv')" || {
+            echo "::error::Studio-Follow-Up names kpubdata-lab/kpubdata-studio#${number}, which does not exist"
+            exit 1
+          }
+          if [ "${issue}" != "$(printf 'open\tfalse')" ]; then
+            echo "::error::Studio-Follow-Up must name an open Studio issue; #${number} is not one (${issue})"
+            exit 1
+          fi
+          echo "number=${number}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout Studio (main)
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: kpubdata-lab/kpubdata-studio
+          ref: main
+          path: .studio
+          persist-credentials: false
+
+      - name: Setup Node
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .studio/package-lock.json
+
+      - name: Install Studio dependencies
+        if: steps.changed.outputs.run == 'true'
+        working-directory: .studio
+        run: npm ci --no-audit --no-fund
+
+      - name: Studio's drift test against this contract
+        if: steps.changed.outputs.run == 'true'
+        working-directory: .studio
+        env:
+          BUILDER_CONTRACT: ${{ github.workspace }}/contract/builder-api.yaml
+          FOLLOW_UP: ${{ steps.follow-up.outputs.number }}
+        run: |
+          if npx vitest run src/shared/lib/contractDrift.test.ts; then
+            exit 0
+          fi
+          if [ -n "${FOLLOW_UP}" ]; then
+            echo "::warning::Studio main drifts from this contract; kpubdata-lab/kpubdata-studio#${FOLLOW_UP} follows it up"
+            exit 0
+          fi
+          echo "::error::Studio main drifts from this contract. Fix Studio first, or name the Studio issue that will follow with a 'Studio-Follow-Up: kpubdata-lab/kpubdata-studio#N' line in the pull request body"
+          exit 1
+
   # The release freeze (kpubdata #701, kpubdata docs/compatibility.md §5.1): while
   # main is frozen — from the release week's Monday until Studio ships in that week —
   # only release pull requests may merge. The action exits 0 when the freeze does not
@@ -264,7 +376,7 @@ jobs:
   gate:
     name: CI gate
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, docs, kpubdata-releases, min-deps, duckdb-floor, release-freeze]
+    needs: [lint, test, coverage, docs, kpubdata-releases, min-deps, duckdb-floor, studio-drift, release-freeze]
     # `always()` so a failed job still reaches this step. Without it the gate is
     # skipped when something upstream fails, and a skipped required check is the same
     # absence this job exists to remove.
