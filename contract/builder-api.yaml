@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.102.0"
+  version: "1.103.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.103.0 gives the preview the build's refusal for a missing key (#1070, additive): in a multi-user deployment `POST /preview` answers 400 `provider_credential_required`, naming the `providers`, when the spec calls a provider that needs a key and `X-Provider-Key` carries none for it — the answer `POST /build` and `POST /builds` give. It was an ordinary provider error after the call was attempted. Nothing is fetched. The 403 with the same `code` is unchanged: that is a single-user deployment refusing the operator's key (#786). No schema changes.
+
     v1.102.0 judges a credential header after authentication and only where it is read (#1105). A malformed `X-Publish-Credential` answered 400 `invalid_publish_credential` on every route; it is now answered only by the operations that declare the parameter (the five under `/builds/{run_id}/publish`) and ignored elsewhere, as a malformed `X-Provider-Key` has been since v1.93.0. On the operations that do read a header, the 400 for a malformed one — `invalid_publish_credential` or `invalid_provider_key` — now comes after the authentication gate: a request with no or wrong credentials gets its 401 (and is counted by the failure throttle), and `GET /healthz` answers whatever the headers hold.
 
     v1.101.0 lists a run whose table was not committed as `failed` (#1106). Such a build produced its artifacts — its manifest says `status: ok` and records the refused commit in `warehouse_failures` (#788) — while the request answered 409 and `GET /builds/{run_id}` said `failed` (#997); `GET /builds` and `GET /admin/runs` showed the same run as `ok`. `BuildSummary.status` and the admin list now give the run's outcome, `failed`, from the index and from the filesystem alike. The manifest is unchanged. An index written before this version keeps `ok` for such a run until `kpubdata-builder rebuild-index` reads the manifests again.
@@ -927,7 +929,12 @@ paths:
                           changed_rows: 0
                         diff_truncated: false
         "400":
-          description: 잘못된 요청(spec 누락/검증 실패, limit 타입 오류 등)
+          description: >-
+            잘못된 요청(spec 누락/검증 실패, limit 타입 오류 등).
+            다중 사용자 배포에서, spec 이 부르는 provider 가 키를 요구하는데 요청의
+            `X-Provider-Key` 에 그 키가 없으면 `provider_credential_required` 이고
+            `providers` 가 그 provider 들을 적는다(#1070) — `POST /build`, `POST /builds`
+            와 같은 답이며 아무것도 가져오지 않는다. `limit` 등 요청 자체의 오류가 먼저다.
           content:
             application/json:
               schema:

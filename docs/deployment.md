@@ -22,7 +22,7 @@
 | `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` | `prune-cancelled --apply`가 cancelled partial run을 정리하기까지의 보존 시간(시간). 미설정이면 정리 대상 없음(#549) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT` | HTTP `local` publish target의 루트 디렉터리(절대 경로). destination은 이 안의 상대 `owner/name`로 한정된다(#550). 미설정이면 local target blocker | 미설정 | local publish 사용 시 필수 |
 | `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` | `true` 면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683). **`env_keys` 를 지원하는 kpubdata 가 필요하다**(0.8.0 에는 없다): 없으면 `serve` 가 기동을 거부하고(종료 코드 1), 그 kpubdata 로 키 없는 클라이언트를 만들려는 시도도 오류로 끝난다 — 환경변수 키로 조용히 내려가지 않는다(#990). | 미설정 | 선택 |
-| `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` | 다중 사용자 배포에서 비동기 작업에 묶인 provider 키를 워커가 가져가기 전까지 메모리에 두는 최대 시간(#683). 지나면 키를 버리고 작업은 키 없이 실패한다 | `3600` | 선택 |
+| `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` | 다중 사용자 배포에서 비동기 작업에 묶인 provider 키를 워커가 가져가기 전까지 메모리에 두는 최대 시간(#683). 제출한 때부터 세고, 지나면 타이머가 그때 키를 지운다 — 큐에 시간 상한이 없어도 키는 이 시간을 넘겨 남지 않는다(#1070). 그 작업은 차례가 왔을 때 `credentials_required` 로 끝난다. 워커가 가져간 뒤에는 이 시간과 무관하게 빌드가 끝날 때까지 쓰고 버린다. 작업에는 그 spec 이 쓰는 provider 의 키만 묶인다 | `3600` | 선택 |
 | `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` | `true`면 게시 시 요청자에게 저장된 publish credential 만 쓰고 서버 환경변수(`HF_TOKEN` 등)로 내려가지 않는다(#635). 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 폴백이 없고 저장된 publish credential 도 읽지 않는다** — 토큰은 요청의 `X-Publish-Credential` 헤더(`HF_TOKEN=...`, `KAGGLE_USERNAME=...`, `KAGGLE_KEY=...`)로만 받아 그 요청 동안만 메모리에 둔다(#925) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES` | `POST /uploads`가 받는 최대 본문 크기(바이트). 초과분은 413 | 코드 기본값 | 선택 |
 | `KPUBDATA_BUILDER_UPLOAD_MAX_FILES` | 다중 사용자 배포에서 사용자 한 명이 가질 수 있는 업로드 수(#1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `50` | 선택 |
@@ -94,11 +94,11 @@ ADR 0006). 설정은 환경변수로 주입합니다 — `docker-entrypoint.sh`�
 | `KPUBDATA_BUILDER_CUBRID_URL` | CUBRID SQLAlchemy URL (예: `cubrid+pycubrid://user:pass@host:33000/db?charset=utf8`) | 미설정 | `STORAGE_BACKEND=cubrid` 시 필수 |
 | `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` | `prune-cancelled --apply`가 cancelled partial run을 정리하기까지의 보존 시간(시간). 미설정이면 정리 대상 없음(#549) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT` | HTTP `local` publish target의 루트 디렉터리(절대 경로). destination은 이 안의 상대 `owner/name`로 한정된다(#550). 미설정이면 local target blocker | 미설정 | local publish 사용 시 필수 |
-| `OIDC_ISSUER` | OIDC 발급자 (설정 시 Bearer 활성, ADR 0015 — Keycloak realm) | 미설정 | 선택 |
+| `OIDC_ISSUER` | OIDC 발급자 (설정 시 Bearer 활성, ADR 0015 — Keycloak realm). 쉼표로 여럿을 줄 수 있고, 그때는 아래 허용 목록의 모든 항목이 `<issuer>\|<값>` 이어야 한다(#1074) | 미설정 | 선택 |
 | `OIDC_AUDIENCE` | OIDC audience (OIDC_ISSUER 설정 시 필수) | 미설정 | OIDC 시 필수 |
-| `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635) | 미설정 | OIDC 시 셋 중 하나 필수 |
-| `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
-| `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635). 세 목록의 항목은 `<값>` 또는 `<issuer>\|<값>` 이다. issuer 를 적은 항목은 그 issuer 가 말한 값만 들인다 — sub·이메일·도메인은 issuer 안에서만 뜻이 있다. issuer 가 하나면 `<값>` 은 그 issuer 의 것이고, 둘 이상인데 `<값>` 만 적은 항목이 있으면 기동을 거부한다(#1074). issuer 는 `OIDC_ISSUER` 에 적은 그대로 쓴다 | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분). 항목 형식은 `OIDC_ALLOWED_HD` 와 같다 | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분). 항목 형식은 `OIDC_ALLOWED_HD` 와 같다 | 미설정 | OIDC 시 셋 중 하나 필수 |
 | `ENFORCE_OWNERSHIP` | `true`/`1`이면 run 소유권 강제 (C2, #389). `OIDC_ISSUER`가 있으면 값과 무관하게 켜진다(#635). `KPUBDATA_BUILDER_DEV_MODE` 와 함께 켜면 `serve` 가 기동을 거절한다 — dev principal 은 인증 없이 모든 사용자의 run 을 읽는다(#1072) | 미설정 | 선택 |
 
 > **fail-closed (ADR 0006)**: 컨테이너는 `KPUBDATA_BUILDER_API_KEY`가 없으면 기동을

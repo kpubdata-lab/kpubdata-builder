@@ -16,7 +16,9 @@ existing deployments. When set, ``OIDC_AUDIENCE`` is required and the ``pyjwt``
 extra must be installed (fail-closed). By default, anyone who creates an IdP
 account can log in — to restrict to specific organizations/individuals, set
 ``OIDC_ALLOWED_HD``/``OIDC_ALLOWED_SUBJECTS``/``OIDC_ALLOWED_EMAILS`` (optional,
-see deploy.md).
+see deploy.md). An entry is compared together with the token's issuer (#1074): with
+several issuers configured each entry is ``<issuer>|<value>``, as the administrator
+list always was.
 
 Separates ``Principal`` display role from persistent ownership role (#505):
 
@@ -310,22 +312,65 @@ def _oidc_jwks_url() -> str:
     return _discover_jwks_uri(issuers[0])
 
 
-def _oidc_allowlists() -> tuple[set[str], set[str], set[str]]:
+#: An allowlist entry: the issuer it is for (None when the entry names none) and the
+#: ``hd``, subject or e-mail it admits.
+_AllowlistEntry = tuple[str | None, str]
+
+_ALLOWLIST_ENVS = (_OIDC_ALLOWED_HD_ENV, _OIDC_ALLOWED_SUBJECTS_ENV, _OIDC_ALLOWED_EMAILS_ENV)
+
+
+def _parse_allowlist(env_name: str) -> set[_AllowlistEntry]:
+    """One allowlist's entries, each with the issuer it is written for (#1074).
+
+    ``<issuer>|<value>`` admits the value from that issuer only. The part before the
+    first ``|`` is read as an issuer only when it is one of ``OIDC_ISSUER`` — some IdPs
+    put a ``|`` inside the subject itself (``google-oauth2|1234``), and such an entry is
+    the whole value, with no issuer named.
+    """
+    issuers = _oidc_issuers()
+    entries: set[_AllowlistEntry] = set()
+    raw = os.environ.get(env_name, "")
+    for item in raw.replace(" ", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        issuer, separator, value = item.partition("|")
+        if separator and value and issuer in issuers:
+            entries.add((issuer, value))
+        else:
+            entries.add((None, item))
+    return entries
+
+
+def _oidc_allowlists() -> tuple[set[_AllowlistEntry], set[_AllowlistEntry], set[_AllowlistEntry]]:
     """(hd, subjects, emails) allowlists — optional restrictions applied only when set (#386).
 
     Default policy is open registration (anyone with IdP account can log in). Only
     restricted deployments allowing specific domains/accounts set these lists,
     and when set, at least one must match to pass.
     """
-
-    def _parse(env_name: str) -> set[str]:
-        raw = os.environ.get(env_name, "")
-        return {s.strip() for s in raw.replace(" ", ",").split(",") if s.strip()}
-
     return (
-        _parse(_OIDC_ALLOWED_HD_ENV),
-        _parse(_OIDC_ALLOWED_SUBJECTS_ENV),
-        _parse(_OIDC_ALLOWED_EMAILS_ENV),
+        _parse_allowlist(_OIDC_ALLOWED_HD_ENV),
+        _parse_allowlist(_OIDC_ALLOWED_SUBJECTS_ENV),
+        _parse_allowlist(_OIDC_ALLOWED_EMAILS_ENV),
+    )
+
+
+def _on_allowlist(entries: set[_AllowlistEntry], issuer: str, value: str) -> bool:
+    """Whether ``value``, as ``issuer`` states it, is on the list (#1074).
+
+    A subject is unique only within its issuer, and an e-mail or ``hd`` is whatever the
+    issuer says it is — so an entry admits a value from the issuer it names. An entry
+    naming none means the deployment's one issuer; with several configured it admits
+    nobody (``validate_oidc_config`` refuses to start that way), because it would give
+    the account one issuer vouches for to whoever holds the same name at another.
+    """
+    if not value:
+        return False
+    sole_issuer = len(_oidc_issuers()) == 1
+    return any(
+        listed == value and (entry_issuer == issuer or (entry_issuer is None and sole_issuer))
+        for entry_issuer, listed in entries
     )
 
 
@@ -395,6 +440,23 @@ def validate_oidc_config() -> None:
             "serves more than one user and open sign-up is refused — refusing to start "
             "(fail-closed, ADR 0012 amendment of 2026-09-30, #635, #785)."
         )
+    # With more than one issuer, an entry must say which issuer it is for (#1074). The
+    # message names the variables, never an entry: these are people's e-mail addresses.
+    if len(_oidc_issuers()) > 1:
+        unbound = [
+            name
+            for name, entries in zip(_ALLOWLIST_ENVS, (hd, subs, emails), strict=True)
+            if any(issuer is None for issuer, _ in entries)
+        ]
+        if unbound:
+            raise RuntimeError(
+                f"OIDC_ISSUER names more than one issuer, and {', '.join(unbound)} "
+                "has an entry that names none; write each entry as '<issuer>|<value>' "
+                "with the issuer exactly as it is in OIDC_ISSUER. A subject, e-mail or "
+                "domain is only what its issuer says it is, so an entry without one "
+                "would admit the same name from every issuer — refusing to start "
+                "(fail-closed, #1074)."
+            )
 
 
 #: Read here rather than from ``ownership`` — that module imports this one.
@@ -579,13 +641,9 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
     # alone. One on no list is not refused here any more (#785): the service asks the
     # Builder sign-up ledger, which records it as pending until an administrator
     # decides. With no list at all nobody is admitted by sign-in alone (#635).
-    hd_set, sub_set, email_set = _oidc_allowlists()
-    allowlisted = (
-        (bool(hd_set) and str(payload.get("hd", "")) in hd_set)
-        or (bool(sub_set) and str(payload.get("sub", "")) in sub_set)
-        or (bool(email_set) and str(payload.get("email", "")) in email_set)
-    )
-
+    #
+    # Each list is asked with the token's issuer (#1074): the same subject or e-mail
+    # from another configured issuer is another account.
     sub = str(payload.get("sub", ""))
     if not sub:
         # jwt.decode's require=["sub"] only enforces claim "existence", not that value is
@@ -593,6 +651,12 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
         # (issuer, "") owner_id, mixing up ownership (#505).
         return AuthError(reason="missing subject claim")
     issuer = str(payload.get("iss", ""))
+    hd_set, sub_set, email_set = _oidc_allowlists()
+    allowlisted = (
+        _on_allowlist(hd_set, issuer, str(payload.get("hd", "")))
+        or _on_allowlist(sub_set, issuer, sub)
+        or _on_allowlist(email_set, issuer, str(payload.get("email", "")))
+    )
     # owner_id hashes full issuer+subject without truncation (#505) — passing issuer
     # and sub as separate fields ensures unambiguous collision prevention without
     # delimiters (length-prefix framing). Different from identifier below (log/display
