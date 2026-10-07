@@ -156,6 +156,33 @@ def test_master_key_problem_does_not_repeat_the_key(
     assert value not in problem
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        # The scheme left out, and mistyped: the whole value is then user:pass@host.
+        "dba:fake-password-123@db.internal:33000/builder",
+        "cubrid+pycubrid:/dba:fake-password-123@db.internal:33000/builder",
+        # "://" later in the value does not make what is before it a scheme.
+        "dba:fake-password-123@db.internal:33000/builder?next=http://x",
+        # A scheme that is refused, with the password after it.
+        "postgresql://dba:fake-password-123@db.internal:5432/builder",
+        "cubrid+cubriddb://dba:fake-password-123@db.internal:33000/builder",
+        "cubrid+aiopycubrid://dba:fake-password-123@db.internal:33000/builder",
+    ],
+)
+def test_cubrid_url_problem_does_not_repeat_the_password(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("KPUBDATA_BUILDER_STORAGE_BACKEND", "cubrid")
+    monkeypatch.setenv("KPUBDATA_BUILDER_CUBRID_URL", url)
+
+    (problem,) = check_settings().problems
+
+    assert "KPUBDATA_BUILDER_CUBRID_URL" in problem
+    assert "fake-password-123" not in problem
+    assert "db.internal" not in problem
+
+
 def test_every_problem_is_reported_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KPUBDATA_DUCKDB_MEMORY_LIMIT", "lots")
     monkeypatch.setenv("KPUBDATA_QUERY_MAX_CONCURRENCY", "0")

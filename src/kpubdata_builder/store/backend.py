@@ -71,10 +71,15 @@ def normalize_cubrid_url(url: str) -> str:
     - Other scheme — reject (prevent typo/different DB URL injection).
     """
     scheme, separator, remainder = url.partition("://")
-    if not separator:
+    # The URL holds the database password, so no message repeats it (#1108). Without a
+    # scheme the whole value is user:pass@host; and text before a later "://" that is
+    # not a scheme name is the same thing, so it is refused here rather than echoed
+    # by the checks below.
+    if not separator or not scheme.replace("+", "").replace("-", "").isalnum():
         raise RuntimeError(
             f"{_CUBRID_URL_ENV} must be a SQLAlchemy URL like "
-            f"{_CANONICAL_SCHEME}://user:pass@host:33000/db?charset=utf8, got {url!r}"
+            f"{_CANONICAL_SCHEME}://user:pass@host:33000/db?charset=utf8; "
+            "it does not start with a scheme (the value is not shown: it holds a password)"
         )
     dialect, _, driver = scheme.partition("+")
     if dialect != _CUBRID_DIALECT:
