@@ -110,6 +110,24 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 <!-- settings:end -->
 
+### 기동할 때의 설정 검사 (#1108)
+
+`kpubdata-builder serve` 는 요청을 받기 전에 설정을 한 번 모두 읽어 봅니다. 결과는 두 가지입니다.
+
+- **`error:` — 기동을 거부합니다(종료 코드 1).** 쓸 수 없는 값이 여럿이면 한 번에 모두 출력합니다.
+  - DuckDB 자원: `KPUBDATA_DUCKDB_THREADS`, `KPUBDATA_DUCKDB_MEMORY_LIMIT`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE`
+  - 쿼리 자원: `KPUBDATA_QUERY_MAX_CONCURRENCY`, `KPUBDATA_QUERY_MAX_MEMORY_MB`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
+  - 상태 저장: `KPUBDATA_BUILDER_STORAGE_BACKEND`, `KPUBDATA_BUILDER_CUBRID_URL`
+  - 그 밖: `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`, `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`, `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT`, `OIDC_JWKS_TTL`
+  - `serve` 가 직접 읽는 값: `KPUBDATA_BUILDER_MAX_WORKERS`, `KPUBDATA_BUILDER_MAX_BUILDS`, `KPUBDATA_BUILDER_MAX_PREVIEWS`, `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`
+- **`warning:` — 기동은 합니다.** 읽을 수 없는 값을 기본값으로 대신하는 설정입니다. 적은 값이 아니라 기본값으로 돌고 있다는 사실을 표준 오류에 한 줄로 알립니다.
+  - 인증 실패 제한: `KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT`, `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
+  - 업로드와 URL 소스: `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`, `KPUBDATA_BUILDER_UPLOAD_MAX_FILES`, `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES`, `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS`, `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
+  - 그 밖: `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`, `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS`, `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
+  - 켜고 끄는 값(`KPUBDATA_BUILDER_DEV_MODE`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)을 `true`/`1`/`false`/`0` 이 아닌 말로 적은 경우. `yes` 나 `on` 은 **꺼진 것으로 읽힙니다.**
+
+비밀 값을 담는 변수는 메시지에 값을 되풀이하지 않습니다. OIDC 설정의 조합과 CUBRID 연결은 이 검사 뒤에 따로 확인하며, 그때의 거부는 지금처럼 예외로 끝납니다.
+
 > **fail-closed (ADR 0006)**: `KPUBDATA_BUILDER_API_KEY` 미설정 + `DEV_MODE` 미설정 → 모든 요청 401.
 > 로컬 개발에서 인증 없이 띄우려면 `KPUBDATA_BUILDER_DEV_MODE=1`을 명시하세요.
 > Docker 컨테이너는 `DEV_MODE` 없이 `API_KEY`가 없으면 기동 자체를 거부합니다 (`docker-entrypoint.sh`).
