@@ -56,10 +56,11 @@ Operating rules:
 ### Comments and docstrings are gated, not merely requested
 
 The rule above went unenforced long enough to accumulate 3,878 Korean comments and
-docstrings across 255 files. `scripts/check_korean_comments.py` is a ratchet: it
-freezes the current per-file count and fails only when a count grows, or when a
-file absent from the baseline has any. Write new code in English; the existing
-debt is paid down separately (#710).
+docstrings across 255 files. That debt has been paid (#710), so the gate is now
+absolute: CI runs `scripts/check_english_comments.py src tests scripts`, which fails
+on any comment or docstring with Korean in it. Korean string literals (messages a
+user reads) are not checked. The earlier per-file ratchet,
+`scripts/check_korean_comments.py` with its baseline, is no longer what CI runs.
 
 
 ## 확인은 기계가 한다
@@ -157,8 +158,12 @@ agent.
 - **kpubdata is not on this train.** It releases on demand, at most once every seven
   days. Never recommend a release outside these rules to unblock work: build against
   kpubdata `main` in the early-warning job, and raise the pin when kpubdata releases.
-- **Prepare, do not release.** An agent may tidy the CHANGELOG's Unreleased section,
-  run a release workflow with `dry_run`, and draft the version and pin pull requests.
+- **Prepare, do not release.** An agent may tidy the CHANGELOG's Unreleased section
+  and draft the version and pin pull requests. `release.yml` has no dry run: its
+  dispatch inputs are `mode`, `bump`, `critical_patch` and `critical_issue`, and
+  `mode=prepare` (the default) opens a release pull request — a real one, which a
+  person merges to release or closes. Check a release locally with
+  `scripts/check_version_consistency.py` instead.
   Pushing a tag, creating a GitHub Release, approving the PyPI environment and
   changing what a release contains are a person's (POLICY 14).
 - **Propose the bump from the CHANGELOG, with the reason.** In 0.x, a breaking change
@@ -246,7 +251,7 @@ During the DuckDB migration (ADR 0021) Silver runs on Polars until the Silver st
 
 ### Prompts that work
 
-- "Add a `CSVExporter`. Follow `exporters/base.py` and implement `ExportModel`."
+- "Add a `TsvExporter`. Subclass `BaseExporter` from `exporters/base.py` and register it in `exporters/__init__.py`."
 - "Add filter conditions to the `BuildSpec` model."
 
 ### Forbidden
@@ -323,15 +328,18 @@ src/kpubdata_builder/
 ```mermaid
 flowchart TD
     Step1[1. subclass BaseExporter] --> Step2[2. implement export]
-    Step2 --> Step3[3. declare the format name]
-    Step3 --> Step4[4. add unit tests]
-    Step4 --> Step5[5. confirm the golden test]
+    Step2 --> Step3[3. implement name]
+    Step3 --> Step4[4. register the factory]
+    Step4 --> Step5[5. add unit tests]
+    Step5 --> Step6[6. confirm the golden test]
 ```
 
 1. Subclass `BaseExporter` from `exporters/base.py`.
-2. Implement `export(self, artifacts: List[Artifact]) -> List[Path]`.
-3. Declare the supported format name as a class variable.
-4. Add tests to `tests/unit/test_exporters.py`.
+2. Implement `export(self, artifact: ArtifactDataset, target: ExportTarget, output_dir: Path) -> ExportResult`.
+   Write under `output_dir` with `ensure_output_dir(output_dir, target.output_path)`.
+3. Implement the `name` property: the `kind` a BuildSpec export target names.
+4. Register it in `exporters/__init__.py` with `register_exporter_factory("<kind>", YourExporter)`.
+5. Add tests to `tests/unit/test_exporters.py`.
 
 ### What a golden test is
 
