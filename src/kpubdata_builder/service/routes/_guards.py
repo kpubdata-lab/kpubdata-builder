@@ -89,9 +89,9 @@ def check_active_run_access(
 
     Snapshot ``owner_id`` is the value ``BuilderService.submit_build`` preserved in
     registry — not exposed in wire response (``BuildJobSnapshot.to_body()`` never exports
-    it). ``_run_build_job`` reuses this value in persisted manifest/BuildIndex (#505 SSOT)
-    record, but still does not pass it to ``kind="file"`` source resolver (#498) — async
-    file-backed source owner propagation limit remains.
+    it). ``_run_build_job`` reuses this value for the persisted manifest/BuildIndex
+    (#505 SSOT) and, since #998, passes it to the ``kind="file"`` source resolver too:
+    an async build reads the submitter's uploads as a synchronous one does.
 
     Other routes like ``/manifest``, ``/stages`` still handle only persisted runs; they
     do not use this function — keeping impact scope narrow to active-job-handling routes.

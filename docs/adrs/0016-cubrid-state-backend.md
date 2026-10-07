@@ -1,7 +1,7 @@
 # ADR 0016 — CUBRID 상태 백엔드 + manifest 정본 이전
 
 - 상태: 수용됨(Accepted)
-- 관련 이슈/문서: [ADR 0003](./0003-persistent-build-store.md)(영속 Build 저장소), [ADR 0010](./0010-artifactstore-state-backend.md)(ArtifactStore·백엔드 분리, 제안됨), [ADR 0012](./0012-provider-credential-boundary.md)(credential 경계)
+- 관련 이슈/문서: [ADR 0003](./0003-persistent-build-store.md)(영속 Build 저장소), [ADR 0010](./0010-artifactstore-state-backend.md)(ArtifactStore·백엔드 분리 — 이 ADR 을 쓸 때는 제안됨, 지금은 승인됨·구현 완료), [ADR 0012](./0012-provider-credential-boundary.md)(credential 경계)
 - 드라이버: `sqlalchemy-cubrid[pycubrid]` (v1.7.1+, SQLAlchemy `>=2.0,<2.3`, 순수 파이썬 `pycubrid` 1.7.1, Python 3.10+)
   - `[pycubrid]` extra 가 필수다. `sqlalchemy-cubrid` 만 설치하면 dialect 만 생기고 드라이버는 없다.
   - **URL 은 반드시 `cubrid+pycubrid://`** 다. sqlalchemy-cubrid 는 dialect 를 `cubrid`,

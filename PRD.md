@@ -137,6 +137,14 @@ exporter는 레지스트리 기반 플러그인이며, 서드파티 exporter를 
 
 ## 9. MVP 범위
 
+> **2026-10-07 보충** — 아래는 첫 MVP 를 정할 때의 범위이고, 지금의 제품은 그보다 넓다.
+> "제외" 에 있는 것 가운데 **다중 사용자**는 들어와 있다: OIDC 로그인(ADR 0015), run 소유권
+> (`ENFORCE_OWNERSHIP`), 가입 승인 원장(#785), 요청·작업 수명의 provider 키(ADR 0020).
+> **브라우저 UI** 는 이 저장소가 아니라 KPubData Studio 가 맡는다. HTTP 서비스(`serve`),
+> 비동기 build job(ADR 0008), 테이블 저장소와 SQL 도 MVP 뒤에 더해졌다. 지금의 실행 구조는
+> [ARCHITECTURE.md](./ARCHITECTURE.md) 의 "현재 실행 구조" 절에 있다. 여러 사람이 한 데이터셋을
+> 함께 고치는 **협업** 기능은 여전히 없다 — 사용자는 각자의 run 과 테이블만 본다.
+
 ### 포함
 - YAML build spec
 - 로컬 파일시스템 출력

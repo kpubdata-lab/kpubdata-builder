@@ -158,9 +158,8 @@ class BuildJobSnapshot:
     (#496 follow-up, #505 canonical stable identity) — unlike ``created_by``
     (Principal.label, display/legacy fallback), this value takes priority for new
     ownership checks. ``BuilderService._run_build_job`` reuses it for persisted
-    manifest/BuildIndex (#505 SSOT) recording. However, ``to_body()`` never exposes
-    it on wire, and ``kind="file"`` source resolver (#498) doesn't receive it — async
-    file-backed source owner propagation limitation remains.
+    manifest/BuildIndex (#505 SSOT) recording and, since #998, for the ``kind="file"``
+    source resolver. ``to_body()`` never exposes it on wire.
     """
 
     run_id: str
@@ -634,8 +633,7 @@ class AsyncBuildExecutor:
         ``owner_id`` passes only to ``registry.create()`` — persisted in snapshot (#496
         follow-up, active run ownership check) — NOT passed to ``runner`` invocation
         (below: ``self._executor.submit(self._run, spec_yaml, run_id, created_by, runner)``).
-        run_build/source resolver owner propagation already has separate limitation (#498);
-        this change doesn't widen that scope.
+        The runner reads the owner back from the registry snapshot when it starts (#998).
 
         ``on_accept`` called before job queued to worker pool (``self._executor.submit``)
         (#496). Caller (``BuilderService.submit_build``) appends "run_submitted" event via

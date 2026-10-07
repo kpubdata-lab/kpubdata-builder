@@ -11,10 +11,10 @@ KPubData Builder의 주요 설계 결정을 기록합니다. 각 ADR은 배경·
 | [0005](./0005-api-contract-single-source.md) | API 계약 단일 소스 & 코드 생성 전략 | 승인됨 | #311 |
 | [0006](./0006-service-auth-and-deployment.md) | 서비스 인증 & 배포(Docker) 스토리 | 승인됨 | #312 |
 | [0007](./0007-kpubdata-version-compatibility-policy.md) | kpubdata 버전 호환성 정책 및 핀 강화 | 승인됨 | #213 |
-| [0008](./0008-async-build-job-model.md) | 비동기 build job 모델: 상태·실패·취소·멱등성·부분 산출물 | 제안됨 | #334 |
+| [0008](./0008-async-build-job-model.md) | 비동기 build job 모델: 상태·실패·취소·멱등성·부분 산출물 | 승인됨 (구현 완료) | #334 |
 | [0009](./0009-user-authentication-google-oidc.md) | 사용자 인증 모델: Google OIDC ID 토큰 검증 | 대체됨(0015) | #383 |
-| [0010](./0010-artifactstore-state-backend.md) | ArtifactStore 추상화 + BuildIndex 백엔드 분리 | 제안됨 | #375 |
-| [0011](./0011-buildspec-assistant-grounding.md) | BuildSpec 어시스턴트 그라운딩 계약 | 제안됨 | #415 |
+| [0010](./0010-artifactstore-state-backend.md) | ArtifactStore 추상화 + BuildIndex 백엔드 분리 | 승인됨 (구현 완료, 0016 이 확장) | #375 |
+| [0011](./0011-buildspec-assistant-grounding.md) | BuildSpec 어시스턴트 그라운딩 계약 | 승인됨 (studio 에 구현) | #415 |
 | [0012](./0012-provider-credential-boundary.md) | Provider credential 저장·주입 경계 | 승인됨 (2026-09-30 개정: 다중 사용자 규칙) | #492, #505, #682 |
 | [0013](./0013-api-contract-release-policy.md) | API 계약 버전과 릴리스 경계 정책 | 승인됨 | #521 |
 | [0014](./0014-source-ingestion-file-url-boundary.md) | Public API·File·URL Source 통합 경계 | 승인됨 | #498 |
@@ -31,4 +31,11 @@ KPubData Builder의 주요 설계 결정을 기록합니다. 각 ADR은 배경·
 - 파일명: `NNNN-kebab-title.md` (4자리 일련번호).
 - 언어: 한국어(문서 정책).
 - 상태 흐름: `제안됨(Proposed) → 승인됨(Accepted) → (필요시) 대체됨(Superseded)`.
+- **상태의 원천은 각 ADR 의 `- 상태:` 줄이다.** 이 표의 상태 열은 그것을 옮긴 것이고,
+  첫 단어(`제안됨` / `승인됨`·`수용됨` / `대체됨`)가 ADR 과 다르면
+  `scripts/check_adr_index.py` 가 실패한다 — `tests/unit/test_adr_index_gate.py` 가 CI 에서
+  돌린다(#1110). ADR 의 상태를 바꾸면 이 표를 같은 변경에서 고친다. 표에 없는 ADR 파일,
+  파일 없는 행, 상태 줄이 없는 ADR 도 실패한다.
+- 과거의 결정을 담은 ADR 은 본문을 고쳐 쓰지 않는다. 뒤에 달라진 것은 날짜를 붙인
+  인용문(`> **YYYY-MM-DD 보충** …`)으로 덧붙이고, 다른 ADR 이 대체했으면 상태 줄에 적는다.
 - 이 목록은 v0.4 마일스톤(Beyond-MVP 통합, epic #313)의 설계 결정을 추적합니다.
