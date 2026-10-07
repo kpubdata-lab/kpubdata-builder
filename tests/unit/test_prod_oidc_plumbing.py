@@ -89,3 +89,22 @@ def test_the_env_example_names_every_variable() -> None:
     text = (_ROOT / ".env.app.example").read_text(encoding="utf-8")
 
     assert [name for name in _OIDC if name not in text] == []
+
+
+def test_the_production_compose_does_not_require_a_service_key() -> None:
+    # An OIDC-only deployment starts without one (#1122); docker-entrypoint.sh refuses a
+    # container with neither. `${VAR:?...}` would make compose refuse before it got there.
+    compose = yaml.safe_load((_ROOT / "docker-compose.prod.app.yml").read_text(encoding="utf-8"))
+    env = compose["services"]["builder"]["environment"]
+    assert env["KPUBDATA_BUILDER_API_KEY"] == "${KPUBDATA_BUILDER_API_KEY:-}"
+    assert env["OIDC_ISSUER"].startswith("${OIDC_ISSUER")
+
+
+def test_the_image_build_runs_the_authentication_smoke() -> None:
+    # The entrypoint and serve decide together; only the built image shows both (#1122).
+    workflow = yaml.safe_load((_ROOT / ".github/workflows/docker.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["build"]["steps"]
+    runs = [step.get("run", "") for step in steps]
+    assert "python3 scripts/image_auth_smoke.py --image kpubdata-builder:ci" in runs
+    names = [step.get("name") for step in steps]
+    assert names.index("Authentication start-up smoke") > names.index("Build serve image")

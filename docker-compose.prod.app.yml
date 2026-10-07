@@ -30,8 +30,11 @@ services:
     # 기본 10초 뒤 SIGKILL 을 보내 빌드가 중간에 끊긴다.
     stop_grace_period: 120s
     environment:
-      # fail-closed (ADR 0006): API 키 없이는 컨테이너가 기동을 거부한다.
-      KPUBDATA_BUILDER_API_KEY: ${KPUBDATA_BUILDER_API_KEY:?KPUBDATA_BUILDER_API_KEY is required (fail-closed, ADR 0006)}
+      # fail-closed (ADR 0006): 인증 수단이 하나도 없으면 컨테이너가 기동을 거부한다
+      # (docker-entrypoint.sh). OIDC 만 쓰는 배포는 이 값을 비워 둔다(#1122) — 그때는 아래
+      # OIDC_ISSUER 가 필수이고, serve 가 나머지 OIDC 설정을 검사한다. 설정한다면 32자
+      # 이상이어야 하고 .env.app.example 의 예시 값은 거부된다.
+      KPUBDATA_BUILDER_API_KEY: ${KPUBDATA_BUILDER_API_KEY:-}
       KPUBDATA_BUILDER_HOST: 0.0.0.0
       KPUBDATA_BUILDER_PORT: "8000"
       # 빌드 산출물/매니페스트/파생 SQLite 인덱스의 영속 루트. builder-data 볼륨에 매핑.
