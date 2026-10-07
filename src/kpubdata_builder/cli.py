@@ -44,6 +44,7 @@ from .warehouse import (
     HOLD_KINDS,
     BackupInvalid,
     HoldKind,
+    SnapshotStateError,
     TableCatalog,
     WarehouseError,
 )
@@ -961,9 +962,10 @@ def _run_serve(
             build_wait_seconds=build_wait_seconds,
             warehouse_root=Path(warehouse) if warehouse is not None else None,
         )
-    except UnsupportedSchemaVersionError as exc:
+    except (UnsupportedSchemaVersionError, SnapshotStateError) as exc:
         # A state store a newer release wrote: said in one line, and left as it is
-        # (#1096). This is what a rolled-back deployment meets.
+        # (#1096). This is what a rolled-back deployment meets. The catalog says it
+        # with its own error, as it did before it was opened at start.
         print(f"error: {exc}", file=sys.stderr)
         return 1
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
