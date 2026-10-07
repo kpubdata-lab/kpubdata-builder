@@ -94,11 +94,11 @@ ADR 0006). 설정은 환경변수로 주입합니다 — `docker-entrypoint.sh`�
 | `KPUBDATA_BUILDER_CUBRID_URL` | CUBRID SQLAlchemy URL (예: `cubrid+pycubrid://user:pass@host:33000/db?charset=utf8`) | 미설정 | `STORAGE_BACKEND=cubrid` 시 필수 |
 | `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` | `prune-cancelled --apply`가 cancelled partial run을 정리하기까지의 보존 시간(시간). 미설정이면 정리 대상 없음(#549) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT` | HTTP `local` publish target의 루트 디렉터리(절대 경로). destination은 이 안의 상대 `owner/name`로 한정된다(#550). 미설정이면 local target blocker | 미설정 | local publish 사용 시 필수 |
-| `OIDC_ISSUER` | OIDC 발급자 (설정 시 Bearer 활성, ADR 0015 — Keycloak realm) | 미설정 | 선택 |
+| `OIDC_ISSUER` | OIDC 발급자 (설정 시 Bearer 활성, ADR 0015 — Keycloak realm). 쉼표로 여럿을 줄 수 있고, 그때는 아래 허용 목록의 모든 항목이 `<issuer>\|<값>` 이어야 한다(#1074) | 미설정 | 선택 |
 | `OIDC_AUDIENCE` | OIDC audience (OIDC_ISSUER 설정 시 필수) | 미설정 | OIDC 시 필수 |
-| `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635) | 미설정 | OIDC 시 셋 중 하나 필수 |
-| `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
-| `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분) | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635). 세 목록의 항목은 `<값>` 또는 `<issuer>\|<값>` 이다. issuer 를 적은 항목은 그 issuer 가 말한 값만 들인다 — sub·이메일·도메인은 issuer 안에서만 뜻이 있다. issuer 가 하나면 `<값>` 은 그 issuer 의 것이고, 둘 이상인데 `<값>` 만 적은 항목이 있으면 기동을 거부한다(#1074). issuer 는 `OIDC_ISSUER` 에 적은 그대로 쓴다 | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_SUBJECTS` | 허용 sub 목록 (콤마 구분). 항목 형식은 `OIDC_ALLOWED_HD` 와 같다 | 미설정 | OIDC 시 셋 중 하나 필수 |
+| `OIDC_ALLOWED_EMAILS` | 허용 이메일 목록 (콤마 구분). 항목 형식은 `OIDC_ALLOWED_HD` 와 같다 | 미설정 | OIDC 시 셋 중 하나 필수 |
 | `ENFORCE_OWNERSHIP` | `true`/`1`이면 run 소유권 강제 (C2, #389). `OIDC_ISSUER`가 있으면 값과 무관하게 켜진다(#635). `KPUBDATA_BUILDER_DEV_MODE` 와 함께 켜면 `serve` 가 기동을 거절한다 — dev principal 은 인증 없이 모든 사용자의 run 을 읽는다(#1072) | 미설정 | 선택 |
 
 > **fail-closed (ADR 0006)**: 컨테이너는 `KPUBDATA_BUILDER_API_KEY`가 없으면 기동을

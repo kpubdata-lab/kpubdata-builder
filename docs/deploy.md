@@ -390,7 +390,11 @@ issuer·audience·JWKS 서명·만료 검증은 항상 fail-closed로 유지한�
 
 - 가입은 허용 목록 또는 **Builder 가입 승인 원장**(#785)으로만 열린다. 환경변수 허용 목록
   (`OIDC_ALLOWED_HD`, `OIDC_ALLOWED_SUBJECTS`, `OIDC_ALLOWED_EMAILS`)에 있는 사용자는 로그인만으로
-  들어온다. 목록에 없는 사용자는 첫 로그인 때 원장에 `pending` 으로 기록되고, 관리자
+  들어온다. 목록의 항목은 토큰의 issuer 와 함께 비교한다(#1074): `OIDC_ISSUER` 에 issuer 가 둘
+  이상이면 항목마다 `<issuer>|<값>` 으로 어느 issuer 의 계정인지 적어야 하고, 그렇지 않은 항목이
+  있으면 기동을 거부한다. 같은 sub 나 이메일이라도 다른 issuer 가 발급한 것은 다른 계정이다 —
+  소유자 식별(`owner_id`)과 관리자 목록이 이미 그렇게 묶는다. issuer 가 하나인 배포는 지금처럼
+  값만 적으면 된다. 목록에 없는 사용자는 첫 로그인 때 원장에 `pending` 으로 기록되고, 관리자
   (`KPUBDATA_BUILDER_ADMIN_SUBJECTS`)가 `POST /admin/users/{user_id}/approve` 로 승인하기 전까지
   모든 요청이 `403 signup_pending` 이다. `.../reject` 는 목록에 있는 사용자도 재시작 없이 막는다
   (`403 signup_rejected`). 관리자는 막히지 않는다. 허용 목록도 관리자도 없으면 아무도 들어올 수
