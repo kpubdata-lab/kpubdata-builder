@@ -127,6 +127,40 @@ def test_build_index_rebuild(engine) -> None:  # type: ignore[no-untyped-def]
     assert idx.count_builds(also=["cbx-r1", "cbx-live"]) == 3
 
 
+def test_build_index_from_a_newer_release_is_refused_not_dropped(engine) -> None:  # type: ignore[no-untyped-def]
+    """An index a newer release wrote is left alone; only a rebuild replaces it (#1096)."""
+    from sqlalchemy import text
+
+    from kpubdata_builder.store.build_index import SCHEMA_VERSION
+    from kpubdata_builder.store.schema_version import UnsupportedSchemaVersionError
+
+    idx = CubridBuildIndex(engine)
+    idx.insert_or_replace("cbx-newer", "ok", None, "2026-01-01T00:01:00Z")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE build_schema_version SET version = version + 1"))
+
+        with pytest.raises(UnsupportedSchemaVersionError) as refusal:
+            CubridBuildIndex(engine)
+        assert refusal.value.found == SCHEMA_VERSION + 1
+        with engine.begin() as conn:
+            kept = conn.execute(
+                text("SELECT COUNT(*) FROM builds WHERE run_id = 'cbx-newer'")
+            ).scalar()
+        assert kept == 1
+
+        # A rebuild is the operator asking for this release's index.
+        rebuilt = CubridBuildIndex(engine, replace_newer=True)
+        assert rebuilt.get("cbx-newer") is None
+        assert CubridBuildIndex(engine).get("cbx-newer") is None
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE build_schema_version SET version = :v"), {"v": SCHEMA_VERSION}
+            )
+        idx.delete("cbx-newer")
+
+
 def test_build_index_monitoring_queries(engine) -> None:  # type: ignore[no-untyped-def]
     """Validate that upstream monitoring (#516/#527) methods work on real CUBRID."""
     idx = CubridBuildIndex(engine)

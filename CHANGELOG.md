@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- A state store a newer release wrote is refused and left as it is (#1096). Rolling a deployment back is when the running code meets one.
+  - The build index dropped its table for any schema version but its own, a newer one too, so the newer release came back to an empty index and nothing had said so. A newer index now stops the start; an older one is recreated as before. `kpubdata-builder rebuild-index` makes this release's index from the manifests, and is the only thing that replaces a newer one (SQLite and CUBRID).
+  - The run event store took any version as its own. A newer one now stops the start: the events cannot be rebuilt from anything else.
+  - `serve` opens an event store that already exists when it starts, rather than on the first build, and prints the refusal as one `error:` line with exit code 1. A workspace without one still gets no file until a build needs it.
 - `serve` reads every setting before it takes a request and refuses to start on one it cannot use (#1108). Each setting is read where it is used, so a mistake showed up there: `KPUBDATA_DUCKDB_MEMORY_LIMIT=lots` as a failed build, `OIDC_JWKS_TTL=1h` as a failed sign-in, `KPUBDATA_QUERY_MAX_CONCURRENCY=0` or `KPUBDATA_BUILDER_MAX_WORKERS=many` as a traceback.
   - `service/startup_settings.py` calls the readers that refuse a value and adds a check for the two that had none (`OIDC_JWKS_TTL`, a non-finite `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT`). `serve` prints every problem as an `error:` line and exits 1 before it creates anything.
   - A setting whose reader falls back to the default on an unreadable value still starts, with a `warning:` line naming it. So does a flag written as anything but `true`/`1`/`false`/`0`: `ENFORCE_OWNERSHIP=yes` is read as off, and said nothing.

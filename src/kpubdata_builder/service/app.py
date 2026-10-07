@@ -32,6 +32,7 @@ from ..credentials import (
     SQLiteCredentialRepository,
 )
 from ..events import BuildEventStore
+from ..events.store import events_store_path
 from ..pipeline import (
     DEFAULT_PREVIEW_SEED,
     CancellationProbe,
@@ -543,6 +544,11 @@ class BuilderService:
         # events query).
         self._event_store_lazy: BuildEventStore | None = None
         self._event_store_lock = threading.Lock()
+        # The store is created on first use so that a preview leaves no file; one that
+        # is already there is opened now, so that a store this release cannot use
+        # stops the start rather than the first build (#1096).
+        if events_store_path(output_root).exists():
+            self._event_store_lazy = BuildEventStore(output_root)
         # Upload store for kind="file" source (#498). If not explicitly injected,
         # create SQLite only when actually needed (lazy creation, `_upload_repository`
         # property) — like credential repository (no master key → None), workspaces
