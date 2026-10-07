@@ -51,12 +51,13 @@ import sqlite3
 import threading
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from ..store.schema_version import stored_version
 from .errors import (
     ImmutableSnapshot,
     SnapshotConflict,
@@ -301,6 +302,28 @@ def _utc_instant(value: str, *, field: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
+def _migration_path(found: int) -> list[tuple[str, ...]]:
+    """The steps from ``found`` to ``SCHEMA_VERSION``, in order.
+
+    Raises:
+        SnapshotStateError: There is no path — ``found`` is newer than this code
+            knows, or older with a gap in the chain.
+    """
+    path: list[tuple[str, ...]] = []
+    version = found
+    while version != SCHEMA_VERSION:
+        steps = _MIGRATIONS.get(version)
+        if steps is None:
+            raise SnapshotStateError(
+                f"catalog schema version is {found} and this code expects "
+                f"{SCHEMA_VERSION}, with no migration from {version}. Being "
+                "canonical, this catalog is never recreated automatically."
+            )
+        path.append(steps)
+        version += 1
+    return path
+
+
 def _now() -> str:
     """Current time as a UTC ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
@@ -325,7 +348,44 @@ class TableCatalog:
         self._path = catalog_path if catalog_path is not None else root / CATALOG_FILENAME
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        # Before the first ordinary connection, which sets the journal mode: a catalog
+        # this release cannot use is refused as it was found, and one it is about to
+        # migrate is copied first (#1096).
+        found = stored_version(self._path)
+        if found is not None and found != SCHEMA_VERSION:
+            _migration_path(found)
+            self._copy_before_migration(found)
         self._init_db()
+
+    def _copy_before_migration(self, found: int) -> Path:
+        """Copy the catalog as it is before its schema is changed (#1096).
+
+        A migration runs in one transaction, so a failure leaves the old version. This
+        is for the failure that comes after it: the release that wrote the old version
+        cannot read the new one, and the catalog cannot be rebuilt from anything.
+
+        The copy is taken through SQLite, so it is consistent, and is kept beside the
+        catalog. One that is already there for this version is left: it is from the
+        first attempt, which is the state worth having. It is the catalog only — the
+        snapshot files it names are not copied, and putting it back over a warehouse
+        that has moved on loses what was written since.
+        """
+        copy = self._path.with_name(f"{self._path.name}.v{found}.before-migration")
+        if copy.exists():
+            return copy
+        partial = copy.with_name(f"{copy.name}.partial")
+        partial.unlink(missing_ok=True)
+        with (
+            closing(
+                sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True)
+            ) as source,
+            closing(sqlite3.connect(str(partial))) as target,
+        ):
+            source.backup(target)
+            # Read later, perhaps read-only: a WAL database needs its -shm for that.
+            target.execute("PRAGMA journal_mode=DELETE")
+        partial.replace(copy)
+        return copy
 
     @property
     def root(self) -> Path:
@@ -449,18 +509,9 @@ class TableCatalog:
             SnapshotStateError: There is no path from ``found`` to the current
                 version.
         """
-        version = found
-        while version != SCHEMA_VERSION:
-            steps = _MIGRATIONS.get(version)
-            if steps is None:
-                raise SnapshotStateError(
-                    f"catalog schema version is {found} and this code expects "
-                    f"{SCHEMA_VERSION}, with no migration from {version}. Being "
-                    "canonical, this catalog is never recreated automatically."
-                )
+        for steps in _migration_path(found):
             for statement in steps:
                 conn.execute(statement)
-            version += 1
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
 

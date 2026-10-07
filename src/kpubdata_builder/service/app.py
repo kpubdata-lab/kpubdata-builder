@@ -49,7 +49,7 @@ from ..uploads import (
     UploadRepository,
     resolve_max_upload_bytes,
 )
-from ..warehouse import TableCatalog
+from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
@@ -534,6 +534,12 @@ class BuilderService:
         # caller write a catalog anywhere the process can reach (#703).
         self._warehouse_root = warehouse_root
         self._catalog: TableCatalog | None = None
+        # Opened on first use, so that a deployment that never materialises has no
+        # catalog file; one that is already there is opened now. A catalog this release
+        # cannot use, or cannot migrate, then stops the start and not the first request
+        # that needs it (#1096).
+        if warehouse_root is not None and (warehouse_root / CATALOG_FILENAME).is_file():
+            self._catalog = TableCatalog(warehouse_root)
         self._client_factory = client_factory
         self._build_index = make_build_index(output_root)  # #309, ADR 0003/0016
         self._store = make_artifact_store(output_root)  # ADR 0010/0016 (canonical manifest)
