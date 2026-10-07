@@ -34,6 +34,21 @@ def _status(service: BuilderService, run_id: str) -> str:
     return snapshot.status
 
 
+def _last_event(service: BuilderService, run_id: str, event: str) -> tuple[str, str]:
+    """The run's last event, once it is ``event``.
+
+    A job's status turns ``cancelled`` before its ``run_cancelled`` event is written —
+    the registry finishes the job, then the worker calls the hook that records it — so a
+    test that reads the events as soon as the status is terminal can see the one before.
+    """
+    for _ in range(500):
+        events = _events(service, run_id)
+        if events and events[-1][0] == event:
+            return events[-1]
+        threading.Event().wait(0.01)
+    raise AssertionError(f"{run_id} did not record {event}: {_events(service, run_id)}")
+
+
 def _until_running(service: BuilderService, run_id: str) -> None:
     for _ in range(500):
         if _status(service, run_id) == "running":
@@ -160,8 +175,7 @@ def test_a_build_still_running_after_the_grace_is_asked_to_stop_and_says_why(
         gate.set()
 
     assert _wait(service, "slow") == "cancelled"
-    event, message = _events(service, "slow")[-1]
-    assert event == "run_cancelled"
+    _event, message = _last_event(service, "slow", "run_cancelled")
     assert "shutting down" in message and "new run_id" in message
     assert not service._job_credentials.holds("slow")
 
@@ -182,7 +196,7 @@ def test_a_users_own_cancel_keeps_its_plain_message(
         gate.set()
 
     assert _wait(service, "mine") == "cancelled"
-    assert _events(service, "mine")[-1] == (
+    assert _last_event(service, "mine", "run_cancelled") == (
         "run_cancelled",
         "build cancelled at a safe stage boundary",
     )
