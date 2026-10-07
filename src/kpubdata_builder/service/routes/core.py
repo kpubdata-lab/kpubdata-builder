@@ -82,6 +82,11 @@ def route(
             if not isinstance(seed_value, int) or isinstance(seed_value, bool):
                 return ServiceResponse(400, {"error": "'seed' must be an integer"})
             seed = seed_value
+        # The refusal the two build routes give (#1070), after the request's own
+        # parameters are judged and before anything is fetched.
+        refused = refuse_missing_provider_keys(service, spec, what="preview")
+        if refused is not None:
+            return refused
         return service.preview(
             spec, limit=limit, sample_mode=sample_mode, seed=seed, principal=principal
         )
