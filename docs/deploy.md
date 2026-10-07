@@ -335,6 +335,11 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 - 자동 배포 워크플로(`deploy.yml`)와 rollout 스크립트는 **제거됐다**(2026-10-05). 그 워크플로가
   대상으로 하던 VM 에 배포하지 않기로 했고, 그 워크플로는 `main` 에 머지될 때마다 실행돼 SSH 단계에서 실패하고 있었다.
   이미지는 `docker.yml` 이 GHCR 에 올린다. VM 에 올리려면 이 절의 compose 를 손으로 실행한다.
+- 어떤 경로가 어떤 태그를 올리는지는 `docker.yml` 머리 주석에 있다. 요약하면 다음과 같다.
+  - 풀 리퀘스트: 올리지 않는다.
+  - `main` push: `main`, `latest`, `sha-…`.
+  - 릴리스: `release.yml` 이 `publish: true` 로 부른다. 릴리스 풀 리퀘스트를 머지한 경우도 같다.
+  - 릴리스 태그의 이미지 digest 가 없으면 `release.yml` 의 `Image published` 작업이 실패한다(#1142).
 
 VM 최초 준비:
 

@@ -318,8 +318,30 @@ jobs:
     uses: ./.github/workflows/docker.yml
     with:
       ref: ${{ needs.release.outputs.tag }}
+      # Always: a release pull request calls this as a `pull_request` event, which
+      # docker.yml otherwise treats as "build, do not publish" (#1142).
+      publish: true
     permissions:
       contents: read
       packages: write
       id-token: write
     secrets: inherit
+
+  image-published:
+    name: Image published
+    needs: [release, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A skipped publish job leaves the called workflow green. The release is not done
+    # until the image it declares exists (#1142).
+    steps:
+      - name: The release's image has a digest
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::no image was published for ${TAG}; the release is incomplete"
+            exit 1
+          fi
+          echo "ghcr.io/kpubdata-lab/kpubdata-builder:${TAG} is ${DIGEST}"

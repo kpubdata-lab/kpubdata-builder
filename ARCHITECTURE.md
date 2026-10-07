@@ -227,7 +227,7 @@ Gold 에서 선언한다(#659 선택지 a) — Silver 는 컬럼을 모두 보�
 | 프로세스 | **하나.** `serve` 가 스레드 풀로 HTTP 요청을 받고, 비동기 build 는 같은 프로세스의 워커 스레드에서 돈다. job 레지스트리·큐·job 에 묶인 키·동시 실행 상한이 프로세스 메모리에 있어 replica 를 늘릴 수 없다 | ADR 0008, [deploy.md §6](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/deploy.md) |
 | 재시작·종료 | 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호에는 대기 job 을 시작하지 않고 끝내고 실행 중인 것은 기다린다(#1118). 다중 사용자 배포는 중단된 run 을 다음 기동 때 `credentials_required` 로 표시한다(#683) | [deploy.md §7](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/deploy.md) |
 | 인증 | 두 경로. 사람은 **OIDC access token**(`Authorization: Bearer`, Keycloak 등), 서비스 계정은 `X-API-Key`. `OIDC_ISSUER` 가 있으면 다중 사용자 배포다: 소유권이 강제되고 가입은 허용 목록이나 승인 원장으로만 열린다 | ADR 0006, 0015 (0009 를 대체), 0012 개정 |
-| provider 키 | 다중 사용자 배포는 저장하지 않는다 — 요청마다 헤더로 받고 요청·작업 동안만 메모리에 둔다. 단일 사용자 배포는 암호화해 저장한다 | ADR 0020 |
+| provider 키 | 다중 사용자 배포는 저장하지 않는다 — 요청마다 헤더로 받고 요청·작업 동안만 메모리에 둔다. 단일 사용자 배포는 암호화해 저장한다 | ADR 0020, [REQUEST_CREDENTIALS.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/REQUEST_CREDENTIALS.md) |
 | build 경로 | 동기 `POST /build` 와 비동기 `POST /builds` 둘 다 있다. **업로드한 파일을 쓰는 build 도 비동기로 돈다**(#998) — ADR 0014 가 적은 "동기 경로만" 은 그때의 한계였다 | ADR 0002, 0008, 0014 보충 |
 | 상태 저장 | 기본은 로컬 파일시스템 + SQLite(`BuildIndex`, 이벤트, 테이블 카탈로그 등). `KPUBDATA_BUILDER_STORAGE_BACKEND` 로 CUBRID 를 고를 수 있다 | ADR 0003, 0010, 0016 |
 | tabular 엔진 | **전환 중.** 테이블 저장소·SQL·silver 정규화·품질 평가는 DuckDB 로 돌고, Polars 를 쓰는 모듈이 아직 남아 있다. 두 엔진을 함께 두는 것은 목표가 아니라 경과다 | ADR 0021 (제안됨), #876 |

@@ -3,6 +3,19 @@ name: Docker
 # Dockerfile이 빌드 가능한 serve 이미지를 만드는지 검증한다 (#320, ADR 0006).
 # docker build 자체가 인수 기준 "빌드 성공 + serve 진입점 포함"을 증명한다.
 # uv sync --no-sources가 PyPI에서 kpubdata를 해석하므로 빌드 시 네트워크가 필요하다.
+#
+# What each way in publishes to ghcr.io/kpubdata-lab/kpubdata-builder (#1142):
+#
+#   pull_request                    builds and scans; publishes nothing
+#   push to main                    `main`, `latest`, `sha-<commit>`
+#   push of a tag v*                `v*` (a tag pushed by a person; one pushed by
+#                                   release.yml's GITHUB_TOKEN does not fire this)
+#   workflow_dispatch               the dispatched branch or tag, `sha-<commit>`
+#   workflow_call from release.yml  the release tag (`ref`) — with `publish: true`,
+#                                   whichever event started the release
+#
+# A release's tag is published by one run at a time: the concurrency group is the
+# image's ref, the same for a tag push and for release.yml's call with that tag.
 
 on:
   pull_request:
@@ -37,6 +50,18 @@ on:
         description: "Tag to build and publish."
         required: true
         type: string
+      # Whether to publish is its own input, not read from the event (#1142). In a
+      # called workflow `github` is the caller's: a release pull request merged into
+      # main calls this as a `pull_request` event, and `publish` skipped every time.
+      publish:
+        description: "Publish the image. release.yml sets it; a pull request never does."
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      digest:
+        description: "The published image's digest; empty when nothing was published."
+        value: ${{ jobs.publish.outputs.digest }}
 
 permissions:
   contents: read
@@ -44,8 +69,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: docker-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # The image's ref: `v1.2.3` called by release.yml and `refs/tags/v1.2.3` pushed
+  # are one group, so the same release is never published by two runs at once.
+  group: docker-${{ inputs.ref && format('refs/tags/{0}', inputs.ref) || github.ref }}
+  # Only a pull request's build is superseded; a publish is never cut off half-way.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && !inputs.publish }}
 
 jobs:
   build:
@@ -106,7 +134,9 @@ jobs:
     name: publish GHCR image
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' || inputs.publish }}
+    outputs:
+      digest: ${{ steps.build-publish.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
