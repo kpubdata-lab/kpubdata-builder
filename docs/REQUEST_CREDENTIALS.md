@@ -1,6 +1,6 @@
 # 요청에 실려 오는 키 — 어디서 보이고 언제 버려지는가
 
-기준: 2026-10-07, `kpubdata-builder` `main` (계약 1.105.0), `kpubdata-studio` `main`,
+기준: 2026-10-07, `kpubdata-builder` `main` (계약 1.106.0), `kpubdata-studio` `main`,
 `kpubdata` `main`. 이 저장소의 `docker-compose.prod.app.yml` 과 `ops/caddy/Caddyfile` 이
 말하는 배포를 "실제 배포" 로 본다. 다른 프록시를 쓰는 배포는 2절의 표를 자기 체인으로
 다시 채워야 한다.
