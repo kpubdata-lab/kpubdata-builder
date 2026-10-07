@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- A query over the deployment's memory or spill limit says so (#961, API contract 1.107.0, additive). SQL (`POST /query`, `POST /warehouse/query`, saved analyses), rows, aggregates, profiles and exports answered such a query with `query_execution_failed` — "query execution failed", the same as a typo in a column name — so a user could not tell that a narrower query, not a corrected one, was needed. They now answer 400 `query_resource_limit` with the fixed sentence a build or preview over its limits gives (`RESOURCE_LIMIT_MESSAGE`, naming `KPUBDATA_DUCKDB_MEMORY_LIMIT` and `KPUBDATA_DUCKDB_MAX_TEMP_SIZE`). The child process still sends no exception across: only the fixed reason `resource_limit` for DuckDB's out-of-memory or spill-quota error, Builder's `ResourceLimitError` or a `MemoryError` under the query's address-space cap, so DuckDB's sizes and spill paths stay out of the response.
 - A failed scheduled publish is reported where someone will see it (#1143). Each of the five scheduled workflows ran an inline `gh issue create` that named no repository. It ran on a runner without a checkout, where `gh` has no repository to file in, so the notice itself could fail.
   - The notice is now one reusable workflow, `freshness-incident.yml`, and the five workflows call it from `notify-failure`.
   - It names the repository (`GH_REPO`), and a repeat failure comments on the workflow's open issue instead of opening another.

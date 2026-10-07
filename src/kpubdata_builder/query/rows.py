@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
 from ..tabular.sql import quote_identifier
+from .engine import failure_payload
 
 if TYPE_CHECKING:
     from .result import WireResult
@@ -413,10 +414,10 @@ def rows_worker(
             connection.send({"ok": False})
         else:
             connection.send(payload)
-    except BaseException:
+    except BaseException as exc:
         # Engine messages can contain absolute parquet paths; never send them across.
         with suppress(BrokenPipeError, EOFError, OSError):
-            connection.send({"ok": False})
+            connection.send(failure_payload(exc))
     finally:
         connection.close()
 

@@ -22,7 +22,11 @@ from typing import cast
 
 import duckdb
 
-from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
+from kpubdata_builder.query.engine import (
+    QueryExecutionError,
+    QueryResourceLimitError,
+    QueryTimeoutError,
+)
 from kpubdata_builder.query.models import QueryRequest, QueryStage
 from kpubdata_builder.query.resolver import (
     QueryArtifactUnavailableError,
@@ -216,6 +220,8 @@ def execute_query(
         return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
     except QueryTimeoutError:
         return ServiceResponse(504, {"error": "query timed out", "code": "query_timeout"})
+    except QueryResourceLimitError as exc:
+        return ServiceResponse(400, {"error": str(exc), "code": "query_resource_limit"})
     except QueryExecutionError:
         return ServiceResponse(
             400, {"error": "query execution failed", "code": "query_execution_failed"}
