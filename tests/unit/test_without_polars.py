@@ -172,6 +172,15 @@ def test_float_key_text_is_polars_text(value: float) -> None:
             dt.datetime(2020, 1, 1, 1, 2, 3, tzinfo=zoneinfo.ZoneInfo("Asia/Seoul")),
             ("datetime", "Asia/Seoul"),
         ),
+        # An offset with seconds — Seoul's local mean time, +08:27:52 (#876 review).
+        (
+            dt.datetime(1900, 1, 1, tzinfo=zoneinfo.ZoneInfo("Asia/Seoul")),
+            ("datetime", "Asia/Seoul"),
+        ),
+        (
+            dt.datetime(1900, 1, 1, tzinfo=zoneinfo.ZoneInfo("America/New_York")),
+            ("datetime", "America/New_York"),
+        ),
         (2**70, ("int128",)),
         ("서울", ("str",)),
     ],

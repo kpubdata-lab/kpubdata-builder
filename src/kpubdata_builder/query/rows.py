@@ -22,6 +22,7 @@ their leading zeros, Decimals and large integers are exact decimal text, dates I
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -241,14 +242,20 @@ def typed_literal(value: JsonValue, dtype: str) -> object:
     if isinstance(value, (dict, list)):
         raise ValueError("a filter value must be a scalar")
     storage = scalar_sql_type(dtype)
+    zoned = storage == "TIMESTAMP WITH TIME ZONE"
+    # Fetching an instant needs pytz, which is not a dependency (#876 review): read its
+    # UTC wall time and mark it UTC, as the Parquet upload reader does.
+    expression = f"timezone('UTC', CAST(? AS {storage}))" if zoned else f"CAST(? AS {storage})"
     with duckdb.connect(":memory:") as connection:
         connection.execute("SET TimeZone = 'UTC'")
         try:
-            row = connection.execute(f"SELECT CAST(? AS {storage})", [value]).fetchone()
+            row = connection.execute(f"SELECT {expression}", [value]).fetchone()
         except duckdb.Error as exc:
             raise ValueError(f"{value!r} is not a valid {dtype}") from exc
     if row is None or row[0] is None:
         raise ValueError(f"{value!r} is not a valid {dtype}")
+    if zoned and isinstance(row[0], dt.datetime):
+        return row[0].replace(tzinfo=dt.timezone.utc)
     return row[0]
 
 
@@ -308,7 +315,7 @@ def read_page(table_path: str, plan: RowsPlan) -> tuple[WireResult, int | None, 
     column ``_c<i>`` and carries the row's position in the file, so any column — an
     empty name included — is read, and ties keep one order on every page.
     """
-    from .result import to_wire
+    from .result import WireResult, to_wire
     from .sandbox import ORDERED_DATASET, ROW_ORDER, open_sandbox
 
     with open_sandbox(table_path) as sandbox:
@@ -351,7 +358,8 @@ def read_page(table_path: str, plan: RowsPlan) -> tuple[WireResult, int | None, 
             + [quote_identifier(ROW_ORDER)]
         )
         names = list(plan.columns) if plan.columns is not None else list(sandbox.columns)
-        select = ", ".join(sandbox.alias(name) for name in names)
+        # A table without columns still has rows: each is an empty record.
+        select = ", ".join(sandbox.alias(name) for name in names) or quote_identifier(ROW_ORDER)
         # The page, encoded from its own rows only (as the client receives them), and
         # whether one more row exists after it.
         relation = connection.sql(
@@ -359,7 +367,11 @@ def read_page(table_path: str, plan: RowsPlan) -> tuple[WireResult, int | None, 
             f"LIMIT {plan.page_size} OFFSET {plan.offset}",
             params=params,
         )
-        page = to_wire(relation, stored=[sandbox.dtypes.get(n) for n in names]).renamed(names)
+        if names:
+            page = to_wire(relation, stored=[sandbox.dtypes.get(n) for n in names]).renamed(names)
+        else:
+            fetched = relation.fetchall()
+            page = WireResult([], [], [{} for _ in fetched], [() for _ in fetched])
         beyond = connection.execute(
             f"SELECT 1 FROM {source} LIMIT 1 OFFSET {plan.offset + plan.page_size}", params
         ).fetchone()

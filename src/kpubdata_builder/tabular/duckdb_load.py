@@ -869,7 +869,18 @@ def load_parquet(
     columns = parquet_columns(connection, path)
     nodes = tuple(node_from_dtype(dtype) for dtype in columns.dtypes)
     physical = tuple(f"c{i}" for i in range(len(nodes)))
-    parts = [f"file_row_number AS {quote_identifier(ROW_SEQ_COLUMN)}"]
+    # The row ordinal is the file's row order. read_parquet names it ``file_row_number``
+    # and refuses a file that has a column of that name (any letter case) — then the
+    # file is copied into a table first, whose ``rowid`` is the same order (#876 review).
+    source = f"read_parquet({location}, file_row_number = true)"
+    ordinal = "file_row_number"
+    if any(name.lower() == "file_row_number" for name in columns.stored):
+        staging = TabularRelation(f"{table}__rows")
+        connection.execute(
+            f"CREATE OR REPLACE TEMP TABLE {staging.sql} AS SELECT * FROM read_parquet({location})"
+        )
+        source, ordinal = staging.sql, "rowid"
+    parts = [f"{ordinal} AS {quote_identifier(ROW_SEQ_COLUMN)}"]
     for index, (stored, node) in enumerate(zip(columns.stored, nodes, strict=True)):
         column = quote_identifier(stored)
         if node[0] == "null":
@@ -883,9 +894,10 @@ def load_parquet(
         parts.append(f"{expression} AS {quote_identifier(physical[index])}")
     relation = TabularRelation(table)
     connection.execute(
-        f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT {', '.join(parts)} "
-        f"FROM read_parquet({location}, file_row_number = true)"
+        f"CREATE OR REPLACE TABLE {relation.sql} AS SELECT {', '.join(parts)} FROM {source}"
     )
+    if ordinal == "rowid":
+        connection.execute(f"DROP TABLE {source}")
     counted = connection.execute(f"SELECT count(*) FROM {relation.sql}").fetchone()
     return LoadedTable(
         relation=relation,

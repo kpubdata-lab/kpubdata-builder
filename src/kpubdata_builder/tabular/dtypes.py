@@ -117,8 +117,9 @@ def is_temporal(dtype: str) -> bool:
 
 def scalar_sql_type(dtype: str) -> str:
     """The DuckDB type a value of a scalar dtype is compared as in a query of a Builder
-    table: the stored type, a zoned datetime as an instant and a duration as its
-    microseconds (``query.sandbox``).
+    table: the stored type, a zoned datetime as an instant and a duration as an INTERVAL
+    — the types ``query.sandbox`` gives the columns (``to_microseconds``), so a value the
+    check accepts is one the query can compare (#876 review).
 
     Raises:
         ValueError: The dtype is nested or Null, which has no value to compare with.
@@ -134,7 +135,7 @@ def scalar_sql_type(dtype: str) -> str:
             unit.group(1) if unit else "us", "TIMESTAMP"
         )
     if base == "Duration":
-        return "BIGINT"
+        return "INTERVAL"
     decimal = re.fullmatch(r"Decimal\(precision=(\d+), scale=(\d+)\)", dtype)
     if decimal:
         return f"DECIMAL({decimal.group(1)},{decimal.group(2)})"

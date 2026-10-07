@@ -13,8 +13,9 @@ memory is never held whole — not as bytes, not as text, not as a record list:
 - **JSON** (a top-level array of objects) is read element by element. A malformed
   element is refused where it is found, and one element may span at most
   :data:`MAX_JSON_ELEMENT_CHARS` characters (#920).
-- **CSV** is decoded to UTF-8 into a spill file, then read in batches by DuckDB. The
-  column types are still inferred from the whole file, so a batch never decides a type
+- **CSV** is decoded to UTF-8 into a spill file. Its records are read here, strictly
+  (an unclosed quote or an extra field is refused with its line), written again without
+  ambiguity, and typed by DuckDB over the whole file — so a batch never decides a type
   the next batch contradicts.
 - **Parquet** is spilled to a file and read in batches by DuckDB.
 
@@ -25,10 +26,10 @@ gives the same records the stream gives.
 from __future__ import annotations
 
 import codecs
-import csv
 import datetime as dt
 import io
 import json
+import logging
 import re
 import shutil
 import tempfile
@@ -39,6 +40,8 @@ from typing import BinaryIO, cast
 
 from ..spec import JsonValue
 from .errors import IngestionError
+
+logger = logging.getLogger(__name__)
 
 _TEXT_FORMATS = frozenset({"csv", "json", "jsonl"})
 _FORMATS = _TEXT_FORMATS | {"parquet"}
@@ -229,6 +232,11 @@ def _untexted_kind(value: object) -> str | None:
     return _UNTEXTED.get(type(value))
 
 
+#: A zoned timestamp or UUID as the type of a list element or struct field: a type name
+#: is followed by ``,``, ``)``, ``[`` or the end, where a field's name is followed by a space.
+_NESTED_UNFETCHABLE = re.compile(r"\b(?:TIMESTAMP WITH TIME ZONE|UUID)(?=[,)\[]|$)")
+
+
 def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
     """The rows of a Parquet file as records, in file order, read by DuckDB.
 
@@ -245,12 +253,27 @@ def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
                 "DESCRIBE SELECT * FROM read_parquet(?)", [str(path)]
             ).fetchall()
             names = [str(row[0]) for row in described]
-            zoned = [str(row[1]) == "TIMESTAMP WITH TIME ZONE" for row in described]
+            types = [str(row[1]) for row in described]
+            zoned = [t == "TIMESTAMP WITH TIME ZONE" for t in types]
+            for name, type_ in zip(names, types, strict=True):
+                # Inside a list or struct an instant needs pytz to fetch, and a UUID comes
+                # out as an object no output writes: refused by name (#876 review).
+                if type_ not in ("TIMESTAMP WITH TIME ZONE", "UUID") and _NESTED_UNFETCHABLE.search(
+                    type_
+                ):
+                    raise IngestionError(
+                        f"column {name!r} holds zoned timestamps or UUIDs inside a list or "
+                        "struct, which a parquet upload cannot carry: store them as text"
+                    )
             # Fetching an instant needs pytz, which is not a dependency: read its UTC
-            # wall time and mark it UTC here.
+            # wall time and mark it UTC here. A UUID is read as its text.
             select = ", ".join(
-                f"timezone('UTC', {quote_identifier(n)})" if z else quote_identifier(n)
-                for n, z in zip(names, zoned, strict=True)
+                f"timezone('UTC', {quote_identifier(n)})"
+                if z
+                else f"CAST({quote_identifier(n)} AS VARCHAR)"
+                if t == "UUID"
+                else quote_identifier(n)
+                for n, z, t in zip(names, zoned, types, strict=True)
             )
             cursor = connection.execute(f"SELECT {select} FROM read_parquet(?)", [str(path)])
             for rows in iter(lambda: cursor.fetchmany(batch_records), []):
@@ -270,7 +293,11 @@ def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
         except IngestionError:
             raise
         except duckdb.Error as exc:
-            raise IngestionError(f"failed to parse parquet content: {exc}") from exc
+            # DuckDB's text names the spill file and the SQL; it stays in the log.
+            logger.warning("parquet: DuckDB could not read the upload: %s", exc)
+            raise IngestionError(
+                "failed to parse parquet content: not a Parquet file Builder can read"
+            ) from exc
 
 
 #: How a CSV field's text is typed (the rules Polars applied before #876, kept so the
@@ -285,22 +312,110 @@ _CSV_FLOAT = (
 )
 
 
-def _csv_header(path: Path) -> list[str]:
-    """The header row's names: a name repeated is renamed ``<name>_duplicated_<n>``."""
-    with path.open(encoding="utf-8", newline="") as handle:
-        header = next(csv.reader(handle), [])
-    if header and header[0].startswith("\ufeff"):
-        header[0] = header[0][1:]
+#: One field of a CSV record, then a comma or the end of the record: a quoted field
+#: (``""`` inside is a quote), or an unquoted one — empty, or not starting with a quote,
+#: and then anything but a comma (a quote inside it is a character, as Polars read it).
+_CSV_FIELD = re.compile(r'(?:"((?:[^"]|"")*)"|([^,"][^,]*|))(,|\Z)', re.DOTALL)
+#: A quoted field still open at the end of the text read so far.
+_CSV_OPEN_FIELD = re.compile(r'"(?:[^"]|"")*\Z', re.DOTALL)
+
+
+class _OpenQuote(Exception):
+    """The record's last quoted field continues on the next line."""
+
+
+def _csv_records(path: Path) -> Iterator[tuple[int, list[str | None]]]:
+    """The records of a CSV file with the line each starts on, strictly (#876 review).
+
+    A quoted field may span lines; one that is never closed is refused with the line the
+    record starts on — DuckDB's reader returned the rows before it and dropped the rest
+    without an error. A quoted field followed by anything but a comma is refused. An
+    unquoted empty field is ``None``, a quoted one the empty string. A blank line is
+    skipped. Lines may end in LF, CRLF or CR, mixed; a byte-order mark is dropped before
+    the header is read.
+    """
+    parts: list[str] = []
+    start = 0
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        for number, line in enumerate(handle, start=1):
+            if parts and '"' not in line:
+                parts.append(line)  # still inside the open quoted field
+                continue
+            if not parts:
+                start = number
+            parts.append(line)
+            text = "".join(parts)
+            # One line ending: universal newlines read CRLF, LF and CR, mixed.
+            if text.endswith("\r\n"):
+                text = text[:-2]
+            elif text.endswith(("\n", "\r")):
+                text = text[:-1]
+            try:
+                fields = _csv_fields(text, start)
+            except _OpenQuote:
+                continue
+            parts = []
+            if fields is not None:
+                yield start, fields
+    if parts:
+        raise IngestionError(
+            f"failed to parse csv content: a quoted field starting on line {start} is never closed"
+        )
+
+
+def _csv_fields(text: str, line: int) -> list[str | None] | None:
+    """The fields of one record, ``None`` for a blank line; ``_OpenQuote`` when the last
+    quoted field is not closed in ``text``."""
+    if text == "":
+        return None
+    if '"' not in text:
+        return [value or None for value in text.split(",")]
+    fields: list[str | None] = []
+    position = 0
+    while True:
+        match = _CSV_FIELD.match(text, position)
+        if match is None:
+            if _CSV_OPEN_FIELD.match(text, position):
+                raise _OpenQuote
+            raise IngestionError(
+                f"failed to parse csv content: on line {line} a quoted field is followed by "
+                "something other than a comma"
+            )
+        quoted, plain, separator = match.groups()
+        if quoted is not None:
+            fields.append(quoted.replace('""', '"'))
+        else:
+            fields.append(plain if plain else None)
+        position = match.end()
+        if separator == "":
+            return fields
+
+
+def _csv_names(header: list[str | None]) -> list[str]:
+    """The header row's names: a name repeated is renamed ``<name>_duplicated_<n>``.
+
+    A renamed column that takes a name the header already has is refused, as Polars
+    refused it, rather than one of the two columns being lost.
+    """
     names: list[str] = []
     seen: dict[str, int] = {}
-    for name in header:
+    for name in (value or "" for value in header):
         if name in seen:
             names.append(f"{name}_duplicated_{seen[name]}")
             seen[name] += 1
         else:
             names.append(name)
             seen[name] = 0
+    if len(set(names)) != len(names):
+        raise IngestionError(
+            "failed to parse csv content: the header names a column twice once repeated "
+            "names are numbered (<name>_duplicated_<n>)"
+        )
     return names
+
+
+def _quoted_csv_value(value: str | None) -> str:
+    return "" if value is None else '"' + value.replace('"', '""') + '"'
 
 
 def _csv_batches(
@@ -308,30 +423,50 @@ def _csv_batches(
 ) -> Iterator[Batch]:
     """The rows of a CSV file as records, typed by the whole file (``_CSV_*``).
 
-    Every field is read as text first — an unquoted empty field is null, a quoted one
-    the empty string — so a column's type is decided by all of its values before a
-    record is given, and a column ``read_as: str`` declares keeps its text (``00123``).
-    A short row is padded with nulls; a row with more fields than the header is refused.
+    The file's structure is read here (``_csv_records``) and written again as a file with
+    no ambiguity left — every value quoted, a null unquoted, one LF per record — which
+    DuckDB reads as text. Every field stays text until a column's type is decided by all
+    of its values, so a column ``read_as: str`` declares keeps its text (``00123``). A
+    short row is padded with nulls; a row with more fields than the header is refused.
     """
     import duckdb
 
     from ..tabular.sql import quote_identifier
 
-    names = _csv_header(path)
-    if not names:
+    records = _csv_records(path)
+    first = next(records, None)
+    if first is None:
         raise IngestionError("failed to parse csv content: no header row")
+    names = _csv_names(first[1])
+    normalized = path.with_name(path.name + ".normalized.csv")
+    count = 0
+    with normalized.open("w", encoding="utf-8", newline="") as handle:
+        for line, fields in records:
+            if len(fields) > len(names):
+                raise IngestionError(
+                    f"failed to parse csv content: line {line} has {len(fields)} fields, "
+                    f"the header {len(names)}"
+                )
+            fields.extend([None] * (len(names) - len(fields)))
+            handle.write(",".join(_quoted_csv_value(value) for value in fields) + "\n")
+            count += 1
     keep_text = {column for column, dtype in (read_as or {}).items() if dtype == "str"}
     physical = [f"c{i}" for i in range(len(names))]
     columns = "{" + ", ".join(f"'{p}': 'VARCHAR'" for p in physical) + "}"
     with duckdb.connect(":memory:") as connection:
         try:
             connection.execute(
-                "CREATE TABLE csv_rows AS SELECT * FROM read_csv(?, header = true, "
+                "CREATE TABLE csv_rows AS SELECT * FROM read_csv(?, header = false, "
                 "auto_detect = false, all_varchar = true, delim = ',', quote = '\"', "
-                "escape = '\"', allow_quoted_nulls = false, null_padding = true, "
+                "escape = '\"', allow_quoted_nulls = false, new_line = '\\n', "
+                f"max_line_size = {max(normalized.stat().st_size, 2_097_152) + 1}, "
                 f"parallel = false, columns = {columns})",
-                [str(path)],
+                [str(normalized)],
             )
+            read = connection.execute("SELECT count(*) FROM csv_rows").fetchone()
+            if read is None or read[0] != count:
+                logger.warning("csv: %s records parsed, DuckDB read %s", count, read)
+                raise IngestionError("failed to parse csv content")
             kinds = _csv_kinds(connection, physical)
             select = []
             for name, column in zip(names, physical, strict=True):
@@ -353,8 +488,16 @@ def _csv_batches(
                 yield [dict(zip(names, row, strict=True)) for row in rows]
         except IngestionError:
             raise
+        except duckdb.ConversionException as exc:
+            # DuckDB's text names the spill file; the client gets a fixed sentence.
+            logger.warning("csv: a value does not fit its column type: %s", exc)
+            raise IngestionError(
+                "failed to parse csv content: a value does not fit the type its column was "
+                "read as (an integer beyond 64 bits)"
+            ) from exc
         except duckdb.Error as exc:
-            raise IngestionError(f"failed to parse csv content: {exc}") from exc
+            logger.warning("csv: DuckDB could not read the normalized file: %s", exc)
+            raise IngestionError("failed to parse csv content") from exc
 
 
 def _csv_kinds(connection: object, physical: list[str]) -> dict[str, str]:

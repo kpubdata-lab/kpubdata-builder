@@ -225,6 +225,16 @@ def _float_text(value: float) -> str:
     return fixed if "." in fixed else f"{fixed}.0"
 
 
+def _offset_text(offset: dt.timedelta) -> str:
+    """``+09:00``: the offset to the nearest minute, as Polars printed it. A historic zone
+    offset with seconds (Seoul's +08:27:52 in 1900) was ``+08:2752`` with ``%z`` (#876
+    review)."""
+    minutes = round(offset.total_seconds() / 60)
+    sign = "-" if minutes < 0 else "+"
+    hours, rest = divmod(abs(minutes), 60)
+    return f"{sign}{hours:02d}:{rest:02d}"
+
+
 def key_text(value: object, node: tuple[object, ...]) -> str | None:
     """A key value as the name of its partition — the text the splits have always used
     (Polars' cast to text before #876), or None for a null.
@@ -249,8 +259,7 @@ def key_text(value: object, node: tuple[object, ...]) -> str | None:
         text = moment.strftime("%Y-%m-%d %H:%M:%S.%f")
         if moment.tzinfo is None:
             return text
-        offset = moment.strftime("%z")
-        return f"{text}{offset[:3]}:{offset[3:]}"
+        return f"{text}{_offset_text(cast(dt.timedelta, moment.utcoffset()))}"
     if kind == "time":
         return cast(dt.time, value).strftime("%H:%M:%S")
     if kind == "date":
