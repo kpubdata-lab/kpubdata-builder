@@ -62,6 +62,12 @@ jobs:
       - name: kpubdata public-API gate
         run: uv run --no-sources python scripts/check_kpubdata_imports.py
 
+      # A `uses:` reference to another repository runs whatever its ref points at when
+      # the job starts, so a branch or tag lets code reach the release and review
+      # gates without a change here (#1003). Every one must be a full commit SHA.
+      - name: Action pin gate
+        run: python3 scripts/check_action_pins.py
+
       # The service contract tests pass a deliberate break as long as the document and
       # the code change together. This compares the contract with the base branch's:
       # any normative change must raise info.version, and a break must raise its major
@@ -242,7 +248,7 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: kpubdata-lab/kpubdata/.github/actions/release-freeze@main
+      - uses: kpubdata-lab/kpubdata/.github/actions/release-freeze@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           github_token: ${{ github.token }}
 
