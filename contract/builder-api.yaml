@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.104.0"
+  version: "1.105.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,8 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.105.0 says what a stopping server does with async builds (#1118, additive). On SIGTERM the queued jobs end as `failed` without starting — `error` begins `interrupted:` and says to submit again under a new `run_id`; nothing was fetched or written — and `POST /builds` answers 503 `shutting_down`, recording nothing, so the same `run_id` can be sent again. Running jobs get `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS` to finish; one still running then is cancelled the way `POST /builds/{run_id}/cancel` cancels and ends `cancelled`. Before, queued jobs started during the shutdown and were killed with the process. No schema changes.
+
     v1.104.0 reads a refresh whose table was not committed as a failed refresh of the dataset (#1123). `GET /datasets`, `GET /datasets/{dataset_id}` and `GET /datasets/{dataset_id}/runs` read the manifest's build status, so such a run — `status: ok` with `warehouse_failures` (#788) — showed `status: ok`, `status_axes.refresh: succeeded`, and was the last success `status_axes.health` counted from, for a table that had not changed. They now say what `GET /builds` says since 1.101.0: the run and the dataset's `status` are `failed`, `refresh` is `failed`, the run is not a last success, and `completeness` is `unknown` — the run's rows are in its own artifacts and the table is what an earlier refresh left. No schema changes.
 
     v1.103.0 gives the preview the build's refusal for a missing key (#1070, additive): in a multi-user deployment `POST /preview` answers 400 `provider_credential_required`, naming the `providers`, when the spec calls a provider that needs a key and `X-Provider-Key` carries none for it — the answer `POST /build` and `POST /builds` give. It was an ordinary provider error after the call was attempted. Nothing is fetched. The 403 with the same `code` is unchanged: that is a single-user deployment refusing the operator's key (#786). No schema changes.
@@ -1703,6 +1705,14 @@ paths:
                     code: build_queue_full
         "500":
           description: job 접수 실패(event 기록/큐잉 불가 — job은 생성되지 않음)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >-
+            서버가 종료 중이다(`shutting_down`, #1118). job 도 제출 기록도 만들어지지
+            않았으므로 같은 `run_id` 로 잠시 뒤 다시 보낸다.
           content:
             application/json:
               schema:

@@ -464,7 +464,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.103.0 -> 1.104.0: the dataset views read a run whose table was not committed as
 #   failed — status, status_axes.refresh, the last success health counts from — and
 #   its completeness as unknown (#1123).
-API_CONTRACT_VERSION = "1.104.0"
+# 1.104.0 -> 1.105.0: POST /builds answers 503 shutting_down once the server is
+#   stopping; queued jobs end failed (interrupted) unstarted and running ones are
+#   drained, then cancelled (#1118, additive).
+API_CONTRACT_VERSION = "1.105.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1183,6 +1186,29 @@ class BuilderService:
         response = self._build_runs.cancel_build(run_id)
         self._job_credentials.discard(run_id)
         return response
+
+    def begin_shutdown(self) -> tuple[str, ...]:
+        """The first step of stopping (#1118): no new async build is accepted, and the
+        queued ones end as failed with their keys dropped. Returns the runs it ended.
+
+        Safe to call more than once, and from a signal handler's thread.
+        """
+        ended = self._build_runs.interrupt_for_shutdown()
+        for run_id in ended:
+            self._job_credentials.discard(run_id)
+        return ended
+
+    def drain_builds(
+        self, grace_seconds: float, cancel_seconds: float = 10.0
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Wait for the running async builds to end, after ``begin_shutdown`` (#1118).
+
+        Those still running after ``grace_seconds`` are asked to stop and given
+        ``cancel_seconds`` more. Returns ``(cancelled, still_running)``. A job's keys go
+        when it ends, as always; one that outlives both waits holds its keys until the
+        process ends.
+        """
+        return self._build_runs.drain_for_shutdown(grace_seconds, cancel_seconds)
 
     def mark_interrupted_runs(self) -> tuple[str, ...]:
         """At startup of a multi-user deployment, fail runs a restart interrupted (#683).

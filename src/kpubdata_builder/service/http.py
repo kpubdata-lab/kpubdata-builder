@@ -14,6 +14,7 @@ import json
 import logging
 import mimetypes
 import os
+import threading
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -538,6 +539,42 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
         self._executor.shutdown(wait=False, cancel_futures=True)
 
 
+#: How long a SIGTERM waits for running async builds before asking them to stop (#1118).
+#: The container's stop timeout must be longer than this plus ``_SHUTDOWN_CANCEL_SECONDS``.
+SHUTDOWN_GRACE_ENV = "KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS"
+_DEFAULT_SHUTDOWN_GRACE_SECONDS = 90.0
+_SHUTDOWN_CANCEL_SECONDS = 10.0
+
+
+def shutdown_grace_seconds() -> float:
+    """``KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS``; the default when unset or not a
+    non-negative number. ``0`` asks running builds to stop at once."""
+    raw = os.environ.get(SHUTDOWN_GRACE_ENV, "").strip()
+    try:
+        value = float(raw) if raw else _DEFAULT_SHUTDOWN_GRACE_SECONDS
+    except ValueError:
+        return _DEFAULT_SHUTDOWN_GRACE_SECONDS
+    return value if value >= 0 else _DEFAULT_SHUTDOWN_GRACE_SECONDS
+
+
+def _drain_builds(service: BuilderService) -> None:
+    """Let the running async builds finish within the grace period (#1118)."""
+    cancelled, still_running = service.drain_builds(
+        shutdown_grace_seconds(), _SHUTDOWN_CANCEL_SECONDS
+    )
+    if cancelled:
+        _logger.warning(
+            "shutdown: %d build job(s) were still running after the grace period and "
+            "were asked to stop",
+            len(cancelled),
+        )
+    if still_running:
+        _logger.error(
+            "shutdown: %d build job(s) did not stop; they end with the process and are incomplete",
+            len(still_running),
+        )
+
+
 def serve(
     service: BuilderService,
     *,
@@ -553,6 +590,9 @@ def serve(
 
     On SIGTERM, stop serve_forever and gracefully shut down in-flight requests (#374).
     ACA/K8s rolling updates send SIGTERM to container; work is not forcibly severed.
+    Async builds (#1118): the queued ones end as failed without starting and new
+    submissions are refused, then the running ones get
+    ``KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`` to finish before they are asked to stop.
     SIGINT (Ctrl-C) is untouched so KeyboardInterrupt propagates naturally.
 
     Args:
@@ -591,12 +631,25 @@ def serve(
         # process can reach it without a race for a port picked beforehand.
         print(f"listening on http://{host}:{server.server_port}", flush=True)
 
+    stopping = threading.Event()
+
+    def _stop() -> None:
+        # Before the listener stops (#1118): a submission already being handled is then
+        # refused rather than queued behind a shutdown, and no queued job can start
+        # when a running one returns its slot.
+        try:
+            ended = service.begin_shutdown()
+            if ended:
+                _logger.warning("shutdown: ended %d queued build job(s) unstarted", len(ended))
+        except Exception:  # noqa: BLE001 - the server must still stop
+            _logger.exception("shutdown: could not end the queued build jobs")
+        server.shutdown()
+
     def _shutdown(_signum: int, _frame: object) -> None:
         # Must shutdown from separate thread so serve_forever block unblocks (http.server
         # recommended pattern).
-        import threading
-
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        stopping.set()
+        threading.Thread(target=_stop, daemon=True).start()
 
     import signal
 
@@ -608,6 +661,8 @@ def serve(
     finally:
         server.server_close()
         signal.signal(signal.SIGTERM, previous_term)
+    if stopping.is_set():
+        _drain_builds(service)
 
 
 __all__ = ["BoundedThreadingHTTPServer", "make_handler", "serve"]

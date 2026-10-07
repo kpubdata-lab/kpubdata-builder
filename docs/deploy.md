@@ -94,6 +94,15 @@ docker run --rm -p 8000:8000 \
 - `GET /healthz` — 무인증 liveness probe (#372). 프로브가 API 키를 못 실을 때 사용.
 - `Dockerfile` `HEALTHCHECK` — urllib로 `/healthz` 폴링 (#372).
 - `SIGTERM` — 우아운 종료(진행 중 요청 drain, #374). ACA/K8s 롤링 업데이트 대응.
+  비동기 빌드는 이렇게 끝난다(#1118). 대기 중인 작업은 시작하지 않고 `failed`
+  (`interrupted: …`)로 끝나며 키를 버린다 — 가져오거나 쓴 것이 없으므로 새 `run_id` 로 다시
+  제출하면 된다. 그 뒤의 제출은 503 `shutting_down` 이다. 실행 중인 빌드는
+  `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`(기본 90초) 동안 끝나기를 기다리고, 그때까지 남은
+  빌드에는 사용자의 취소와 같은 방식으로 멈추라고 한 뒤 10초를 더 준다(다음 단계 경계에서
+  `cancelled` 로 끝나고 이벤트가 이유를 적는다). **컨테이너의 종료 대기 시간은 그 합보다 길게**
+  둔다 — compose 의 `stop_grace_period: 120s`. Docker 의 기본값 10초로는 실행 중인 빌드가
+  SIGKILL 로 끊긴다. 그렇게 끊긴 run 은 manifest 없이 남고, 다중 사용자 배포는 다음 기동 때
+  `credentials_required` 로 표시한다(#683).
 
 ## 8. 동시성·풀·백프레셔
 

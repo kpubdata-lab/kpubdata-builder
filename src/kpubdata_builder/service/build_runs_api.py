@@ -88,6 +88,16 @@ def _declared_dataset_id(spec_yaml: str) -> str | None:
 #: The stable code of a run a restart interrupted (#683, #996). It starts the failure
 #: event's message and is the ``code`` of the job status read back from that event.
 INTERRUPTED_CODE = "credentials_required"
+#: What a job that was still queued when the server began to shut down ends with (#1118).
+SHUTDOWN_QUEUED_ERROR = (
+    "interrupted: the server shut down before this job started; nothing was fetched or "
+    "written — submit it again under a new run_id"
+)
+#: What a job that was still running when the shutdown's grace period ended is told.
+SHUTDOWN_CANCELLED_MESSAGE = (
+    "build cancelled at a safe stage boundary: the server was shutting down and the "
+    "build did not finish within the grace period; submit it again under a new run_id"
+)
 
 
 class BuildRunsApiService:
@@ -130,6 +140,9 @@ class BuildRunsApiService:
         self._build_index = build_index
         self._store = store
         self._async_builds = async_builds
+        # Runs cancelled because the shutdown's grace period ended (#1118), so their
+        # run_cancelled event can say why.
+        self._cancelled_for_shutdown: set[str] = set()
 
     def build(
         self,
@@ -528,6 +541,16 @@ class BuildRunsApiService:
                 return ServiceResponse(
                     429, {"error": "async build queue is full", "code": "build_queue_full"}
                 )
+            case "shutting_down":
+                # Nothing was recorded for the run (#1118): the registry refused it
+                # before ``on_accept``, so the same run_id can be submitted again.
+                return ServiceResponse(
+                    503,
+                    {
+                        "error": "the server is shutting down; submit the build again shortly",
+                        "code": "shutting_down",
+                    },
+                )
             case unreachable:
                 assert_never(unreachable)
 
@@ -723,6 +746,54 @@ class BuildRunsApiService:
             logger.exception("could not record run_failed for %s", run_id)
         return ServiceResponse(409, {"error": message, "code": INTERRUPTED_CODE})
 
+    def interrupt_for_shutdown(self) -> tuple[str, ...]:
+        """Stop accepting jobs and end the queued ones, each with a ``run_failed`` event
+        that says why and what to do (#1118). Returns the run ids it ended.
+
+        A queued job has fetched and written nothing, so there is nothing to keep. Left
+        alone it would start as soon as a running build returned its slot — after the
+        server had stopped answering — and be killed part-way when the grace period ran
+        out. Running jobs are left to finish (``drain_for_shutdown``).
+        """
+        ended = self._async_builds.begin_shutdown(SHUTDOWN_QUEUED_ERROR)
+        for snapshot in ended:
+            try:
+                self._event_store().append(
+                    BuildEvent(
+                        seq=0,
+                        timestamp=datetime.now(tz=timezone.utc),
+                        run_id=snapshot.run_id,
+                        event="run_failed",
+                        status="fail",
+                        message=SHUTDOWN_QUEUED_ERROR,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the shutdown still has to go on
+                logger.exception("could not record run_failed for %s", snapshot.run_id)
+        return tuple(snapshot.run_id for snapshot in ended)
+
+    def drain_for_shutdown(
+        self, grace_seconds: float, cancel_seconds: float
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Wait for the running jobs; cancel those still running when the grace ends.
+
+        Returns ``(cancelled, still_running)``: the runs asked to stop because
+        ``grace_seconds`` passed, and those of them that had not stopped
+        ``cancel_seconds`` later. Cancellation is the cooperative one a user's cancel
+        uses (#481): the build stops at its next stage boundary and writes a partial
+        manifest, and its ``run_cancelled`` event says the server was shutting down.
+        A build that does not reach a boundary in time is left to the process's end; a
+        multi-user deployment marks it interrupted when it starts again (#683).
+        """
+        if self._async_builds.wait_until_idle(grace_seconds):
+            return (), ()
+        overdue = self._async_builds.running_run_ids()
+        self._cancelled_for_shutdown.update(overdue)
+        for run_id in overdue:
+            self._async_builds.request_cancel(run_id)
+        self._async_builds.wait_until_idle(cancel_seconds)
+        return overdue, self._async_builds.running_run_ids()
+
     def record_run_cancelled(self, run_id: str) -> None:
         """Record cancelled terminal event (#481). Failure not re-raised.
 
@@ -739,7 +810,11 @@ class BuildRunsApiService:
                     run_id=run_id,
                     event="run_cancelled",
                     status="ok",
-                    message="build cancelled at a safe stage boundary",
+                    message=(
+                        SHUTDOWN_CANCELLED_MESSAGE
+                        if run_id in self._cancelled_for_shutdown
+                        else "build cancelled at a safe stage boundary"
+                    ),
                 )
             )
         except Exception:
