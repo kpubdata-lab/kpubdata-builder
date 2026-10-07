@@ -97,12 +97,19 @@ def test_every_studio_step_waits_for_a_contract_change() -> None:
 
 def test_the_pull_request_body_never_reaches_a_shell_as_text() -> None:
     # `${{ }}` in `run:` is pasted into the script before the shell reads it, so a body
-    # holding `$(...)` would run. It has to arrive as an environment variable.
+    # holding `$(...)` would run. No event field is interpolated into a script.
     for step in _job()["steps"]:
-        assert "github.event.pull_request" not in step.get("run", ""), step["name"]
-    assert _step("Studio follow-up named in the pull request")["env"]["PR_BODY"] == (
-        "${{ github.event.pull_request.body }}"
-    )
+        assert "github.event" not in step.get("run", ""), step["name"]
+
+
+def test_the_body_is_read_when_the_step_runs() -> None:
+    # A re-run replays the original event, so a line added to the body afterwards is
+    # seen only if the body is fetched at run time rather than taken from the event.
+    step = _step("Studio follow-up named in the pull request")
+
+    assert "body" not in " ".join(step["env"].values())
+    assert step["env"]["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    assert 'gh api "repos/${REPO}/pulls/${PR_NUMBER}"' in step["run"]
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,8 @@ pull request body names the Studio issue that will follow, on a line of its own:
     Studio-Follow-Up: kpubdata-lab/kpubdata-studio#123
 
 The job then reports the drift as a warning naming that issue instead of failing, after
-checking the issue exists and is open. Without the line, drift fails the job.
+checking the issue exists and is open. Without the line, drift fails the job. The job
+reads the body when it runs, so adding the line and re-running the job is enough.
 
 Usage (the body comes from the environment, never from the command line, so its text
 is not interpreted by a shell)::

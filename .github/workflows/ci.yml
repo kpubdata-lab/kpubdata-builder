@@ -283,9 +283,17 @@ jobs:
         id: follow-up
         if: steps.changed.outputs.run == 'true'
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          # The body is read when the step runs, not from the event, so adding the line
+          # and re-running the job is enough — a re-run replays the original event.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ -z "${PR_NUMBER}" ]; then
+            exit 0
+          fi
+          PR_BODY="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')"
+          export PR_BODY
           number="$(python3 scripts/studio_drift_follow_up.py)"
           if [ -z "${number}" ]; then
             exit 0
