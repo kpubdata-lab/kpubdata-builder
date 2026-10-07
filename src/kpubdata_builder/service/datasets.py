@@ -27,7 +27,7 @@ from pathlib import Path
 
 import yaml
 
-from ..manifest import status_from_manifest
+from ..manifest import run_status_from_manifest, status_from_manifest
 from ..spec import BuildSpec, JsonValue, parse_spec
 from ..spec.cadence import parse_cadence
 from ..spec.serializer import BUILDSPEC_SNAPSHOT_FILENAME
@@ -307,7 +307,9 @@ def _canonical_record_from_run_id(
     return RunRecord(
         run_id=run_id,
         dataset_id=dataset_id,
-        status=status_from_manifest(manifest, fallback_status=fallback_status),
+        # The run's outcome, a refused table commit included (#1123) — the reading the
+        # build list and the index use, so a record says the same whichever path made it.
+        status=run_status_from_manifest(manifest, fallback_status=fallback_status),
         started_at=started_at if isinstance(started_at, str) else None,
         finished_at=finished_at if isinstance(finished_at, str) else None,
         spec_digest=spec_digest,
@@ -379,7 +381,7 @@ def collect_run_records_from_filesystem(output_root: Path) -> list[RunRecord]:
             RunRecord(
                 run_id=run_dir.name,
                 dataset_id=dataset_id,
-                status=status_from_manifest(manifest),
+                status=run_status_from_manifest(manifest),
                 started_at=started_at if isinstance(started_at, str) else None,
                 finished_at=finished_at if isinstance(finished_at, str) else None,
                 spec_digest=None,
@@ -426,6 +428,11 @@ def _fetched_part_of_a_source(manifest: dict[str, object]) -> bool:
     return False
 
 
+def _table_commit_refused(manifest: dict[str, object]) -> bool:
+    """Whether the build produced its artifacts and its table was not committed (#788)."""
+    return status_from_manifest(manifest) == "ok" and bool(manifest.get("warehouse_failures"))
+
+
 def status_axes(
     manifest: dict[str, object],
     record: RunRecord,
@@ -444,7 +451,10 @@ def status_axes(
     - **completeness** — from the latest run's manifest: ``partial`` when it is marked
       partial, failed with some sources written, or a source fetched fewer rows than
       its provider reported (#816); ``complete`` when it succeeded,
-      ``unknown`` when there is no manifest or nothing was written.
+      ``unknown`` when there is no manifest or nothing was written. A run whose table
+      commit was refused (#1123) is ``unknown`` too: it wrote every row to its own
+      artifacts and none to the table, which is still what an earlier refresh left —
+      and this manifest says nothing about that one.
     - **health** — from the spec's declared ``refresh_cadence`` (owner decision D7):
       ``stale`` when the last successful refresh is older than one cadence,
       ``healthy`` when it is not, ``unknown`` without a cadence or without any
@@ -463,7 +473,7 @@ def status_axes(
     wrote_rows = isinstance(row_counts, dict) and any(
         isinstance(count, int) and count > 0 for count in row_counts.values()
     )
-    if not manifest:
+    if not manifest or _table_commit_refused(manifest):
         completeness = "unknown"
     elif manifest.get("partial") is True or _fetched_part_of_a_source(manifest):
         completeness = "partial"
@@ -486,7 +496,11 @@ def status_axes(
 
 
 def last_success_at(records: Iterable[RunRecord], dataset_id: str) -> str | None:
-    """When ``dataset_id`` last refreshed successfully, among ``records`` (#781)."""
+    """When ``dataset_id`` last refreshed successfully, among ``records`` (#781).
+
+    A refresh whose table commit was refused is not one (#1123): its record is
+    ``failed``, and the table is as old as the refresh before it.
+    """
     times = [
         r.finished_at
         for r in records
