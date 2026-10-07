@@ -1,14 +1,14 @@
 """A route the contract does not declare cannot be added unnoticed (#994).
 
-``test_service_contract.py`` compares the contract with ``_DISPATCH_ROUTES`` — a table
-kept by hand in the test. A route added to the service and to neither the table nor the
-contract passed every check: nothing looked at the route modules themselves.
+``test_service_contract.py`` compared the contract with a table of routes kept by hand in
+the test (removed in #1109). A route added to the service and to neither the table nor
+the contract passed every check: nothing looked at the route modules themselves.
 
 The routes are matched by hand (``path == "/builds"``, ``path.startswith("/uploads/")``,
 ``rest.endswith("/publish/reconcile")``), so every route needs a path literal. This reads
 those literals out of the route modules and requires each to be a piece of a path the
-contract declares. It does not check methods: a new method on a declared path is still
-only caught by the table.
+contract declares. It does not check methods: a new method on a declared path is caught
+by ``test_dispatch_answers_only_declared_operations.py`` (#1054), which asks the service.
 """
 
 from __future__ import annotations
