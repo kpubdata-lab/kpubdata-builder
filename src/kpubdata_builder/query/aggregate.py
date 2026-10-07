@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from ..spec import JsonValue
 from ..tabular.dtypes import is_nested, is_numeric, is_temporal
+from .engine import failure_payload
 from .rows import RowFilter, parse_filters, typed_literal
 
 if TYPE_CHECKING:
@@ -522,10 +523,10 @@ def aggregate_worker(
                 "max_bytes": MAX_QUERY_RESPONSE_BYTES,
             }
         connection.send(payload)
-    except BaseException:
+    except BaseException as exc:
         # Engine messages can contain absolute parquet paths; never send them across.
         with suppress(BrokenPipeError, EOFError, OSError):
-            connection.send({"ok": False})
+            connection.send(failure_payload(exc))
     finally:
         connection.close()
 

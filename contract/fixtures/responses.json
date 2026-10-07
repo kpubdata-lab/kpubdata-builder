@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.106.0",
+  "contract_version": "1.107.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -6005,6 +6005,30 @@
       "required_type_broken": {
         "error": 12345,
         "code": "invalid_context"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 400,
+      "example": "QueryResourceLimit",
+      "current": {
+        "error": "the table needs more memory or temporary disk than this deployment allows (KPUBDATA_DUCKDB_MEMORY_LIMIT, KPUBDATA_DUCKDB_MAX_TEMP_SIZE)",
+        "code": "query_resource_limit"
+      },
+      "with_additive_fields": {
+        "error": "the table needs more memory or temporary disk than this deployment allows (KPUBDATA_DUCKDB_MEMORY_LIMIT, KPUBDATA_DUCKDB_MAX_TEMP_SIZE)",
+        "code": "query_resource_limit",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "query_resource_limit"
       },
       "broken_path": "$.error"
     },

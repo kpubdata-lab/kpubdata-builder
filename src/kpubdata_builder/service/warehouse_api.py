@@ -40,7 +40,11 @@ from kpubdata_builder.query.aggregate import (
     check_aggregate_plan,
     parse_aggregate_plan,
 )
-from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
+from kpubdata_builder.query.engine import (
+    QueryExecutionError,
+    QueryResourceLimitError,
+    QueryTimeoutError,
+)
 from kpubdata_builder.query.rows import check_plan, parse_rows_plan, table_dtypes
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
@@ -311,6 +315,8 @@ class WarehouseApiService:
                 return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
             except QueryTimeoutError:
                 return ServiceResponse(504, {"error": "read timed out", "code": "query_timeout"})
+            except QueryResourceLimitError as exc:
+                return ServiceResponse(400, {"error": str(exc), "code": "query_resource_limit"})
             except QueryExecutionError:
                 return ServiceResponse(
                     400, {"error": "read failed", "code": "query_execution_failed"}
@@ -419,6 +425,8 @@ class WarehouseApiService:
                 return ServiceResponse(
                     504, {"error": "aggregate timed out", "code": "query_timeout"}
                 )
+            except QueryResourceLimitError as exc:
+                return ServiceResponse(400, {"error": str(exc), "code": "query_resource_limit"})
             except QueryExecutionError:
                 return ServiceResponse(
                     400, {"error": "aggregate failed", "code": "query_execution_failed"}

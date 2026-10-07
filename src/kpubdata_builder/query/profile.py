@@ -58,6 +58,7 @@ from typing import Any, cast
 
 from ..spec import JsonValue
 from ..tabular.wire import JS_SAFE_INTEGER, encode_value
+from .engine import failure_payload
 from .sandbox import ORDERED_DATASET
 
 #: Raised whenever what is computed, or how, changes; cached profiles of another
@@ -399,10 +400,10 @@ def profile_worker(
                 "meta": {"profile": body},
             }
         )
-    except BaseException:
+    except BaseException as exc:
         # Engine messages can contain absolute parquet paths; never send them across.
         with suppress(BrokenPipeError, EOFError, OSError):
-            connection.send({"ok": False})
+            connection.send(failure_payload(exc))
     finally:
         connection.close()
 

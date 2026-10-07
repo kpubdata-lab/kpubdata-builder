@@ -470,7 +470,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.105.0 -> 1.106.0: the sign-up ledger is read on every request and written only on
 #   change; last_seen_at refreshes hourly; 503 signup_ledger_unavailable when it cannot
 #   be read or a first sign-in cannot be recorded (#1121, additive).
-API_CONTRACT_VERSION = "1.106.0"
+# 1.106.0 -> 1.107.0: a query-path request over the deployment's memory or spill limit
+#   answers 400 query_resource_limit with the fixed limit message instead of
+#   query_execution_failed (#961, additive).
+API_CONTRACT_VERSION = "1.107.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

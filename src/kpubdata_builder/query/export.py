@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, cast
 
 from ..spec import JsonValue
+from .engine import failure_payload
 
 if TYPE_CHECKING:
     from ..stages.silver.pii import PiiFinding
@@ -264,10 +265,10 @@ def export_worker(
                 "meta": meta,
             }
         )
-    except BaseException:
+    except BaseException as exc:
         # Engine messages can contain absolute parquet paths; never send them across.
         with suppress(BrokenPipeError, EOFError, OSError):
-            connection.send({"ok": False})
+            connection.send(failure_payload(exc))
     finally:
         connection.close()
 

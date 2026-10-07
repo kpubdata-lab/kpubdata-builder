@@ -149,7 +149,7 @@ Builder's tabular engine moved from Polars to DuckDB (#864–#877). The engine's
 | 1.74.0 (#874) | SQL, rows, aggregate, profile and export run on DuckDB. Result types are DuckDB's in Builder's dtype names: `COUNT(*)` is `int64`, an integer `SUM` is `int128` (a number or exact decimal text, by its values), an unnamed aggregate gets DuckDB's name (`count_star()`), `DESC` puts nulls last, a zoned datetime is sent in UTC. Settings and version functions and nondeterministic SQL (`random`, `now`, sampling) are `unsafe_query` | Read column names and types from each response's `columns`/`column_meta` instead of hard-coding them, and decode values by `wire_encoding` |
 | 1.76.0 (#875) | `SavedAnalysis` gains `sql_dialect` (`duckdb` or `legacy-polars`), `engine`, `engine_version`, `query_contract_version` and `migration_required` | For an analysis with `migration_required`, ask the user to review its SQL and save it as a new analysis instead of running it — a run answers 409 `analysis_migration_required` |
 
-The error codes (`query_busy` 429, `query_timeout` 504, `query_execution_failed`, `unsafe_query`, `invalid_request`) did not change. A query over the memory or spill limit also answers `query_execution_failed` (whether to tell it apart is #961).
+The error codes (`query_busy` 429, `query_timeout` 504, `query_execution_failed`, `unsafe_query`, `invalid_request`) did not change. Since contract 1.107.0 (#961) a query over the deployment's memory or spill limit answers 400 `query_resource_limit` with the same fixed sentence a build or preview over its limits gives, never DuckDB's own text; it answered `query_execution_failed` before.
 
 ### Declared PII in Silver and Bronze Reads (#900)
 

@@ -41,7 +41,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
-from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
+from kpubdata_builder.query.engine import (
+    QueryExecutionError,
+    QueryResourceLimitError,
+    QueryTimeoutError,
+)
 from kpubdata_builder.query.export import (
     DEFAULT_EXPORT_MAX_ROWS,
     MAX_EXPORT_BYTES,
@@ -508,6 +512,8 @@ class ExportsApiService:
                 return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
             except QueryTimeoutError:
                 return ServiceResponse(504, {"error": "export timed out", "code": "query_timeout"})
+            except QueryResourceLimitError as exc:
+                return ServiceResponse(400, {"error": str(exc), "code": "query_resource_limit"})
             except QueryExecutionError:
                 return ServiceResponse(
                     400, {"error": "export query failed", "code": "query_execution_failed"}
