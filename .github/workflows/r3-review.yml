@@ -3,7 +3,8 @@
 # 0, so ordinary pull requests are unaffected; this check is what enforces R3.
 #
 # The rule lives in kpubdata (`scripts/r3_review.py`, `.github/actions/r3-review`) so
-# the four repositories run one implementation, called here at `@main`.
+# the four repositories run one implementation, called here at a pinned kpubdata
+# commit (#1003; move it with `scripts/check_action_pins.py --bump-kpubdata`).
 #
 # The job runs on every pull request and passes when it is not R3. It is a required
 # check, and a required check that some pull requests never produce leaves them
