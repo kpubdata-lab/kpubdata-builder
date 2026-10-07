@@ -182,7 +182,7 @@ agent.
 1. The spec model
 2. Medallion pipeline orchestration
 3. Source execution through `kpubdata`
-4. The tabular engine (Polars today, moving to DuckDB — ADR 0021) and Silver validation
+4. The tabular engine (DuckDB, ADR 0021) and Silver validation
 5. The artifact model and Gold packaging
 6. The Markdown exporter
 7. The HuggingFace layout exporter
@@ -214,7 +214,7 @@ every build leaves a manifest describing what came out.
 | **Gold** | Final internal stage: partitioning and an export-ready package |
 | **Artifact** | Something a build produced (a file, usually) |
 | **Manifest** | The specification of what a build produced — version, timestamps, digests |
-| **Tabular engine** | The one canonical tabular engine. Polars today; the migration to DuckDB is in progress (ADR 0021, #864–#877) and ends with DuckDB as the only engine in `src/`. The legacy publish path (`scripts/pipeline/`) keeps Polars until it is retired (ADR 0018, ADR 0021 D1) |
+| **Tabular engine** | The one canonical tabular engine: DuckDB (ADR 0021, #864–#877). Nothing under `src/` imports Polars (#876). Only the legacy publish path (`scripts/pipeline/`, the `legacy-publish` extra) keeps Polars until it is retired (ADR 0018, ADR 0021 D1); the tests keep the old Polars engine in `tests/support/` as an oracle |
 | **Exporter** | Converts data into a format (Markdown, JSONL, Parquet, HuggingFace) |
 | **Publisher** | Uploads a finished artifact somewhere (GitHub, HF Hub) |
 | **Golden Test** | Compares current output against a stored known-good file |
@@ -224,7 +224,7 @@ every build leaves a manifest describing what came out.
 ```mermaid
 graph LR
     BS[BuildSpec] --> B[Bronze]
-    B --> S[Silver\nPolars]
+    B --> S[Silver\nDuckDB]
     S --> G[Gold]
     G --> EX[Export]
     EX --> M[Manifest]
@@ -239,8 +239,9 @@ graph LR
     end
 ```
 
-During the DuckDB migration (ADR 0021) Silver runs on Polars until the Silver step
-(#869) lands; the diagram shows the stage, not the engine.
+Silver, Gold, quality rules and queries all run on DuckDB (ADR 0021): Bronze's JSONL
+is loaded into a table, each stage is SQL over it, and Silver and Gold are written as
+Parquet with their Builder dtypes in the file's metadata.
 
 ```text
 [BuildSpec] -> [Bronze: raw collection] -> [Silver: tabular conversion and validation]
@@ -260,12 +261,12 @@ During the DuckDB migration (ADR 0021) Silver runs on Polars until the Silver st
   what came back.
 - **Unclear output paths.** Where a file is written is always explicit.
 - **A build without a manifest.** Every build output includes `manifest.json`.
-- **New Polars code under `src/`.** ADR 0021 moves the canonical tabular engine to
-  DuckDB. New tabular code goes through `tabular/duckdb_runtime.py` (connections,
-  resource limits, temp directories), `tabular/sql.py` (identifier quoting and
-  parameter binding — never interpolate user data into SQL) and `tabular/dtypes.py`
-  (Builder-owned dtype names). Changes to existing Polars code stay minimal until
-  the step that replaces it; `tests/parity/` holds the baseline every step must match.
+- **Polars under `src/`.** The canonical tabular engine is DuckDB (ADR 0021), and
+  `tests/unit/test_without_polars.py` fails if any module of the package loads Polars.
+  Tabular code goes through `tabular/duckdb_runtime.py` (connections, resource limits,
+  temp directories), `tabular/sql.py` (identifier quoting and parameter binding —
+  never interpolate user data into SQL) and `tabular/dtypes.py` (Builder-owned dtype
+  names); `tests/parity/` holds the baseline a change must match or explain.
 - **Leaking kpubdata's vocabulary into the contract.** Builder owns the wire
   vocabulary (`service/vocabulary.py`, #831); map kpubdata values explicitly and
   use only kpubdata's public API (`scripts/check_kpubdata_imports.py`).
@@ -295,7 +296,7 @@ graph TD
     ST --> BR[bronze/]
     ST --> SI[silver/]
     ST --> GO[gold/]
-    TB --> PO[duckdb_* · polars_*]
+    TB --> PO[duckdb_* · sql · dtypes]
     E --> ME[markdown.py]
     E --> JE[jsonl.py]
     E --> PE[parquet.py]
@@ -307,7 +308,7 @@ graph TD
 src/kpubdata_builder/
 ├── pipeline/        # medallion stage flow control
 ├── stages/          # bronze, silver, gold implementations
-├── tabular/         # tabular processing — Polars today, DuckDB runtime alongside (ADR 0021)
+├── tabular/         # tabular processing on DuckDB (ADR 0021)
 ├── exporters/       # format conversion (Markdown, JSONL, Parquet)
 ├── publishers/      # artifact upload (HF, GitHub)
 ├── service/         # HTTP service mode (app.py, http.py, auth.py)

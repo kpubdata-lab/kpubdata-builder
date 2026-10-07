@@ -26,13 +26,17 @@ _CODE_ENV_SOURCES = [
 
 _README = _REPO_ROOT / "README.md"
 _DOCS = _REPO_ROOT / "docs" / "deployment.md"
+#: The resource-budget guide documents the DuckDB and query limits (#701, #877).
+_DEPLOY = _REPO_ROOT / "docs" / "deploy.md"
 
-_ENV_PATTERN = re.compile(r"KPUBDATA_BUILDER_[A-Z_]+")
-_QUOTED_PATTERN = re.compile(r'"(KPUBDATA_BUILDER_[A-Z_]+)"')
+#: Builder's own settings, the DuckDB budget and the query service (#877: the DuckDB and
+#: query names were outside this check).
+_ENV_PATTERN = re.compile(r"KPUBDATA_(?:BUILDER|DUCKDB|QUERY)_[A-Z_]+")
+_QUOTED_PATTERN = re.compile(r'"(KPUBDATA_(?:BUILDER|DUCKDB|QUERY)_[A-Z_]+)"')
 
 
 def _readme_env_vars() -> set[str]:
-    text = _README.read_text(encoding="utf-8") + "\n" + _DOCS.read_text(encoding="utf-8")
+    text = "\n".join(path.read_text(encoding="utf-8") for path in (_README, _DOCS, _DEPLOY))
     return set(_ENV_PATTERN.findall(text))
 
 

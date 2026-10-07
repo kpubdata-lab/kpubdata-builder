@@ -136,6 +136,20 @@ When policy and implementation disagree, do not add implementation footnotes. Fi
 
 - `/query` allows only a single SELECT/CTE referencing the `dataset` physical relation at least once. CTE `dataset` shadowing, recursive CTEs, external tables/table functions, filesystem/network access, and DML/DDL are rejected.
 - Queries use a bounded capacity separate from the HTTP worker pool. The query timeout actually terminates the child process; 429/504 errors are distinguished by stable `code` values.
+- The SQL dialect is DuckDB's (contract 1.74.0, #874). A query runs on a locked DuckDB connection that can read only the pinned snapshot file.
+
+### The DuckDB cutover and client compatibility (ADR 0021, #877)
+
+Builder's tabular engine moved from Polars to DuckDB (#864–#877). The engine's name is not part of the wire. A client — Studio included (kpubdata-studio#565) — needs to know only the contract changes below; to a user it is "Builder SQL". Name DuckDB compatibility only where the dialect itself has to be explained.
+
+| Contract | What changed | What a client does |
+| :--- | :--- | :--- |
+| 1.60.0 (#867) | `provenance[].data_checksum` is `canonical-multiset-v2`, named by `data_checksum_algorithm`. The byte digest (`artifacts[].artifact_digest`) is separate. `artifact_writer` is the engine that wrote Gold — `duckdb` since #876 | Never compare checksums of different algorithms |
+| 1.70.0 (#871) | Ratio splits are `hash-sort-v2` (manifest `split_algorithm`). With the same seed, rows land in different splits than under `shuffle-v1` | Do not compare split membership row by row with an earlier run |
+| 1.74.0 (#874) | SQL, rows, aggregate, profile and export run on DuckDB. Result types are DuckDB's in Builder's dtype names: `COUNT(*)` is `int64`, an integer `SUM` is `int128` (a number or exact decimal text, by its values), an unnamed aggregate gets DuckDB's name (`count_star()`), `DESC` puts nulls last, a zoned datetime is sent in UTC. Settings and version functions and nondeterministic SQL (`random`, `now`, sampling) are `unsafe_query` | Read column names and types from each response's `columns`/`column_meta` instead of hard-coding them, and decode values by `wire_encoding` |
+| 1.76.0 (#875) | `SavedAnalysis` gains `sql_dialect` (`duckdb` or `legacy-polars`), `engine`, `engine_version`, `query_contract_version` and `migration_required` | For an analysis with `migration_required`, ask the user to review its SQL and save it as a new analysis instead of running it — a run answers 409 `analysis_migration_required` |
+
+The error codes (`query_busy` 429, `query_timeout` 504, `query_execution_failed`, `unsafe_query`, `invalid_request`) did not change. A query over the memory or spill limit also answers `query_execution_failed` (whether to tell it apart is #961).
 
 ### Declared PII in Silver and Bronze Reads (#900)
 
@@ -143,7 +157,7 @@ Gold masks declared PII (kpubdata `license.pii_columns` + BuildSpec `sources[].g
 
 | Path | Behaviour |
 | :--- | :--- |
-| `POST /query` `stage: silver` | Queries run over a masked copy of Silver. Expressions like `upper(col)`, `substr`, `WHERE col = '…'` never see the original values. The copy is read with the same `scan_builder_parquet` the query engine uses, restoring the Builder dtypes and real column names DuckDB stored in file metadata (#891), so the response's `columns`/`column_meta` match an unmasked query (including all-null, Duration, Int128, zone). The response's `masked_columns` lists the masked columns. `stage: gold` is already masked at build time and does not change |
+| `POST /query` `stage: silver` | Queries run over a masked copy of Silver. Expressions like `upper(col)`, `substr`, `WHERE col = '…'` never see the original values. DuckDB writes the copy with the original's Builder dtypes and real column names in the file metadata (#891), so the response's `columns`/`column_meta` match an unmasked query (including all-null, Duration, Int128, zone). The response's `masked_columns` lists the masked columns. `stage: gold` is already masked at build time and does not change |
 | `POST /preview` | Masks each source's `sample`, `source_sample` (original field names — walking back through `schema.coalesce` and `rename`), and those columns' `diffs`; records `masked_columns` |
 | `GET /builds/{run_id}/stages/silver/{source}` | Masks `sample`, records `masked_columns`. Bronze stage detail has no rows |
 | `GET /artifacts/{run_id}/{file_path}` | `bronze/{source}/…` and `silver/{source}/…` files for sources with declared columns are **all 403 `declared_pii_withheld`** (with column names in `columns`). Gold files and the manifest are served as-is |

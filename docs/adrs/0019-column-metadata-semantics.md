@@ -27,6 +27,9 @@ Core(kpubdata)에는 이미 `FieldDescriptor.title`·`description`, `FieldConstr
 | 단위 | `unit.name`·`scale` | 측정값의 단위와 배율(1000 = 천 단위) | 힌트(출처 포함) |
 | 출처 | 각 힌트의 `origin` | `user_annotation`·`core_spec`·`catalog`·`engine_inferred` | 힌트를 만든 쪽 |
 
+> 2026-10 주: "Polars 타입"은 이 ADR 당시의 표현이다. [ADR 0021](0021-duckdb-tabular-engine.md) 이후 저장 타입은
+> DuckDB 가 들고 있는 값을 Builder dtype 이름(`tabular/dtypes.py`)으로 부른 것이고, 이름 자체는 같다.
+
 `semantic`·`display`·`unit` 은 모두 **선택**이다. 아무도 설명하지 않은 컬럼에는 키 자체가
 없다 — 빈 객체나 `null` 을 보내지 않는다. 빈 객체는 "설명했는데 아무것도 없다"와 구분되지
 않기 때문이다.

@@ -54,7 +54,7 @@ df = pl.DataFrame(mapped, schema=schema)
 
 ### Builder 적용 지점
 
-- **Silver 단계 (Polars engine)**: raw 데이터를 DataFrame으로 변환할 때 항상 `Utf8` 기본 스키마를 사용하고, 이후 명시적 캐스팅으로 타입을 확정
+- **Silver 단계**: 지금은 DuckDB(ADR 0021)다. 레코드를 표로 올리기 전에 한 컬럼에 섞인 타입을 찾아 조용히 바꾸지 않고 거부하며(`RecordTypeScan`, #187), source 가 `read_as: str` 로 선언한 컬럼은 텍스트로 읽고, 타입은 선언된 캐스트로만 확정한다. 이 절의 Polars 오류는 레거시 publish 스크립트와 그 이전 엔진의 기록이다
 - **BuildSpec**: `dtypes` 필드를 필수로 요구하여 암묵적 추론에 의존하지 않도록 강제
 - **검증**: 캐스팅 실패 시 null로 변환하되 실패 건수를 경고로 출력
 

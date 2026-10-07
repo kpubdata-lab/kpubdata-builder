@@ -154,13 +154,13 @@ manifest 정책까지 승인·완료됐다는 뜻이 아니다.
 memory >= base process
         + HTTP_workers * per_HTTP_thread
         + active_build_workers * per_build_working_set
-        + query_concurrency * (per_Polars_child + 최대 8 MiB IPC payload)
+        + query_concurrency * (per_query_child + 최대 8 MiB IPC payload)
         + filesystem/cache headroom
 ```
 
 CPU 수요는 대략 `active_build_workers * build_CPU` +
-`query_concurrency * Polars_child_CPU` + HTTP overhead다. Polars child 하나도 내부적으로 여러
-thread를 사용할 수 있으므로 `query_concurrency`를 vCPU 수처럼 간주하면 안 된다. 작은 ACA
+`query_concurrency * query_child_CPU` + HTTP overhead다. query child 하나도 DuckDB 연결의
+thread(`KPUBDATA_DUCKDB_THREADS`)를 여럿 쓸 수 있으므로 `query_concurrency`를 vCPU 수처럼 간주하면 안 된다. 작은 ACA
 인스턴스는 `infra/main.bicep` 기본값인 1 vCPU/2 GiB, HTTP worker 4, async build worker 4,
 query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받지만 서로 다른 pool이라
 동시에 각각 4개까지 실행될 수 있다. 따라서 CPU/memory 중심 build를 많이 제출하는 환경에서는
@@ -181,11 +181,14 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | DuckDB thread | **연결 하나당** 기본 2. build 는 실행 중인 source 마다 연결 하나 | `KPUBDATA_DUCKDB_THREADS` |
 | DuckDB buffer memory | **연결 하나당** 기본 `1GB`. 넘으면 spill 한다 | `KPUBDATA_DUCKDB_MEMORY_LIMIT` |
 | DuckDB spill(임시 디스크) | **연결 하나당** 기본 `10GB`. 넘으면 그 질의·source 만 실패하고 디스크를 채우지 않는다 | `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` |
-| Polars 내부 thread | 프로세스마다 기본 CPU 코어 수 — 아직 Polars 를 쓰는 query child 와 bridge(#876 까지) | `POLARS_MAX_THREADS` |
+
+Builder 는 Polars 를 쓰지 않으므로(#876) `POLARS_MAX_THREADS` 는 더 이상 효과가 없다.
+query child 의 spill 디렉터리는 parent 가 질의마다 만들어 `KPUBDATA_QUERY_TEMP_DIR` 로 child 에
+넘기고, child 가 어떻게 끝나든 parent 가 지운다 — 운영자가 설정하는 값이 아니다.
 
 `KPUBDATA_QUERY_MAX_MEMORY_MB` 는 address space 상한(`RLIMIT_AS`)이라 RSS 보다 크게 잡아야
-한다 — Polars 가 import 시점에 가상 메모리를 넉넉히 예약하므로 너무 작으면 모든 질의가
-실패한다. admission 기준은 **메모리**다(#701, 소유자 결정 D3): `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
+한다 — child 의 interpreter 와 DuckDB 가 import 시점에 가상 메모리를 예약하므로 너무 작으면
+모든 질의가 실패한다. admission 기준은 **메모리**다(#701, 소유자 결정 D3): `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
 를 두면 질의 하나가 `KPUBDATA_QUERY_MAX_MEMORY_MB` 만큼 예약한다. 질의별 상한 없이 예산만
 두면 질의 하나가 예산 전체를 예약하므로 한 번에 하나씩 돈다 — 둘을 함께 설정하는 것이 맞다.
 CPU·임시 디스크·프로세스·스레드 수는 위 표의 문서화 항목이고 admission 기준이 아니다. 동시
@@ -221,7 +224,6 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 | 동시 build | `KPUBDATA_BUILDER_MAX_BUILDS=2` | 2 (동기·비동기 합계) |
 | DuckDB 연결 (build 2 × source 4 = 8) | `KPUBDATA_DUCKDB_THREADS=1`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=96MB`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE=1GB` | thread 8, 메모리 768 MB, 임시 디스크 8 GB |
 | query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 프로세스 2, query 메모리 768 MB |
-| Polars thread | `POLARS_MAX_THREADS=1` | — |
 | 기본 프로세스·HTTP·여유 | 실측 | 약 400 MB |
 
 메모리 합은 약 1.9 GB 다(DuckDB 768 MB + query 768 MB + 기본 약 400 MB). 2 GiB 에 여유가 거의 없으므로
@@ -273,7 +275,7 @@ canonical SQL을 준비하고, cold query(새 child)와 warm filesystem-cache qu
 ## 10. Process 격리 선택
 
 query는 의도적으로 `spawn`을 사용한다. thread가 이미 실행 중인 service process를 `fork`하면
-다른 thread가 잡은 lock, logging/runtime 상태, Polars native thread-pool 상태를 child가
+다른 thread가 잡은 lock, logging/runtime 상태, DuckDB native thread 상태를 child가
 불완전하게 상속할 수 있다. startup이 짧아 보인다는 이유로 `fork`로 바꾸는 것은 안전한
 대체가 아니다.
 
