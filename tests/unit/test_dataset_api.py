@@ -771,10 +771,14 @@ class TestFilterOwnership:
         principal = Principal(kind="oidc", identifier="userA", owner_id="oidc:abc")
         assert filter_ownership([record], principal, enforce=True) == []
 
-    def test_dev_and_service_principal_bypass_filter(self) -> None:
+    def test_only_the_dev_principal_bypasses_the_filter(self) -> None:
         record = self._record("a", created_by="oidc:userA", owner_id="oidc:canonical-abc")
         assert filter_ownership([record], Principal(kind="dev"), enforce=True) == [record]
-        assert filter_ownership([record], Principal(kind="service"), enforce=True) == [record]
+        # The API key sees its own runs here, not every owner's (#1091, ADR 0012).
+        service = Principal(kind="service", owner_id="service:default")
+        assert filter_ownership([record], service, enforce=True) == []
+        own = self._record("b", created_by="service", owner_id="service:default")
+        assert filter_ownership([record, own], service, enforce=True) == [own]
 
     def test_enforce_false_returns_all_records(self) -> None:
         record = self._record("a", created_by=None, owner_id=None)

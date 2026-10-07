@@ -115,6 +115,16 @@
 
 ### Security
 
+- **Where runs are kept apart per user, the API key's lists hold only its own runs** (#1091). #1072 stopped the `service` principal (`X-API-Key`) reading another user's run, but the lists still filtered only for signed-in (`oidc`) users. The API key saw every user's runs in:
+  - `GET /builds`;
+  - `GET /datasets`, `GET /datasets/{dataset_id}`, its `runs`, `runs/{run_id}` and `quality/history`;
+  - `GET /quality/issues` and `GET /quality/summary`;
+  - `GET /monitoring/builds`.
+
+  These lists now ask `ownership.lists_only_own_runs`, which follows the rule for one run (only `dev` sees every owner's runs). The administration routes still show the API key every run's metadata. Single-user deployments are unchanged.
+  - `tests/unit/test_api_key_data_routes.py` classifies every operation in the contract as `public`, `caller`, `admin` or `owner`, and fails while one is unclassified.
+  - For each of the 50 `owner` operations it checks two things against a signed-in user who owns nothing: the API key gets exactly that user's answer, and the owner gets something else.
+  - Nine of those failed before this change.
 - Every workflow runs another repository's action at a fixed commit (#1003). The release, title, R3 review and release-freeze gates called kpubdata's shared actions at `@main`, and `release.yml` called `actions/checkout`, `actions/setup-python` and `astral-sh/setup-uv` at `@v7`, so a change in another repository reached this repository's release path without a change here. All fifteen are pinned to a full commit SHA — the kpubdata actions to the `main` commit they ran (`807c21f`), the others to the commit their tag pointed at — and `scripts/check_action_pins.py` fails CI on any `uses:` that names a branch or tag. Third-party pins move with Dependabot, which reads the `# vX.Y.Z` comment; the kpubdata actions have no release tags of their own, so Dependabot ignores them and `scripts/check_action_pins.py --bump-kpubdata SHA` moves them all together.
 - **Where runs are kept apart per user, the API key no longer reads other users' run data** (#1072). The `service` principal — a request with `KPUBDATA_BUILDER_API_KEY` — had full access to every user's runs wherever ownership was enforced (`ENFORCE_OWNERSHIP`, or OIDC). Following ADR 0012's decision of 2026-10-01 it is like an administrator: `GET /admin/runs` and the other administration routes still show it every run's metadata, and another user's run status, manifest, spec, events, stage rows and files answer 404, as a run that does not exist does. It keeps the runs it made itself. A deployment that does not enforce ownership — single-user — is unchanged. An automation that read users' runs with the API key in a multi-user deployment stops working.
 - `serve` refuses to start with `KPUBDATA_BUILDER_DEV_MODE` and `ENFORCE_OWNERSHIP` both set (#1072). Dev mode with OIDC was already refused; with `ENFORCE_OWNERSHIP` alone it started, and the dev principal — every request, unauthenticated — reads every user's runs. ADR 0012's decision of 2026-10-01 is that dev mode is not allowed in a multi-user deployment. A single-user deployment's dev mode is unchanged.

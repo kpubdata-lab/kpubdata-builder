@@ -106,3 +106,5 @@ publish 경로는 아직 이 규칙을 따르지 않는다 — #925.
   `multi_user_mode()` 와 dev 모드가 함께 켜지면 기동이 실패한다
 
 **구현됨 (#1072, #1081).** `ownership._has_grandfathered_full_access` 가 `dev` 만 남긴다: 소유권이 강제되는 배포에서 `service`(`X-API-Key`)는 자기가 만든 run 만 읽고, 남의 run 의 데이터·산출물에는 없는 run 과 같은 답(404)을 받는다. 메타데이터는 관리 경로(`GET /admin/runs` 등, `is_admin`)로 본다. dev 모드와 `ENFORCE_OWNERSHIP`·OIDC 의 조합은 `serve` 가 기동을 거절한다. 소유권을 강제하지 않는 단일 사용자 배포는 그대로다.
+
+**목록도 같은 규칙 (#1091).** 위 구현은 run 하나를 읽는 경로에만 적용됐다. `GET /builds`, 데이터셋 목록·상세·run 목록·품질 이력, `/quality/issues`·`/quality/summary`, `/monitoring/builds` 는 `oidc` 주체만 걸렀다. 그래서 API 키에는 모든 사용자의 run 메타데이터가 보였다. 이제는 모두 `ownership.lists_only_own_runs` 를 따른다. `tests/unit/test_api_key_data_routes.py` 는 계약의 모든 operation 을 `public`·`caller`·`admin`·`owner` 로 분류한다. 분류되지 않은 operation 이 있으면 실패한다. `owner` 마다 API 키의 답이 아무것도 소유하지 않은 사용자의 답과 같은지 확인한다.

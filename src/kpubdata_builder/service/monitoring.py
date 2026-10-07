@@ -30,6 +30,7 @@ from typing import Literal
 from ..store import BuildEntry, BuildIndex
 from .auth import Principal, principal_owns
 from .jobs import AsyncBuildExecutor
+from .ownership import lists_only_own_runs
 from .quality import Availability
 
 # Latency samples use a fixed-size ring buffer of the most recent N requests,
@@ -323,13 +324,13 @@ def _isoformat_z(dt: datetime) -> str:
 def _should_enforce_ownership(principal: Principal | None, *, enforce: bool) -> bool:
     """Determine whether to apply ownership filter (#516, #505).
 
-    Same policy as ``app._apply_ownership``/``datasets.filter_ownership`` —
-    filter only when ENFORCE_OWNERSHIP + oidc principal; dev/service/None bypass
-    as admin. Both ``_filter_ownership`` (Python post-filter) and
+    ``ownership.lists_only_own_runs``, as ``builds_api._apply_ownership`` and
+    ``datasets.filter_ownership`` ask it — every principal but ``dev`` where ownership
+    is enforced, the API key included (#1091). Both ``_filter_ownership`` (Python post-filter) and
     ``BuildIndex.list_recent_owned`` (SQL push-down, #527) share this judgment
     to keep policy aligned.
     """
-    return enforce and principal is not None and principal.kind == "oidc"
+    return lists_only_own_runs(principal, enforce=enforce)
 
 
 def _filter_ownership(

@@ -35,7 +35,7 @@ from ..stages._path_safety import ensure_within
 from ..stages.bronze.resolve import source_identity
 from ..store import BuildEntry, BuildIndex
 from .auth import Principal
-from .ownership import ownership_allows
+from .ownership import lists_only_own_runs, ownership_allows
 from .stages import list_run_stages
 from .vocabulary import access_status
 
@@ -105,14 +105,14 @@ def filter_ownership(
     Uses ``service.ownership.ownership_allows`` shared predicate (#504 review) —
     shares semantics with ``query.resolver``/``app._check_ownership``, and
     comparison follows ``principal_owns`` (#505: canonical owner_id prioritized,
-    legacy created_by/label fallback). Filter only when ENFORCE_OWNERSHIP + oidc
-    principal. dev/service principal and principal=None pass (admin privilege +
-    backward compatibility). Even for the same dataset_id, runs from other users
+    legacy created_by/label fallback). Filter whenever ``lists_only_own_runs`` says so
+    — every principal but ``dev`` where ownership is enforced, the API key included
+    (#1091); principal=None passes. Even for the same dataset_id, runs from other users
     are completely excluded from grouping/latest selection (#488 semantics D) —
     filtering happens before grouping/latest selection, so other users' runs
     never become latest or mix into metadata.
     """
-    if not (enforce and principal is not None and principal.kind == "oidc"):
+    if principal is None or not lists_only_own_runs(principal, enforce=enforce):
         return list(records)
     return [
         r
