@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from kpubdata_builder.service.http import _overloaded_response
+from kpubdata_builder.service.publish_credentials import route_reads_publish_credentials
 from kpubdata_builder.service.request_credentials import (
     PROVIDER_KEY_HEADER,
     route_reads_provider_keys,
@@ -96,6 +97,28 @@ def test_a_malformed_header_is_refused_on_exactly_those_operations(
                 disagree.append(f"{method.upper()} {template}")
 
     assert disagree == []
+
+
+def test_a_malformed_publish_header_is_refused_on_exactly_the_declaring_operations(
+    contract: dict[str, Any],
+) -> None:
+    """``route_reads_publish_credentials`` is a list kept by hand; this holds it to the
+    contract, in both directions (#1105)."""
+    reference = {"$ref": "#/components/parameters/PublishCredential"}
+    disagree: list[str] = []
+    declaring = 0
+    for template, item in contract["paths"].items():
+        path = re.sub(r"\{[^}]+\}", "x", template)
+        for method, operation in item.items():
+            if method not in ("get", "post", "put", "delete", "patch"):
+                continue
+            declared = reference in operation.get("parameters", [])
+            declaring += declared
+            if route_reads_publish_credentials(method.upper(), path) != declared:
+                disagree.append(f"{method.upper()} {template}")
+
+    assert disagree == []
+    assert declaring == 5
 
 
 def test_the_overload_response_is_the_declared_one(contract: dict[str, Any]) -> None:

@@ -456,7 +456,9 @@ _BuildListEntry = dict[str, str | None]
 #   says so in checkpoints_not_reused (#1103).
 # 1.100.0 -> 1.101.0: GET /builds and GET /admin/runs list a run whose table was not
 #   committed as failed, as GET /builds/{run_id} does (#1106).
-API_CONTRACT_VERSION = "1.101.0"
+# 1.101.0 -> 1.102.0: a malformed X-Publish-Credential is refused only by the operations
+#   that declare it, and both credential-header 400s come after authentication (#1105).
+API_CONTRACT_VERSION = "1.102.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1569,15 +1571,21 @@ def dispatch(
     try:
         # Provider keys for this request only (#683): parsed from the X-Provider-Key
         # header — never the URL — and forgotten when the request ends.
+        #
+        # A header that cannot be read is not answered here (#1105). It is an error only
+        # on a route that would use it (#1073) — a browser that built the header wrong
+        # once used to fail every call it made, the version check and the health check
+        # among them — and only for a caller who has been authenticated: a request with
+        # no credentials is told to sign in, not how its header is malformed.
+        header_refusal: ServiceResponse | None = None
         try:
             request_keys = request_credentials.parse_provider_key_headers(provider_key_headers)
         except ValueError as exc:
-            # Only a route that would use a key refuses the request for it (#1073). A
-            # browser that built the header wrong once used to fail every call it made —
-            # the version check, the lists, the health check — though none reads a key.
-            if request_credentials.route_reads_provider_keys(method, path):
-                return ServiceResponse(400, {"error": str(exc), "code": "invalid_provider_key"})
             request_keys = {}
+            if request_credentials.route_reads_provider_keys(method, path):
+                header_refusal = ServiceResponse(
+                    400, {"error": str(exc), "code": "invalid_provider_key"}
+                )
         # Publish credentials for this request only (#925): the X-Publish-Credential
         # header, read by publish in a multi-user deployment and forgotten when the
         # request ends. The error message never carries a value.
@@ -1586,7 +1594,13 @@ def dispatch(
                 publish_credential_headers
             )
         except ValueError as exc:
-            return ServiceResponse(400, {"error": str(exc), "code": "invalid_publish_credential"})
+            request_publish_values = {}
+            if header_refusal is None and publish_credentials.route_reads_publish_credentials(
+                method, path
+            ):
+                header_refusal = ServiceResponse(
+                    400, {"error": str(exc), "code": "invalid_publish_credential"}
+                )
         with (
             request_credentials.request_scope(request_keys),
             publish_credentials.request_scope(request_publish_values),
@@ -1601,6 +1615,7 @@ def dispatch(
                 bearer_token=bearer_token,
                 raw_body=raw_body,
                 client_id=client_id,
+                header_refusal=header_refusal,
             )
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -1680,6 +1695,7 @@ def _dispatch_impl(
     bearer_token: str | None = None,
     raw_body: bytes | None = None,
     client_id: str | None = None,
+    header_refusal: ServiceResponse | None = None,
 ) -> ServiceResponse | FileResponse:
     """Route (method, path) to BuilderService operation.
 
@@ -1692,6 +1708,10 @@ def _dispatch_impl(
     authentication failures and cut off repeated attempts with 429. Check failure
     accumulation before authentication itself, so throttled clients never incur
     key comparison or signature verification cost.
+
+    ``header_refusal`` is the 400 for a credential header the route reads and
+    ``dispatch`` could not parse. It is returned after authentication and admission,
+    never before (#1105).
 
     Returns:
         ServiceResponse or FileResponse (#323).
@@ -1711,6 +1731,11 @@ def _dispatch_impl(
         refusal = admission_refusal(entry, principal)
         if refusal is not None:
             return ServiceResponse(403, refusal)
+
+    # A credential header this route reads could not be parsed (#1105). Said only now:
+    # who may not call the service has already been answered above.
+    if header_refusal is not None:
+        return header_refusal
 
     # /uploads (#498) is the only endpoint needing binary body (raw_body), so it's
     # called directly here rather than added to standard RouteAdapter list (JSON
