@@ -14,3 +14,8 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(ci)"
+    # The shared kpubdata actions are pinned to a kpubdata main commit, not a release
+    # tag, so a tag-based bump would move them backwards. They move together with
+    # `scripts/check_action_pins.py --bump-kpubdata SHA` (#1003).
+    ignore:
+      - dependency-name: "kpubdata-lab/kpubdata*"

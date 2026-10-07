@@ -66,7 +66,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
@@ -74,13 +74,13 @@ jobs:
       # Builder and Studio release once a month, in the week holding the month's last
       # Thursday (KST); outside it only a critical patch that names its issue.
       - name: Release window
-        uses: kpubdata-lab/kpubdata/.github/actions/release-window@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-window@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           policy: monthly
           critical_patch: ${{ inputs.critical_patch }}
           critical_issue: ${{ inputs.critical_issue }}
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
 
@@ -89,7 +89,7 @@ jobs:
       # repository for being impossible to run without dispatching a real release.
       - name: Work out the new version
         id: bump
-        uses: kpubdata-lab/kpubdata/.github/actions/next-version@main
+        uses: kpubdata-lab/kpubdata/.github/actions/next-version@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           bump: ${{ inputs.bump }}
           file: pyproject.toml
@@ -98,14 +98,14 @@ jobs:
       # `uv lock --check` in CI compares them — writing one without the other turns
       # nine checks red, which is how #744 first went.
       - name: Write the version
-        uses: kpubdata-lab/kpubdata/.github/actions/set-version@main
+        uses: kpubdata-lab/kpubdata/.github/actions/set-version@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           version: ${{ steps.bump.outputs.new_version }}
 
       # The release pull request carries its own CHANGELOG change: `[Unreleased]` becomes
       # this version, dated. An empty `[Unreleased]` stops here, before a branch exists.
       - name: Date the CHANGELOG section
-        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           command: promote
           version: ${{ steps.bump.outputs.new_version }}
@@ -162,7 +162,7 @@ jobs:
       # may be whatever merged next, a different tree from the one gated below. On a
       # dispatch it is main's head, pinned immediately so the tag cannot land on
       # something that merged while the gates ran.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha || github.ref }}
           fetch-depth: 0
@@ -197,7 +197,7 @@ jobs:
       # critical_issue. Re-running this job does not help — it replays the same event,
       # so a Critical-Patch line added to the body after the merge is not seen.
       - name: Release window
-        uses: kpubdata-lab/kpubdata/.github/actions/release-window@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-window@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           policy: monthly
           critical_patch: ${{ steps.critical.outputs.patch }}
@@ -207,12 +207,12 @@ jobs:
         id: commit
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
 
@@ -259,7 +259,7 @@ jobs:
       # is still nothing to clean up.
       - name: Release notes from the CHANGELOG
         id: notes
-        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@main
+        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
         with:
           command: extract
           version: ${{ steps.tag.outputs.tag }}
