@@ -458,7 +458,10 @@ _BuildListEntry = dict[str, str | None]
 #   committed as failed, as GET /builds/{run_id} does (#1106).
 # 1.101.0 -> 1.102.0: a malformed X-Publish-Credential is refused only by the operations
 #   that declare it, and both credential-header 400s come after authentication (#1105).
-API_CONTRACT_VERSION = "1.102.0"
+# 1.102.0 -> 1.103.0: POST /preview answers 400 provider_credential_required when the
+#   request carries no key for a provider the spec calls, as the build routes do
+#   (#1070, additive).
+API_CONTRACT_VERSION = "1.103.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1160,6 +1163,7 @@ class BuilderService:
             created_by=created_by,
             owner_id=owner_id,
             job_credentials=(self._job_credentials if ownership_module.multi_user_mode() else None),
+            job_keys=self.request_keys_a_build_uses(spec_yaml),
             retry_of=retry_of,
         )
 
@@ -1246,6 +1250,30 @@ class BuilderService:
             for name in names
             if name in needs_key and self._credential_resolver.resolve(None, name).value is None
         )
+
+    def request_keys_a_build_uses(self, spec_yaml: str) -> dict[str, str]:
+        """The current request's provider keys that a build of ``spec_yaml`` reads (#1070).
+
+        A request may carry keys for providers this spec never calls — Studio sends every
+        key the user has entered. A queued job holds its keys for as long as it waits, so
+        it is given only the ones it will use: the entry under each ``public_api``
+        provider's own name and under the name of the provider whose key it shares, the
+        two places ``CredentialResolver.resolve`` looks. Empty for a spec that cannot be
+        read; its job fails on the spec and needs no key.
+        """
+        spec = self._load_validated(spec_yaml)
+        if isinstance(spec, ServiceResponse):
+            return {}
+        carried = request_credentials.current_keys()
+        used: dict[str, str] = {}
+        for source in spec.sources:
+            if source.kind != "public_api" or not source.provider:
+                continue
+            provider = source.provider.lower()
+            for name in (provider, self._credential_resolver.client_key_slot(provider)):
+                if name in carried:
+                    used[name] = carried[name]
+        return used
 
     def _run_build_job(
         self,
