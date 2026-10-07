@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import cast
 
 from ..spec.models import JsonValue
-from ..store.schema_version import UnsupportedSchemaVersionError
+from ..store.schema_version import UnsupportedSchemaVersionError, stored_version
 from .models import BuildEvent, EventName, EventStatus, StageName
 
 SCHEMA_VERSION = 1
@@ -100,7 +100,29 @@ class BuildEventStore:
         self._output_root = output_root
         self._db_path = db_path if db_path is not None else output_root / _EVENTS_FILENAME
         self._local = threading.local()
+        # Before the first ordinary connection, which sets the journal mode.
+        self._refuse_newer(stored_version(self._db_path))
         self._init_db()
+
+    def _refuse_newer(self, found: int | None) -> None:
+        """Refuse a store a newer release wrote (#1096).
+
+        Canonical and append-only: there is nothing to rebuild it from, so it is not
+        read as this version's.
+        """
+        if found is None or found <= SCHEMA_VERSION:
+            return
+        raise UnsupportedSchemaVersionError(
+            store="run event store",
+            location=str(self._db_path),
+            found=found,
+            supported=SCHEMA_VERSION,
+            remedy=(
+                "Run the release that wrote it, or restore the output directory from a "
+                "backup taken before the upgrade; the events cannot be rebuilt from "
+                "anything else."
+            ),
+        )
 
     @property
     def _conn(self) -> sqlite3.Connection:
@@ -128,22 +150,9 @@ class BuildEventStore:
             )
             cur = self._conn.execute("SELECT MAX(version) FROM schema_version")
             found = cur.fetchone()[0]
-            if found is not None and int(found) > SCHEMA_VERSION:
-                # Canonical and append-only: there is nothing to rebuild it from, so a
-                # store a newer release wrote is refused rather than read as this
-                # version's (#1096). Raised inside the transaction, so nothing above
-                # is kept.
-                raise UnsupportedSchemaVersionError(
-                    store="run event store",
-                    location=str(self._db_path),
-                    found=int(found),
-                    supported=SCHEMA_VERSION,
-                    remedy=(
-                        "Run the release that wrote it, or restore the output "
-                        "directory from a backup taken before the upgrade; the events "
-                        "cannot be rebuilt from anything else."
-                    ),
-                )
+            # Again inside the transaction: a store made between the check above and
+            # here is refused with nothing of this version added to it.
+            self._refuse_newer(int(found) if found is not None else None)
             if found is None:
                 # v1 is first release — no destructive migration (DROP) needed. This store is
                 # append-only canonical (unlike BuildIndex), so schema change never DROPs existing

@@ -48,6 +48,18 @@ _SCHEMA_VERSION_TABLE = "build_schema_version"
 _IN_CHUNK = 500
 
 
+def stored_index_version(engine: Engine) -> int | None:
+    """The schema version of the index in CUBRID, or None when there is none yet."""
+    version_table = Table(
+        _SCHEMA_VERSION_TABLE, MetaData(), Column("version", Integer, primary_key=True)
+    )
+    with engine.connect() as conn:
+        if _SCHEMA_VERSION_TABLE not in set(inspect(conn).get_table_names()):
+            return None
+        row = conn.execute(select(func.max(version_table.c.version))).first()
+    return int(row[0]) if row is not None and row[0] is not None else None
+
+
 class CubridBuildIndex:
     """CUBRID-based build index (ADR 0016). Implements ``BuildIndex`` Protocol."""
 

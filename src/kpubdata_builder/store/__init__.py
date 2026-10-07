@@ -14,6 +14,7 @@ from .build_index import (
     BuildEntry,
     BuildIndex,
     SqliteBuildIndex,
+    bring_index_up_to_date,
     make_build_index,
     rebuild_index,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "BuildIndex",
     "SCHEMA_VERSION",
     "SqliteBuildIndex",
+    "bring_index_up_to_date",
     "make_build_index",
     "rebuild_index",
 ]

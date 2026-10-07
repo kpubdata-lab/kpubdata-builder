@@ -132,6 +132,7 @@ def test_build_index_from_a_newer_release_is_refused_not_dropped(engine) -> None
     from sqlalchemy import text
 
     from kpubdata_builder.store.build_index import SCHEMA_VERSION
+    from kpubdata_builder.store.build_index_cubrid import stored_index_version
     from kpubdata_builder.store.schema_version import UnsupportedSchemaVersionError
 
     idx = CubridBuildIndex(engine)
@@ -140,6 +141,7 @@ def test_build_index_from_a_newer_release_is_refused_not_dropped(engine) -> None
         with engine.begin() as conn:
             conn.execute(text("UPDATE build_schema_version SET version = version + 1"))
 
+        assert stored_index_version(engine) == SCHEMA_VERSION + 1
         with pytest.raises(UnsupportedSchemaVersionError) as refusal:
             CubridBuildIndex(engine)
         assert refusal.value.found == SCHEMA_VERSION + 1

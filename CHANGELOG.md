@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- `serve` fills the build index from the manifests before it takes a request when the stored index is an older version or missing (#1096). Opening an older index drops its table and makes it again, so the server answered as healthy with every earlier run missing from its lists until someone ran `rebuild-index`. An index that is already this release's is not scanned or changed. `rebuild-index` and this rebuild also move the old index's `-wal` and `-shm` out with it: a process that ended without closing its connections leaves them, and SQLite applied them to the new index, which was then read as the old one.
+- A state store that is refused keeps its journal mode (#1096). The version was read on a connection that had already set WAL, so a store a newer release wrote was switched to WAL, with `-wal` and `-shm` files beside it, by the release that refused it. The version is now read first, on a read-only connection.
 - A state store a newer release wrote is refused and left as it is (#1096). Rolling a deployment back is when the running code meets one.
   - The build index dropped its table for any schema version but its own, a newer one too, so the newer release came back to an empty index and nothing had said so. A newer index now stops the start; an older one is recreated as before. `kpubdata-builder rebuild-index` makes this release's index from the manifests, and is the only thing that replaces a newer one (SQLite and CUBRID).
   - The run event store took any version as its own. A newer one now stops the start: the events cannot be rebuilt from anything else.
