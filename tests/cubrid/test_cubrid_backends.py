@@ -163,6 +163,114 @@ def test_build_index_from_a_newer_release_is_refused_not_dropped(engine) -> None
         idx.delete("cbx-newer")
 
 
+def _write_manifest(root, run_id: str, *, owner_id: str, errors: list[str]) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-01-01T10:00:00Z",
+                "finished_at": "2026-01-01T10:05:00Z",
+                "owner_id": owner_id,
+                "created_by": owner_id,
+                "errors": errors,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_index_is_brought_up_to_date_on_start(  # type: ignore[no-untyped-def]
+    tmp_path, engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What ``serve`` does before it opens the index, on this backend (#1096, #1158).
+
+    The stored version decides: an older index is filled again from the manifests, this
+    release's is not scanned or changed, and a newer one is not touched — opening it
+    then refuses.
+    """
+    from sqlalchemy import text
+
+    from kpubdata_builder.store import backend, bring_index_up_to_date
+    from kpubdata_builder.store.build_index import SCHEMA_VERSION
+    from kpubdata_builder.store.build_index_cubrid import stored_index_version
+    from kpubdata_builder.store.schema_version import UnsupportedSchemaVersionError
+
+    monkeypatch.setenv("KPUBDATA_BUILDER_STORAGE_BACKEND", "cubrid")
+    monkeypatch.setattr(backend, "get_engine", lambda: engine)
+    _write_manifest(tmp_path, "cbx-up-ok", owner_id="oidc:a", errors=[])
+    _write_manifest(tmp_path, "cbx-up-failed", owner_id="oidc:b", errors=["boom"])
+
+    def set_version(version: int) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE build_schema_version SET version = :v"), {"v": version})
+
+    idx = CubridBuildIndex(engine)
+    idx.insert_or_replace("cbx-up-stale", "ok", None, "2026-01-01T00:01:00Z")
+    try:
+        # This release's index: nothing is done, and a row is not dropped for having
+        # no manifest behind it.
+        assert bring_index_up_to_date(tmp_path) is None
+        assert idx.get("cbx-up-stale") is not None
+
+        # A newer one: left as it is, and refused when opened.
+        set_version(SCHEMA_VERSION + 1)
+        assert bring_index_up_to_date(tmp_path) is None
+        assert stored_index_version(engine) == SCHEMA_VERSION + 1
+        with engine.begin() as conn:
+            kept = conn.execute(
+                text("SELECT COUNT(*) FROM builds WHERE run_id = 'cbx-up-stale'")
+            ).scalar()
+        assert kept == 1
+        with pytest.raises(UnsupportedSchemaVersionError):
+            CubridBuildIndex(engine)
+
+        # An older one: the index is what the manifests say, at this release's version.
+        set_version(SCHEMA_VERSION - 1)
+        assert bring_index_up_to_date(tmp_path) == 2
+        assert stored_index_version(engine) == SCHEMA_VERSION
+        rebuilt = CubridBuildIndex(engine)
+        ok, failed = rebuilt.get("cbx-up-ok"), rebuilt.get("cbx-up-failed")
+        assert ok is not None and (ok.status, ok.owner_id) == ("ok", "oidc:a")
+        assert failed is not None and (failed.status, failed.owner_id) == ("failed", "oidc:b")
+        assert rebuilt.get("cbx-up-stale") is None
+
+        # And once it is this release's, the next start does nothing.
+        assert bring_index_up_to_date(tmp_path) is None
+    finally:
+        set_version(SCHEMA_VERSION)
+        cleanup = CubridBuildIndex(engine)
+        for run_id in ("cbx-up-ok", "cbx-up-failed", "cbx-up-stale"):
+            cleanup.delete(run_id)
+
+
+def test_index_is_built_on_start_when_there_is_none(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No tables yet: they are made and filled, not left for the first request (#1158)."""
+    from kpubdata_builder.store import backend, bring_index_up_to_date
+    from kpubdata_builder.store.build_index import SCHEMA_VERSION
+    from kpubdata_builder.store.build_index_cubrid import stored_index_version
+
+    if _require_real_cubrid():
+        pytest.skip("needs a database with no index tables; the shared CUBRID has them")
+    fresh = create_engine("sqlite:///:memory:", future=True)
+    try:
+        monkeypatch.setenv("KPUBDATA_BUILDER_STORAGE_BACKEND", "cubrid")
+        monkeypatch.setattr(backend, "get_engine", lambda: fresh)
+        _write_manifest(tmp_path, "cbx-new-ok", owner_id="oidc:a", errors=[])
+        assert stored_index_version(fresh) is None
+
+        assert bring_index_up_to_date(tmp_path) == 1
+
+        assert stored_index_version(fresh) == SCHEMA_VERSION
+        assert CubridBuildIndex(fresh).get("cbx-new-ok") is not None
+    finally:
+        fresh.dispose()
+
+
 def test_build_index_monitoring_queries(engine) -> None:  # type: ignore[no-untyped-def]
     """Validate that upstream monitoring (#516/#527) methods work on real CUBRID."""
     idx = CubridBuildIndex(engine)
