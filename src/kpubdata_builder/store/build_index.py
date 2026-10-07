@@ -672,20 +672,41 @@ def _rebuild_sqlite(output_root: Path) -> int:
     finally:
         index.close()
 
-    # Atomic replace: backup existing index to .bak, rename .tmp to original
+    # Atomic replace: backup existing index to .bak, rename .tmp to original.
+    #
+    # The old index's ``-wal`` and ``-shm`` go with it. A process that ended without
+    # closing its connections — killed, out of memory, or a thread whose connection
+    # nobody closed — leaves them behind, and SQLite applies a ``-wal`` it finds next
+    # to a database to that database: the new index would be read as the old one,
+    # or as a mix of the two, the next time it was opened (#1096).
+    sidecars = ("-wal", "-shm")
+    for suffix in sidecars:
+        # What the scan's own connection left; ``close()`` checkpointed it.
+        Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)
+        Path(f"{backup_path}{suffix}").unlink(missing_ok=True)
     backup_path.unlink(missing_ok=True)
+    moved: list[str] = []
     if index_path.exists():
         index_path.rename(backup_path)
+    for suffix in sidecars:
+        sidecar = Path(f"{index_path}{suffix}")
+        if sidecar.exists():
+            sidecar.rename(Path(f"{backup_path}{suffix}"))
+            moved.append(suffix)
 
     try:
         tmp_path.rename(index_path)
     except OSError:
-        # Restore from backup if replace fails
+        # Restore from backup if replace fails, with the files that belong to it.
         if backup_path.exists():
             backup_path.rename(index_path)
+        for suffix in moved:
+            Path(f"{backup_path}{suffix}").rename(Path(f"{index_path}{suffix}"))
         raise
     else:
         backup_path.unlink(missing_ok=True)
+        for suffix in sidecars:
+            Path(f"{backup_path}{suffix}").unlink(missing_ok=True)
 
     return count
 

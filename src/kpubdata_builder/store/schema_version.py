@@ -35,8 +35,10 @@ def stored_version(path: Path) -> int | None:
     """The schema version a SQLite store records, read without changing the file.
 
     The connection is read-only and sets nothing, so a store this code then refuses
-    keeps its journal mode and gains no ``-wal`` or ``-shm`` file beside it: opening it
-    the ordinary way switches it to WAL before any version is looked at (#1096).
+    keeps its journal mode: opening it the ordinary way switches it to WAL before any
+    version is looked at (#1096). A store that is not in WAL mode gains no file beside
+    it either. One that is already in WAL mode does — SQLite creates its ``-shm`` and
+    ``-wal`` to read it at all — which changes nothing about the store.
 
     None when there is no file, no version in it, or it cannot be read this way — the
     ordinary open then decides, and fails as it would have.

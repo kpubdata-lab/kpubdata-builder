@@ -303,3 +303,55 @@ def test_newer_index_is_not_rebuilt_on_start(tmp_path: Path) -> None:
     assert bring_index_up_to_date(tmp_path) is None
 
     assert _dump(path) == before
+
+
+_OLD_INDEX_LEFT_OPEN = """
+import os, sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+conn.execute("PRAGMA journal_mode=WAL")
+conn.execute("PRAGMA wal_autocheckpoint=0")
+conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)")
+conn.execute("INSERT INTO schema_version (version) VALUES (?)", (int(sys.argv[2]),))
+conn.execute("CREATE TABLE builds (run_id TEXT PRIMARY KEY, old_col TEXT)")
+conn.executemany("INSERT INTO builds VALUES (?, 'x')", [(f"old-{i}",) for i in range(50)])
+conn.commit()
+os._exit(0)
+"""
+
+
+def test_rebuild_is_not_undone_by_the_wal_the_last_process_left(tmp_path: Path) -> None:
+    """A process that ended without closing its connections leaves ``-wal`` behind.
+
+    SQLite applies a ``-wal`` it finds beside a database to that database, so a new
+    index renamed into place next to the old one's was read as the old one: version 4,
+    then dropped as older and left empty, after ``serve`` had said it was rebuilt.
+    """
+    import subprocess
+    import sys
+
+    from kpubdata_builder.store import bring_index_up_to_date
+
+    path = tmp_path / "_builds.sqlite"
+    subprocess.run(
+        [sys.executable, "-c", _OLD_INDEX_LEFT_OPEN, str(path), str(INDEX_VERSION - 1)],
+        check=True,
+    )
+    # The old index is in the files the dead process left, not in the database file.
+    assert Path(f"{path}-wal").stat().st_size > 0
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+    _write_run(tmp_path, "run-failed", owner_id="oidc:b", errors=["boom"])
+
+    assert bring_index_up_to_date(tmp_path) == 2
+
+    assert bring_index_up_to_date(tmp_path) is None
+    index = SqliteBuildIndex(tmp_path)
+    ok, failed = index.get("run-ok"), index.get("run-failed")
+    assert ok is not None and ok.owner_id == "oidc:a"
+    assert failed is not None and failed.status == "failed"
+    assert index.get("old-0") is None
+    index.close()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(INDEX_VERSION,)]
+        assert conn.execute("SELECT COUNT(*) FROM builds").fetchone() == (2,)
+    assert not [item.name for item in tmp_path.iterdir() if ".bak" in item.name]
+    assert not [item.name for item in tmp_path.iterdir() if ".tmp" in item.name]
