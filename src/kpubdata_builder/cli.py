@@ -851,18 +851,31 @@ def _run_serve(
             KPUBDATA_BUILDER_REPLAY_DIR env, else no replay.
 
     Returns:
-        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when the replay
-        fixtures cannot be used, or when the deployment requires each request's own
-        provider key and the installed kpubdata cannot keep the operator's out (#990).
+        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when a setting
+        cannot be used as written (#1108), when the replay fixtures cannot be used, or
+        when the deployment requires each request's own provider key and the installed
+        kpubdata cannot keep the operator's out (#990).
     """
     from .service import BuilderService
     from .service.app import DEFAULT_BUILD_WAIT_SECONDS
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
+    # Every setting is read once before anything is built from them (#1108): what
+    # cannot be used stops the start here, all of it in one message.
+    from .service.startup_settings import check_settings
+
+    report = check_settings()
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    if report.problems:
+        for problem in report.problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 1
+
     # Priority: --max-workers flag > KPUBDATA_BUILDER_MAX_WORKERS env > default.
     if max_workers is None:
-        env_workers = os.environ.get("KPUBDATA_BUILDER_MAX_WORKERS")
-        max_workers = int(env_workers) if env_workers else _DEFAULT_MAX_WORKERS
+        env_workers = _count_from_env("KPUBDATA_BUILDER_MAX_WORKERS")
+        max_workers = env_workers if env_workers is not None else _DEFAULT_MAX_WORKERS
     if max_workers < 1:
         raise SystemExit(f"max_workers must be >= 1, got {max_workers}")
 
@@ -873,14 +886,13 @@ def _run_serve(
     # KPUBDATA_BUILDER_MAX_BUILDS env > the request thread count (what a deployment that
     # only set MAX_WORKERS had as its async worker count).
     if max_builds is None:
-        env_builds = os.environ.get("KPUBDATA_BUILDER_MAX_BUILDS")
-        max_builds = int(env_builds) if env_builds else max_workers
+        env_builds = _count_from_env("KPUBDATA_BUILDER_MAX_BUILDS")
+        max_builds = env_builds if env_builds is not None else max_workers
     if max_builds < 1:
         raise SystemExit(f"max_builds must be >= 1, got {max_builds}")
     # Priority: --max-previews flag > KPUBDATA_BUILDER_MAX_PREVIEWS env > no limit.
     if max_previews is None:
-        env_previews = os.environ.get("KPUBDATA_BUILDER_MAX_PREVIEWS")
-        max_previews = int(env_previews) if env_previews else None
+        max_previews = _count_from_env("KPUBDATA_BUILDER_MAX_PREVIEWS")
     if max_previews is not None and max_previews < 1:
         raise SystemExit(f"max_previews must be >= 1, got {max_previews}")
     # How long a synchronous build waits for a slot before 429 build_queue_full (#1040).
@@ -952,6 +964,22 @@ def _run_serve(
     except KeyboardInterrupt:
         print("\nshutting down", file=sys.stderr)
     return 0
+
+
+def _count_from_env(name: str) -> int | None:
+    """The variable as an integer, or None when it is unset or empty.
+
+    Raises:
+        SystemExit: It is not an integer. ``int()`` on its own ended the start with a
+            traceback that did not name the variable (#1108).
+    """
+    raw = os.environ.get(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer, got {raw!r}") from None
 
 
 def _run_fixtures_export(*, destination: str) -> int:
