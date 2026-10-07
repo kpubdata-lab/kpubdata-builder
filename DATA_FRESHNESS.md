@@ -58,7 +58,7 @@
 - 모든 `scheduled-*.yml`은 `permissions: contents: read`를 기본값으로 두고, 실패 알림 job에만 `issues: write`를 부여한다.
 - append-only 데이터셋(대기오염/날씨)은 `concurrency.cancel-in-progress: false`로 이전 실행을 취소하지 않고 직렬화해 중복 append와 부분 publish를 피한다.
 - 데이터셋 publish job은 reusable workflow의 `timeout_minutes` 입력으로 45~60분 제한을 둔다. 긴 backfill은 scheduled workflow가 아니라 `workflow_dispatch`로 별도 실행한다.
-- scheduled workflow가 실패하면 `fix(freshness): <workflow> failed` 이슈가 생성되며, run URL을 기준으로 원인 확인 후 backfill 여부를 결정한다.
+- scheduled workflow가 실패하면 `fix(freshness): <workflow> failed` 이슈가 생성되며, run URL을 기준으로 원인 확인 후 backfill 여부를 결정한다. 같은 workflow 의 이슈가 열려 있으면 새로 만들지 않고 그 이슈에 run URL 을 댓글로 단다. 알림을 남기지 못하면 `notify-failure` 작업이 실패로 표시된다(`.github/workflows/freshness-incident.yml`, #1143).
 - GitHub는 저장소 활동이 60일 이상 없으면 scheduled workflow를 비활성화할 수 있다. 월 1회 이상 수동 `workflow_dispatch` 또는 운영 변경 PR로 schedule 활성 상태를 확인한다.
 - `KPUBDATA_DATAGO_API_KEY`, `HF_TOKEN`, Kaggle credentials는 GitHub Environment 보호 규칙 아래에서 관리하고, 분기별 로테이션 결과를 운영 이슈에 기록한다.
 - Kaggle scheduled publish는 현재 비활성이다. dataset config에 `kaggle_slug`가 있고 Environment에 `KAGGLE_USERNAME`/`KAGGLE_KEY`가 등록된 데이터셋만 별도 scheduled workflow에서 활성화한다.

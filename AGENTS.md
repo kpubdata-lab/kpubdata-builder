@@ -363,6 +363,8 @@ would notice.
 | [PRD.md](./PRD.md) | Product requirements |
 | [ROADMAP.md](./ROADMAP.md) | Roadmap |
 | [CREDENTIAL_SURFACE.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/CREDENTIAL_SURFACE.md) | Every place a user key can persist |
+| [REQUEST_CREDENTIALS.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/REQUEST_CREDENTIALS.md) | Where a key sent with a request can be read on its way, and when it is dropped |
+| [REQUEST_CREDENTIALS.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/REQUEST_CREDENTIALS.md) | Where a key sent with a request can be read on its way, and when it is dropped |
 | [SECURITY.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/SECURITY.md) | Security policy and known limits |
 
 ### KPubData product family
