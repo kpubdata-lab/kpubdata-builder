@@ -14,6 +14,7 @@ import json
 import logging
 import mimetypes
 import os
+import sys
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -149,6 +150,9 @@ _FILE_CHUNK_BYTES = 64 * 1024
 _TEXTUAL_MIME_SUFFIXES = ("json", "xml", "yaml", "javascript")
 
 _logger = logging.getLogger(__name__)
+
+#: What a write raises when the client has already closed its end (#1132).
+_CLIENT_GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
 
 @lru_cache(maxsize=1)
@@ -532,6 +536,27 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
             pass
         finally:
             self.shutdown_request(request)
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Keep a client that left early out of stderr (#1132).
+
+        socketserver calls this from inside the ``except`` that caught a handler's
+        exception, and its default prints the whole traceback to stderr. When the client
+        closed the connection before the response was written — a page navigated away,
+        a tab closed, a ``fetch`` was aborted — that is ordinary client behaviour, not a
+        server error, and about twenty lines of traceback per occurrence buried the real
+        errors. Those are logged at debug level instead; anything else still goes to the
+        default handler.
+        """
+        error = sys.exc_info()[1]
+        if isinstance(error, _CLIENT_GONE):
+            _logger.debug(
+                "client %s closed the connection before the response was written: %s",
+                client_address,
+                type(error).__name__,
+            )
+            return
+        super().handle_error(request, client_address)
 
     def server_close(self) -> None:
         super().server_close()
