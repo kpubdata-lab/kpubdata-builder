@@ -3,6 +3,11 @@
 기준: 2026-09-27, `kpubdata-builder` main + `kpubdata` main + `kpubdata-studio` main
 (17·18번과 3번 보강: 2026-09-29, builder `fbbdd16` 이후 main)
 
+> **지금의 동작은 [`REQUEST_CREDENTIALS.md`](./REQUEST_CREDENTIALS.md) 에 있다.** 아래는
+> 2026-09-27 의 조사 기록이다. 요약의 "세 가지 모두 어긋난다" 는 그때의 판정이고, 다중
+> 사용자 배포에서는 #683(요청·작업 수명의 키), #684, #686, #925 로 바뀌었다 — 문서 뒤쪽의
+> 날짜가 붙은 절들이 그 경과다.
+
 이 문서는 **조사**다. 고치지 않는다 — 수정은 #682(ADR)·#683(ephemeral context)이
 한다. 여기서 하는 일은 "키가 어디에 남는가" 를 빈칸 없이 적는 것이다.
 

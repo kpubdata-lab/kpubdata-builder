@@ -23,7 +23,9 @@ This project handles **user-supplied API keys for Korean public data services**
   keys: a key lives only for its request or job, and there is no fallback to the
   operator's key. A single-user deployment stores them encrypted per principal.
   ADR 0012 (2026-09-30 amendment) and ADR 0020 hold the rules;
-  `docs/CREDENTIAL_SURFACE.md` records every place a key is known to reach.
+  `docs/REQUEST_CREDENTIALS.md` says, hop by hop, who can read a key sent with a
+  request and when it is dropped; `docs/CREDENTIAL_SURFACE.md` is the audit that
+  found every place a key was known to reach.
 - **One user receiving another user's data**, including through a shared
   response cache.
 - **A request reaching an address it should not** — the URL source guard in
@@ -59,6 +61,13 @@ unreleased code.
   request only. A stored publish token is not read and the server's `HF_TOKEN` /
   `KAGGLE_*` is never used, whatever
   `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` says.
+- "Not stored" is not "never readable" (`docs/REQUEST_CREDENTIALS.md`). In a
+  multi-user deployment a key is in the Builder process's memory while its request
+  or job runs, and the TLS-terminating proxies in front of Builder handle the header
+  in the clear; whoever operates those can read it then. A job that waits holds its
+  key for up to an hour by default, and a running build until it ends — signing out of Studio
+  does not cancel it. A build of a spec whose provider endpoint is still `http://`
+  sends the key to the provider unencrypted (kpubdata#738).
 - `ENFORCE_OWNERSHIP` defaults off only for a single-user deployment. When
   `OIDC_ISSUER` is set it is forced on whatever its value (#635), and another
   user's run answers 404, not 403 (#796).
