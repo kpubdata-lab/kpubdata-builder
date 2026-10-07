@@ -310,18 +310,60 @@ _CSV_INTEGER = r"-?\p{Nd}+"
 _CSV_FLOAT = (
     r"[-+]?((\p{Nd}*\.\p{Nd}+)([eE][-+]?\p{Nd}+)?|inf|NaN|(\p{Nd}+)[eE][-+]?\p{Nd}+|\p{Nd}+\.)"
 )
+#: A value a column's type cannot hold: an integer beyond 64 bits, or a number in digits
+#: other than 0-9 — ``\p{Nd}`` types ``١٢٣`` as a number, as Polars did, and the cast
+#: refuses it, as Polars' did (#876 review).
+_CSV_NOT_CAST = (
+    "failed to parse csv content: a value does not fit the type its column was read as "
+    "(an integer beyond 64 bits, or a number written in digits other than 0-9)"
+)
 
 
-#: One field of a CSV record, then a comma or the end of the record: a quoted field
-#: (``""`` inside is a quote), or an unquoted one — empty, or not starting with a quote,
-#: and then anything but a comma (a quote inside it is a character, as Polars read it).
-_CSV_FIELD = re.compile(r'(?:"((?:[^"]|"")*)"|([^,"][^,]*|))(,|\Z)', re.DOTALL)
-#: A quoted field still open at the end of the text read so far.
-_CSV_OPEN_FIELD = re.compile(r'"(?:[^"]|"")*\Z', re.DOTALL)
+#: How a record's fields are read (#876 review): a field starting with a quote is quoted
+#: and runs to the next quote not doubled (``""`` inside is a quote), which must be
+#: followed by a comma or the end of the record; any other field runs to the next comma,
+#: and a quote inside it is a character, as Polars read it. Quotes are found with
+#: ``str.find``, so a record is read in time and memory linear in its length — a regular
+#: expression over a quoted field remembered every character, and re-reading a record
+#: from its start on each of its lines took time quadratic in them.
 
 
-class _OpenQuote(Exception):
-    """The record's last quoted field continues on the next line."""
+def _closing_quote(text: str, position: int) -> int:
+    """The index of the quote closing a field whose text starts at ``position``, or -1
+    when the field is not closed in ``text``."""
+    while True:
+        quote = text.find('"', position)
+        if quote == -1 or not text.startswith('"', quote + 1):
+            return quote
+        position = quote + 2
+
+
+def _csv_fields(text: str, position: int, fields: list[str | None], line: int) -> int:
+    """Append the fields of ``text`` from ``position`` to ``fields``; -1 when the record
+    ends in ``text``, else the index just after the quote opening its last field, which
+    continues on the next line."""
+    while True:
+        if text.startswith('"', position):
+            close = _closing_quote(text, position + 1)
+            if close == -1:
+                return position + 1
+            fields.append(text[position + 1 : close].replace('""', '"'))
+            position = close + 1
+            if position == len(text):
+                return -1
+            if text[position] != ",":
+                raise IngestionError(
+                    f"failed to parse csv content: on line {line} a quoted field is "
+                    "followed by something other than a comma"
+                )
+            position += 1
+        else:
+            comma = text.find(",", position)
+            if comma == -1:
+                fields.append(text[position:] or None)
+                return -1
+            fields.append(text[position:comma] or None)
+            position = comma + 1
 
 
 def _csv_records(path: Path) -> Iterator[tuple[int, list[str | None]]]:
@@ -332,63 +374,57 @@ def _csv_records(path: Path) -> Iterator[tuple[int, list[str | None]]]:
     without an error. A quoted field followed by anything but a comma is refused. An
     unquoted empty field is ``None``, a quoted one the empty string. A blank line is
     skipped. Lines may end in LF, CRLF or CR, mixed; a byte-order mark is dropped before
-    the header is read.
+    the header is read. Each line is read once: a quoted field open at the end of a line
+    is kept as its pieces, and the next line is read from where the field went on.
     """
-    parts: list[str] = []
+    fields: list[str | None] = []
+    #: The pieces of the quoted field open at the end of the last line, else ``None``.
+    open_field: list[str] | None = None
     start = 0
     with path.open(encoding="utf-8-sig", newline="") as handle:
         for number, line in enumerate(handle, start=1):
-            if parts and '"' not in line:
-                parts.append(line)  # still inside the open quoted field
-                continue
-            if not parts:
-                start = number
-            parts.append(line)
-            text = "".join(parts)
             # One line ending: universal newlines read CRLF, LF and CR, mixed.
-            if text.endswith("\r\n"):
-                text = text[:-2]
-            elif text.endswith(("\n", "\r")):
-                text = text[:-1]
-            try:
-                fields = _csv_fields(text, start)
-            except _OpenQuote:
-                continue
-            parts = []
-            if fields is not None:
+            if line.endswith("\r\n"):
+                text = line[:-2]
+            elif line.endswith(("\n", "\r")):
+                text = line[:-1]
+            else:
+                text = line
+            if open_field is None:
+                if text == "":
+                    continue
+                start = number
+                if '"' not in text:
+                    yield start, [value or None for value in text.split(",")]
+                    continue
+                position = _csv_fields(text, 0, fields, number)
+            else:
+                close = _closing_quote(text, 0)
+                if close == -1:
+                    open_field.append(line)  # the line ending is the field's text
+                    continue
+                open_field.append(text[:close])
+                fields.append("".join(open_field).replace('""', '"'))
+                open_field = None
+                position = close + 1
+                if position < len(text):
+                    if text[position] != ",":
+                        raise IngestionError(
+                            f"failed to parse csv content: on line {number} a quoted field "
+                            "is followed by something other than a comma"
+                        )
+                    position = _csv_fields(text, position + 1, fields, number)
+                else:
+                    position = -1
+            if position == -1:
                 yield start, fields
-    if parts:
+                fields = []
+            else:
+                open_field = [text[position:], line[len(text) :]]
+    if open_field is not None:
         raise IngestionError(
             f"failed to parse csv content: a quoted field starting on line {start} is never closed"
         )
-
-
-def _csv_fields(text: str, line: int) -> list[str | None] | None:
-    """The fields of one record, ``None`` for a blank line; ``_OpenQuote`` when the last
-    quoted field is not closed in ``text``."""
-    if text == "":
-        return None
-    if '"' not in text:
-        return [value or None for value in text.split(",")]
-    fields: list[str | None] = []
-    position = 0
-    while True:
-        match = _CSV_FIELD.match(text, position)
-        if match is None:
-            if _CSV_OPEN_FIELD.match(text, position):
-                raise _OpenQuote
-            raise IngestionError(
-                f"failed to parse csv content: on line {line} a quoted field is followed by "
-                "something other than a comma"
-            )
-        quoted, plain, separator = match.groups()
-        if quoted is not None:
-            fields.append(quoted.replace('""', '"'))
-        else:
-            fields.append(plain if plain else None)
-        position = match.end()
-        if separator == "":
-            return fields
 
 
 def _csv_names(header: list[str | None]) -> list[str]:
@@ -479,7 +515,7 @@ def _csv_batches(
                 }.get(kind, quoted)
                 select.append(expression)
             # Every value is cast before the first record is given, so a value the type
-            # cannot hold (an integer beyond 64 bits) fails the parse, not a later batch.
+            # cannot hold (_CSV_NOT_CAST) fails the parse, not a later batch.
             connection.execute(
                 f"CREATE TABLE csv_typed AS SELECT {', '.join(select)} FROM csv_rows"
             )
@@ -491,10 +527,7 @@ def _csv_batches(
         except duckdb.ConversionException as exc:
             # DuckDB's text names the spill file; the client gets a fixed sentence.
             logger.warning("csv: a value does not fit its column type: %s", exc)
-            raise IngestionError(
-                "failed to parse csv content: a value does not fit the type its column was "
-                "read as (an integer beyond 64 bits)"
-            ) from exc
+            raise IngestionError(_CSV_NOT_CAST) from exc
         except duckdb.Error as exc:
             logger.warning("csv: DuckDB could not read the normalized file: %s", exc)
             raise IngestionError("failed to parse csv content") from exc

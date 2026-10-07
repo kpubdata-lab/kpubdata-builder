@@ -7,7 +7,10 @@ query can run is not refused by the check in front of it.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import time
+import tracemalloc
 from pathlib import Path
 
 import duckdb
@@ -86,11 +89,20 @@ def test_a_byte_order_mark_does_not_reach_a_quoted_header(
             "parquet",
             "failed to parse parquet content: not a Parquet file Builder can read",
         ),
-        (
-            b"a\n99999999999999999999999\n",
-            "csv",
-            "failed to parse csv content: a value does not fit the type its column was read "
-            "as (an integer beyond 64 bits)",
+        *(
+            (
+                content,
+                "csv",
+                "failed to parse csv content: a value does not fit the type its column was "
+                "read as (an integer beyond 64 bits, or a number written in digits other "
+                "than 0-9)",
+            )
+            for content in (
+                b"a\n99999999999999999999999\n",
+                "a\n١٢٣\n".encode(),  # Arabic-Indic digits: Polars refused them as well
+                "a\n１２３\n".encode(),  # full-width digits
+                "a\n١.٥\n".encode(),
+            )
         ),
     ],
 )
@@ -159,6 +171,51 @@ def test_a_renamed_duplicate_that_takes_a_header_name_is_refused() -> None:
     """``a,a,a_duplicated_0``: one of two columns was lost; Polars refused it."""
     with pytest.raises(IngestionError, match="the header names a column twice"):
         parse_tabular_bytes(b"a,a,a_duplicated_0\n1,2,3\n", format="csv")
+
+
+# ------------------------------------------- the reader's time and memory are linear
+# (the second review of f042f03: a record was parsed again from its start on every line
+# with a quote, and a regular expression over a quoted field remembered every character)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # a valid cell over 4,000 lines, each with a doubled quote: 10 seconds before
+        b'a,b\n"' + b'he said ""hi"" today\n' * 4_000 + b'",1\n',
+        # a quote never closed over 8,000 lines: 5 seconds before it was refused
+        b'a\n"' + b'""\n' * 8_000,
+    ],
+    ids=["multi-line-cell", "never-closed"],
+)
+def test_a_quoted_field_over_many_lines_is_read_in_linear_time(content: bytes) -> None:
+    started = time.perf_counter()
+    with contextlib.suppress(IngestionError):  # the second is refused; only time is checked
+        parse_tabular_bytes(content, format="csv")
+
+    assert time.perf_counter() - started < 1.0
+
+
+def test_a_multi_line_cell_is_read_whole() -> None:
+    content = b'a,b\n"' + b'he said ""hi"" today\n' * 4_000 + b'",1\n'
+
+    (row,) = parse_tabular_bytes(content, format="csv")
+
+    assert row == {"a": 'he said "hi" today\n' * 4_000, "b": 1}
+
+
+def test_a_large_quoted_field_takes_memory_in_proportion_to_its_size() -> None:
+    content = b'a\n"' + b"x" * 5_000_000 + b'"\n'
+    tracemalloc.start()
+    try:
+        (row,) = parse_tabular_bytes(content, format="csv")
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert len(row["a"]) == 5_000_000
+    # 25 MB now; 1.3 GB in the regular expression alone before
+    assert peak < 100_000_000
 
 
 def test_a_header_too_long_for_the_csv_module_is_read() -> None:
