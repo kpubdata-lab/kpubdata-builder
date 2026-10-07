@@ -461,7 +461,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.102.0 -> 1.103.0: POST /preview answers 400 provider_credential_required when the
 #   request carries no key for a provider the spec calls, as the build routes do
 #   (#1070, additive).
-API_CONTRACT_VERSION = "1.103.0"
+# 1.103.0 -> 1.104.0: the dataset views read a run whose table was not committed as
+#   failed — status, status_axes.refresh, the last success health counts from — and
+#   its completeness as unknown (#1123).
+API_CONTRACT_VERSION = "1.104.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
