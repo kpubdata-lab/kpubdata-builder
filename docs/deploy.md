@@ -53,13 +53,29 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 
 ## 6. 상태 저장 제약 — 단일 replica 전제
 
-산출물(artifacts)·완료 이력(`BuildIndex`, ADR 0003)이 로컬 FS/SQLite에 고정되어 있어 **replica를 2개 이상 띄울 수 없다** (ADR 0010/#375). 배포 시:
+Builder 는 **프로세스 하나**로 돈다. replica 를 2개 이상 띄울 수 없다. 배포 시:
 
 - `minReplicas: 1, maxReplicas: 1` 고정.
-- `/data` 볼륨(Azure Files 등) 마운트 필수 — 산출물·인덱스 영속화.
-- **Azure Files 위에 SQLite를 올리지 말 것** — 파일 잠금이 불안정하다 (ADR 0010 §5).
+- `/data` 는 **로컬 블록 볼륨**으로 마운트한다 — 산출물·인덱스·SQLite 저장소가 여기에 있다.
+  compose 는 named volume `builder-data` 를 쓴다.
+- **네트워크 파일시스템(NFS, Azure Files) 위에 SQLite를 올리지 말 것** — 파일 잠금이
+  불안정하다 (ADR 0010 §5). 예전 이 절은 `/data` 에 Azure Files 를 마운트하라고 하면서
+  같은 곳에서 그 위에 SQLite 를 올리지 말라고 했다. 두 문장은 함께 지킬 수 없다 —
+  인프라 쪽 정리는 #1097 이다.
 
-멀티 replica는 ADR 0010(`ArtifactStore` 추상화 + 백엔드 분리) 이행 후 가능하다.
+replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 백엔드 분리(`ArtifactStore`,
+`make_build_index()`)는 구현되어 있고 CUBRID 백엔드(ADR 0016)도 있지만, 아래는 여전히
+**프로세스 메모리**에 있다(2026-10-07):
+
+| 프로세스 안에만 있는 것 | 둘 이상이면 |
+|---|---|
+| 비동기 job 레지스트리와 큐 (`service/jobs.py`) | 다른 replica 에 제출된 job 의 상태를 답하지 못한다 |
+| job 에 묶인 provider 키 (`JobCredentials`, #683) | 키를 받은 replica 만 그 job 을 돌릴 수 있다 |
+| 동시에 도는 build 의 자리 수 (`BuildSlots`) 와 preview 상한 | 상한이 replica 수만큼 곱해진다 |
+| 인증 실패 스로틀, probe 간격 | 클라이언트가 replica 를 바꿔 가며 한도를 피한다 |
+
+그래서 재시작하면 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호를 받았을 때의 처리는
+§7, 다중 사용자 배포에서 중단된 run 의 표시는 #683 을 본다.
 
 ### 6.1 CUBRID 상태 백엔드 (ADR 0016)
 

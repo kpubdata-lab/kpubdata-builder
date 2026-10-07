@@ -85,3 +85,10 @@ P0는 GET, Auth=None만 지원한다. Bearer credential 연동은 #492 이후 P1
   비동기 경로는 현재 `owner_id`를 만들지 않으므로, file source를 참조하는
   build는 동기 `POST /build`로만 안정적으로 동작한다(비동기 경로는 owner_id
   부재로 해당 소스가 명확한 오류로 실패한다).
+
+> **2026-10-07 보충** — 위 마지막 항목은 이 결정을 내릴 때의 한계였고 지금은 사실이
+> 아니다. #998 부터 비동기 job 은 제출한 소유자를 file source resolver 에 넘기므로
+> (`BuilderService._run_build_job` 의 `owner_id`), 업로드한 파일을 쓰는 build 도
+> `POST /builds` 로 돈다. Studio 는 파일 build 를 비동기 경로로 제출한다
+> (kpubdata-studio#786). 업로드 보존 기간 뒤의 자동 정리도 #1045 로 들어왔다. URL
+> source 는 다중 사용자 배포에서 거부된다(#685).
