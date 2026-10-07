@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- A release made by merging a release pull request publishes its image (#1142). `release.yml` calls `docker.yml` with the release tag, but in a called workflow the event is the caller's. A merged release pull request arrived as `pull_request`, and the `publish` job — guarded by `github.event_name != 'pull_request'` — was skipped. The tag and the GitHub Release were made and no image was published, with nothing failing.
+  - `docker.yml` takes a `publish` input, off by default. `release.yml` sets it, and the publish job runs on it.
+  - The published digest is an output. A new `Image published` job fails the release when it is empty.
+  - The concurrency group is the image's ref, so a pushed tag and the release call for the same tag never publish at once. Only an ordinary pull request's run is cancelled by a newer one.
+  - The workflow's header lists what each way in publishes.
+  - `tests/unit/test_release_image_workflow.py` evaluates the workflows' expressions for each way in. 11 of its 18 tests fail on the workflows before this change.
 - The container starts with OIDC and no service key (#1122). `docker-entrypoint.sh` and `docker-compose.prod.app.yml` required `KPUBDATA_BUILDER_API_KEY` although `serve` handles an OIDC-only deployment, and answers a request without a token with `401 sign-in required`. A deployment for signed-in users only had to invent an administrator key it did not want.
   - The entrypoint now starts with `OIDC_ISSUER`, a service key or both, and still refuses with neither. `serve` checks the rest of the OIDC configuration and refuses on a bad one, and dev-mode does not skip that check.
   - **Behaviour change:** a service key shorter than 32 characters, or one of the example values in the documentation (`replace-with-strong-random-api-key` and three others), now stops the container. The value is never printed. `secrets.token_urlsafe(32)` gives 43 characters.
