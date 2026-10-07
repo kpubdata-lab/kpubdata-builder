@@ -77,17 +77,10 @@ jobs:
   notify-failure:
     needs: [tour-area, tour-location, tour-keyword, tour-festival]
     if: ${{ failure() }}
-    runs-on: ubuntu-latest
+    # One issue per workflow, in this repository, updated on a repeat (#1143).
+    uses: ./.github/workflows/freshness-incident.yml
     permissions:
       contents: read
       issues: write
-    steps:
-      - name: Create freshness incident issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKFLOW: ${{ github.workflow }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          gh issue create \
-            --title "fix(freshness): ${WORKFLOW} failed" \
-            --body "Scheduled dataset publish failed.\n\nRun: ${RUN_URL}\n\nFollow DATA_FRESHNESS.md escalation policy before re-running or backfilling."
+    with:
+      workflow: ${{ github.workflow }}
