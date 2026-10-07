@@ -7,9 +7,10 @@ still be read and nothing about them had changed.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -287,12 +288,83 @@ def test_a_first_sign_in_and_a_rejection_arriving_together_never_end_approved(
     assert ledger.observe(now_listed).status == "rejected"
 
 
-def test_the_ledger_is_in_wal_mode_and_waits_for_a_busy_writer(tmp_path: Path) -> None:
+def test_the_ledger_waits_for_a_busy_writer_and_is_not_in_wal_mode(tmp_path: Path) -> None:
+    """WAL would make the file unreadable from a directory that cannot be written."""
     ledger = _ledger(tmp_path)
 
     with ledger._connect() as conn:
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal"
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == ledger_module._BUSY_TIMEOUT_MS
+
+
+# ------------------------------------------------- a filesystem that is really read-only
+
+
+@pytest.fixture()
+def read_only_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[BuilderService]:
+    """A service whose ledger file and directory have been made read-only on disk, after
+    one listed and one pending user signed in. Nothing is patched: the failures below
+    are the operating system's."""
+    if os.geteuid() == 0:
+        pytest.skip("root writes through a read-only mode")
+    service = _service(tmp_path)
+    assert _as(service, monkeypatch, _LISTED, "GET", "/version").status_code == 200
+    assert _code(_as(service, monkeypatch, _NEWCOMER, "GET", "/version")) == "signup_pending"
+    directory = tmp_path / ".service"
+    ledger_file = directory / "users.sqlite3"
+    # Whatever SQLite left beside the file while it could write is what it will find.
+    _age_last_seen(service._user_ledger(), _LISTED.owner_id, LAST_SEEN_REFRESH_SECONDS * 2)
+    ledger_file.chmod(0o444)
+    directory.chmod(0o555)
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            service._user_ledger()._write([("UPDATE users SET display_name = ?", ("x",))])
+        yield service
+    finally:
+        directory.chmod(0o755)
+        ledger_file.chmod(0o644)
+
+
+def test_on_a_read_only_filesystem_a_known_user_is_still_read_and_served(
+    read_only_service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A write is due — last seen two hours ago — and the disk refuses it.
+    for _ in range(3):
+        assert _as(read_only_service, monkeypatch, _LISTED, "GET", "/version").status_code == 200
+
+
+def test_on_a_read_only_filesystem_refusals_are_still_read(
+    read_only_service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    waiting = _as(read_only_service, monkeypatch, _NEWCOMER, "GET", "/version")
+
+    assert waiting.status_code == 403 and _code(waiting) == "signup_pending"
+
+
+def test_on_a_read_only_filesystem_a_first_sign_in_is_unavailable_not_admitted(
+    read_only_service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stranger = _user("stranger", admitted=True)
+
+    answer = _as(read_only_service, monkeypatch, stranger, "GET", "/version")
+
+    assert answer.status_code == 503 and _code(answer) == "signup_ledger_unavailable"
+
+
+def test_when_the_filesystem_is_writable_again_what_was_not_saved_is_saved(
+    tmp_path: Path, read_only_service: BuilderService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = read_only_service._user_ledger()
+    before = {entry.user_id: entry.last_seen_at for entry in ledger.list()}
+    _as(read_only_service, monkeypatch, _LISTED, "GET", "/version")
+    assert {e.user_id: e.last_seen_at for e in ledger.list()} == before
+
+    (tmp_path / ".service").chmod(0o755)
+    (tmp_path / ".service" / "users.sqlite3").chmod(0o644)
+    assert _as(read_only_service, monkeypatch, _LISTED, "GET", "/version").status_code == 200
+
+    after = {entry.user_id: entry.last_seen_at for entry in ledger.list()}
+    assert after[str(_LISTED.owner_id)] > before[str(_LISTED.owner_id)]
 
 
 def test_a_service_without_oidc_users_still_never_opens_the_ledger(tmp_path: Path) -> None:

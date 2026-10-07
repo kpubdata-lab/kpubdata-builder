@@ -29,6 +29,11 @@ answered every signed-in user with a 500, though nothing about them had changed:
 - **A failed write does not shut out a user the ledger already knows.** Their status was
   read; what could not be saved is logged and saved by a later request. Only a first
   sign-in, which has no row to read, fails — as ``LedgerUnavailableError``.
+
+One request can get ahead of a decision: a pending user the list has come to admit is
+let in on the request that could not save that admission, even if an administrator
+rejected them in the moment after the row was read. The next request reads the
+rejection.
 """
 
 from __future__ import annotations
@@ -52,9 +57,16 @@ logger = logging.getLogger(__name__)
 
 #: How stale ``last_seen_at`` may get before a request writes it again (#1121).
 LAST_SEEN_REFRESH_SECONDS = 3600.0
-#: The policy the other SQLite stores follow (warehouse catalog, build index): readers
-#: are not blocked by a writer, and a writer waits for another instead of failing at
-#: once. Neither makes a full disk writable.
+#: A writer waits for another instead of failing at once — the value the warehouse
+#: catalog and the build index use.
+#:
+#: Their WAL journal mode is deliberately **not** used here. A WAL database cannot be
+#: read from a directory that cannot be written: every connection, a reader included,
+#: has to create the ``-shm`` file, and this ledger opens a connection per request. On a
+#: read-only filesystem a ``SELECT`` then fails with "attempt to write a readonly
+#: database" — the very case this module exists to survive. In the default rollback
+#: journal mode a reader creates nothing. What that costs is a reader waiting out a
+#: writer's commit, and a request writes at most once an hour for a user.
 _BUSY_TIMEOUT_MS = 30_000
 
 
@@ -109,9 +121,6 @@ class UserLedger:
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
-            # Persistent, so set once: a request that only reads is not held up by one
-            # that writes.
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS users ("
                 " user_id TEXT PRIMARY KEY, display_name TEXT, status TEXT NOT NULL,"
