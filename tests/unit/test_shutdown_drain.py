@@ -201,7 +201,7 @@ def test_stopping_an_idle_service_ends_nothing_and_does_not_wait(
 
 @pytest.mark.parametrize(
     ("raw", "seconds"),
-    [(None, 90.0), ("", 90.0), ("30", 30.0), ("0", 0.0), ("-5", 90.0), ("soon", 90.0)],
+    [(None, 90.0), ("", 90.0), ("  ", 90.0), ("30", 30.0), ("0", 0.0), ("1.5", 1.5)],
 )
 def test_the_grace_period_setting(
     monkeypatch: pytest.MonkeyPatch, raw: str | None, seconds: float
@@ -212,3 +212,26 @@ def test_the_grace_period_setting(
         monkeypatch.setenv(http_module.SHUTDOWN_GRACE_ENV, raw)
 
     assert http_module.shutdown_grace_seconds() == seconds
+
+
+@pytest.mark.parametrize("raw", ["inf", "-inf", "nan", "-5", "soon", "90s"])
+def test_a_grace_period_that_cannot_be_used_is_refused(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    """``inf`` would wait for the builds without end; a typo would silently become 90."""
+    monkeypatch.setenv(http_module.SHUTDOWN_GRACE_ENV, raw)
+
+    with pytest.raises(RuntimeError, match="finite number >= 0"):
+        http_module.shutdown_grace_seconds()
+
+
+def test_serve_refuses_to_start_with_such_a_grace_period(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the start, not when the stop comes: nothing is bound and no job is touched."""
+    monkeypatch.setenv("KPUBDATA_BUILDER_DEV_MODE", "true")
+    monkeypatch.setenv(http_module.SHUTDOWN_GRACE_ENV, "inf")
+    service = BuilderService(output_root=tmp_path, client_factory=_Recorder())
+
+    with pytest.raises(RuntimeError, match=http_module.SHUTDOWN_GRACE_ENV):
+        http_module.serve(service, port=0)

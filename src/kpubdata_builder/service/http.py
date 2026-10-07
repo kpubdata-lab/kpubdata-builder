@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import mimetypes
 import os
 import sys
@@ -572,21 +573,32 @@ _SHUTDOWN_CANCEL_SECONDS = 10.0
 
 
 def shutdown_grace_seconds() -> float:
-    """``KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS``; the default when unset or not a
-    non-negative number. ``0`` asks running builds to stop at once."""
+    """``KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS``, or the default when unset. ``0`` asks
+    running builds to stop at once.
+
+    Raises:
+        RuntimeError: The value is not a finite number >= 0. ``serve`` reads it at
+            startup and refuses to start, as it does for
+            ``KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`` (#1068): ``inf`` would make a
+            stopping server wait for its builds without end, and a typo silently
+            replaced by the default would leave the operator with a grace period other
+            than the one their stop timeout was set for.
+    """
     raw = os.environ.get(SHUTDOWN_GRACE_ENV, "").strip()
-    try:
-        value = float(raw) if raw else _DEFAULT_SHUTDOWN_GRACE_SECONDS
-    except ValueError:
+    if not raw:
         return _DEFAULT_SHUTDOWN_GRACE_SECONDS
-    return value if value >= 0 else _DEFAULT_SHUTDOWN_GRACE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value < 0:
+        raise RuntimeError(f"{SHUTDOWN_GRACE_ENV} must be a finite number >= 0, got {raw!r}")
+    return value
 
 
-def _drain_builds(service: BuilderService) -> None:
+def _drain_builds(service: BuilderService, grace_seconds: float) -> None:
     """Let the running async builds finish within the grace period (#1118)."""
-    cancelled, still_running = service.drain_builds(
-        shutdown_grace_seconds(), _SHUTDOWN_CANCEL_SECONDS
-    )
+    cancelled, still_running = service.drain_builds(grace_seconds, _SHUTDOWN_CANCEL_SECONDS)
     if cancelled:
         _logger.warning(
             "shutdown: %d build job(s) were still running after the grace period and "
@@ -635,6 +647,8 @@ def serve(
     # Validate storage backend config on startup (fail-closed, ADR 0016). No-op for
     # sqlite default; cubrid checks URL and driver early.
     validate_storage_config()
+    # Read now, so a value that cannot be used stops the start rather than the stop.
+    grace_seconds = shutdown_grace_seconds()
     # A multi-user deployment keeps job keys in memory only (#683): runs a previous
     # process left unfinished can never resume, so they are failed now, as
     # credentials_required, rather than left looking in progress.
@@ -687,7 +701,7 @@ def serve(
         server.server_close()
         signal.signal(signal.SIGTERM, previous_term)
     if stopping.is_set():
-        _drain_builds(service)
+        _drain_builds(service, grace_seconds)
 
 
 __all__ = ["BoundedThreadingHTTPServer", "make_handler", "serve"]
