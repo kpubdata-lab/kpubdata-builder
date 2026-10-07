@@ -328,8 +328,45 @@ docker compose -f docker-compose.prod.app.yml up -d            # IP-only
 docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TLS 진입
 ```
 
-> fail-closed(§2, ADR 0006): `KPUBDATA_BUILDER_API_KEY` 없이는 컨테이너가 기동을 거부한다.
+> fail-closed(§2, ADR 0006): 인증 수단이 하나도 없으면 컨테이너가 기동을 거부한다.
 > `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`는 재기동 사이에 동일 값을 유지해야 한다(ADR 0012).
+
+### 인증 구성별 기동 (#1122)
+
+컨테이너 진입점(`docker-entrypoint.sh`)과 `serve` 가 함께 판정한다. 진입점은 인증 수단이
+있는지와 서비스 키의 모양을, `serve` 는 OIDC 설정 전체를 본다.
+
+| 구성 | 기동 | 누가 들어오는가 |
+|---|---|---|
+| `OIDC_ISSUER` 만 (API 키 비움) | 기동 — `serve` 가 `OIDC_AUDIENCE`, allowlist 또는 `KPUBDATA_BUILDER_ADMIN_SUBJECTS`, pyjwt 를 검사하고 하나라도 빠지면 거부 | 로그인한 사용자. 토큰 없는 요청은 `401 sign-in required` |
+| API 키만 | 기동 | `X-API-Key` 를 가진 소비자(단일 사용자 배포) |
+| 둘 다 | 기동 | 두 경로 모두 |
+| 둘 다 없음 | **거부** (dev-mode 가 아니면) | — |
+| `KPUBDATA_BUILDER_DEV_MODE=1` + OIDC 또는 `ENFORCE_OWNERSHIP` | **거부** (`serve`) — dev-mode 로 인증 검사를 건너뛰지 않는다 | — |
+
+서비스 키를 설정했다면 진입점이 다음을 거부하고, 값은 출력하지 않는다.
+
+- 32자 미만 — `python -c "import secrets; print(secrets.token_urlsafe(32))"` 는 43자다.
+- 문서·예시 파일에 실린 값 (`replace-with-strong-random-api-key`, `change-me-strong-secret`,
+  `your-secret-key`, `<secret>`) — 공개된 값이라 누구나 안다.
+
+**관리 작업과 최소 권한.**
+
+| 작업 | OIDC 전용 배포에서 | 권한 |
+|---|---|---|
+| 가입 승인·거절, 관리 화면(`/admin/*`) | `KPUBDATA_BUILDER_ADMIN_SUBJECTS` 에 있는 사용자가 로그인해서 | 그 사용자만 관리자 |
+| 인덱스 재구축, 취소된 run 정리 | 컨테이너 안의 CLI: `docker exec kpubdata-builder kpubdata-builder rebuild-index` / `prune-cancelled` | 호스트에서 컨테이너를 다룰 수 있는 사람 — HTTP 로 열리지 않는다 |
+| 스케줄 워크플로(데이터 갱신) | 서비스 키가 필요하다 — 이 소비자가 있으면 키를 함께 둔다 | 서비스 키는 관리자(`is_admin`)다. 다른 사용자의 run 은 읽지 못한다(#1072) |
+
+**서비스 키 회전과 노출 면적.** 키는 인스턴스당 하나이고 관리자 권한을 갖는다.
+
+- 키가 닿는 곳: 호스트의 `.env`(`chmod 600`), 컨테이너 환경변수(`docker inspect` 로 보인다),
+  그 키를 쓰는 소비자의 secret 저장소. Builder 는 키 값을 로그·`owner_id`·응답 어디에도 쓰지
+  않는다(#505). Studio 번들(`VITE_*`)에는 절대 넣지 않는다(§2).
+- 회전: 새 값을 `.env` 에 쓰고 소비자의 secret 을 바꾼 뒤 `docker compose ... up -d` 로
+  컨테이너를 다시 만든다. 한 번에 하나의 키만 유효하므로, 바꾸는 동안 옛 키로 오는 요청은
+  `401` 이다 — 소비자를 먼저 멈추거나 실패를 감수한다.
+- 소비자가 없으면 키를 두지 않는 것이 가장 좁다 — OIDC 전용으로 띄운다.
 
 ## 인증 실패 스로틀
 

@@ -88,6 +88,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Each authentication configuration starts, or refuses to, the way a deployment
+      # would (#1122): OIDC only, service key only, both, neither, an example key, OIDC
+      # without an audience, and dev-mode with OIDC.
+      - name: Authentication start-up smoke
+        run: python3 scripts/image_auth_smoke.py --image kpubdata-builder:ci
+
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:

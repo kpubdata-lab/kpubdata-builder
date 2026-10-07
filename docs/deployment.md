@@ -332,8 +332,8 @@ curl -X POST http://localhost:8000/validate \
 # 허용할 오리진 설정 (콤마로 구분)
 export KPUBDATA_BUILDER_ALLOWED_ORIGINS=http://localhost:5173,https://studio.example.com
 
-# 인증 키 설정 (선택)
-export KPUBDATA_BUILDER_API_KEY=your-secret-key
+# 인증 키 설정 (선택) — 강한 랜덤 값. 컨테이너는 32자 미만이나 예시 값을 거부한다(#1122)
+export KPUBDATA_BUILDER_API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 
 # 서버 시작
 kpubdata-builder serve

@@ -6,8 +6,8 @@
 # pyproject의 PyPI 핀(kpubdata>=0.8.0,<0.9, #213)대로 kpubdata를 설치한다. 진입점은
 # kpubdata-builder serve이며, 환경변수로 설정을 주입한다 (docker-entrypoint.sh).
 #
-# ADR 0006 결정: 컨테이너는 fail-closed로 동작한다. KPUBDATA_BUILDER_API_KEY 없이는
-# 기동하지 않는다 (docker-entrypoint.sh에서 강제). 베이스는 pragmatic한 python-slim
+# ADR 0006 결정: 컨테이너는 fail-closed로 동작한다. 인증 수단(KPUBDATA_BUILDER_API_KEY 또는
+# OIDC_ISSUER, #1122)이 없으면 기동하지 않는다 (docker-entrypoint.sh에서 강제). 베이스는 pragmatic한 python-slim
 # (ADR-0006 미해결 질문: distroless 대안은 후속).
 
 # Debian 12(bookworm)로 고정한다 (#581). `python:3.12-slim` 이 최근 Debian 13(trixie)로
