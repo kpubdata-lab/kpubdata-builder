@@ -1,0 +1,56 @@
+# Report a failed scheduled publish as an issue in this repository (#1143).
+#
+# The scheduled workflows call this from their `notify-failure` job. It used to be an
+# inline `gh issue create` in each of the five, which named no repository — on a
+# runner without a checkout `gh` cannot find one, so the notice itself could fail —
+# opened a new issue on every failure, and printed `\n` literally in the body.
+#
+# One open issue per workflow: a later failure of the same workflow adds a comment to
+# it. Any `gh` failure fails this job, so a notice that was not filed shows as failed.
+name: Freshness incident
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        description: "The scheduled workflow that failed (github.workflow of the caller)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: File or update the freshness incident
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: File or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # No checkout: gh is told the repository instead of reading it from git.
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW: ${{ inputs.workflow }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="fix(freshness): ${WORKFLOW} failed"
+          body="$(mktemp)"
+          printf '%s\n\n%s\n\n%s\n' \
+            "Scheduled dataset publish failed." \
+            "Run: ${RUN_URL}" \
+            "Follow DATA_FRESHNESS.md escalation policy before re-running or backfilling." \
+            > "${body}"
+          existing="$(gh issue list --state open --search "in:title \"${title}\"" \
+            --json number,title --limit 50 \
+            | jq -r --arg title "${title}" 'map(select(.title == $title)) | .[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --body-file "${body}"
+            echo "Commented on #${existing}: ${title}"
+          else
+            gh issue create --title "${title}" --body-file "${body}"
+          fi
