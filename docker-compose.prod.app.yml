@@ -24,6 +24,11 @@ services:
       context: .
     container_name: kpubdata-builder
     restart: unless-stopped
+    # SIGTERM 뒤 실행 중인 비동기 빌드를 기다리는 시간(#1118). 서버는
+    # KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS(기본 90초) 동안 기다리고, 남은 빌드에
+    # 멈추라고 한 뒤 10초를 더 준다. 이 값은 그 합보다 길어야 한다 — 짧으면 Docker 가
+    # 기본 10초 뒤 SIGKILL 을 보내 빌드가 중간에 끊긴다.
+    stop_grace_period: 120s
     environment:
       # fail-closed (ADR 0006): API 키 없이는 컨테이너가 기동을 거부한다.
       KPUBDATA_BUILDER_API_KEY: ${KPUBDATA_BUILDER_API_KEY:?KPUBDATA_BUILDER_API_KEY is required (fail-closed, ADR 0006)}

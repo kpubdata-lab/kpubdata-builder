@@ -16,6 +16,7 @@ Cancellation (#481) design summary:
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -61,7 +62,10 @@ class BuildJobRunner(Protocol):
     ) -> BuildJobResponse: ...
 
 
-SubmitStatus = Literal["accepted", "existing", "queue_full"]
+#: How often ``wait_until_idle`` looks at the registry.
+_IDLE_POLL_SECONDS = 0.05
+
+SubmitStatus = Literal["accepted", "existing", "queue_full", "shutting_down"]
 
 # Result of ``AsyncBuildJobRegistry.request_cancel``. Each value maps to exactly one HTTP
 # response (``BuilderService.cancel_build``) — deterministic regardless of races.
@@ -229,6 +233,8 @@ class AsyncBuildJobRegistry:
     def __init__(self, *, max_terminal_jobs: int = _DEFAULT_MAX_TERMINAL_JOBS) -> None:
         self._lock = Lock()
         self._jobs: dict[str, BuildJobSnapshot] = {}
+        # Set once, by ``close_and_fail_queued``: the process is shutting down (#1118).
+        self._closed = False
         # run_id -> cooperative cancellation state (#481). Same lifecycle as snapshot,
         # mutable state never exposed externally (``cancellation()`` returns narrow
         # request/probe API only).
@@ -280,13 +286,17 @@ class AsyncBuildJobRegistry:
         between calls. Concurrent POST with same run_id both pass existence check, call
         ``on_accept`` twice, log event twice, exceed queue limit.
 
-        Returns: ``("existing"|"queue_full"|"created", snapshot|None)``.
+        Returns: ``("existing"|"queue_full"|"closed"|"created", snapshot|None)``.
+        ``"closed"`` once ``close_and_fail_queued`` has run (#1118): decided under the
+        same lock, so no job is created after the queue was emptied for shutdown.
         """
         now = _utc_now_text()
         with self._lock:
             existing = self._jobs.get(run_id)
             if existing is not None:
                 return "existing", existing
+            if self._closed:
+                return "closed", None
             queued = sum(1 for job in self._jobs.values() if job.status == "queued")
             if queued >= max_queued:
                 return "queue_full", None
@@ -437,6 +447,29 @@ class AsyncBuildJobRegistry:
     def get(self, run_id: str) -> BuildJobSnapshot | None:
         with self._lock:
             return self._jobs.get(run_id)
+
+    def close_and_fail_queued(self, error: str) -> tuple[BuildJobSnapshot, ...]:
+        """Stop accepting jobs and end every queued one as ``failed`` (#1118).
+
+        One lock scope does both, and ``begin_run`` takes the same lock: a job is either
+        failed here — its runner is then never called, even if a worker is already
+        waiting for a slot with it — or was ``running`` before this ran and is left to
+        finish. Nothing can be created afterwards (``try_create`` answers ``closed``).
+        Returns the jobs it ended; a second call ends none.
+        """
+        ended: list[BuildJobSnapshot] = []
+        with self._lock:
+            self._closed = True
+            for run_id, job in list(self._jobs.items()):
+                if job.status != "queued":
+                    continue
+                failed = _transition(job, status="failed", error=error)
+                self._jobs[run_id] = failed
+                ended.append(failed)
+            # Retired after the loop: retiring evicts old terminal jobs from the dict.
+            for job in ended:
+                self._retire_locked(job.run_id)
+        return tuple(ended)
 
     def discard(self, run_id: str) -> None:
         """Reset job to non-existent right after creation.
@@ -640,6 +673,8 @@ class AsyncBuildExecutor:
             return BuildJobSubmitResult(status="existing", snapshot=snapshot)
         if outcome == "queue_full":
             return BuildJobSubmitResult(status="queue_full")
+        if outcome == "closed":
+            return BuildJobSubmitResult(status="shutting_down")
         assert snapshot is not None  # noqa: S101 - "created" always gives snapshot
         if on_accept is not None:
             # Called after creation. If hook raises, clean up job below —
@@ -670,6 +705,37 @@ class AsyncBuildExecutor:
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def begin_shutdown(self, error: str) -> tuple[BuildJobSnapshot, ...]:
+        """Refuse new jobs and end the queued ones as failed with ``error`` (#1118).
+
+        Running jobs are not touched: ``wait_until_idle`` waits for them. The pool is
+        told to drop what it has not started — those jobs are already ``failed``, and a
+        worker that is waiting for a build slot with one finds that out in
+        ``begin_run`` and returns the slot at once.
+        """
+        ended = self.registry.close_and_fail_queued(error)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        return ended
+
+    def wait_until_idle(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for every running job to end; True when none
+        is left. Meant for after ``begin_shutdown``, when no job can start."""
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while self.registry.snapshot_counts().running:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(_IDLE_POLL_SECONDS, remaining))
+        return True
+
+    def running_run_ids(self) -> tuple[str, ...]:
+        """The run ids of jobs that are running or being cancelled."""
+        return tuple(
+            job.run_id
+            for job in self.registry.active_snapshots()
+            if job.status in ("running", "cancelling")
+        )
 
     def _run(
         self,
