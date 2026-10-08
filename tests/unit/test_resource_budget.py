@@ -248,9 +248,25 @@ def test_a_crashed_child_is_reaped(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="SIGTERM cannot be ignored on Windows")
-def test_a_child_that_ignores_terminate_is_killed_at_timeout(tmp_path: Path) -> None:
+def test_a_child_that_ignores_terminate_is_killed_at_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The timeout is reached the moment the child ignores SIGTERM, not seconds later.
+
+    The child publishes its pid only after it has started ignoring SIGTERM, so the
+    wait ends there: the subject is what the engine does at the timeout, and waiting
+    out a real one only added its length to every run (#1184).
+    """
     pid_file = tmp_path / "pid"
-    engine = QueryEngine(timeout_seconds=5 * spawn_timeout_multiplier(), worker=_stubborn_worker)
+
+    def timed_out(self: Connection, timeout: float | None = 0.0) -> bool:
+        deadline = time.monotonic() + 20 * spawn_timeout_multiplier()
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return False
+
+    monkeypatch.setattr(Connection, "poll", timed_out)
+    engine = QueryEngine(timeout_seconds=60, worker=_stubborn_worker)
 
     with pytest.raises(QueryTimeoutError):
         engine.execute(pid_file, "SELECT 1", limit=1)

@@ -1,14 +1,16 @@
 """Every SQLite state store Builder keeps, written once (#1096).
 
 Ten stores are opened from ten modules, each with the connection settings its author
-chose: two wait five seconds for a lock and the rest thirty, four use WAL and six do
-not, three record a schema version and three more add columns in place. None of that was
-written down anywhere, so nobody could say what a new store should do or whether an
-existing one was an exception on purpose.
+chose: four use WAL and six do not, three record a schema version and three more add
+columns in place. None of that was written down anywhere, so nobody could say what a new
+store should do or whether an existing one was an exception on purpose. How long a
+connection waits for a lock differed too — two waited five seconds and the rest thirty —
+and is now one value for all of them (``sqlite_settings``).
 
 This is the list. ``tests/unit/test_state_store_inventory.py`` holds it to the code —
-a module that opens SQLite and is not here fails, and so does an entry whose timeout,
-journal mode or versioning is not what its module does — and to the table in
+a module that opens SQLite and is not here fails, and so does a connection that waits
+some other time for a lock, or an entry whose journal mode or versioning is not what its
+module does — and to the table in
 ``docs/deploy.md``. A change to how a store connects is then a change to this file,
 made on purpose.
 
@@ -23,6 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
 
 #: ``wal``: the store sets ``PRAGMA journal_mode=WAL``. ``default``: it sets nothing and
 #: runs in SQLite's rollback-journal mode.
@@ -62,7 +66,7 @@ STORES: tuple[StateStore, ...] = (
         module="store/build_index.py",
         root="output",
         path="_builds.sqlite",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
         versioning="schema_version",
         if_lost="잃어도 된다 — manifest 에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`)",
@@ -72,7 +76,7 @@ STORES: tuple[StateStore, ...] = (
         module="events/store.py",
         root="output",
         path="_build_events.sqlite",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
         versioning="schema_version",
         if_lost="run 의 타임라인과 제출자 기록을 잃는다. 다시 만들 수 없다",
@@ -82,7 +86,7 @@ STORES: tuple[StateStore, ...] = (
         module="service/publish.py",
         root="output",
         path="_publish_receipts.sqlite",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
         versioning="columns",
         if_lost="어떤 run 을 어디에 게시했는지와, 같은 게시가 두 번 나가는 것을 막는 근거를 잃는다. 다시 만들 수 없다",
@@ -92,7 +96,7 @@ STORES: tuple[StateStore, ...] = (
         module="credentials/store.py",
         root="output",
         path=".service/provider-credentials.sqlite3",
-        timeout_seconds=5.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
         versioning="none",
         if_lost="사용자가 저장한 provider 키를 잃는다. 각자 다시 입력해야 한다",
@@ -102,7 +106,7 @@ STORES: tuple[StateStore, ...] = (
         module="uploads/store.py",
         root="output",
         path=".service/uploads.sqlite3",
-        timeout_seconds=5.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
         versioning="columns",
         if_lost="올린 파일과 그 목록을 잃는다(큰 파일의 내용은 옆의 `uploads.sqlite3.blobs/` 에 있다)",
@@ -112,7 +116,7 @@ STORES: tuple[StateStore, ...] = (
         module="service/provider_tests.py",
         root="output",
         path=".service/provider_tests.sqlite3",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
         versioning="none",
         if_lost="잃어도 된다 — 연결 테스트를 다시 하면 채워진다",
@@ -122,7 +126,7 @@ STORES: tuple[StateStore, ...] = (
         module="service/revisions.py",
         root="output",
         path=".service/revisions.sqlite3",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
         versioning="none",
         if_lost="BuildSpec 과 표시 주석의 저장 이력을 잃는다. 다시 만들 수 없다",
@@ -132,7 +136,7 @@ STORES: tuple[StateStore, ...] = (
         module="service/user_ledger.py",
         root="output",
         path=".service/users.sqlite3",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
         versioning="none",
         if_lost="가입 승인·거절 기록을 잃는다. allowlist 에 없는 사용자는 다시 승인을 기다린다",
@@ -142,7 +146,7 @@ STORES: tuple[StateStore, ...] = (
         module="service/analyses_api.py",
         root="output",
         path=".service/analyses.sqlite3",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
         versioning="columns",
         if_lost="저장한 SQL 과 그것이 읽은 스냅샷의 기록을 잃는다. 다시 만들 수 없다",
@@ -152,7 +156,7 @@ STORES: tuple[StateStore, ...] = (
         module="warehouse/catalog.py",
         root="warehouse",
         path="_warehouse.sqlite",
-        timeout_seconds=30.0,
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
         versioning="schema_version",
         if_lost="어떤 스냅샷이 어느 테이블의 현재 것인지를 잃는다. 다시 만들 수 없다",

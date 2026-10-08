@@ -294,7 +294,7 @@ def test_the_ledger_waits_for_a_busy_writer_and_is_not_in_wal_mode(tmp_path: Pat
 
     with ledger._connect() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal"
-        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == ledger_module._BUSY_TIMEOUT_MS
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == ledger_module.BUSY_TIMEOUT_MS
 
 
 # ------------------------------------------------- a filesystem that is really read-only

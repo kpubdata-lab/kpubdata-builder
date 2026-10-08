@@ -74,7 +74,7 @@ auth = ["pyjwt[crypto]>=2.9,<3"]
 # 하한은 1.7.1 — sqlalchemy-cubrid 와 pycubrid 가 같은 1.7.1 로 맞춰 배포된 조합이다.
 # 기본 백엔드(sqlite/local FS)는 이 extra 없이 동작하므로 코어 dependencies 에는
 # 넣지 않는다 — 무외부의존 기본값 유지. 배포 이미지는 3.12-slim.
-cubrid = ["sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.8"]
+cubrid = ["sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.9"]
 publish = ["huggingface-hub>=0.23,<3", "xmltodict>=0.13,<2", "kaggle>=1.6,<2"]
 # The legacy dataset publish scripts (scripts/pipeline, scripts/publish_to_hf.py, ADR 0018;
 # run by publish-dataset.yml) still read and write frames with Polars. Builder itself has
@@ -98,7 +98,7 @@ dev = [
   # CUBRID 백엔드 타입체크/스모크용. sqlalchemy-cubrid 1.7 과 pycubrid 1.x 는 둘 다
   # Python >=3.10 을 지원하므로(각 배포판 requires_python 확인), 이 프로젝트의
   # requires-python 전 구간에서 설치된다 — 환경 마커로 게이팅하지 않는다.
-  "sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.8",
+  "sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.9",
 ]
 
 [tool.hatch.build.targets.wheel]

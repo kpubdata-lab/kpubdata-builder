@@ -41,6 +41,8 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 from ..store.schema_version import open_read_only
 from .catalog import CATALOG_FILENAME, TableCatalog, _now
 from .errors import BackupInvalid, SnapshotNotFound, SnapshotStateError
@@ -129,8 +131,8 @@ def backup(catalog: TableCatalog, destination: Path) -> BackupReport:
     try:
         copy_path = work / CATALOG_FILENAME
         with (
-            closing(sqlite3.connect(str(catalog.path))) as source,
-            closing(sqlite3.connect(str(copy_path))) as target,
+            closing(sqlite3.connect(str(catalog.path), timeout=BUSY_TIMEOUT_SECONDS)) as source,
+            closing(sqlite3.connect(str(copy_path), timeout=BUSY_TIMEOUT_SECONDS)) as target,
         ):
             source.backup(target)
             # The live catalog runs in WAL mode and the page copy carries that over. A

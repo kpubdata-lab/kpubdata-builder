@@ -16,6 +16,8 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 
 class UnsupportedSchemaVersionError(RuntimeError):
     """A state store has a schema version this code cannot use."""
@@ -31,10 +33,10 @@ class UnsupportedSchemaVersionError(RuntimeError):
         )
 
 
-#: Seconds a read-only look at a store waits for a lock, as the stores themselves do
-#: (``store/inventory.py``). SQLite's default of five gave up on a store that an
+#: Seconds a read-only look at a store waits for a lock: as long as the stores themselves
+#: do (``sqlite_settings``). SQLite's default of five gave up on a store that an
 #: ordinary connection would have waited for.
-PROBE_TIMEOUT_SECONDS = 30.0
+PROBE_TIMEOUT_SECONDS = BUSY_TIMEOUT_SECONDS
 
 
 def open_read_only(path: Path) -> sqlite3.Connection:

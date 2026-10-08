@@ -140,7 +140,7 @@ from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .card_facts import card_source, personal_information, processing_steps, write_card
 from .context import BuildContext
 from .export import export_gold_package
-from .failures import public_failure_message
+from .failures import SourceFailureReason, public_failure_message, source_failure
 
 logger = logging.getLogger(__name__)
 
@@ -231,12 +231,14 @@ class SourceBuildOutcome:
             completed stages to cancellation point — incomplete stages
             are not misrepresented as successful.
         error: failure message if status is "failed".
+        reason: why the provider refused the source's fetch (#1187), when it did.
     """
 
     source_key: str
     status: str
     stages_completed: tuple[str, ...] = ()
     error: str | None = None
+    reason: SourceFailureReason | None = None
 
 
 @dataclass(frozen=True)
@@ -649,6 +651,7 @@ def _run_source_pipeline(
     capture_silver: bool = False,
     cancellation: CancellationProbe | None = None,
     secret_values: tuple[str, ...] = (),
+    provider_keys: Mapping[str, str] | None = None,
     fetch_note: str | None = None,
 ) -> _SourcePipelineResult:
     """Execute one source Bronze → Silver → Gold and persist outputs.
@@ -1147,14 +1150,15 @@ def _run_source_pipeline(
     except Exception as exc:  # Convert stage failure to result for manifest
         # Shared with preview (#954): allow-listed errors keep their message, any
         # other is logged server-side and replaced with a generic one (#225).
-        error_msg = public_failure_message(exc, output_key)
+        failure = source_failure(exc, output_key, provider_keys=provider_keys)
+        error_msg = failure.message
         # Record failure event per last boundary actually reached (#496) —
         # completed list is authoritative for "how far did each stage get",
         # so next stage is the failed one. Unstarted stages don't record as
         # failures (no events at all).
         if "bronze" not in completed:
             if not fetch_completed:
-                recorder.source_fetch_failed(output_key, message=error_msg)
+                recorder.source_fetch_failed(output_key, message=error_msg, reason=failure.reason)
             recorder.stage_failed(output_key, "bronze", message=error_msg)
         elif "silver" not in completed:
             recorder.stage_failed(output_key, "silver", message=error_msg)
@@ -1168,6 +1172,7 @@ def _run_source_pipeline(
                 status="failed",
                 stages_completed=tuple(completed),
                 error=error_msg,
+                reason=failure.reason,
             ),
             output_paths=tuple(outputs),
             row_count=evaluated_row_count,
@@ -1593,6 +1598,7 @@ def run_build(
     workspace_id: str = "ws_personal",
     warehouse_keep: int | None = 3,
     secret_values: tuple[str, ...] = (),
+    provider_keys: Mapping[str, str] | None = None,
 ) -> BuildResult:
     """Execute BuildSpec through Medallion pipeline.
 
@@ -1687,6 +1693,7 @@ def run_build(
             capture_silver=_output_source_key(source) in composition_aliases,
             cancellation=cancellation,
             secret_values=secret_values,
+            provider_keys=provider_keys,
             fetch_note=_fetch_note(inherited, retry_of, _output_source_key(source)),
         )
 
