@@ -160,3 +160,16 @@ def test_the_filesystem_scan_cuts_from_the_requesters_own_runs_too(
     assert _ids(service, limit=1, principal=ME) == ["mine-old"]
     # Unfiltered, the scan opens only the newest N, as it did.
     assert _ids(service, limit=2) == ["theirs-8", "theirs-7"]
+
+
+def test_each_of_two_owners_gets_a_full_page_of_their_own(service: BuilderService) -> None:
+    """Interleaved runs of two people: each list fills to the limit with its owner's (#1198)."""
+    for day in range(1, 11):
+        _index(service, f"mine-{day:02d}", day, ME)
+        _index(service, f"theirs-{day:02d}", day, OTHER)
+
+    mine = _ids(service, limit=4, principal=ME)
+    theirs = _ids(service, limit=4, principal=OTHER)
+
+    assert mine == ["mine-10", "mine-09", "mine-08", "mine-07"]
+    assert theirs == ["theirs-10", "theirs-09", "theirs-08", "theirs-07"]
