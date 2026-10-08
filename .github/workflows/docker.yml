@@ -113,8 +113,12 @@ jobs:
           context: .
           load: true
           tags: kpubdata-builder:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # scope 분리(#1181): 세 빌드가 같은 기본 scope 를 덮어쓰지 않게 한다.
+          # PR 빌드는 publish 가 쓴 캐시를 읽고 ci scope 에 쓴다.
+          cache-from: |
+            type=gha,scope=publish
+            type=gha,scope=ci
+          cache-to: type=gha,mode=max,scope=ci
 
       # Each authentication configuration starts, or refuses to, the way a deployment
       # would (#1122): OIDC only, service key only, both, neither, an example key, OIDC
@@ -174,8 +178,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
           sbom: true
           provenance: mode=max
 
@@ -197,8 +201,10 @@ jobs:
             EXTRAS=publish auth cubrid
           tags: ghcr.io/kpubdata-lab/kpubdata-builder:cubrid
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=publish
+            type=gha,scope=cubrid
+          cache-to: type=gha,mode=max,scope=cubrid
           sbom: true
           provenance: mode=max
 

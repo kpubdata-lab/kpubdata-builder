@@ -38,10 +38,9 @@ ENV UV_LINK_MODE=copy \
 
 WORKDIR /app
 
-# 매니페스트를 먼저 복사해 의존성 레이어를 캐시한다 (소스 변경 시에도 재사용).
+# 의존성 레이어: 매니페스트만 먼저 복사한다 — 소스가 바뀌어도 이 레이어는 재사용된다
+# (#1181). 예전에는 src/ 를 설치보다 먼저 복사해 코드 한 줄에도 uv sync 를 다시 했다.
 COPY pyproject.toml uv.lock ./
-COPY src/ ./src/
-COPY README.md LICENSE ./
 
 # --no-sources: editable ../kpubdata 무시, PyPI 핀 사용 (#213).
 # dev extra(mypy/pytest/ruff)는 배포 이미지에서 제외한다.
@@ -59,7 +58,20 @@ COPY README.md LICENSE ./
 # 배포가 기동 시점에 "pyjwt 가 없다"로 거부된다 — Studio 는 Bearer 만 보내므로, Studio 가
 # 붙는 배포는 이 extra 없이는 성립하지 않는다. OIDC 를 켜지 않은 배포에는 영향이 없다.
 ARG EXTRAS="publish auth"
-RUN if [ -z "${EXTRAS}" ]; then \
+# 1단계: 프로젝트 없이 의존성만(캐시 마운트 사용) — 소스 변경과 무관하게 재사용된다.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -z "${EXTRAS}" ]; then \
+      uv sync --no-sources --no-install-project; \
+    else \
+      _flags=""; for _e in ${EXTRAS}; do _flags="$_flags --extra $_e"; done; \
+      uv sync --no-sources --no-install-project $_flags; \
+    fi
+
+# 2단계: 소스를 복사한 뒤 프로젝트를 설치한다.
+COPY src/ ./src/
+COPY README.md LICENSE ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -z "${EXTRAS}" ]; then \
       uv sync --no-sources; \
     else \
       _flags=""; for _e in ${EXTRAS}; do _flags="$_flags --extra $_e"; done; \
