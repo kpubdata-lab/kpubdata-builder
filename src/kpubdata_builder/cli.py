@@ -867,7 +867,16 @@ def _run_serve(
     # cannot be used stops the start here, all of it in one message.
     from .service.startup_settings import check_settings
 
-    report = check_settings()
+    # A flag takes the place of its variable, whose value is then never read. ``--port``
+    # always has one: the variable is the entrypoint's, which passes it as the flag.
+    overridden = {"KPUBDATA_BUILDER_PORT"}
+    if max_workers is not None:
+        overridden.add("KPUBDATA_BUILDER_MAX_WORKERS")
+    if max_builds is not None:
+        overridden.add("KPUBDATA_BUILDER_MAX_BUILDS")
+    if max_previews is not None:
+        overridden.add("KPUBDATA_BUILDER_MAX_PREVIEWS")
+    report = check_settings(overridden=overridden)
     for warning in report.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     if report.problems:

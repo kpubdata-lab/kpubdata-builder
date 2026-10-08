@@ -472,10 +472,19 @@ def test_the_wait_bound_comes_from_the_environment(
 
 @pytest.mark.parametrize("value", ["soon", "-1", "nan", "inf", "-inf", "NaN"])
 def test_serve_refuses_a_wait_bound_that_is_not_a_duration(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, clean_env: None, value: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    clean_env: None,
+    value: str,
 ) -> None:
-    monkeypatch.setattr(http_module, "serve", lambda *_args, **_kwargs: None)
+    started: list[object] = []
+    monkeypatch.setattr(http_module, "serve", lambda *args, **_kwargs: started.append(args))
     monkeypatch.setenv("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", value)
 
-    with pytest.raises(SystemExit, match="KPUBDATA_BUILDER_BUILD_WAIT_SECONDS"):
-        main(["serve", "--output-dir", str(tmp_path)])
+    # Reported with every other setting that cannot be used (#1108), as one line and
+    # exit code 1; it used to end the start on its own with SystemExit.
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 1
+
+    assert "error: KPUBDATA_BUILDER_BUILD_WAIT_SECONDS" in capsys.readouterr().err
+    assert started == []
