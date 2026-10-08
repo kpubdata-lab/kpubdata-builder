@@ -19,7 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from .schema_version import UnsupportedSchemaVersionError, says_damaged, stored_version
+from .schema_version import (
+    UnsupportedSchemaVersionError,
+    open_read_only,
+    says_damaged,
+    stored_version,
+)
 
 if TYPE_CHECKING:
     _BaseConn = sqlite3.Connection
@@ -727,7 +732,7 @@ def _has_this_releases_table(index_path: Path) -> bool:
     if not index_path.is_file():
         return False
     try:
-        with closing(sqlite3.connect(f"{index_path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        with closing(open_read_only(index_path)) as conn:
             columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(builds)")}
     except sqlite3.Error as exc:
         if says_damaged(exc):

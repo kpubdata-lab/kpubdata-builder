@@ -552,6 +552,22 @@ conn.execute("COMMIT")
 """
 
 
+@pytest.fixture
+def short_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The read-only look at a store waits as long as a store does; not in a test."""
+    from kpubdata_builder.store import schema_version
+
+    monkeypatch.setattr(schema_version, "PROBE_TIMEOUT_SECONDS", 0.3)
+
+
+def test_the_read_only_look_waits_as_long_as_the_stores_do() -> None:
+    from kpubdata_builder.store import schema_version
+    from kpubdata_builder.store.inventory import STORES
+
+    assert max(store.timeout_seconds for store in STORES) == schema_version.PROBE_TIMEOUT_SECONDS
+
+
+@pytest.mark.usefixtures("short_wait")
 def test_rebuild_beside_a_process_that_holds_the_index_is_an_error(tmp_path: Path) -> None:
     """A real lock, and the whole of ``rebuild_index`` (#1157).
 
@@ -587,6 +603,39 @@ def test_rebuild_beside_a_process_that_holds_the_index_is_an_error(tmp_path: Pat
         assert [r[0] for r in conn.execute("SELECT run_id FROM builds")] == ["run-1"]
 
 
+@pytest.mark.usefixtures("short_wait")
+def test_serve_says_a_locked_store_in_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Not a traceback: the operator is told which kind of thing went wrong (#1157)."""
+    import subprocess
+    import sys
+
+    import kpubdata_builder.service.http as http_module
+
+    started: list[object] = []
+    monkeypatch.setattr(http_module, "serve", lambda service, **kwargs: started.append(service))
+    path = _index_with_one_run(tmp_path)
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_THE_INDEX, str(path), "60"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "held"
+
+        assert main(["serve", "--output-dir", str(tmp_path)]) == 1
+    finally:
+        holder.kill()
+        holder.wait()
+
+    err = capsys.readouterr().err
+    assert "error: a state store could not be opened: database is locked" in err
+    assert "Traceback" not in err
+    assert started == []
+
+
+@pytest.mark.usefixtures("short_wait")
 def test_a_locked_store_has_no_version_to_report(tmp_path: Path) -> None:
     import subprocess
     import sys

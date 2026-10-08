@@ -31,6 +31,19 @@ class UnsupportedSchemaVersionError(RuntimeError):
         )
 
 
+#: Seconds a read-only look at a store waits for a lock, as the stores themselves do
+#: (``store/inventory.py``). SQLite's default of five gave up on a store that an
+#: ordinary connection would have waited for.
+PROBE_TIMEOUT_SECONDS = 30.0
+
+
+def open_read_only(path: Path) -> sqlite3.Connection:
+    """A read-only connection to ``path`` that sets nothing on it."""
+    return sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=PROBE_TIMEOUT_SECONDS
+    )
+
+
 #: What SQLite says of a file that is not a usable database of ours: not one at all,
 #: damaged, or without the table asked for. Anything else it says — locked, cannot be
 #: opened, an I/O error — is about the moment and not about the file.
@@ -64,7 +77,7 @@ def stored_version(path: Path) -> int | None:
     if not path.is_file():
         return None
     try:
-        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        with closing(open_read_only(path)) as conn:
             row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
     except sqlite3.Error as exc:
         if says_damaged(exc):
@@ -73,4 +86,10 @@ def stored_version(path: Path) -> int | None:
     return int(row[0]) if row is not None and row[0] is not None else None
 
 
-__all__ = ["UnsupportedSchemaVersionError", "says_damaged", "stored_version"]
+__all__ = [
+    "PROBE_TIMEOUT_SECONDS",
+    "UnsupportedSchemaVersionError",
+    "open_read_only",
+    "says_damaged",
+    "stored_version",
+]
