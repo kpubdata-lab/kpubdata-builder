@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from ..errors import ValidationError
-from ..exporters import EXPORTER_REGISTRY
+from ..exporters import supported_exporter_kinds
 from ..tabular.cast_names import FORMATTED_CASTS, NAMED_TARGETS, TEXT_CASTS
 from .models import (
     DERIVED_KINDS,
@@ -107,6 +107,7 @@ def validate_spec(spec: BuildSpec) -> None:
     # exports may be empty (#703). A build with none ends at a committed table,
     # which is a complete job — publishing is an explicit follow-up, not the only
     # way to finish.
+    supported_kinds = supported_exporter_kinds()
     for i, export in enumerate(spec.exports):
         if not export.output_path.strip():
             problems.append(
@@ -116,8 +117,8 @@ def validate_spec(spec: BuildSpec) -> None:
                     f"exports[{i}].output_path must be a non-empty string",
                 )
             )
-        if export.kind not in EXPORTER_REGISTRY:
-            supported = sorted(EXPORTER_REGISTRY)
+        if export.kind not in supported_kinds:
+            supported = list(supported_kinds)
             msg = f"exports[{i}].kind {export.kind!r} is not supported"
             problems.append(
                 _p(

@@ -97,6 +97,16 @@ def get_exporter(name: str) -> BaseExporter:
     raise KeyError(f"unknown exporter kind: {name!r}; registered: {registered}")
 
 
+def supported_exporter_kinds() -> tuple[str, ...]:
+    """every kind a spec's export target may name, sorted.
+
+    Either registry can serve a kind — the factory one (ADR 0004) or the legacy
+    instance one — so this is exactly the set ``get_exporter`` could serve, and
+    the set spec validation accepts (#1199).
+    """
+    return tuple(sorted(set(_EXPORTER_FACTORIES) | set(EXPORTER_REGISTRY)))
+
+
 def load_entry_point_exporters(*, override: bool = False) -> list[str]:
     """discovers and registers external exporter plugins from entry point group.
 
@@ -151,4 +161,5 @@ __all__ = [
     "register_exporter",
     "register_exporter_factory",
     "register_exporter_instance",
+    "supported_exporter_kinds",
 ]

@@ -28,6 +28,7 @@ from .registry import (
     register_exporter,
     register_exporter_factory,
     register_exporter_instance,
+    supported_exporter_kinds,
 )
 
 # register built-in exporters (ADR 0004 recommendation: factory pattern).
@@ -66,4 +67,5 @@ __all__ = [
     "register_exporter",
     "register_exporter_factory",
     "register_exporter_instance",
+    "supported_exporter_kinds",
 ]
