@@ -23,8 +23,8 @@ on:
   push:
     branches: [main]
     # The same paths as the pull request: until the backend is retired
-    (#1094), an unrelated merge has nothing to test here and only pays for
-    the privileged CUBRID container (#1182).
+    # (#1094), an unrelated merge has nothing to test here and only pays for
+    # the privileged CUBRID container (#1182).
     paths:
       - "src/kpubdata_builder/store/**"
       - "src/kpubdata_builder/credentials/**"
