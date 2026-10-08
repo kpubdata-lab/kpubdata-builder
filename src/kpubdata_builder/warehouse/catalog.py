@@ -550,6 +550,15 @@ class TableCatalog:
             )
         return TableRow(new_id, workspace_id, logical_name, None, 0)
 
+    def find_table(self, workspace_id: str, logical_name: str) -> TableRow | None:
+        """The table of that name, or None when there is none yet (#1186)."""
+        row = self._conn.execute(
+            "SELECT id, workspace_id, logical_name, current_snapshot_id, revision"
+            " FROM tables WHERE workspace_id = ? AND logical_name = ?",
+            (workspace_id, logical_name),
+        ).fetchone()
+        return TableRow(*row) if row is not None else None
+
     def table_revision(self, workspace_id: str, logical_name: str) -> int:
         """The table's current revision, or 0 when it does not exist yet (#787).
 

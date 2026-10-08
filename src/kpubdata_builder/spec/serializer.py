@@ -233,6 +233,9 @@ def canonical_source_mapping(source: SourceRef) -> dict[str, JsonValue]:
         if source.gold.publish_unmasked:
             gold["publish_unmasked"] = list(source.gold.publish_unmasked)
         entry["gold"] = gold
+    if source.allow_empty:
+        # Only when declared (#1186), so existing specs keep their digest.
+        entry["allow_empty"] = True
     if source.kind == "file":
         entry["upload_id"] = source.upload_id
         entry["format"] = source.format

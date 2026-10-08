@@ -190,6 +190,10 @@ class SourceRef:
     method: str = "GET"
     #: Columns and rows this source's Gold keeps (#659); None keeps all of Silver.
     gold: GoldSelection | None = None
+    #: A build that finds no rows may replace this source's table (#1186). Without it a
+    #: result of no rows is not committed over a table that has a snapshot: the current
+    #: snapshot stays and the build reports ``empty_result``.
+    allow_empty: bool = False
 
 
 @dataclass(frozen=True)
