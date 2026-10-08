@@ -298,9 +298,9 @@ class BuildArtifactsApiService:
     ) -> ServiceResponse:
         """Return execution history list sorted descending by latest completion time.
 
-        Per ADR 0003, query the build index first (SQLite or CUBRID, ADR 0016); fall back to filesystem scan if index
-        missing or empty. When ENFORCE_OWNERSHIP+oidc, both paths apply _apply_ownership
-        to expose only own runs (#433).
+        Per ADR 0003, query the build index first (SQLite or CUBRID, ADR 0016); fall back
+        to filesystem scan if index missing or empty. When ENFORCE_OWNERSHIP+oidc, both
+        paths apply _apply_ownership to expose only own runs (#433).
         """
         only_own = principal is not None and ownership_module.lists_only_own_runs(principal)
         # Query index first
