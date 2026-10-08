@@ -445,6 +445,8 @@ def test_a_count_that_cannot_be_used_is_a_problem(
         ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "inf"),
         ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "-1"),
         ("KPUBDATA_BUILDER_PORT", "abc"),
+        # Nothing but spaces: the entrypoint passes it to --port, which refuses it.
+        ("KPUBDATA_BUILDER_PORT", "  "),
         ("KPUBDATA_BUILDER_PORT", "65536"),
         ("KPUBDATA_BUILDER_PORT", "-1"),
     ],
@@ -468,6 +470,8 @@ def test_a_serve_value_that_cannot_be_used_is_a_problem(
         ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "2.5"),
         ("KPUBDATA_BUILDER_PORT", "0"),
         ("KPUBDATA_BUILDER_PORT", "8000"),
+        # argparse's int() takes spaces around a number, so this is a usable port.
+        ("KPUBDATA_BUILDER_PORT", " 8000 "),
     ],
 )
 def test_a_serve_value_that_can_be_used_is_not_reported(
