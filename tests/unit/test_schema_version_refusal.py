@@ -746,7 +746,9 @@ def test_serve_keeps_the_traceback_of_a_database_error_that_is_not_about_reachin
         ("database or disk is full", True),
         # A word of those messages as the name of something else is not one of them.
         ("no such column: locked_at", False),
-        ("table disk_io_error has no column named x", False),
+        ("database schema is locked: main", True),
+        ("database table is locked: builds", True),
+        ("no such column: disk i/o error", False),
         ('near "locked": syntax error', False),
         ("no such column: owner_id", False),
         ("no such table: builds", False),
