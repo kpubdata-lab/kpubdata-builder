@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- A preview no longer reads the whole source (#1185, API contract 1.109.0, additive). It fetched a `public_api` source to the end, as a build does, to show `limit` rows: a 2,000-page source took 2,000 requests of the user's provider key — often a data.go.kr key's daily quota, which failed every build that day — and ran past the 100-second proxy limit while holding the only preview slot. A source of more than 1,000 pages failed after spending 1,000 requests.
+  - A preview now reads up to `limit` records or three pages (`PREVIEW_MAX_PAGES`), across a `param_grid`'s combinations too, and asks for pages of `limit` records or the dataset's `max_page_size`, whichever is smaller. `limit: 5` is one request of five rows. kpubdata's spec datasets fetch every page before yielding one, so the bound is passed to them as `max_pages`, sized to the rows still needed.
+  - `total_rows`, `statistics`, the quality results and a `random` sample are over the records read. `SourcePreview` gains `fetch_complete` (false when the source had more) and `source_reported_total` (the provider's count for a single call; null for a `param_grid`, whose total is never summed).
+  - A build asks for pages of the dataset's `max_page_size`, so a source takes ceil(total / max_page_size) requests, where kpubdata's default of 100 rows made it up to ten times as many. A `page_size` in the source's parameters is kept, by a build and a preview. `fetch_params` and provenance do not record the page size.
+  - A file or URL source is still read whole by a preview: it costs no provider quota.
+  - A provider that serves smaller pages than asked gives a preview fewer rows, not more requests.
+  - Replay matches the page size too. A source replaying the bundled `gangnam_full_page` fixture must say `page_size: 100`, as it was recorded; Studio's end-to-end specs already do. Builder's own replay test and parity scenario now say it (the baseline gains only that parameter).
+  - Tests run the real kpubdata client against a fake data.go.kr endpoint and count the requests (`tests/unit/test_preview_fetch_bound.py`).
 - The table catalog's pre-migration copy is the latest state, not the first one (#1163). The copy `_warehouse.sqlite.v<old>.before-migration` was kept once made. After an upgrade, a rollback to the old release, which then wrote to the catalog, and a second upgrade, the copy was still from before the rollback, and putting it back the second time lost those writes. Now:
   - Every migration replaces the copy. It is written under a name of its own and moved into place, and a failed copy leaves no partial file. Two servers starting at once used to share one `.partial` name, and one of them failed.
   - The copy is taken inside the migration's `BEGIN IMMEDIATE`, through a read-only connection. No other writer can commit between the copy and the migration.

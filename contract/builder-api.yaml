@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.108.0"
+  version: "1.109.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.109.0 bounds a preview's fetch (#1185, additive). A public_api source is read up to `limit` records or three pages, across its `param_grid` combinations, and pages are requested at `limit` records or the dataset's `max_page_size`, whichever is smaller; it read the whole source, which could spend a provider key's daily quota. `total_rows`, `statistics` and the quality results then describe the records fetched. `SourcePreview` gains `fetch_complete` (false when the source had more records) and `source_reported_total` (the provider's own count for a single call, else null). A build requests pages of `max_page_size`.
     v1.108.0 declares `auth_unavailable` once, as a shared response (#1109, additive — the wire is unchanged). Since 1.79.0 any authenticated operation has answered 503 `auth_unavailable` when the identity provider's signing keys could not be fetched: the credentials were not judged, and the same request succeeds once the keys can be read. It was written only in the `Error.code` description. `components.responses.AuthUnavailable` now carries it with its status (`x-status: 503`) and a named example, as `AuthThrottled`, `ServerOverloaded` and `SignupNotApproved` are declared: no single operation references it, because every authenticated one can answer it. It is not counted against the authentication-failure limit. No schema changes.
 
     v1.107.0 tells a query over the deployment's limits apart (#961, additive). SQL (`POST /query`, `POST /warehouse/query`), rows, aggregates, profiles and exports that need more memory or temporary disk than the deployment allows answer 400 `query_resource_limit`, whose `error` is the fixed sentence a build or preview over its limits gives (`the table needs more memory or temporary disk than this deployment allows (KPUBDATA_DUCKDB_MEMORY_LIMIT, KPUBDATA_DUCKDB_MAX_TEMP_SIZE)`), never DuckDB's own text. They answered `query_execution_failed`, as a query that fails for any other reason still does. The status stays 400.
@@ -908,12 +909,12 @@ paths:
                             pm10_value: 31
                           - station_name: 중구
                             pm10_value: 28
-                        total_rows: 25
+                        total_rows: 2
                         statistics:
-                          row_count: 25
+                          row_count: 2
                           null_counts:
                             station_name: 0
-                            pm10_value: 1
+                            pm10_value: 0
                           duplicate_rate: 0.0
                         quality_results:
                           - source_key: air
@@ -921,7 +922,7 @@ paths:
                             rule: min_rows
                             column: null
                             status: pass
-                            actual: 25
+                            actual: 2
                             threshold: 1
                             affected_rows: null
                             evaluated_rows: null
@@ -938,6 +939,8 @@ paths:
                           changed_cells: 0
                           changed_rows: 0
                         diff_truncated: false
+                        fetch_complete: false
+                        source_reported_total: 25
         "400":
           description: >-
             잘못된 요청(spec 누락/검증 실패, limit 타입 오류 등).
@@ -7417,6 +7420,10 @@ components:
               $ref: "#/components/schemas/JsonValue"
         total_rows:
           type: integer
+          description: >-
+            Rows the preview read from the source. Since 1.109.0 (#1185) a public_api
+            source is read up to `limit` records or three pages, so this is the whole
+            source only when `fetch_complete` is true.
         statistics:
           $ref: "#/components/schemas/TableStatistics"
         quality_results:
@@ -7478,6 +7485,22 @@ components:
             담지 못했으면 true다(#497 sample/diff memory 상한). diffs를 전체
             diff로 오인하지 않도록 명시한다. diff_available=false면 애초에
             diff를 시도하지 않았으므로 항상 false다.
+        fetch_complete:
+          type: boolean
+          description: >-
+            Since 1.109.0 (#1185). A preview reads a public_api source up to `limit`
+            records or three pages, never the whole source. False when it stopped there
+            while the source had more records, or when the source failed: `total_rows`,
+            `statistics` and `quality_results` then count the records fetched, not the
+            source. True when the records fetched are the whole source; a file or URL
+            source is always read whole.
+        source_reported_total:
+          type: [integer, "null"]
+          description: >-
+            Since 1.109.0 (#1185). The provider's own count of the source's records,
+            when the source made a single call and its pages stated one count. Null
+            otherwise: a `param_grid` total is never summed (#816), and a bounded
+            preview may not have made every combination's call.
 
     PreviewDiffItem:
       type: object
