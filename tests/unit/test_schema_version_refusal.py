@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -22,6 +24,7 @@ from kpubdata_builder.service import BuilderService
 from kpubdata_builder.stages.bronze.build import SourceClient
 from kpubdata_builder.store import SCHEMA_VERSION as INDEX_VERSION
 from kpubdata_builder.store import SqliteBuildIndex, rebuild_index
+from kpubdata_builder.store.build_index import BuildEntry, BuildStatus, _iter_manifest_entries
 from kpubdata_builder.store.schema_version import UnsupportedSchemaVersionError
 
 
@@ -355,3 +358,183 @@ def test_rebuild_is_not_undone_by_the_wal_the_last_process_left(tmp_path: Path) 
         assert conn.execute("SELECT COUNT(*) FROM builds").fetchone() == (2,)
     assert not [item.name for item in tmp_path.iterdir() if ".bak" in item.name]
     assert not [item.name for item in tmp_path.iterdir() if ".tmp" in item.name]
+
+
+def test_rebuild_beside_an_open_index_is_seen_by_its_connections(tmp_path: Path) -> None:
+    """``rebuild-index`` while the server runs (#1157).
+
+    The new index used to be renamed into the old one's place. A thread of the server
+    that already had a connection stayed on the file that was there, so a build it
+    recorded afterwards was in a file nobody else read: the same list differed by which
+    thread answered, until a restart.
+    """
+    import threading
+
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    server = SqliteBuildIndex(tmp_path)
+    server.insert_or_replace(
+        run_id="no-manifest", status="ok", started_at=None, finished_at="2026-01-01T00:00:00Z"
+    )
+
+    assert rebuild_index(tmp_path) == 1
+
+    # The server's open connection sees what the rebuild made of the index...
+    assert server.get("run-a") is not None
+    assert server.get("no-manifest") is None
+    # ...and what it writes next is seen by a connection opened after the rebuild.
+    _write_run(tmp_path, "run-b", owner_id="oidc:b", errors=[])
+    server.insert_or_replace(
+        run_id="run-b", status="ok", started_at=None, finished_at="2026-01-02T00:00:00Z"
+    )
+    seen: dict[str, bool] = {}
+
+    def another_thread() -> None:
+        seen["a"] = server.get("run-a") is not None
+        seen["b"] = server.get("run-b") is not None
+
+    worker = threading.Thread(target=another_thread)
+    worker.start()
+    worker.join()
+    assert seen == {"a": True, "b": True}
+    later = SqliteBuildIndex(tmp_path)
+    assert later.get("run-b") is not None
+    later.close()
+    server.close()
+    # No second file was made: the index is the one the server has open.
+    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+
+
+def test_rebuild_keeps_a_build_that_finished_while_it_was_scanning(tmp_path: Path) -> None:
+    """In the index and not in the scan, with a manifest: it is not a stale row."""
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    _write_run(tmp_path, "run-late", owner_id="oidc:b", errors=[])
+    index = SqliteBuildIndex(tmp_path)
+    index.insert_or_replace(
+        run_id="run-late", status="ok", started_at=None, finished_at="2026-01-02T00:00:00Z"
+    )
+    scanned_before_it_finished = [
+        entry for entry in _manifest_entries(tmp_path) if entry.run_id == "run-a"
+    ]
+
+    index.replace_contents(scanned_before_it_finished)
+
+    assert index.get("run-a") is not None
+    assert index.get("run-late") is not None
+    index.close()
+
+
+def test_failed_rebuild_in_place_leaves_the_index_as_it_was(tmp_path: Path) -> None:
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    before = _dump(path)
+    index = SqliteBuildIndex(tmp_path)
+    entries = _manifest_entries(tmp_path)
+    bad_status = cast(BuildStatus, "not-a-status")
+    broken = [*entries, replace(entries[0], run_id="run-bad", status=bad_status)]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        index.replace_contents(broken)
+
+    index.close()
+    assert _dump(path) == before
+
+
+def _manifest_entries(root: Path) -> list[BuildEntry]:
+    return list(_iter_manifest_entries(root))
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "DROP TABLE builds",
+        "ALTER TABLE builds RENAME COLUMN status TO state",
+        "ALTER TABLE builds DROP COLUMN owner_id",
+        "ALTER TABLE builds ADD COLUMN extra TEXT",
+    ],
+    ids=["table missing", "column renamed", "column dropped", "column added"],
+)
+def test_rebuild_recovers_an_index_of_this_version_that_cannot_be_written(
+    tmp_path: Path, damage: str
+) -> None:
+    """The version says this release's and the table does not: still what a rebuild is for.
+
+    Refilling in place fails on such a file, and the rebuild used to replace the file
+    whatever was in it. It falls back to that.
+    """
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute(damage)
+
+    assert rebuild_index(tmp_path) == 1
+
+    index = SqliteBuildIndex(tmp_path)
+    recovered = index.get("run-ok")
+    assert recovered is not None and recovered.owner_id == "oidc:a"
+    assert index.get("run-1") is None
+    index.close()
+    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+
+
+def test_rebuild_in_place_does_not_wait_for_a_reader(tmp_path: Path) -> None:
+    """A server connection in a read transaction holds back a ``TRUNCATE`` checkpoint
+    for the whole busy timeout; the rebuild leaves the WAL to the server instead."""
+    import time
+
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    with closing(sqlite3.connect(path)) as reader:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM builds").fetchone()
+        started = time.monotonic()
+
+        assert rebuild_index(tmp_path) == 1
+
+        assert time.monotonic() - started < 10
+
+
+def test_rebuild_does_not_replace_the_file_because_the_index_was_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock that is not released in time is an error, and the index is left alone.
+
+    Falling back to a new file here would be the split of #1157 again, and silent: the
+    server writing to the index is exactly the server that would be left on the old
+    file.
+    """
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    inode = path.stat().st_ino
+
+    def impatient(self: SqliteBuildIndex) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(path), timeout=0.2)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    with closing(sqlite3.connect(path, isolation_level=None)) as server:
+        server.execute("BEGIN IMMEDIATE")
+        server.execute("INSERT INTO builds (run_id, status) VALUES ('run-server', 'ok')")
+        monkeypatch.setattr(SqliteBuildIndex, "_connect", impatient)
+
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            rebuild_index(tmp_path)
+
+        server.execute("COMMIT")
+        monkeypatch.undo()
+        # The same file, with what the server wrote and nothing of the rebuild.
+        assert path.stat().st_ino == inode
+        assert [row[0] for row in server.execute("SELECT run_id FROM builds ORDER BY run_id")] == [
+            "run-1",
+            "run-server",
+        ]
+    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+
+
+def test_a_new_index_has_the_table_the_rebuild_looks_for(tmp_path: Path) -> None:
+    """The column list is written twice; this is what keeps the two the same."""
+    from kpubdata_builder.store.build_index import _has_this_releases_table
+
+    path = _index_with_one_run(tmp_path)
+
+    assert _has_this_releases_table(path)
+    assert not _has_this_releases_table(tmp_path / "absent.sqlite")
