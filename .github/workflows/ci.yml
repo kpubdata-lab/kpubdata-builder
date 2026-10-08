@@ -87,6 +87,11 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # Instrumentation rides one leg only: the same information, without
+          # the extra full run a separate job cost (#1179).
+          - python-version: "3.12"
+            coverage: "--cov --cov-report=term-missing"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -100,29 +105,9 @@ jobs:
         run: uv sync --extra dev --no-sources --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run --no-sources pytest
-
-  coverage:
-    # 커버리지 게이트 (#594). 지금 도달한 수준이 조용히 내려가지 않게 잠근다.
-    # 하한은 pyproject 의 [tool.coverage.report] fail_under 한 곳에서만 관리한다.
-    # 테스트 매트릭스에 --cov 를 얹지 않고 이 잡 하나만 계측하는 이유: 5개 잡 전부에
-    # 계측을 걸어도 얻는 정보는 같은데 비용만 5배다.
-    name: Coverage gate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --extra dev --no-sources
-
-      - name: Run tests with coverage
-        run: uv run --no-sources pytest --cov --cov-report=term-missing
+        env:
+          COVERAGE_ARGS: ${{ matrix.coverage }}
+        run: uv run --no-sources pytest ${COVERAGE_ARGS}
 
   docs:
     # The documentation site is built with `--strict`, where a broken link is an error.
@@ -166,6 +151,11 @@ jobs:
         id: list
         run: |
           versions=$(uv run --no-project --python 3.12 --with packaging python scripts/kpubdata_release_matrix.py)
+          # The locked version is what the plain test matrix already installs;
+          # repeating it here adds no information (#1179).
+          locked=$(awk '/^name = "kpubdata"$/ {getline; gsub(/version = |"/, ""); print; exit}' uv.lock)
+          versions=$(printf '%s' "${versions}" | python3 -c 'import json, sys; print(json.dumps([v for v in json.load(sys.stdin) if v != sys.argv[1]]))' "${locked}")
+          echo "locked kpubdata (covered by the test matrix): ${locked}" >> "$GITHUB_STEP_SUMMARY"
           echo "kpubdata releases under test: ${versions}" >> "$GITHUB_STEP_SUMMARY"
           echo "versions=${versions}" >> "$GITHUB_OUTPUT"
 
@@ -179,6 +169,8 @@ jobs:
     # release added or dropped from the range changes no branch protection.
     name: kpubdata ${{ matrix.kpubdata }}
     needs: [kpubdata-releases]
+    # Nothing left to test when the lock already covers the whole range (#1179).
+    if: needs.kpubdata-releases.outputs.versions != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -376,7 +368,7 @@ jobs:
   gate:
     name: CI gate
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, docs, kpubdata-releases, min-deps, duckdb-floor, studio-drift, release-freeze]
+    needs: [lint, test, docs, kpubdata-releases, min-deps, duckdb-floor, studio-drift, release-freeze]
     # `always()` so a failed job still reaches this step. Without it the gate is
     # skipped when something upstream fails, and a skipped required check is the same
     # absence this job exists to remove.
