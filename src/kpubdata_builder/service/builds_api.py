@@ -16,7 +16,7 @@ from __future__ import annotations
 import heapq
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote
@@ -252,8 +252,9 @@ class BuildArtifactsApiService:
     ) -> ServiceResponse:
         """Runs, newest first, each naming its table and committed snapshot (#844).
 
-        ``dataset_id`` keeps only that dataset's runs; it is applied before ``limit``, so
-        a filtered page is full whenever that many runs exist.
+        ``dataset_id`` keeps only that dataset's runs, and where the list is the
+        requester's own (``ownership.lists_only_own_runs``) only theirs. Both are applied
+        before ``limit``, so a page is full whenever that many such runs exist (#1191).
         """
         response = self._list_builds(limit=limit, principal=principal, dataset_id=dataset_id)
         builds = response.body.get("builds")
@@ -301,13 +302,28 @@ class BuildArtifactsApiService:
         missing or empty. When ENFORCE_OWNERSHIP+oidc, both paths apply _apply_ownership
         to expose only own runs (#433).
         """
+        only_own = principal is not None and ownership_module.lists_only_own_runs(principal)
         # Query index first
         try:
-            entries = (
-                self._build_index.list_by_dataset(dataset_id, limit=limit)
-                if dataset_id is not None
-                else self._build_index.list_builds(limit=limit)
-            )
+            if only_own:
+                assert principal is not None
+                # The owner in the query, before LIMIT (#1191). Cutting the newest N of
+                # everyone's runs first and keeping the requester's among them gave a
+                # user with older runs a short page, or none, and no way to the rest.
+                entries = self._build_index.list_recent_owned(
+                    limit=limit,
+                    principal_owner_id=principal.owner_id,
+                    principal_label=principal.label,
+                    dataset_id=dataset_id,
+                )
+                # None of theirs in an index that has runs is the answer; an empty
+                # index says nothing, and the scan below reads the manifests.
+                if not entries and self._build_index.list_builds(limit=1):
+                    return ServiceResponse(200, {"builds": []})
+            elif dataset_id is not None:
+                entries = self._build_index.list_by_dataset(dataset_id, limit=limit)
+            else:
+                entries = self._build_index.list_builds(limit=limit)
             if entries:
                 index_builds: list[_BuildListEntry] = [
                     {
@@ -326,7 +342,7 @@ class BuildArtifactsApiService:
             # Index query failed. Where the list is filtered, other users' runs could
             # leak via fallback, so return empty array fail-closed (#433). Normal mode
             # proceeds to filesystem fallback as before (ADR 0003).
-            if ownership_module.lists_only_own_runs(principal):
+            if only_own:
                 logger.warning(
                     "build index query failed; returning empty list "
                     "(ownership enforced, fail-closed)",
@@ -345,15 +361,29 @@ class BuildArtifactsApiService:
                 for d in run_dirs
                 if read_snapshot_identity(self._output_root, d.name)[0] == dataset_id
             )
-        candidates = heapq.nlargest(limit, run_dirs, key=lambda p: p.stat().st_mtime)
+        # Where the list is the requester's own, the newest N are cut from their runs
+        # and not from everyone's (#1191): every run is looked at, newest first, until
+        # N of theirs are found. Otherwise only the newest N are opened, as before.
+        candidates: Iterable[Path] = (
+            sorted(run_dirs, key=lambda p: p.stat().st_mtime, reverse=True)
+            if only_own
+            else heapq.nlargest(limit, run_dirs, key=lambda p: p.stat().st_mtime)
+        )
         fs_builds: list[_BuildListEntry] = []
         for run_dir in candidates:
+            if len(fs_builds) >= limit:
+                break
             manifest_path = run_dir / "manifest.json"
             if not manifest_path.exists():
                 continue
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
+                continue
+            if only_own and not _apply_ownership(
+                [{"created_by": manifest.get("created_by"), "owner_id": manifest.get("owner_id")}],
+                principal,
+            ):
                 continue
             fs_builds.append(
                 {
