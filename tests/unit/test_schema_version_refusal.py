@@ -540,37 +540,97 @@ def test_a_new_index_has_the_table_the_rebuild_looks_for(tmp_path: Path) -> None
     assert not _has_this_releases_table(tmp_path / "absent.sqlite")
 
 
-def test_a_locked_index_is_not_taken_for_a_damaged_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Looking at the table can meet a lock too, and that is not "no table" (#1157)."""
-    from kpubdata_builder.store import build_index
+_HOLD_THE_INDEX = """
+import sqlite3, sys, time
+conn = sqlite3.connect(sys.argv[1], isolation_level=None)
+conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+conn.execute("BEGIN EXCLUSIVE")
+conn.execute("INSERT INTO builds (run_id, status) VALUES ('run-server', 'ok')")
+print("held", flush=True)
+time.sleep(float(sys.argv[2]))
+conn.execute("COMMIT")
+"""
+
+
+def test_rebuild_beside_a_process_that_holds_the_index_is_an_error(tmp_path: Path) -> None:
+    """A real lock, and the whole of ``rebuild_index`` (#1157).
+
+    Every read of the index before the rebuild — its version, then its table — meets
+    the lock. Reading "no version" or "no table" out of that replaced the file, and the
+    process that held it was left on the one that had been there.
+    """
+    import subprocess
+    import sys
 
     _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
     path = _index_with_one_run(tmp_path)
     inode = path.stat().st_ino
-    real_connect = sqlite3.connect
-
-    def locked_when_read_only(database: object, *args: object, **kwargs: object) -> object:
-        if kwargs.get("uri") and "mode=ro" in str(database):
-            raise sqlite3.OperationalError("database is locked")
-        return real_connect(database, *args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(build_index.sqlite3, "connect", locked_when_read_only)
-    with pytest.raises(sqlite3.OperationalError, match="locked"):
-        build_index._has_this_releases_table(path)
-    monkeypatch.undo()
-
-    monkeypatch.setattr(
-        build_index,
-        "_has_this_releases_table",
-        lambda _path: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_THE_INDEX, str(path), "60"],
+        stdout=subprocess.PIPE,
+        text=True,
     )
-    with pytest.raises(sqlite3.OperationalError, match="locked"):
-        rebuild_index(tmp_path)
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "held"
 
-    assert path.stat().st_ino == inode
-    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            rebuild_index(tmp_path)
+
+        assert path.stat().st_ino == inode
+        leftovers = [i.name for i in tmp_path.iterdir() if i.name.endswith((".tmp", ".bak"))]
+        assert leftovers == []
+    finally:
+        holder.kill()
+        holder.wait()
+    # Nothing of the rebuild is in it: the run it would have added is not there.
+    with closing(sqlite3.connect(path)) as conn:
+        assert [r[0] for r in conn.execute("SELECT run_id FROM builds")] == ["run-1"]
+
+
+def test_a_locked_store_has_no_version_to_report(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from kpubdata_builder.store.build_index import _has_this_releases_table
+    from kpubdata_builder.store.schema_version import stored_version
+
+    path = _index_with_one_run(tmp_path)
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_THE_INDEX, str(path), "60"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "held"
+
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            stored_version(path)
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            _has_this_releases_table(path)
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_file_that_is_not_a_database_has_no_version_and_no_table(tmp_path: Path) -> None:
+    from kpubdata_builder.store.build_index import _has_this_releases_table
+    from kpubdata_builder.store.schema_version import stored_version
+
+    garbage = tmp_path / "_builds.sqlite"
+    garbage.write_bytes(b"this is not a database" * 100)
+
+    assert stored_version(garbage) is None
+    assert not _has_this_releases_table(garbage)
+
+
+def test_a_database_without_a_version_table_has_no_version(tmp_path: Path) -> None:
+    from kpubdata_builder.store.schema_version import stored_version
+
+    path = tmp_path / "other.sqlite"
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute("CREATE TABLE something (x)")
+
+    assert stored_version(path) is None
 
 
 def test_a_file_that_is_not_a_database_is_still_replaced(tmp_path: Path) -> None:
