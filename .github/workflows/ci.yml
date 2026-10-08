@@ -99,8 +99,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --no-sources --python ${{ matrix.python-version }}
 
+      # -n auto: one worker per vCPU (pytest-xdist). The suite takes about 9 minutes on
+      # one core; the runner has four.
       - name: Run tests
-        run: uv run --no-sources pytest
+        run: uv run --no-sources pytest -n auto
 
   coverage:
     # 커버리지 게이트 (#594). 지금 도달한 수준이 조용히 내려가지 않게 잠근다.
@@ -122,7 +124,7 @@ jobs:
         run: uv sync --extra dev --no-sources
 
       - name: Run tests with coverage
-        run: uv run --no-sources pytest --cov --cov-report=term-missing
+        run: uv run --no-sources pytest -n auto --cov --cov-report=term-missing
 
   docs:
     # The documentation site is built with `--strict`, where a broken link is an error.
@@ -206,7 +208,7 @@ jobs:
           test "${installed}" = "${KPUBDATA_VERSION}"
 
       - name: Run tests against kpubdata ${{ matrix.kpubdata }}
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest -n auto
 
   # DuckDB's floor (#866): 1.2.0 is pyproject's lower bound because it is the first
   # release with every sandbox setting Builder relies on. The lock resolves the newest

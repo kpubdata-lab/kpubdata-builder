@@ -91,4 +91,4 @@ jobs:
           # pin allows still keeps it private (scripts/check_kpubdata_imports.py).
           KPUBDATA_IMPORT_GATE_TARGET: unreleased
           KPUBDATA_REPLAY_DIR: ${{ github.workspace }}/.kpubdata-src/tests/fixtures
-        run: uv run --no-sync pytest -q
+        run: uv run --no-sync pytest -q -n auto

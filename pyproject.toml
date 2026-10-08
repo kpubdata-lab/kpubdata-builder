@@ -88,6 +88,8 @@ dev = [
   "mypy>=1.10,<3",
   "pytest>=8.2,<10",
   "pytest-cov>=5,<8",
+  # Runs the suite across workers in CI (`pytest -n auto`).
+  "pytest-xdist>=3.6,<4",
   "ruff>=0.5,<1",
   "types-PyYAML>=6.0",
   # Windows에서 zoneinfo가 시스템 tz 데이터베이스를 찾지 못하는 경우를

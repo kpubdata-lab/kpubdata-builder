@@ -201,8 +201,8 @@ uv run ruff format --check .
 # 3. 타입 검사
 uv run mypy src
 
-# 4. 전체 유닛 테스트 실행
-uv run pytest
+# 4. 전체 유닛 테스트 실행 (-n auto: CPU 코어마다 워커 하나, pytest-xdist — CI 와 같다)
+uv run pytest -n auto
 ```
 
 ## 4. 코딩 컨벤션

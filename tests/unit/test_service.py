@@ -27,6 +27,12 @@ from kpubdata_builder.spec import JsonValue
 
 from ._openapi import response_schema, validate
 
+#: How long a test client waits for the in-process server. No test here is about the
+#: client timing out; it only stops a hung server from hanging the suite. Two seconds
+#: was too short for `POST /build` on a loaded machine (pytest -n auto beside other
+#: work): the build finished, but after the client had given up.
+_CLIENT_TIMEOUT = 30.0
+
 VALID_SPEC_YAML = (
     """
 dataset_id: dataset.sample
@@ -861,7 +867,7 @@ class TestPreviewWireSerialization:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=2.0) as response:
+            with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
                 return cast(dict[str, object], json.loads(response.read()))
         finally:
             server.shutdown()
@@ -982,7 +988,7 @@ class TestHttpAdapter:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=2.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 400
 
     def test_malformed_json_body_returns_400(
@@ -996,7 +1002,7 @@ class TestHttpAdapter:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=2.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 400
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert "invalid JSON body" in str(body.get("error", ""))
@@ -1006,7 +1012,7 @@ class TestHttpAdapter:
     ) -> None:
         base_url, _, _ = http_server
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(f"{base_url}/nope", timeout=2.0)
+            urllib.request.urlopen(f"{base_url}/nope", timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 404
 
     def test_non_object_json_body_returns_400(
@@ -1021,7 +1027,7 @@ class TestHttpAdapter:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=2.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 400
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert "object" in str(body.get("error", ""))
@@ -1037,7 +1043,7 @@ class TestHttpAdapter:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
 
     def test_query_string_does_not_corrupt_run_id(
@@ -1051,9 +1057,11 @@ class TestHttpAdapter:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(build_req, timeout=2.0) as response:
+        with urllib.request.urlopen(build_req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
-        with urllib.request.urlopen(f"{base_url}/artifacts/run1?download=1", timeout=2.0) as resp:
+        with urllib.request.urlopen(
+            f"{base_url}/artifacts/run1?download=1", timeout=_CLIENT_TIMEOUT
+        ) as resp:
             assert resp.status == 200
             body = cast(dict[str, object], json.loads(resp.read()))
         assert body["run_id"] == "run1"
@@ -1067,7 +1075,7 @@ class TestHttpAdapter:
         base_url, _, _ = http_server
         host_port = base_url.removeprefix("http://")
         host, port = host_port.split(":")
-        conn = http.client.HTTPConnection(host, int(port), timeout=2.0)
+        conn = http.client.HTTPConnection(host, int(port), timeout=_CLIENT_TIMEOUT)
         try:
             conn.putrequest("POST", "/validate")
             conn.putheader("Content-Type", "application/json")
@@ -1089,7 +1097,7 @@ class TestHttpAdapter:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             body = cast(dict[str, object], json.loads(response.read()))
         assert body["status"] == "valid"
@@ -1100,7 +1108,7 @@ class TestHttpAdapter:
         # CORS preflight (OPTIONS) must return 204 + allow headers (#254).
         base_url, _, _ = http_server
         req = urllib.request.Request(f"{base_url}/build", method="OPTIONS")
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 204
             assert response.headers["Access-Control-Allow-Origin"] == "*"
             assert response.headers["Access-Control-Allow-Methods"] == (
@@ -1117,7 +1125,7 @@ class TestHttpAdapter:
     ) -> None:
         # Same-origin requests (no Origin header) must include CORS headers (#322).
         base_url, _, _ = http_server
-        with urllib.request.urlopen(f"{base_url}/version", timeout=2.0) as response:
+        with urllib.request.urlopen(f"{base_url}/version", timeout=_CLIENT_TIMEOUT) as response:
             # If same-origin, return `*`.
             assert response.headers["Access-Control-Allow-Origin"] == "*"
 
@@ -1134,7 +1142,7 @@ class TestHttpAdapter:
         allowed = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
-        with urllib.request.urlopen(allowed, timeout=2.0) as response:
+        with urllib.request.urlopen(allowed, timeout=_CLIENT_TIMEOUT) as response:
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
             assert response.headers["Vary"] == "Origin"
 
@@ -1142,7 +1150,7 @@ class TestHttpAdapter:
         denied = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://evil.example"}
         )
-        with urllib.request.urlopen(denied, timeout=2.0) as response:
+        with urllib.request.urlopen(denied, timeout=_CLIENT_TIMEOUT) as response:
             assert "Access-Control-Allow-Origin" not in response.headers
             assert response.headers["Vary"] == "Origin"
 
@@ -1150,7 +1158,7 @@ class TestHttpAdapter:
         preflight = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://evil.example"}, method="OPTIONS"
         )
-        with urllib.request.urlopen(preflight, timeout=2.0) as response:
+        with urllib.request.urlopen(preflight, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 204
             assert response.headers["Vary"] == "Origin"
 
@@ -1167,7 +1175,7 @@ class TestHttpAdapter:
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             # default-deny so no CORS headers
             assert "Access-Control-Allow-Origin" not in response.headers
 
@@ -1194,7 +1202,7 @@ class TestHttpAdapter:
             f"{base_url}/artifacts/run1/manifest.json",
             headers={"Origin": "http://localhost:5173"},
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             # default-deny: origins not in allowlist get no CORS headers
             assert "Access-Control-Allow-Origin" not in response.headers
@@ -1219,7 +1227,7 @@ class TestHttpAdapter:
             f"{base_url}/artifacts/run1/manifest.json",
             headers={"Origin": "http://localhost:5173"},
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
 
@@ -1235,7 +1243,7 @@ class TestHttpAdapter:
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
 
     def test_cors_exposes_the_headers_a_page_has_to_read(
@@ -1250,7 +1258,7 @@ class TestHttpAdapter:
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             exposed = {
                 name.strip()
                 for name in response.headers["Access-Control-Expose-Headers"].split(",")
@@ -1266,7 +1274,7 @@ class TestHttpAdapter:
         monkeypatch.setenv("KPUBDATA_BUILDER_ALLOWED_ORIGINS", "http://localhost:5173")
         base_url, _, _ = http_server
         req = urllib.request.Request(f"{base_url}/version", headers={"Origin": "https://evil.test"})
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.headers["Access-Control-Expose-Headers"] is None
 
     def test_cors_multiple_origins_configurable(
@@ -1284,13 +1292,13 @@ class TestHttpAdapter:
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "http://localhost:5173"}
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
         # Request from second origin
         req = urllib.request.Request(
             f"{base_url}/version", headers={"Origin": "https://studio.example.com"}
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.headers["Access-Control-Allow-Origin"] == "https://studio.example.com"
 
     def test_cors_rejects_disallowed_origin(
@@ -1303,7 +1311,7 @@ class TestHttpAdapter:
         base_url, _, _ = http_server
         # Request from unapproved origin
         req = urllib.request.Request(f"{base_url}/version", headers={"Origin": "http://evil.com"})
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             # Unapproved origin so no CORS headers
             assert "Access-Control-Allow-Origin" not in response.headers
 
@@ -1314,7 +1322,7 @@ class TestHttpAdapter:
         # Adapter must pass X-API-Key header to dispatch (#248).
         base_url, _, _ = http_server_with_auth
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(f"{base_url}/version", timeout=2.0)
+            urllib.request.urlopen(f"{base_url}/version", timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 401
 
     def test_valid_api_key_header_is_accepted(
@@ -1324,7 +1332,7 @@ class TestHttpAdapter:
         # http_server_with_auth fixture already sets API key, no monkeypatch needed
         base_url, _, _ = http_server_with_auth
         req = urllib.request.Request(f"{base_url}/version", headers={"X-API-Key": "secret"})
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
 
     def test_healthz_accessible_without_api_key(
@@ -1334,7 +1342,7 @@ class TestHttpAdapter:
         # /healthz is exposed unauthenticated outside auth gate (#372).
         # Probe can't carry credentials, so return only 200 + {"status":"ok"} without key.
         base_url, _, _ = http_server_with_auth
-        with urllib.request.urlopen(f"{base_url}/healthz", timeout=2.0) as response:
+        with urllib.request.urlopen(f"{base_url}/healthz", timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             request_id = response.headers["X-Request-ID"]
             body = cast(dict[str, object], json.loads(response.read()))
@@ -1364,7 +1372,7 @@ class TestHttpAdapter:
             assert response.status == 200
 
         url = f"{base_url}/builds/wire-stage-detail/stages/{stage}?source=datago.air_quality"
-        with urllib.request.urlopen(url, timeout=2.0) as response:
+        with urllib.request.urlopen(url, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             status_code = response.status
             request_id = response.headers["X-Request-ID"]
@@ -1392,28 +1400,30 @@ class TestHttpUploads:
             headers={"Content-Type": "application/octet-stream"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             created = cast(dict[str, object], json.loads(response.read()))
         upload_id = created["upload_id"]
         assert isinstance(upload_id, str) and upload_id.startswith("upl_")
         assert created["original_filename"] == "trades.csv"
 
-        with urllib.request.urlopen(f"{base_url}/uploads/{upload_id}", timeout=2.0) as response:
+        with urllib.request.urlopen(
+            f"{base_url}/uploads/{upload_id}", timeout=_CLIENT_TIMEOUT
+        ) as response:
             assert response.status == 200
             fetched = cast(dict[str, object], json.loads(response.read()))
         assert fetched["upload_id"] == upload_id
         assert "content" not in fetched
 
         delete_req = urllib.request.Request(f"{base_url}/uploads/{upload_id}", method="DELETE")
-        with urllib.request.urlopen(delete_req, timeout=2.0) as response:
+        with urllib.request.urlopen(delete_req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
             deleted = cast(dict[str, object], json.loads(response.read()))
         assert deleted["upload_id"] == upload_id
         assert deleted["deleted"] is True
 
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(f"{base_url}/uploads/{upload_id}", timeout=2.0)
+            urllib.request.urlopen(f"{base_url}/uploads/{upload_id}", timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 404
 
     def test_create_upload_over_configured_limit_returns_413(
@@ -1430,7 +1440,7 @@ class TestHttpUploads:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=2.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 413
 
     def test_create_upload_missing_format_returns_400(
@@ -1444,7 +1454,7 @@ class TestHttpUploads:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=2.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 400
 
     def test_create_upload_body_is_not_parsed_as_json(
@@ -1460,7 +1470,7 @@ class TestHttpUploads:
             headers={"Content-Type": "application/octet-stream"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=2.0) as response:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as response:
             assert response.status == 200
 
 
@@ -1495,7 +1505,7 @@ class TestHttpRobustness:
                 method="POST",
             )
             with pytest.raises(urllib.error.HTTPError) as exc_info:
-                urllib.request.urlopen(req, timeout=2.0)
+                urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 500
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert body.get("error") == "internal server error"
@@ -1806,7 +1816,7 @@ class TestHttpRobustness:
         base_url, _, _ = http_server
         host_port = base_url.removeprefix("http://")
         host, port = host_port.split(":")
-        conn = http.client.HTTPConnection(host, int(port), timeout=2.0)
+        conn = http.client.HTTPConnection(host, int(port), timeout=_CLIENT_TIMEOUT)
         try:
             conn.putrequest("POST", "/validate")
             conn.putheader("Content-Type", "application/json")
