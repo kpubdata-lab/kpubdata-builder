@@ -946,7 +946,7 @@ def _run_serve(
         return 1
 
     from .store import bring_index_up_to_date
-    from .store.schema_version import UnsupportedSchemaVersionError
+    from .store.schema_version import UnsupportedSchemaVersionError, says_unreachable
 
     try:
         # Before the service opens the index: an older one would be emptied there, and
@@ -970,9 +970,13 @@ def _run_serve(
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except sqlite3.OperationalError as exc:
-        # A state store that could not be opened or read to begin with — locked by
-        # another process, on a disk that cannot be written. Said in one line as the
-        # refusals above are; the store is as it was (#1157).
+        # A state store that could not be reached to begin with — locked by another
+        # process, on a disk that cannot be written. Said in one line as the refusals
+        # above are; the store is as it was (#1157). Any other database error is not
+        # this — a migration that failed, a statement this release got wrong — and
+        # keeps its traceback: "could not be opened" would be a wrong answer to it.
+        if not says_unreachable(exc):
+            raise
         print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
         return 1
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.

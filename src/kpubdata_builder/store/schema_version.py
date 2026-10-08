@@ -56,6 +56,18 @@ def says_damaged(error: sqlite3.Error) -> bool:
     return any(sign in message for sign in _DAMAGE)
 
 
+#: What SQLite says when a store could not be reached at all: held by another process,
+#: not openable, on a disk that failed or cannot be written. Nothing here is about what
+#: the store holds.
+_UNREACHABLE = ("locked", "unable to open", "disk i/o", "readonly database")
+
+
+def says_unreachable(error: sqlite3.Error) -> bool:
+    """Whether ``error`` says the store could not be reached, rather than what is in it."""
+    message = str(error).lower()
+    return any(sign in message for sign in _UNREACHABLE)
+
+
 def stored_version(path: Path) -> int | None:
     """The schema version a SQLite store records, read without changing the file.
 
@@ -91,5 +103,6 @@ __all__ = [
     "UnsupportedSchemaVersionError",
     "open_read_only",
     "says_damaged",
+    "says_unreachable",
     "stored_version",
 ]

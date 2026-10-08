@@ -691,3 +691,63 @@ def test_a_file_that_is_not_a_database_is_still_replaced(tmp_path: Path) -> None
     index = SqliteBuildIndex(tmp_path)
     assert index.get("run-ok") is not None
     index.close()
+
+
+def test_the_read_only_look_is_opened_with_that_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The value reaches SQLite: thirty seconds, read-only, and nothing set on the file."""
+    from kpubdata_builder.store import schema_version
+
+    path = _index_with_one_run(tmp_path)
+    opened: list[tuple[str, dict[str, object]]] = []
+    real_connect = sqlite3.connect
+
+    def recording(database: str, **kwargs: object) -> sqlite3.Connection:
+        opened.append((database, kwargs))
+        return real_connect(database, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(schema_version.sqlite3, "connect", recording)
+
+    assert schema_version.stored_version(path) == INDEX_VERSION
+
+    ((database, kwargs),) = opened
+    assert database.endswith("?mode=ro")
+    assert kwargs == {"uri": True, "timeout": 30.0}
+
+
+def test_serve_keeps_the_traceback_of_a_database_error_that_is_not_about_reaching_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed migration is not "could not be opened"; it is raised as it is."""
+    import kpubdata_builder.service.http as http_module
+    from kpubdata_builder import store
+
+    monkeypatch.setattr(http_module, "serve", lambda service, **kwargs: None)
+
+    def failing(_root: Path) -> int | None:
+        raise sqlite3.OperationalError("no such column: owner_id")
+
+    monkeypatch.setattr(store, "bring_index_up_to_date", failing)
+
+    with pytest.raises(sqlite3.OperationalError, match="no such column"):
+        main(["serve", "--output-dir", str(tmp_path)])
+
+
+@pytest.mark.parametrize(
+    ("message", "unreachable"),
+    [
+        ("database is locked", True),
+        ("database table is locked", True),
+        ("unable to open database file", True),
+        ("disk I/O error", True),
+        ("attempt to write a readonly database", True),
+        ("no such column: owner_id", False),
+        ("no such table: builds", False),
+        ("file is not a database", False),
+    ],
+)
+def test_which_errors_say_the_store_could_not_be_reached(message: str, unreachable: bool) -> None:
+    from kpubdata_builder.store.schema_version import says_unreachable
+
+    assert says_unreachable(sqlite3.OperationalError(message)) is unreachable
