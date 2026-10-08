@@ -21,7 +21,7 @@ from kpubdata_builder.service.app import BuilderService, ServiceResponse, dispat
 from kpubdata_builder.service.auth_throttle import AuthFailureThrottle
 from kpubdata_builder.service.http import make_handler
 
-from .test_service import _FakeClient
+from .test_service import _CLIENT_TIMEOUT, _FakeClient
 
 _CLIENT = "203.0.113.7"
 
@@ -207,7 +207,7 @@ class TestHttpAuthThrottle:
         def _status(api_key: str) -> tuple[int, dict[str, object]]:
             request = urllib.request.Request(f"{server}/version", headers={"X-API-Key": api_key})
             try:
-                with urllib.request.urlopen(request, timeout=2.0) as response:
+                with urllib.request.urlopen(request, timeout=_CLIENT_TIMEOUT) as response:
                     return response.status, json.loads(response.read())
             except urllib.error.HTTPError as exc:
                 return exc.code, json.loads(exc.read())
