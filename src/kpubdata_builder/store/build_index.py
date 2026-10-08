@@ -101,7 +101,12 @@ class BuildIndex(Protocol):
     def list_by_dataset(self, dataset_id: str, limit: int | None = None) -> list[BuildEntry]: ...
 
     def list_recent_owned(
-        self, *, limit: int, principal_owner_id: str | None, principal_label: str
+        self,
+        *,
+        limit: int,
+        principal_owner_id: str | None,
+        principal_label: str,
+        dataset_id: str | None = None,
     ) -> list[BuildEntry]: ...
 
     def list_between(self, start_iso: str, end_iso: str) -> list[BuildEntry]: ...
@@ -361,7 +366,12 @@ class SqliteBuildIndex:
         ]
 
     def list_recent_owned(
-        self, *, limit: int, principal_owner_id: str | None, principal_label: str
+        self,
+        *,
+        limit: int,
+        principal_owner_id: str | None,
+        principal_label: str,
+        dataset_id: str | None = None,
     ) -> list[BuildEntry]:
         """Return up to ``limit`` builds owned by principal, latest finished first (#527).
 
@@ -387,31 +397,31 @@ class SqliteBuildIndex:
                 (same as ``principal_owns()``).
             principal_label: Requesting principal's legacy comparison label
                 (``Principal.label``).
+            dataset_id: Keep only this dataset's runs (#1191), also before LIMIT.
 
         Returns:
             BuildEntry list (finished_at descending, max limit items).
         """
         if principal_owner_id is not None:
-            sql = """
-                SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                       dataset_id, owner_id
-                FROM builds
-                WHERE (owner_id IS NOT NULL AND owner_id = ?)
-                   OR (owner_id IS NULL AND created_by = ?)
-                ORDER BY finished_at DESC
-                LIMIT ?
-            """
-            params: tuple[object, ...] = (principal_owner_id, principal_label, limit)
+            owned = (
+                "((owner_id IS NOT NULL AND owner_id = ?) OR (owner_id IS NULL AND created_by = ?))"
+            )
+            params: list[object] = [principal_owner_id, principal_label]
         else:
-            sql = """
-                SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                       dataset_id, owner_id
-                FROM builds
-                WHERE created_by = ?
-                ORDER BY finished_at DESC
-                LIMIT ?
-            """
-            params = (principal_label, limit)
+            owned = "created_by = ?"
+            params = [principal_label]
+        of_dataset = ""
+        if dataset_id is not None:
+            of_dataset = " AND dataset_id = ?"
+            params.append(dataset_id)
+        params.append(limit)
+        # The two fragments are fixed text chosen above; every value is a parameter.
+        sql = (
+            "SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,"
+            " dataset_id, owner_id FROM builds"
+            f" WHERE {owned}{of_dataset}"
+            " ORDER BY finished_at DESC LIMIT ?"
+        )
         cur = self._conn.execute(sql, params)
         return [
             BuildEntry(

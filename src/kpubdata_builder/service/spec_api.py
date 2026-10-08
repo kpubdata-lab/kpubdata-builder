@@ -376,6 +376,8 @@ class SpecApiService:
                 owner_id=principal.owner_id if principal is not None else None,
                 # A provider that echoes the request would put the key into the sample.
                 secret_values=tuple(provider_keys.values()),
+                # By provider, to say which provider's key a refusal was about (#1187).
+                provider_keys=dict(provider_keys),
             )
             # Declared PII leaves masked as Gold masks it (#900), read through the same
             # client the preview fetched with, as the build reads it.
@@ -454,6 +456,7 @@ class SpecApiService:
                 "diff_truncated": p.diff_truncated,
                 "fetch_complete": p.fetch_complete,
                 "source_reported_total": p.source_reported_total,
+                "reason": p.reason,
             }
             for p, _ in masked
         ]
