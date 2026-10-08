@@ -355,3 +355,87 @@ def test_rebuild_is_not_undone_by_the_wal_the_last_process_left(tmp_path: Path) 
         assert conn.execute("SELECT COUNT(*) FROM builds").fetchone() == (2,)
     assert not [item.name for item in tmp_path.iterdir() if ".bak" in item.name]
     assert not [item.name for item in tmp_path.iterdir() if ".tmp" in item.name]
+
+
+def test_rebuild_beside_an_open_index_is_seen_by_its_connections(tmp_path: Path) -> None:
+    """``rebuild-index`` while the server runs (#1157).
+
+    The new index used to be renamed into the old one's place. A thread of the server
+    that already had a connection stayed on the file that was there, so a build it
+    recorded afterwards was in a file nobody else read: the same list differed by which
+    thread answered, until a restart.
+    """
+    import threading
+
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    server = SqliteBuildIndex(tmp_path)
+    server.insert_or_replace(
+        run_id="no-manifest", status="ok", started_at=None, finished_at="2026-01-01T00:00:00Z"
+    )
+
+    assert rebuild_index(tmp_path) == 1
+
+    # The server's open connection sees what the rebuild made of the index...
+    assert server.get("run-a") is not None
+    assert server.get("no-manifest") is None
+    # ...and what it writes next is seen by a connection opened after the rebuild.
+    _write_run(tmp_path, "run-b", owner_id="oidc:b", errors=[])
+    server.insert_or_replace(
+        run_id="run-b", status="ok", started_at=None, finished_at="2026-01-02T00:00:00Z"
+    )
+    seen: dict[str, bool] = {}
+
+    def another_thread() -> None:
+        seen["a"] = server.get("run-a") is not None
+        seen["b"] = server.get("run-b") is not None
+
+    worker = threading.Thread(target=another_thread)
+    worker.start()
+    worker.join()
+    assert seen == {"a": True, "b": True}
+    later = SqliteBuildIndex(tmp_path)
+    assert later.get("run-b") is not None
+    later.close()
+    server.close()
+    # No second file was made: the index is the one the server has open.
+    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+
+
+def test_rebuild_keeps_a_build_that_finished_while_it_was_scanning(tmp_path: Path) -> None:
+    """In the index and not in the scan, with a manifest: it is not a stale row."""
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    _write_run(tmp_path, "run-late", owner_id="oidc:b", errors=[])
+    index = SqliteBuildIndex(tmp_path)
+    index.insert_or_replace(
+        run_id="run-late", status="ok", started_at=None, finished_at="2026-01-02T00:00:00Z"
+    )
+    scanned_before_it_finished = [
+        entry for entry in _manifest_entries(tmp_path) if entry.run_id == "run-a"
+    ]
+
+    index.replace_contents(scanned_before_it_finished)
+
+    assert index.get("run-a") is not None
+    assert index.get("run-late") is not None
+    index.close()
+
+
+def test_failed_rebuild_in_place_leaves_the_index_as_it_was(tmp_path: Path) -> None:
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    before = _dump(path)
+    index = SqliteBuildIndex(tmp_path)
+    entries = _manifest_entries(tmp_path)
+    broken = [*entries, entries[0].__class__(**{**entries[0].__dict__, "status": "not-a-status"})]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        index.replace_contents(broken)
+
+    index.close()
+    assert _dump(path) == before
+
+
+def _manifest_entries(root: Path) -> list[object]:
+    from kpubdata_builder.store.build_index import _iter_manifest_entries
+
+    return list(_iter_manifest_entries(root))

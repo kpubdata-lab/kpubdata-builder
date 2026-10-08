@@ -553,6 +553,59 @@ class SqliteBuildIndex:
             # Ignore index failure
             pass
 
+    def replace_contents(self, entries: Collection[BuildEntry]) -> None:
+        """Make the index what ``entries`` say, in one transaction, in this file.
+
+        For a rebuild beside a running server (#1157): its connections stay on the
+        same file and see the result. Rows are written over, and a row ``entries`` does
+        not name is removed only when its run has no manifest — a build that finished
+        while the manifests were being scanned is in the index and not in the scan, and
+        is kept.
+
+        Unlike the other writes this one does not swallow a failure: a rebuild is asked
+        for, and one that failed leaves the index as it was.
+        """
+        scanned = {entry.run_id for entry in entries}
+        conn = self._conn
+        # The write lock from the start, so nothing is added between reading which
+        # rows are stale and removing them.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO builds
+                (run_id, status, started_at, finished_at, spec_digest, error, created_by,
+                 dataset_id, owner_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        entry.run_id,
+                        entry.status,
+                        entry.started_at,
+                        entry.finished_at,
+                        entry.spec_digest,
+                        entry.error,
+                        entry.created_by,
+                        entry.dataset_id,
+                        entry.owner_id,
+                    )
+                    for entry in entries
+                ],
+            )
+            indexed = [str(row[0]) for row in conn.execute("SELECT run_id FROM builds")]
+            stale = [
+                (run_id,)
+                for run_id in indexed
+                if run_id not in scanned
+                and not (self._output_root / run_id / "manifest.json").is_file()
+            ]
+            conn.executemany("DELETE FROM builds WHERE run_id = ?", stale)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
     def close(self) -> None:
         """Close connection.
 
@@ -641,13 +694,30 @@ def _rebuild_sqlite(output_root: Path) -> int:
     """Build SQLite index fresh to .tmp, then atomically replace (#366).
 
     Existing index survives if scan fails. Atomic rename works only for single-file
-    SQLite, so separate from cubrid path. The existing index is never opened, so this
-    also replaces one a newer release wrote — the remedy its refusal names (#1096).
+    SQLite, so separate from cubrid path. An index of another version is never opened,
+    so this also replaces one a newer release wrote — the remedy its refusal names
+    (#1096). This release's own index is refilled in place instead (#1157).
     """
     if not output_root.exists():
         return 0
 
     index_path = output_root / _INDEX_FILENAME
+    if stored_version(index_path) == SCHEMA_VERSION:
+        # This release's index, which a running server may have open (#1157). Renaming
+        # a new file into its place leaves the server's connections on the file that
+        # was there: each thread that had one keeps writing builds to a file nobody
+        # else reads, and the lists differ by which thread answers. So it is filled
+        # again where it is. An index of another version is not open in a server of
+        # this release — that server refuses a newer one and remakes an older one when
+        # it starts — and is replaced by the file below.
+        entries = list(_iter_manifest_entries(output_root))
+        index = SqliteBuildIndex(output_root)
+        try:
+            index.replace_contents(entries)
+        finally:
+            index.close()
+        return len(entries)
+
     tmp_path = output_root / f"{_INDEX_FILENAME}.tmp"
     backup_path = output_root / f"{_INDEX_FILENAME}.bak"
 
