@@ -482,7 +482,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.109.0 -> 1.110.0: a build that finds no rows is not committed over a table that has
 #   a snapshot (warehouse_failures reason empty_result) unless the source declares
 #   allow_empty, which keeps the current columns (#1186, additive).
-API_CONTRACT_VERSION = "1.110.0"
+# 1.110.0 -> 1.111.0: in a multi-user deployment POST /builds answers 429
+#   build_owner_limit past KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER (#1189,
+#   additive).
+API_CONTRACT_VERSION = "1.111.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

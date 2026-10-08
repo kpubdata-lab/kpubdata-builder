@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.110.0",
+  "contract_version": "1.111.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5493,6 +5493,33 @@
       "required_type_broken": {
         "error": 12345,
         "code": "build_queue_full"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
+      "status": 429,
+      "example": "BuildOwnerLimit",
+      "current": {
+        "error": "you already have 2 builds queued or running; submit this one when one of them has finished",
+        "code": "build_owner_limit",
+        "limit": 2
+      },
+      "with_additive_fields": {
+        "error": "you already have 2 builds queued or running; submit this one when one of them has finished",
+        "code": "build_owner_limit",
+        "limit": 2,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "build_owner_limit",
+        "limit": 2
       },
       "broken_path": "$.error"
     },
