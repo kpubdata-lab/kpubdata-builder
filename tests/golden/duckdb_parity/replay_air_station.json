@@ -8,11 +8,13 @@
     },
     "fetch_params": {
      "dataTerm": "daily",
+     "page_size": 100,
      "stationName": "강남구"
     },
     "provenance": {
      "fetch_params": {
       "dataTerm": "daily",
+      "page_size": 100,
       "stationName": "강남구"
      },
      "operation": "fetch",
@@ -2897,6 +2899,7 @@
     "fetched_row_count": 22,
     "params": {
      "dataTerm": "daily",
+     "page_size": 100,
      "stationName": "강남구"
     },
     "provider": "datago",
