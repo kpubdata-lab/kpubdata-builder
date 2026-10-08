@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
+from kpubdata_builder.service.build_limits import MAX_ACTIVE_BUILDS_PER_OWNER_ENV
 from kpubdata_builder.service.request_credentials import CREDENTIAL_TTL_ENV, JobCredentials
 
 from .test_ephemeral_credentials import _CANARY, _SPEC, _Recorder
@@ -149,6 +150,8 @@ def test_a_job_is_bound_only_the_keys_its_spec_uses(
 ) -> None:
     gate = threading.Event()
     recorder = _Recorder(gate=gate)
+    # Four jobs of one owner: the per-owner limit (#1189) is not what this tests.
+    monkeypatch.setenv(MAX_ACTIVE_BUILDS_PER_OWNER_ENV, "0")
     service = _service(tmp_path, monkeypatch, recorder)
     headers = (f"datago={_CANARY}", f"seoul={_OTHER}", f"bok={_OTHER}")
     try:

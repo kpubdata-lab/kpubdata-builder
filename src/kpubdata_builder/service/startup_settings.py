@@ -35,7 +35,9 @@ from ..query.service import (
 )
 from ..store.backend import cubrid_url, storage_backend
 from ..tabular.duckdb_runtime import BuildProfile
+from .auth import oidc_enabled
 from .http import shutdown_grace_seconds
+from .ownership import multi_user_mode
 
 #: Settings ``serve`` reads itself, each with a flag that takes precedence. A value the
 #: flag overrides is never read, so the caller says which those are.
@@ -121,6 +123,7 @@ FALLS_BACK: dict[str, tuple[Callable[[str], bool], str]] = {
     ),
     "KPUBDATA_BUILDER_MAX_UPLOAD_BYTES": (_is_positive_integer, "an integer > 0"),
     "KPUBDATA_BUILDER_UPLOAD_MAX_FILES": (_is_non_negative_integer, "an integer >= 0"),
+    "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES": (_is_positive_integer, "an integer > 0"),
@@ -222,13 +225,36 @@ def _serve_problems(skip: Collection[str]) -> list[str]:
     ):
         check(name, _is_positive_integer, "an integer >= 1")
     check("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", _is_non_negative_number, "a finite number >= 0")
-    check("KPUBDATA_BUILDER_PORT", _is_port, "a port number from 0 to 65535")
+    # Not stripped first, unlike the rest: the entrypoint hands the value to ``--port``
+    # as it is, and one of nothing but spaces is a usage error there, not "not set".
+    port = os.environ.get("KPUBDATA_BUILDER_PORT", "")
+    if "KPUBDATA_BUILDER_PORT" not in skip and port and not _is_port(port):
+        problems.append(
+            f"KPUBDATA_BUILDER_PORT must be a port number from 0 to 65535, got {port!r}"
+        )
     return problems
 
 
 def _is_port(raw: str) -> bool:
     value = _integer(raw)
     return value is not None and 0 <= value <= 65535
+
+
+def _forced_on(name: str) -> bool:
+    """Whether the deployment turns ``name`` on whatever the variable says.
+
+    Sign-in through OIDC makes a deployment multi-user, and so does
+    ``ENFORCE_OWNERSHIP``; a multi-user deployment keeps each user's runs apart and
+    uses nobody's credentials but the requester's (ADR 0012).
+    """
+    if name == "ENFORCE_OWNERSHIP":
+        return oidc_enabled()
+    if name in (
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL",
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL",
+    ):
+        return multi_user_mode()
+    return False
 
 
 def check_settings(*, overridden: Collection[str] = ()) -> SettingsReport:
@@ -257,8 +283,17 @@ def check_settings(*, overridden: Collection[str] = ()) -> SettingsReport:
     for name, (strips, on_words) in FLAGS.items():
         raw = os.environ.get(name, "")
         # A reader that does not strip judges the value as written: ``"true "`` is off.
-        written = raw.strip() if strips else raw
-        if written and written.lower() not in on_words | _OFF_WORDS:
+        written = (raw.strip() if strips else raw).lower()
+        if not written or written in on_words:
+            continue
+        if _forced_on(name):
+            # Whatever it says: a warning that it "is read as off" would tell an
+            # operator that a switch which is on is off.
+            report.warnings.append(
+                f"{name} is {raw!r}, which is ignored: this deployment serves more than "
+                "one user, and that turns it on whatever it says"
+            )
+        elif written not in _OFF_WORDS:
             accepted = "/".join(sorted(on_words))
             report.warnings.append(
                 f"{name} is {raw!r}, which is neither {accepted} nor false/0; it is read as off"

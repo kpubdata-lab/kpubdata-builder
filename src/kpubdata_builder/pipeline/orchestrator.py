@@ -118,7 +118,7 @@ from ..stages.silver.models import SilverDataset
 from ..stages.silver.persist import persist_silver_dataset
 from ..stages.silver.pii import scan_pii
 from ..tabular import DEFAULT_PREVIEW_LIMIT
-from ..tabular.duckdb_load import TableHandle, load_parquet
+from ..tabular.duckdb_load import TableHandle, load_parquet, parquet_columns, write_empty_like
 from ..tabular.duckdb_runtime import (
     artifact_writer,
     build_connection,
@@ -135,7 +135,7 @@ from ..warehouse import (
     materialize,
 )
 from ..warehouse import gc as warehouse_gc
-from ..warehouse.layout import content_digest
+from ..warehouse.layout import SnapshotLayout, content_digest
 from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .card_facts import card_source, personal_information, processing_steps, write_card
 from .context import BuildContext
@@ -1491,6 +1491,51 @@ def _pii_unmasked_warnings(pii_masking: Mapping[str, PiiMaskResult]) -> tuple[st
     return tuple(warnings)
 
 
+def _empty_result(
+    catalog: TableCatalog,
+    *,
+    workspace_id: str,
+    logical_name: str,
+    gold_dir: Path,
+    allowed: bool,
+) -> dict[str, str] | None:
+    """Whether a build of no rows may be committed over the table (#1186).
+
+    A table with a committed snapshot keeps it: an empty result is refused, as a
+    ``warehouse_failures`` entry, unless the source declares ``allow_empty``. A provider
+    that answers nothing for other conditions (another station, a quiet day) would
+    otherwise replace the rows a user had, silently, with none.
+
+    When the source allows it, the snapshot is committed with the current snapshot's
+    columns if the build found none: no rows give no columns, and a table without
+    columns cannot be queried at all. A first build of a table is committed as it is.
+
+    Returns the failure to record, or None to commit.
+    """
+    table = catalog.find_table(workspace_id, logical_name)
+    if table is None or table.current_snapshot_id is None:
+        return None
+    if not allowed:
+        current = catalog.get_snapshot(table.current_snapshot_id)
+        held = f"{current.row_count} rows" if current.row_count is not None else "its rows"
+        return {
+            "reason": "empty_result",
+            "detail": f"the build found no rows; the current snapshot ({held}) stays "
+            "current. Declare allow_empty: true on the source to commit an empty result",
+        }
+    target = gold_dir / "table.parquet"
+    with duckdb.connect() as connection:
+        if not target.is_file() or parquet_columns(connection, target).names:
+            return None
+        pinned = catalog.resolve_current(table.id)
+        try:
+            current_dir = SnapshotLayout(catalog.root, table.id).snapshot_dir(pinned.snapshot_id)
+            write_empty_like(connection, current_dir / "table.parquet", target)
+        finally:
+            catalog.release(pinned.lease_id)
+    return None
+
+
 def _reclaim(catalog: TableCatalog, table_id: str, keep: int | None) -> None:
     """Drop the snapshots of ``table_id`` that this commit just superseded.
 
@@ -1831,11 +1876,30 @@ def run_build(
             # can only answer "coverage unknown" for every snapshot a build commits.
             source_ref = sources_by_key.get(outcome.source_key)
             fingerprints = fingerprint_source(source_ref) if source_ref is not None else None
+            logical_name = f"{spec.dataset_id}.{outcome.source_key}"
+            # The table holds Gold's rows; with a selection that is not Silver's count
+            # (#659).
+            table_rows = (
+                gold_selection[outcome.source_key].output_rows
+                if outcome.source_key in gold_selection
+                else row_counts.get(outcome.source_key)
+            )
+            if table_rows == 0:
+                refused = _empty_result(
+                    catalog,
+                    workspace_id=workspace_id,
+                    logical_name=logical_name,
+                    gold_dir=gold_dir,
+                    allowed=source_ref is not None and source_ref.allow_empty,
+                )
+                if refused is not None:
+                    warehouse_failures[outcome.source_key] = refused
+                    continue
             try:
                 committed = materialize(
                     catalog,
                     workspace_id=workspace_id,
-                    logical_name=f"{spec.dataset_id}.{outcome.source_key}",
+                    logical_name=logical_name,
                     source_dir=gold_dir,
                     run_id=context.run_id,
                     owner_id=effective_manifest_owner_id,
@@ -1846,13 +1910,7 @@ def run_build(
                     schema_contract_version=(
                         fingerprints.schema_contract if fingerprints else None
                     ),
-                    # The table holds Gold's rows; with a selection that is not Silver's
-                    # count (#659).
-                    row_count=(
-                        gold_selection[outcome.source_key].output_rows
-                        if outcome.source_key in gold_selection
-                        else row_counts.get(outcome.source_key)
-                    ),
+                    row_count=table_rows,
                     expected_revision=start_revisions.get(outcome.source_key),
                     # A snapshot of a partial fetch says so (#816), so a reader can show
                     # it rather than present part of the data as the whole.

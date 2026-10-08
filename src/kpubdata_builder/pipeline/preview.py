@@ -21,6 +21,12 @@ unlimited. diffs list itself is truncated at MAX_PREVIEW_DIFF_ITEMS and that fac
 recorded in ``diff_truncated`` — transform_summary aggregation (changed_cells/
 changed_rows) remains accurate even after truncation.
 
+Fetch bound (#1185): a public_api source is read up to ``limit`` records or
+``PREVIEW_MAX_PAGES`` pages, never the whole source — a preview spends at most that
+many requests of the user's provider quota. Statistics, quality checks and a random
+sample are then over the records fetched; ``fetch_complete`` says whether those are
+the whole source.
+
 Main components:
     - SampleMode: "first" | "random" sampling method
     - PreviewDiffItem: One cell-level change
@@ -43,7 +49,8 @@ from ..quality import QualityCheckResult, evaluate_quality
 from ..spec import BuildSpec, JsonValue, SourceRef
 from ..spec.models import QualityPolicy
 from ..spec.validator import validate_spec
-from ..stages.bronze.build import SourceClient
+from ..stages.bronze.build import FetchBound, SourceClient
+from ..stages.bronze.models import CallTotal
 from ..stages.bronze.resolve import build_bronze_artifact_for_source, source_identity
 from ..stages.bronze.writer import new_staging_dir
 from ..stages.silver.build import build_silver_dataset
@@ -68,6 +75,11 @@ DEFAULT_PREVIEW_SEED = 0
 # magic number — transform_summary.changed_cells/changed_rows remain accurate even
 # after truncation, keeping "diffs list truncated but aggregation exact" contract.
 MAX_PREVIEW_DIFF_ITEMS = 1000
+
+# Most requests one source's preview makes (#1185), across its param_grid
+# combinations too. A data.go.kr key's daily quota is often 1,000 to 10,000 requests;
+# the unbounded preview could spend it on one large source.
+PREVIEW_MAX_PAGES = 3
 
 
 @dataclass(frozen=True)
@@ -135,6 +147,12 @@ class SourcePreview:
         diff_truncated: True if diffs hit MAX_PREVIEW_DIFF_ITEMS ceiling and did not
             capture all changed cells. Always false if diff_available=false (not "truncated",
             diff was never attempted).
+        fetch_complete: False when the fetch stopped at the preview's bound while the
+            source had more records (#1185); ``preview.total_rows`` and ``statistics``
+            then count the records fetched, not the source.
+        source_reported_total: The provider's own count of the source's records, when
+            a single call reported one; None otherwise (a ``param_grid`` total is never
+            summed, #816).
     """
 
     source_key: str
@@ -150,6 +168,8 @@ class SourcePreview:
     diffs: tuple[PreviewDiffItem, ...] = ()
     transform_summary: PreviewTransformSummary | None = None
     diff_truncated: bool = False
+    fetch_complete: bool = True
+    source_reported_total: int | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +272,17 @@ def _diff_sample(
     return tuple(diffs), summary, truncated
 
 
+def _reported_total(call_totals: Sequence[CallTotal]) -> int | None:
+    """The provider's total for a single-call source, else None (#816: never summed).
+
+    A ``param_grid`` source is excluded by the caller: a bounded preview may have made
+    one of its calls, whose total is that combination's, not the source's.
+    """
+    if len(call_totals) != 1 or call_totals[0].status != "reported":
+        return None
+    return call_totals[0].value
+
+
 def _preview_source(
     source: SourceRef,
     *,
@@ -293,6 +324,7 @@ def _preview_source(
             owner_id=owner_id,
             secret_values=secret_values,
             staging_dir=staging_dir,
+            bound=FetchBound(rows=limit, pages=PREVIEW_MAX_PAGES),
         )
         silver = build_silver_dataset(
             bronze,
@@ -373,6 +405,10 @@ def _preview_source(
             diffs=diffs,
             transform_summary=transform_summary,
             diff_truncated=diff_truncated,
+            fetch_complete=not bronze.stopped_early,
+            source_reported_total=(
+                None if source.param_grid else _reported_total(bronze.call_totals)
+            ),
         )
     except Exception as exc:  # Convert preview failure to result
         return SourcePreview(
@@ -384,6 +420,7 @@ def _preview_source(
             # Same public-message rule as build (#954): raw engine/internal text is
             # logged server-side, never returned in the /preview response.
             error=public_failure_message(exc, out_key),
+            fetch_complete=False,
             source_sample=(),
             sample_mode=sample_mode,
             diff_available=False,

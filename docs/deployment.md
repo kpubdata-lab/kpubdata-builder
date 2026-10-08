@@ -16,7 +16,7 @@
 | 변수명 | 설명 | 기본값 | 필수 여부 |
 | :--- | :--- | :--- | :--- |
 | `KPUBDATA_BUILDER_API_KEY` | API 인증 키 (`X-API-Key` 헤더). 미설정 시 모든 요청 401 (fail-closed) | 없음 | **필수** (프로덕션) |
-| `KPUBDATA_BUILDER_DEV_MODE` | `true`/`1`이면 인증 생략 (**로컬 개발 전용**, ADR 0006). 기동 시 경고 로그를 남기고, `OIDC_ISSUER`와 함께 설정되면 기동 거부 | 미설정 | 선택 |
+| `KPUBDATA_BUILDER_DEV_MODE` | `true`/`1`이면 인증 생략 (**로컬 개발 전용**, ADR 0006). 기동 시 경고 로그를 남기고, `OIDC_ISSUER` 나 `ENFORCE_OWNERSHIP` 과 함께 설정되면 기동 거부(#1072) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_ALLOWED_ORIGINS` | CORS 허용 오리진 (콤마 구분, default-deny). 응답에는 항상 `Vary: Origin`이 붙는다 | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT` | 윈도당 허용할 인증 실패 횟수(클라이언트 IP별). 초과분은 `429 auth_throttled`. `0` 이하면 비활성 | `60` | 선택 |
 | `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS` | 인증 실패 카운트 윈도(초) | `60` | 선택 |
@@ -37,7 +37,7 @@
 | :--- | :--- | :--- | :--- |
 | `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` | 사용자별 Provider credential AES-GCM master key (URL-safe base64 32 bytes) | 미설정 | credential CRUD 사용 시 필수 |
 | `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT` | Provider connection test 전송 timeout(초) | `10` | 선택 |
-| `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` | `true` 면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683). **`env_keys` 를 지원하는 kpubdata 가 필요하다**(0.8.0 에는 없다): 없으면 `serve` 가 기동을 거부하고(종료 코드 1), 그 kpubdata 로 키 없는 클라이언트를 만들려는 시도도 오류로 끝난다 — 환경변수 키로 조용히 내려가지 않는다(#990). | 미설정 | 선택 |
+| `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` | `true`/`1`/`yes`/`on` 이면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683). **`env_keys` 를 지원하는 kpubdata 가 필요하다**(0.8.0 에는 없다): 없으면 `serve` 가 기동을 거부하고(종료 코드 1), 그 kpubdata 로 키 없는 클라이언트를 만들려는 시도도 오류로 끝난다 — 환경변수 키로 조용히 내려가지 않는다(#990). | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS` | 다중 사용자 배포에서 비동기 작업에 묶인 provider 키를 워커가 가져가기 전까지 메모리에 두는 최대 시간(#683). 제출한 때부터 세고, 지나면 타이머가 그때 키를 지운다 — 큐에 시간 상한이 없어도 키는 이 시간을 넘겨 남지 않는다(#1070). 그 작업은 차례가 왔을 때 `credentials_required` 로 끝난다. 워커가 가져간 뒤에는 이 시간과 무관하게 빌드가 끝날 때까지 쓰고 버린다. 작업에는 그 spec 이 쓰는 provider 의 키만 묶인다 | `3600` | 선택 |
 | `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL` | `true`면 게시 시 요청자에게 저장된 publish credential 만 쓰고 서버 환경변수(`HF_TOKEN` 등)로 내려가지 않는다(#635). 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 폴백이 없고 저장된 publish credential 도 읽지 않는다** — 토큰은 요청의 `X-Publish-Credential` 헤더(`HF_TOKEN=...`, `KAGGLE_USERNAME=...`, `KAGGLE_KEY=...`)로만 받아 그 요청 동안만 메모리에 둔다(#925) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS` | 한 사용자가 같은 provider 를 다시 probe(`POST /providers/{provider}/probe`)할 수 있을 때까지의 간격(초, #1059). 기본 60. `0` 이면 간격을 두지 않고 "사용자당 동시 1건"만 남는다. 간격 안의 요청은 provider 를 호출하지 않고 429 `probe_rate_limited` 로 답한다. 프로세스 메모리에만 있어 재시작하면 잊는다. | `60` | 선택 |
@@ -49,6 +49,7 @@
 | `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` | `prune-cancelled --apply`가 cancelled partial run을 정리하기까지의 보존 시간(시간). 미설정이면 정리 대상 없음(#549) | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_MAX_WORKERS` | 동시 요청 스레드 상한 | `10` | 선택 |
 | `KPUBDATA_BUILDER_MAX_BUILDS` | 동시에 도는 build 수의 상한 — 동기 `POST /build` 와 비동기 job 을 합쳐서(`serve --max-builds`, #1028). 한도에 닿으면 동기 build 는 기다리고 비동기 job 은 큐에 남는다 | `KPUBDATA_BUILDER_MAX_WORKERS` 값 | 선택 |
+| `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` | 다중 사용자 배포에서 사용자 한 명이 동시에 대기·실행 중으로 둘 수 있는 비동기 build 수(#1189). 넘으면 `POST /builds` 가 429 `build_owner_limit` 로 답하고, 큐는 다른 사용자에게 열려 있다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `2` | 선택 |
 | `KPUBDATA_BUILDER_MAX_PREVIEWS` | 동시에 도는 preview 수의 상한(`serve --max-previews`, #1028). 넘는 preview 는 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` 까지 기다리고, 그래도 자리가 없으면 429 `preview_queue_full` 로 답한다(#1068) | 미설정 (무제한) | 선택 |
 | `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS` | SIGTERM 뒤 실행 중인 비동기 빌드가 끝나기를 기다리는 시간(초, #1118). 지나면 남은 빌드에 멈추라고 하고 10초를 더 기다린다. `0` 이면 바로 멈추라고 한다. 유한한 0 이상의 수가 아니면(`inf`, `nan`, 음수, 숫자가 아닌 값) `serve` 가 기동을 거부한다. 대기 중이던 작업은 이 값과 무관하게 시작하지 않고 끝난다. 컨테이너의 종료 대기 시간(compose `stop_grace_period`, 기본 설정 120초)을 이 값 + 10초보다 길게 둔다 | `90` | 선택 |
 | `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` | 동기 `POST /build` 가 build 자리를 기다리는 상한(초, #1040). 넘으면 아무것도 가져오지 않은 채 429 `build_queue_full` 로 답한다. `0` 이면 자리가 없을 때 바로 거절한다. 비동기 `POST /builds` 는 기다리지 않고 큐에 넣는다. 유한한 0 이상의 수여야 한다 — `nan`, `inf`, 음수, 숫자가 아닌 값이면 `serve` 가 기동을 거절하고, 빈 값이면 기본값을 쓴다(#1068). preview 자리 대기에도 같은 상한이 쓰인다 | `30` | 선택 |
@@ -123,8 +124,9 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 - **`warning:` — 기동은 합니다.** 읽을 수 없는 값을 기본값으로 대신하는 설정입니다. 적은 값이 아니라 기본값으로 돌고 있다는 사실을 표준 오류에 한 줄로 알립니다.
   - 인증 실패 제한: `KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT`, `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
   - 업로드와 URL 소스: `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`, `KPUBDATA_BUILDER_UPLOAD_MAX_FILES`, `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES`, `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS`, `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
+  - 사용자별 build 상한: `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER`
   - 그 밖: `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`, `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS`, `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
-  - 켜고 끄는 값(`KPUBDATA_BUILDER_DEV_MODE`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)을 그 설정이 켜짐으로 읽는 말도 `false`/`0` 도 아닌 말로 적은 경우. 켜짐으로 읽는 말은 `true`/`1` 이고, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` 만 `yes`/`on` 도 받습니다. 나머지 셋에서 `yes` 나 `on` 은 **꺼진 것으로 읽힙니다.**
+  - 켜고 끄는 값(`KPUBDATA_BUILDER_DEV_MODE`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)을 그 설정이 켜짐으로 읽는 말도 `false`/`0` 도 아닌 말로 적은 경우. 켜짐으로 읽는 말은 `true`/`1` 이고, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` 만 `yes`/`on` 도 받습니다. 나머지 셋에서 `yes` 나 `on` 은 **꺼진 것으로 읽힙니다.** 다만 다중 사용자 배포(`OIDC_ISSUER` 또는 `ENFORCE_OWNERSHIP`)는 `ENFORCE_OWNERSHIP` 과 두 `REQUIRE_OWN_*` 를 무엇이 적혀 있든 켜므로, 그때는 "꺼진 것으로 읽힌다" 가 아니라 **"무시된다 — 켜져 있다"** 고 알립니다(`false`/`0` 을 적은 경우에도).
 
 비밀 값을 담는 변수는 메시지에 값을 되풀이하지 않습니다. OIDC 설정의 조합과 CUBRID 연결은 이 검사 뒤에 따로 확인하며, 그때의 거부는 지금처럼 예외로 끝납니다.
 
