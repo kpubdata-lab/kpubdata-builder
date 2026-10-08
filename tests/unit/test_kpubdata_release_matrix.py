@@ -7,6 +7,7 @@ nobody tests. Mostly negative tests.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -74,3 +75,69 @@ def test_the_range_is_read_from_pyproject() -> None:
 
     assert str(specifier), "pyproject.toml declares no kpubdata range"
     assert any(s.operator == ">=" for s in specifier)
+
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _run(tmp_path: Path, releases: dict[str, Any], *argv: str) -> Any:
+    pyproject = _write(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "x"\ndependencies = ["kpubdata>=0.7.0,<0.8"]\n',
+    )
+    releases_file = _write(tmp_path / "releases.json", json.dumps(releases))
+    return matrix.main(["--pyproject", str(pyproject), "--releases", str(releases_file), *argv])
+
+
+_LOCK = (
+    '[[package]]\nname = "other"\nversion = "1.0"\n\n'
+    '[[package]]\nname = "kpubdata"\nversion = "{}"\n'
+)
+
+
+def test_the_locked_version_is_left_out(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    lock = _write(tmp_path / "uv.lock", _LOCK.format("0.7.1"))
+    releases = {"0.7.0": _FILE, "0.7.1": _FILE, "0.7.2": _FILE}
+
+    assert _run(tmp_path, releases, "--exclude-locked", str(lock)) == 0
+    assert json.loads(capsys.readouterr().out) == ["0.7.0", "0.7.2"]
+
+
+def test_only_the_locked_version_leaves_an_empty_matrix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock = _write(tmp_path / "uv.lock", _LOCK.format("0.7.0"))
+
+    assert _run(tmp_path, {"0.7.0": _FILE}, "--exclude-locked", str(lock)) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_without_the_option_the_locked_version_stays(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(tmp_path, {"0.7.0": _FILE}) == 0
+    assert json.loads(capsys.readouterr().out) == ["0.7.0"]
+
+
+def test_the_floor_is_checked_before_the_locked_version_is_left_out(tmp_path: Path) -> None:
+    lock = _write(tmp_path / "uv.lock", _LOCK.format("0.7.1"))
+
+    with pytest.raises(SystemExit, match="floor 0.7.0"):
+        _run(tmp_path, {"0.7.1": _FILE}, "--exclude-locked", str(lock))
+
+
+def test_a_lock_without_kpubdata_fails(tmp_path: Path) -> None:
+    lock = _write(tmp_path / "uv.lock", '[[package]]\nname = "other"\nversion = "1.0"\n')
+
+    with pytest.raises(SystemExit, match="no kpubdata package"):
+        matrix.locked_version(lock)
+
+
+def test_the_repository_lock_resolves_a_version_inside_the_declared_range() -> None:
+    # The test matrix is what covers the locked version once it is left out here, so it
+    # must be one the range admits.
+    locked = matrix.locked_version(_ROOT / "uv.lock")
+
+    assert locked in matrix.declared_range(_ROOT / "pyproject.toml")

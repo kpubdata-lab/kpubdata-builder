@@ -10,8 +10,14 @@ JSON list for a GitHub Actions matrix.
 It fails rather than shrink the matrix: when PyPI cannot be read, when the floor is
 not among the releases, or when nothing is left.
 
+``--exclude-locked uv.lock`` then leaves out the version ``uv.lock`` resolves. The
+ordinary test matrix already installs that one, so testing it here as well runs the
+same suite against the same packages twice. What remains may be empty — the matrix job
+is then skipped — but the checks above still see the whole list first.
+
 Usage:
     python scripts/kpubdata_release_matrix.py            # prints ["0.7.0", ...]
+    python scripts/kpubdata_release_matrix.py --exclude-locked uv.lock
     python scripts/kpubdata_release_matrix.py --releases releases.json
 """
 
@@ -79,6 +85,15 @@ def supported_releases(
     return [str(v) for v in found]
 
 
+def locked_version(lock: Path) -> str:
+    """The ``kpubdata`` version ``uv.lock`` resolves."""
+    data = tomllib.loads(lock.read_text(encoding="utf-8"))
+    for package in data.get("package", []):
+        if package.get("name") == "kpubdata":
+            return str(Version(package["version"]))
+    raise SystemExit(f"error: no kpubdata package in {lock}")
+
+
 def _fetch() -> dict[str, list[dict[str, Any]]]:
     with urllib.request.urlopen(PYPI_URL, timeout=30) as response:  # noqa: S310 - fixed https URL
         payload = json.load(response)
@@ -89,11 +104,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
     parser.add_argument("--releases", type=Path, help="PyPI 'releases' mapping as JSON (tests)")
+    parser.add_argument(
+        "--exclude-locked",
+        type=Path,
+        metavar="UV_LOCK",
+        help="leave out the version this lock file resolves (the test matrix runs it)",
+    )
     args = parser.parse_args(argv)
 
     specifier = declared_range(args.pyproject)
     releases = json.loads(args.releases.read_text(encoding="utf-8")) if args.releases else _fetch()
-    print(json.dumps(supported_releases(releases, specifier)))
+    versions = supported_releases(releases, specifier)
+    if args.exclude_locked:
+        locked = locked_version(args.exclude_locked)
+        versions = [v for v in versions if v != locked]
+    print(json.dumps(versions))
     return 0
 
 

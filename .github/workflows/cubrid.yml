@@ -20,8 +20,18 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/cubrid.yml"
+  # A push to main runs only when it changes what the pull request trigger watches:
+  # anything else cannot change the CUBRID backend's behaviour.
   push:
     branches: [main]
+    paths:
+      - "src/kpubdata_builder/store/**"
+      - "src/kpubdata_builder/credentials/**"
+      - "src/kpubdata_builder/service/app.py"
+      - "tests/cubrid/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/cubrid.yml"
   workflow_dispatch:
 
 permissions:
@@ -29,12 +39,16 @@ permissions:
 
 concurrency:
   group: cubrid-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a pull request's run is superseded; a run on main is that commit's record.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   cubrid:
     name: CUBRID backend contract tests
     runs-on: ubuntu-latest
+    # The job's p95 is under a minute (40 runs, 2026-10), but the readiness wait alone
+    # may take four minutes before it gives up.
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
