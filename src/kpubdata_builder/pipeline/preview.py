@@ -58,7 +58,7 @@ from ..stages.silver.preview import select_preview_rows
 from ..tabular import DEFAULT_PREVIEW_LIMIT, PreviewSlice, SchemaInfo, TableStatistics
 from ..tabular.duckdb_runtime import build_connection
 from ..uploads import UploadRepository
-from .failures import public_failure_message
+from .failures import SourceFailureReason, source_failure
 
 SampleMode = Literal["first", "random"]
 _SAMPLE_MODES: tuple[SampleMode, ...] = ("first", "random")
@@ -153,6 +153,7 @@ class SourcePreview:
         source_reported_total: The provider's own count of the source's records, when
             a single call reported one; None otherwise (a ``param_grid`` total is never
             summed, #816).
+        reason: why the provider refused the source's fetch (#1187), when it did.
     """
 
     source_key: str
@@ -170,6 +171,7 @@ class SourcePreview:
     diff_truncated: bool = False
     fetch_complete: bool = True
     source_reported_total: int | None = None
+    reason: SourceFailureReason | None = None
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,7 @@ def _preview_source(
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
     secret_values: tuple[str, ...] = (),
+    provider_keys: Mapping[str, str] | None = None,
 ) -> SourcePreview:
     """Fetch one source → construct Silver in-memory, extract schema/sample/diff/quality results.
 
@@ -411,6 +414,7 @@ def _preview_source(
             ),
         )
     except Exception as exc:  # Convert preview failure to result
+        failure = source_failure(exc, out_key, provider_keys=provider_keys)
         return SourcePreview(
             source_key=out_key,
             status="failed",
@@ -419,8 +423,9 @@ def _preview_source(
             statistics=TableStatistics(row_count=0, null_counts={}, duplicate_rate=0.0),
             # Same public-message rule as build (#954): raw engine/internal text is
             # logged server-side, never returned in the /preview response.
-            error=public_failure_message(exc, out_key),
+            error=failure.message,
             fetch_complete=False,
+            reason=failure.reason,
             source_sample=(),
             sample_mode=sample_mode,
             diff_available=False,
@@ -443,6 +448,7 @@ def preview_build(
     upload_repository: UploadRepository | None = None,
     owner_id: str | None = None,
     secret_values: tuple[str, ...] = (),
+    provider_keys: Mapping[str, str] | None = None,
 ) -> PreviewResult:
     """Produce schema and sample rows per source, Source↔Silver diff (no file write).
 
@@ -484,6 +490,7 @@ def preview_build(
             upload_repository=upload_repository,
             owner_id=owner_id,
             secret_values=secret_values,
+            provider_keys=provider_keys,
         )
         for source in spec.sources
     )

@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 from .. import logging_redaction
 from ..spec import JsonValue
 from . import request_credentials
@@ -162,7 +164,7 @@ class RevisionStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        with closing(sqlite3.connect(self._path, timeout=30)) as conn, conn:
+        with closing(sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)) as conn, conn:
             yield conn
 
     @staticmethod
