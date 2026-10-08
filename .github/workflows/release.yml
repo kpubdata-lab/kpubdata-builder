@@ -152,6 +152,7 @@ jobs:
        github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.merged == true &&
+       github.event.pull_request.base.ref == 'main' &&
        startsWith(github.event.pull_request.head.ref, 'release/'))
     timeout-minutes: 30
     permissions:
