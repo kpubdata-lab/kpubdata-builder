@@ -42,7 +42,6 @@ _NOT_CHECKED: dict[str, str] = {
     "HF_TOKEN": "a secret",
     "KAGGLE_USERNAME": "an account name",
     "KAGGLE_KEY": "a secret",
-    "KPUBDATA_BUILDER_PORT": "read by the container entrypoint",
     "KPUBDATA_BUILDER_OUTPUT_DIR": "read by the container entrypoint",
     "KPUBDATA_BUILDER_HOST": "read by the container entrypoint",
 }
@@ -63,6 +62,7 @@ def test_every_setting_is_checked_or_says_why_not() -> None:
         set(startup_settings.FALLS_BACK),
         set(startup_settings.FLAGS),
         set(startup_settings.READ_BY_SERVE),
+        set(startup_settings.READ_BY_ENTRYPOINT),
         set(_NOT_CHECKED),
     ]
     seen: set[str] = set()
@@ -305,17 +305,49 @@ def test_warning_is_true_of_what_the_reader_does(
         assert check_settings().warnings == [], value
 
 
+def _flag_readers() -> dict[str, Callable[[], bool]]:
+    """Each flag's own reader, as "is it on"."""
+    from kpubdata_builder.service import publish_credentials
+    from kpubdata_builder.service.auth import _is_dev_mode, _ownership_enforced
+    from kpubdata_builder.service.providers import require_own_provider_credential
+
+    return {
+        "KPUBDATA_BUILDER_DEV_MODE": _is_dev_mode,
+        "ENFORCE_OWNERSHIP": _ownership_enforced,
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL": require_own_provider_credential,
+        # Its reader answers the opposite question: may the server's own token be used.
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": lambda: (
+            not publish_credentials.server_fallback_allowed()
+        ),
+    }
+
+
+def test_every_flag_has_its_reader_here() -> None:
+    assert set(_flag_readers()) == set(startup_settings.FLAGS)
+
+
 @pytest.mark.parametrize("name", sorted(startup_settings.FLAGS))
-@pytest.mark.parametrize("value", ["yes", "on", "enabled", "2"])
-def test_flag_written_another_way_is_warned_as_off(
+@pytest.mark.parametrize("value", ["yes", "on", "enabled", "2", "true", "TRUE", "1", "false", "0"])
+def test_flag_warning_is_true_of_what_its_reader_does(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
+    """Warned as "read as off" exactly when the reader reads it as off and it was not
+    written as off on purpose.
+
+    Held to each reader, because they differ: one of them takes ``yes`` as on, and the
+    check said of that one too that ``yes`` is read as off.
+    """
     monkeypatch.setenv(name, value)
 
-    (warning,) = check_settings().warnings
+    on = _flag_readers()[name]()
+    warnings = check_settings().warnings
 
-    assert name in warning
-    assert "read as off" in warning
+    if on or value.lower() in ("false", "0"):
+        assert warnings == []
+    else:
+        (warning,) = warnings
+        assert name in warning
+        assert "read as off" in warning
 
 
 @pytest.mark.parametrize("name", sorted(startup_settings.FLAGS))
@@ -382,19 +414,113 @@ def test_serve_starts_with_a_warning(
     assert len(calls) == 1
 
 
+_COUNTS = [
+    "KPUBDATA_BUILDER_MAX_WORKERS",
+    "KPUBDATA_BUILDER_MAX_BUILDS",
+    "KPUBDATA_BUILDER_MAX_PREVIEWS",
+]
+_FLAG_OF = {
+    "KPUBDATA_BUILDER_MAX_WORKERS": "--max-workers",
+    "KPUBDATA_BUILDER_MAX_BUILDS": "--max-builds",
+    "KPUBDATA_BUILDER_MAX_PREVIEWS": "--max-previews",
+}
+
+
+@pytest.mark.parametrize("name", _COUNTS)
+@pytest.mark.parametrize("value", ["many", "0", "-1", "1.5"])
+def test_a_count_that_cannot_be_used_is_a_problem(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    (problem,) = check_settings().problems
+
+    assert f"{name} must be an integer >= 1" in problem
+
+
 @pytest.mark.parametrize(
-    "name",
+    ("name", "value"),
     [
-        "KPUBDATA_BUILDER_MAX_WORKERS",
-        "KPUBDATA_BUILDER_MAX_BUILDS",
-        "KPUBDATA_BUILDER_MAX_PREVIEWS",
+        ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "soon"),
+        ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "inf"),
+        ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "-1"),
+        ("KPUBDATA_BUILDER_PORT", "abc"),
+        ("KPUBDATA_BUILDER_PORT", "65536"),
+        ("KPUBDATA_BUILDER_PORT", "-1"),
     ],
 )
-def test_serve_names_the_count_that_is_not_an_integer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+def test_a_serve_value_that_cannot_be_used_is_a_problem(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
-    _serve_calls(monkeypatch)
+    monkeypatch.setenv(name, value)
+
+    (problem,) = check_settings().problems
+
+    assert name in problem
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("KPUBDATA_BUILDER_MAX_WORKERS", "10"),
+        ("KPUBDATA_BUILDER_MAX_PREVIEWS", "1"),
+        ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "0"),
+        ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "2.5"),
+        ("KPUBDATA_BUILDER_PORT", "0"),
+        ("KPUBDATA_BUILDER_PORT", "8000"),
+    ],
+)
+def test_a_serve_value_that_can_be_used_is_not_reported(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    assert check_settings().problems == []
+
+
+def test_a_value_a_flag_takes_the_place_of_is_not_judged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KPUBDATA_BUILDER_MAX_BUILDS", "many")
+
+    assert check_settings(overridden={"KPUBDATA_BUILDER_MAX_BUILDS"}).problems == []
+    assert len(check_settings().problems) == 1
+
+
+@pytest.mark.parametrize("name", _COUNTS)
+def test_serve_says_the_count_that_is_not_an_integer_in_one_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+) -> None:
+    calls = _serve_calls(monkeypatch)
     monkeypatch.setenv(name, "many")
 
-    with pytest.raises(SystemExit, match=f"{name} must be an integer"):
-        main(["serve", "--output-dir", str(tmp_path)])
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 1
+
+    err = capsys.readouterr().err
+    assert f"error: {name} must be an integer >= 1" in err
+    assert "Traceback" not in err
+    assert calls == []
+
+
+@pytest.mark.parametrize("name", _COUNTS)
+def test_serve_starts_when_a_flag_takes_the_place_of_a_bad_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """As before: the variable is not read when its flag is given."""
+    calls = _serve_calls(monkeypatch)
+    monkeypatch.setenv(name, "many")
+
+    assert main(["serve", "--output-dir", str(tmp_path), _FLAG_OF[name], "3"]) == 0
+    assert len(calls) == 1
+
+
+def test_serve_does_not_judge_the_port_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``serve`` takes its port from ``--port``; the variable is the entrypoint's."""
+    calls = _serve_calls(monkeypatch)
+    monkeypatch.setenv("KPUBDATA_BUILDER_PORT", "abc")
+
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+    assert len(calls) == 1

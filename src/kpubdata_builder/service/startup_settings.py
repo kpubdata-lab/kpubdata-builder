@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 from ..credentials.crypto import AesGcmCredentialCipher, CredentialCryptoError
@@ -37,7 +37,8 @@ from ..store.backend import cubrid_url, storage_backend
 from ..tabular.duckdb_runtime import BuildProfile
 from .http import shutdown_grace_seconds
 
-#: Settings ``serve`` reads itself, with its flags taking precedence; it reports them.
+#: Settings ``serve`` reads itself, each with a flag that takes precedence. A value the
+#: flag overrides is never read, so the caller says which those are.
 READ_BY_SERVE: frozenset[str] = frozenset(
     {
         "KPUBDATA_BUILDER_MAX_WORKERS",
@@ -46,6 +47,10 @@ READ_BY_SERVE: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_BUILD_WAIT_SECONDS",
     }
 )
+
+#: Settings the container entrypoint hands to ``serve`` as flags, checked here so that a
+#: stack's values can be judged without starting a container.
+READ_BY_ENTRYPOINT: frozenset[str] = frozenset({"KPUBDATA_BUILDER_PORT"})
 
 
 @dataclass(frozen=True)
@@ -121,15 +126,20 @@ FALLS_BACK: dict[str, tuple[Callable[[str], bool], str]] = {
     "KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES": (_is_positive_integer, "an integer > 0"),
 }
 
-#: Flags, and whether the reader strips the value first. Each reader takes ``true`` or
-#: ``1`` as on and everything else as off.
-FLAGS: dict[str, bool] = {
-    "KPUBDATA_BUILDER_DEV_MODE": False,
-    "ENFORCE_OWNERSHIP": False,
-    "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL": True,
-    "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": False,
+#: Flags: whether the reader strips the value first, and the words it takes as on.
+#: Everything else is off.
+FLAGS: dict[str, tuple[bool, frozenset[str]]] = {
+    "KPUBDATA_BUILDER_DEV_MODE": (False, frozenset({"true", "1"})),
+    "ENFORCE_OWNERSHIP": (False, frozenset({"true", "1"})),
+    # This reader alone takes ``yes`` and ``on`` (``service/providers.py``).
+    "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL": (
+        True,
+        frozenset({"true", "1", "yes", "on"}),
+    ),
+    "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": (False, frozenset({"true", "1"})),
 }
-_FLAG_WORDS = frozenset({"true", "1", "false", "0"})
+#: The words that say off on purpose. Any other word is off too, and gets a warning.
+_OFF_WORDS = frozenset({"false", "0"})
 
 #: Settings a reader refuses, or that had no check and broke when used.
 REFUSED: frozenset[str] = frozenset(
@@ -196,11 +206,40 @@ _READERS: tuple[Callable[[], object], ...] = (
 )
 
 
-def check_settings() -> SettingsReport:
+def _serve_problems(skip: Collection[str]) -> list[str]:
+    """What ``serve`` and the entrypoint would refuse, said before either is reached."""
+    problems: list[str] = []
+
+    def check(name: str, accepts: Callable[[str], bool], expected: str) -> None:
+        raw = _raw(name)
+        if name not in skip and raw and not accepts(raw):
+            problems.append(f"{name} must be {expected}, got {raw!r}")
+
+    for name in (
+        "KPUBDATA_BUILDER_MAX_WORKERS",
+        "KPUBDATA_BUILDER_MAX_BUILDS",
+        "KPUBDATA_BUILDER_MAX_PREVIEWS",
+    ):
+        check(name, _is_positive_integer, "an integer >= 1")
+    check("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", _is_non_negative_number, "a finite number >= 0")
+    check("KPUBDATA_BUILDER_PORT", _is_port, "a port number from 0 to 65535")
+    return problems
+
+
+def _is_port(raw: str) -> bool:
+    value = _integer(raw)
+    return value is not None and 0 <= value <= 65535
+
+
+def check_settings(*, overridden: Collection[str] = ()) -> SettingsReport:
     """Every setting that cannot be used as written, found without starting anything.
 
     Nothing here opens a file, a socket or a database; the checks that do
     (``validate_storage_config``, the OIDC combination rules) stay in ``serve``.
+
+    Args:
+        overridden: Settings a command-line flag takes the place of. Their values in
+            the environment are never read, so they are not judged.
     """
     report = SettingsReport()
     for read in _READERS:
@@ -208,18 +247,20 @@ def check_settings() -> SettingsReport:
             read()
         except (ValueError, RuntimeError) as exc:
             report.problems.append(str(exc))
+    report.problems.extend(_serve_problems(overridden))
     for name, (accepts, expected) in FALLS_BACK.items():
         raw = _raw(name)
         if raw and not accepts(raw):
             report.warnings.append(
                 f"{name} must be {expected}, got {raw!r}; ignored, the default is in use"
             )
-    for name, strips in FLAGS.items():
+    for name, (strips, on_words) in FLAGS.items():
         raw = os.environ.get(name, "")
         # A reader that does not strip judges the value as written: ``"true "`` is off.
         written = raw.strip() if strips else raw
-        if written and written.lower() not in _FLAG_WORDS:
+        if written and written.lower() not in on_words | _OFF_WORDS:
+            accepted = "/".join(sorted(on_words))
             report.warnings.append(
-                f"{name} is {raw!r}, which is neither true/1 nor false/0; it is read as off"
+                f"{name} is {raw!r}, which is neither {accepted} nor false/0; it is read as off"
             )
     return report

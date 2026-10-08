@@ -58,11 +58,14 @@ def says_damaged(error: sqlite3.Error) -> bool:
 
 #: What SQLite says when a store could not be reached at all: held by another process,
 #: not openable, on a disk that failed, is full or cannot be written. Nothing here is
-#: about what the store holds. Whole messages, not words: a word could as well be the
-#: name of a column in a message about something else (``no such column: locked_at``).
+#: about what the store holds. The message has to start with one of these: a word of one
+#: could as well be the name of a column in a message about something else
+#: (``no such column: locked_at``), and SQLite adds a detail after some
+#: (``database table is locked: builds``).
 _UNREACHABLE = (
     "database is locked",
     "database table is locked",
+    "database schema is locked",
     "unable to open database file",
     "disk i/o error",
     "attempt to write a readonly database",
