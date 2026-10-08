@@ -479,7 +479,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.108.0 -> 1.109.0: a preview reads up to limit records or three pages of a
 #   public_api source; SourcePreview gains fetch_complete and source_reported_total
 #   (#1185, additive).
-API_CONTRACT_VERSION = "1.109.0"
+# 1.109.0 -> 1.110.0: a build that finds no rows is not committed over a table that has
+#   a snapshot (warehouse_failures reason empty_result) unless the source declares
+#   allow_empty, which keeps the current columns (#1186, additive).
+API_CONTRACT_VERSION = "1.110.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
