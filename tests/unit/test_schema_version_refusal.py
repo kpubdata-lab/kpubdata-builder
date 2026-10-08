@@ -637,6 +637,7 @@ def test_serve_says_a_locked_store_in_one_line(
 
 
 @pytest.mark.usefixtures("short_wait")
+@pytest.mark.usefixtures("short_wait")
 def test_a_locked_store_has_no_version_to_report(tmp_path: Path) -> None:
     import subprocess
     import sys
