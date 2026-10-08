@@ -97,6 +97,9 @@ class BronzeArtifact:
     #: run (#648). Non-zero makes the run not reproducible: its records came from two
     #: fetches at two times.
     resumed_combinations: int = 0
+    #: A :class:`~.build.FetchBound` stopped the fetch while the source still had
+    #: records (#1185): the records are a preview's sample, not the source.
+    stopped_early: bool = False
 
     def __post_init__(self) -> None:
         """enforces fetched_at timezone validity immediately after creation."""
