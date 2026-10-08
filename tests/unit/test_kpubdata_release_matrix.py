@@ -83,9 +83,11 @@ def _write(path: Path, text: str) -> Path:
 
 
 def _run(tmp_path: Path, releases: dict[str, Any], *argv: str) -> Any:
+    # The sample range is written once, as _RANGE: a second literal here would read as
+    # a statement of the pin to tests/unit/test_kpubdata_pin_mentions.py (#1193).
     pyproject = _write(
         tmp_path / "pyproject.toml",
-        '[project]\nname = "x"\ndependencies = ["kpubdata>=0.7.0,<0.8"]\n',
+        f'[project]\nname = "x"\ndependencies = ["kpubdata{_RANGE}"]\n',
     )
     releases_file = _write(tmp_path / "releases.json", json.dumps(releases))
     return matrix.main(["--pyproject", str(pyproject), "--releases", str(releases_file), *argv])
