@@ -41,6 +41,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 from ..spec.models import SOURCE_FILE_FORMATS
 from ..stages._path_safety import ensure_within
 from .models import UploadMetadata
@@ -183,7 +185,7 @@ class SQLiteUploadRepository:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._path, timeout=5.0)
+        connection = sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 

@@ -32,6 +32,8 @@ from datetime import timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS, enable_wal
+
 from ..errors import ValidationError
 from ..publishers import PUBLISHER_REGISTRY
 from ..spec import BuildSpec
@@ -160,8 +162,8 @@ class PublishReceiptStore:
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=30.0)
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SECONDS)
+        enable_wal(connection)
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
