@@ -8,6 +8,7 @@ one too — so the newer release came back to an empty index and nothing had sai
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -701,11 +702,11 @@ def test_the_read_only_look_is_opened_with_that_wait(
 
     path = _index_with_one_run(tmp_path)
     opened: list[tuple[str, dict[str, object]]] = []
-    real_connect = sqlite3.connect
+    real_connect: Callable[..., sqlite3.Connection] = sqlite3.connect
 
     def recording(database: str, **kwargs: object) -> sqlite3.Connection:
         opened.append((database, kwargs))
-        return real_connect(database, **kwargs)  # type: ignore[arg-type]
+        return real_connect(database, **kwargs)
 
     monkeypatch.setattr(schema_version.sqlite3, "connect", recording)
 
@@ -742,6 +743,11 @@ def test_serve_keeps_the_traceback_of_a_database_error_that_is_not_about_reachin
         ("unable to open database file", True),
         ("disk I/O error", True),
         ("attempt to write a readonly database", True),
+        ("database or disk is full", True),
+        # A word of those messages as the name of something else is not one of them.
+        ("no such column: locked_at", False),
+        ("table disk_io_error has no column named x", False),
+        ('near "locked": syntax error', False),
         ("no such column: owner_id", False),
         ("no such table: builds", False),
         ("file is not a database", False),
