@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.110.0"
+  version: "1.111.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.111.0 limits each user's share of the async build queue (#1189, additive). The queue counted queued jobs for the whole service, so one user's submissions filled it and every other user's `POST /builds` was refused with `build_queue_full`. In a multi-user deployment an owner may now have `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` builds (default 2, chosen without measurement; `0` turns it off) queued, running or cancelling; one more is refused with 429 `build_owner_limit`, whose body gives the `limit`, and nothing is recorded for that run. The service-wide limit still applies. A single-user deployment has no owner limit, and the synchronous `POST /build` is unchanged.
     v1.110.0 keeps a table's rows when a build finds none (#1186, additive). A build whose source returned no rows replaced the table's current snapshot with an empty one, and with no rows there were no columns, so SQL on the table failed — a second add of the same dataset under other conditions lost the first add's rows without a word. Such a commit is now refused over a table that has a snapshot: `warehouse_failures` names the source with the new reason `empty_result`, the request answers 409, and the current snapshot stays. A source that may legitimately be empty declares `allow_empty: true` (`SourceRef`); its empty result is committed with the current snapshot's columns when it found none. A first build of a table is committed as before.
     v1.109.0 bounds a preview's fetch (#1185, additive). A public_api source is read up to `limit` records or three pages, across its `param_grid` combinations, and pages are requested at `limit` records or the dataset's `max_page_size`, whichever is smaller; it read the whole source, which could spend a provider key's daily quota. `total_rows`, `statistics` and the quality results then describe the records fetched. `SourcePreview` gains `fetch_complete` (false when the source had more records) and `source_reported_total` (the provider's own count for a single call, else null). A build requests pages of `max_page_size`.
     v1.108.0 declares `auth_unavailable` once, as a shared response (#1109, additive — the wire is unchanged). Since 1.79.0 any authenticated operation has answered 503 `auth_unavailable` when the identity provider's signing keys could not be fetched: the credentials were not judged, and the same request succeeds once the keys can be read. It was written only in the `Error.code` description. `components.responses.AuthUnavailable` now carries it with its status (`x-status: 503`) and a named example, as `AuthThrottled`, `ServerOverloaded` and `SignupNotApproved` are declared: no single operation references it, because every authenticated one can answer it. It is not counted against the authentication-failure limit. No schema changes.
@@ -1704,7 +1705,12 @@ paths:
                     code: run_id_ended
                     run_id: air-quality-20260815
         "429":
-          description: async build queue가 가득 참 (`build_queue_full`, #1000)
+          description: >-
+            async build queue가 가득 참 (`build_queue_full`, #1000). Since 1.111.0, in a
+            multi-user deployment, also `build_owner_limit` (#1189): the requester
+            already has `limit` builds queued or running
+            (`KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER`). Nothing is recorded for
+            the run, so the same `run_id` can be submitted once one of them ends.
           content:
             application/json:
               schema:
@@ -1715,6 +1721,14 @@ paths:
                   value:
                     error: async build queue is full
                     code: build_queue_full
+                BuildOwnerLimit:
+                  summary: The requester already has as many builds as one user may
+                  value:
+                    error: >-
+                      you already have 2 builds queued or running; submit this one
+                      when one of them has finished
+                    code: build_owner_limit
+                    limit: 2
         "500":
           description: job 접수 실패(event 기록/큐잉 불가 — job은 생성되지 않음)
           content:
@@ -5073,7 +5087,9 @@ components:
             `revision_conflict`(#820, #947, 409) — a revision save or revert based on a
             stale revision; the body carries `current_revision` (`RevisionConflictError`).
             `build_queue_full`(#1000, 429) — `POST /builds` when the async build queue
-            is full; try again later. `unauthorized` / `token_expired`(#1000, 401) — any
+            is full; try again later. `build_owner_limit`(#1189, 429) — `POST /builds`
+            when the requester already has `limit` builds queued or running in a
+            multi-user deployment; submit again when one ends. `unauthorized` / `token_expired`(#1000, 401) — any
             operation: the credentials were refused, or the bearer token's `exp` has
             passed and a new token is needed. `auth_unavailable`(#1000, 503) — the
             JWKS could not be fetched, so the credentials were not judged

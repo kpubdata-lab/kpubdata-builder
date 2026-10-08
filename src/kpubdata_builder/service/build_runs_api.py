@@ -45,6 +45,7 @@ from ..warehouse import TableCatalog
 from . import ownership as ownership_module
 from . import request_credentials
 from .auth import Principal
+from .build_limits import resolve_owner_build_limit
 from .build_slots import BuildSlots
 from .jobs import AsyncBuildExecutor, BuildJobRunner, generate_run_id
 from .providers import ProviderCredentialConflictError, ProviderCredentialRequired
@@ -512,6 +513,9 @@ class BuildRunsApiService:
                 owner_id=owner_id,
                 dataset_id=_declared_dataset_id(spec_yaml),
                 retry_of=retry_of,
+                # Read per submission, like the upload limits: the deployment's mode
+                # comes from the environment (#1189).
+                max_active_per_owner=resolve_owner_build_limit(),
                 runner=runner,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
@@ -540,6 +544,20 @@ class BuildRunsApiService:
                 # `auth_throttled`, and the sentence was the only way to tell them apart.
                 return ServiceResponse(
                     429, {"error": "async build queue is full", "code": "build_queue_full"}
+                )
+            case "owner_limit":
+                # This owner's builds fill their share (#1189); the queue is open to
+                # everyone else. Nothing was recorded for the run.
+                return ServiceResponse(
+                    429,
+                    {
+                        "error": (
+                            f"you already have {result.owner_limit} builds queued or "
+                            "running; submit this one when one of them has finished"
+                        ),
+                        "code": "build_owner_limit",
+                        "limit": result.owner_limit,
+                    },
                 )
             case "shutting_down":
                 # Nothing was recorded for the run (#1118): the registry refused it
