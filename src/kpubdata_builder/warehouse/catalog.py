@@ -57,7 +57,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
 
-from ..store.schema_version import stored_version
+from ..store.schema_version import open_read_only, stored_version
 from .errors import (
     ImmutableSnapshot,
     SnapshotConflict,
@@ -384,11 +384,7 @@ class TableCatalog:
         partial = copy.with_name(f"{copy.name}.{uuid.uuid4().hex}.partial")
         try:
             with (
-                closing(
-                    sqlite3.connect(
-                        f"{self._path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0
-                    )
-                ) as source,
+                closing(open_read_only(self._path)) as source,
                 closing(sqlite3.connect(str(partial))) as target,
             ):
                 source.backup(target)

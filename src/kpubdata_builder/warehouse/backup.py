@@ -41,6 +41,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..store.schema_version import open_read_only
 from .catalog import CATALOG_FILENAME, TableCatalog, _now
 from .errors import BackupInvalid, SnapshotNotFound, SnapshotStateError
 from .layout import SnapshotLayout, content_digest, is_empty, thaw
@@ -225,7 +226,7 @@ def verify_backup(source: Path) -> list[str]:
     if manifest.get("format") != BACKUP_FORMAT:
         return [f"backup format {manifest.get('format')!r} is not {BACKUP_FORMAT}"]
 
-    with closing(sqlite3.connect(f"file:{catalog_path}?mode=ro", uri=True)) as conn:
+    with closing(open_read_only(catalog_path)) as conn:
         tables = {
             row[0]: row[1] for row in conn.execute("SELECT id, current_snapshot_id FROM tables")
         }
