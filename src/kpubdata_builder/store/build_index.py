@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from .schema_version import UnsupportedSchemaVersionError, stored_version
+from .schema_version import UnsupportedSchemaVersionError, says_damaged, stored_version
 
 if TYPE_CHECKING:
     _BaseConn = sqlite3.Connection
@@ -715,13 +715,24 @@ _BUILDS_COLUMNS = frozenset(
 def _has_this_releases_table(index_path: Path) -> bool:
     """Whether ``builds`` is there with the columns this release writes.
 
-    Read on a read-only connection, as the version is. False when it cannot be read.
+    Read on a read-only connection, as the version is. False when the file is not a
+    usable database, or is not there.
+
+    Raises:
+        sqlite3.Error: The table could not be looked at for another reason — the index
+            is locked, cannot be opened, the disk failed. That says nothing about the
+            table, and answering False would have the caller replace the file of a
+            server that is only busy (#1157).
     """
+    if not index_path.is_file():
+        return False
     try:
         with closing(sqlite3.connect(f"{index_path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
             columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(builds)")}
-    except sqlite3.Error:
-        return False
+    except sqlite3.Error as exc:
+        if says_damaged(exc):
+            return False
+        raise
     return columns == _BUILDS_COLUMNS
 
 

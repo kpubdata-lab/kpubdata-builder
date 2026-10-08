@@ -31,6 +31,18 @@ class UnsupportedSchemaVersionError(RuntimeError):
         )
 
 
+#: What SQLite says of a file that is not a usable database of ours: not one at all,
+#: damaged, or without the table asked for. Anything else it says — locked, cannot be
+#: opened, an I/O error — is about the moment and not about the file.
+_DAMAGE = ("not a database", "malformed", "no such table")
+
+
+def says_damaged(error: sqlite3.Error) -> bool:
+    """Whether ``error`` says the file itself is not usable, rather than busy or unreachable."""
+    message = str(error).lower()
+    return any(sign in message for sign in _DAMAGE)
+
+
 def stored_version(path: Path) -> int | None:
     """The schema version a SQLite store records, read without changing the file.
 
@@ -40,17 +52,25 @@ def stored_version(path: Path) -> int | None:
     it either. One that is already in WAL mode does — SQLite creates its ``-shm`` and
     ``-wal`` to read it at all — which changes nothing about the store.
 
-    None when there is no file, no version in it, or it cannot be read this way — the
-    ordinary open then decides, and fails as it would have.
+    None when there is no file, or the file holds no version: it is not a database, is
+    damaged, or has no version table.
+
+    Raises:
+        sqlite3.Error: The version could not be read for another reason — the store
+            is locked, cannot be opened, the disk failed. "No version" would be a
+            guess, and a caller that replaces a store with no version would replace
+            one that was only busy (#1157).
     """
     if not path.is_file():
         return None
     try:
         with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
             row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-    except sqlite3.Error:
-        return None
+    except sqlite3.Error as exc:
+        if says_damaged(exc):
+            return None
+        raise
     return int(row[0]) if row is not None and row[0] is not None else None
 
 
-__all__ = ["UnsupportedSchemaVersionError", "stored_version"]
+__all__ = ["UnsupportedSchemaVersionError", "says_damaged", "stored_version"]
