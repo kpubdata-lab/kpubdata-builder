@@ -224,7 +224,13 @@ def _serve_problems(skip: Collection[str]) -> list[str]:
     ):
         check(name, _is_positive_integer, "an integer >= 1")
     check("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", _is_non_negative_number, "a finite number >= 0")
-    check("KPUBDATA_BUILDER_PORT", _is_port, "a port number from 0 to 65535")
+    # Not stripped first, unlike the rest: the entrypoint hands the value to ``--port``
+    # as it is, and one of nothing but spaces is a usage error there, not "not set".
+    port = os.environ.get("KPUBDATA_BUILDER_PORT", "")
+    if "KPUBDATA_BUILDER_PORT" not in skip and port and not _is_port(port):
+        problems.append(
+            f"KPUBDATA_BUILDER_PORT must be a port number from 0 to 65535, got {port!r}"
+        )
     return problems
 
 
