@@ -16,12 +16,15 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A pull request's new push replaces only that pull request's earlier run. A
+  # merge to main must finish and leave its result behind (#1178).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
     name: Lint & type check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -83,6 +86,7 @@ jobs:
   test:
     name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -109,6 +113,7 @@ jobs:
     # 계측을 걸어도 얻는 정보는 같은데 비용만 5배다.
     name: Coverage gate
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -131,6 +136,7 @@ jobs:
     # request; docs.yml still does the deploy.
     name: Docs build (strict)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -153,6 +159,7 @@ jobs:
     # tested the day it appears. It fails rather than return a shorter list.
     name: List supported kpubdata releases
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       versions: ${{ steps.list.outputs.versions }}
     steps:
@@ -180,6 +187,7 @@ jobs:
     name: kpubdata ${{ matrix.kpubdata }}
     needs: [kpubdata-releases]
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -214,6 +222,7 @@ jobs:
   duckdb-floor:
     name: DuckDB floor
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -251,6 +260,7 @@ jobs:
   studio-drift:
     name: Studio drift
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -356,6 +366,7 @@ jobs:
   release-freeze:
     name: Release freeze
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -376,6 +387,7 @@ jobs:
   gate:
     name: CI gate
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [lint, test, coverage, docs, kpubdata-releases, min-deps, duckdb-floor, studio-drift, release-freeze]
     # `always()` so a failed job still reaches this step. Without it the gate is
     # skipped when something upstream fails, and a skipped required check is the same
