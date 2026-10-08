@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import sqlite3
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -44,6 +45,7 @@ from .warehouse import (
     HOLD_KINDS,
     BackupInvalid,
     HoldKind,
+    SnapshotStateError,
     TableCatalog,
     WarehouseError,
 )
@@ -851,18 +853,41 @@ def _run_serve(
             KPUBDATA_BUILDER_REPLAY_DIR env, else no replay.
 
     Returns:
-        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when the replay
-        fixtures cannot be used, or when the deployment requires each request's own
-        provider key and the installed kpubdata cannot keep the operator's out (#990).
+        int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when a setting
+        cannot be used as written (#1108), when a state store was written by a newer
+        release (#1096), when the replay fixtures cannot be used, or
+        when the deployment requires each request's own provider key and the installed
+        kpubdata cannot keep the operator's out (#990).
     """
     from .service import BuilderService
     from .service.app import DEFAULT_BUILD_WAIT_SECONDS
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
+    # Every setting is read once before anything is built from them (#1108): what
+    # cannot be used stops the start here, all of it in one message.
+    from .service.startup_settings import check_settings
+
+    # A flag takes the place of its variable, whose value is then never read. ``--port``
+    # always has one: the variable is the entrypoint's, which passes it as the flag.
+    overridden = {"KPUBDATA_BUILDER_PORT"}
+    if max_workers is not None:
+        overridden.add("KPUBDATA_BUILDER_MAX_WORKERS")
+    if max_builds is not None:
+        overridden.add("KPUBDATA_BUILDER_MAX_BUILDS")
+    if max_previews is not None:
+        overridden.add("KPUBDATA_BUILDER_MAX_PREVIEWS")
+    report = check_settings(overridden=overridden)
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    if report.problems:
+        for problem in report.problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 1
+
     # Priority: --max-workers flag > KPUBDATA_BUILDER_MAX_WORKERS env > default.
     if max_workers is None:
-        env_workers = os.environ.get("KPUBDATA_BUILDER_MAX_WORKERS")
-        max_workers = int(env_workers) if env_workers else _DEFAULT_MAX_WORKERS
+        env_workers = _count_from_env("KPUBDATA_BUILDER_MAX_WORKERS")
+        max_workers = env_workers if env_workers is not None else _DEFAULT_MAX_WORKERS
     if max_workers < 1:
         raise SystemExit(f"max_workers must be >= 1, got {max_workers}")
 
@@ -873,19 +898,18 @@ def _run_serve(
     # KPUBDATA_BUILDER_MAX_BUILDS env > the request thread count (what a deployment that
     # only set MAX_WORKERS had as its async worker count).
     if max_builds is None:
-        env_builds = os.environ.get("KPUBDATA_BUILDER_MAX_BUILDS")
-        max_builds = int(env_builds) if env_builds else max_workers
+        env_builds = _count_from_env("KPUBDATA_BUILDER_MAX_BUILDS")
+        max_builds = env_builds if env_builds is not None else max_workers
     if max_builds < 1:
         raise SystemExit(f"max_builds must be >= 1, got {max_builds}")
     # Priority: --max-previews flag > KPUBDATA_BUILDER_MAX_PREVIEWS env > no limit.
     if max_previews is None:
-        env_previews = os.environ.get("KPUBDATA_BUILDER_MAX_PREVIEWS")
-        max_previews = int(env_previews) if env_previews else None
+        max_previews = _count_from_env("KPUBDATA_BUILDER_MAX_PREVIEWS")
     if max_previews is not None and max_previews < 1:
         raise SystemExit(f"max_previews must be >= 1, got {max_previews}")
     # How long a synchronous build waits for a slot before 429 build_queue_full (#1040).
     # KPUBDATA_BUILDER_BUILD_WAIT_SECONDS; 0 turns a build away at once when none is free.
-    env_wait = os.environ.get("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS")
+    env_wait = os.environ.get("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "").strip()
     try:
         build_wait_seconds = float(env_wait) if env_wait else DEFAULT_BUILD_WAIT_SECONDS
     except ValueError:
@@ -930,15 +954,40 @@ def _run_serve(
         print(f"error: {ENV_KEYS_UNSUPPORTED}", file=sys.stderr)
         return 1
 
-    service = BuilderService(
-        output_root=Path(output_dir),
-        client_factory=_create_client,
-        async_max_workers=max_builds,
-        max_concurrent_builds=max_builds,
-        max_concurrent_previews=max_previews,
-        build_wait_seconds=build_wait_seconds,
-        warehouse_root=Path(warehouse) if warehouse is not None else None,
-    )
+    from .store import bring_index_up_to_date
+    from .store.schema_version import UnsupportedSchemaVersionError, says_unreachable
+
+    try:
+        # Before the service opens the index: an older one would be emptied there, and
+        # the server would answer as healthy with every earlier run missing (#1096).
+        indexed = bring_index_up_to_date(Path(output_dir))
+        if indexed:
+            print(f"rebuilt the build index from the manifests: {indexed} run(s)", flush=True)
+        service = BuilderService(
+            output_root=Path(output_dir),
+            client_factory=_create_client,
+            async_max_workers=max_builds,
+            max_concurrent_builds=max_builds,
+            max_concurrent_previews=max_previews,
+            build_wait_seconds=build_wait_seconds,
+            warehouse_root=Path(warehouse) if warehouse is not None else None,
+        )
+    except (UnsupportedSchemaVersionError, SnapshotStateError) as exc:
+        # A state store a newer release wrote: said in one line, and left as it is
+        # (#1096). This is what a rolled-back deployment meets. The catalog says it
+        # with its own error, as it did before it was opened at start.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except sqlite3.OperationalError as exc:
+        # A state store that could not be reached to begin with — locked by another
+        # process, on a disk that cannot be written. Said in one line as the refusals
+        # above are; the store is as it was (#1157). Any other database error is not
+        # this — a migration that failed, a statement this release got wrong — and
+        # keeps its traceback: "could not be opened" would be a wrong answer to it.
+        if not says_unreachable(exc):
+            raise
+        print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
+        return 1
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
         f"serving kpubdata-builder on http://{host}:{port} "
@@ -952,6 +1001,24 @@ def _run_serve(
     except KeyboardInterrupt:
         print("\nshutting down", file=sys.stderr)
     return 0
+
+
+def _count_from_env(name: str) -> int | None:
+    """The variable as an integer, or None when it is unset or empty.
+
+    Raises:
+        SystemExit: It is not an integer. ``int()`` on its own ended the start with a
+            traceback that did not name the variable (#1108).
+    """
+    # Stripped, as the start-up check reads it: a value of nothing but spaces is not
+    # set, here as there.
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer, got {raw!r}") from None
 
 
 def _run_fixtures_export(*, destination: str) -> int:

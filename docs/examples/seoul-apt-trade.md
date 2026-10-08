@@ -1,6 +1,6 @@
 # 서울 아파트 실거래가 종단 간 예제
 
-이 문서는 `kpubdata`의 `datago.apt_trade` 데이터를 사용해 서울 아파트 실거래가를 수집하고, Polars로 정제한 뒤, Hugging Face Dataset 형태의 로컬 산출물로 패키징하는 end-to-end 예제입니다.
+이 문서는 `kpubdata`의 `datago.apt_trade` 데이터를 사용해 서울 아파트 실거래가를 수집하고, Polars로 정제한 뒤, Hugging Face Dataset 형태의 로컬 산출물로 패키징하는 end-to-end 예제입니다. **레거시 publish 스크립트**([ADR 0018](../adrs/0018-legacy-publish-pipeline.md))를 쓰는 예제라 Polars 를 쓰며, Builder 본체는 DuckDB 만 쓴다([ADR 0021](../adrs/0021-duckdb-tabular-engine.md)).
 
 현재 예제는 선행 PR #52에서 추가된 config-driven publishing script를 재사용합니다. 새 YAML을 만들지 않고 `scripts/configs/korean_apartment_trades.yaml`을 기준 config로 사용합니다.
 
@@ -31,10 +31,10 @@ uv sync --extra dev --extra publish --extra docs
 패키지로 설치해 실행하는 경우에는 다음 extra가 필요합니다.
 
 ```bash
-pip install "kpubdata-builder[publish]"
+pip install "kpubdata-builder[publish,legacy-publish]"
 ```
 
-`publish` extra에는 `huggingface-hub`, `xmltodict`, `kaggle`이 포함됩니다. 이 예제의 로컬 파일 생성에는 Polars와 Parquet 작성 의존성이 필요하고, 실제 Hugging Face 업로드를 할 때만 Hugging Face 인증이 필요합니다. 한국어 건물명 로마자 변환이 필요하면 `kr-building-name-normalizer`를 별도로 설치하세요.
+`publish` extra에는 `huggingface-hub`, `xmltodict`, `kaggle`이 포함됩니다. 이 예제의 로컬 파일 생성에는 Polars(`legacy-publish` extra)와 Parquet 작성 의존성이 필요하고, 실제 Hugging Face 업로드를 할 때만 Hugging Face 인증이 필요합니다. 한국어 건물명 로마자 변환이 필요하면 `kr-building-name-normalizer`를 별도로 설치하세요.
 
 ## 사전 준비
 

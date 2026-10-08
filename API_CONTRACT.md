@@ -19,6 +19,17 @@ The single source of truth for KPubData Builder's (package `kpubdata-builder`) H
 - Studio checks the same major plus a per-feature minimum SemVer, not exact equality. It bumps its schema/client and minimum feature version only when it actually consumes a new operation.
 - Completing Epic #484 is the point to freeze the final contract and record it in the release manifest and tag, not to defer version changes during development.
 
+### The operations table (#1109)
+
+Which method and path is which `operationId`, and which operations read a credential header, is written once: in `contract/builder-api.yaml`. The contract is not shipped in the wheel, so `scripts/generate_operations.py` writes what the service needs of it into `src/kpubdata_builder/service/_contract_operations.py` — a module nobody edits — and `service/operations.py` answers "which operation is this request" from it. `route_reads_provider_keys` and `route_reads_publish_credentials` read their answer there; neither spells out a path any more.
+
+When an operation is added, removed or renamed in the contract, or gains or loses the `ProviderKey` / `PublishCredential` parameter, run `uv run python scripts/generate_operations.py` and commit the result. Two tests hold the pieces together:
+
+- `tests/unit/test_contract_operations.py` fails when the generated module is stale, and holds the table and the lookup to the contract.
+- `tests/unit/test_dispatch_answers_only_declared_operations.py` (#1054) asks the service itself: every declared operation is taken by a route, and no other method or assembled path is.
+
+Routing is still done by the route adapters, by hand. What an operation may answer (`_OPERATION_STATUS_CODES` in `tests/unit/test_service_contract.py`) is also still declared by hand: the contract says what is allowed, and only reading the code says what is returned.
+
 ### Client Compatibility Rules (#814)
 
 These are the rules the reading side follows. They pair with the server-side rules above.
@@ -102,6 +113,9 @@ When policy and implementation disagree, do not add implementation footnotes. Fi
 - The `spec` field in HTTP requests is a YAML string, as now. The OpenAPI `BuildSpec` component defines the canonical domain structure that YAML represents, so type generators can read it.
 - `metadata`, `sources[].params`, `exports[].options` values are standard JSON-compatible.
 - Source preview returns `source_key`, `status`, `error`, `schema`, `sample`, `total_rows`, `statistics` for both success and failure. A failed source within HTTP 200 is represented by `status: failed`, empty schema/sample, zero-based statistics, and a string `error`.
+- In a multi-user deployment each owner may have `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` async builds (default 2; `0` is off) queued, running or cancelling (#1189, contract 1.111.0). One more is refused by `POST /builds` with 429 `build_owner_limit` and `limit`; nothing is recorded for the run. The service-wide `build_queue_full` still applies; a single-user deployment and the synchronous `POST /build` have no owner limit.
+- A build that finds no rows is not committed over a table that has a snapshot (#1186, contract 1.110.0): the build answers 409 with `warehouse_failures` reason `empty_result`, and the current snapshot stays. A source declaring `allow_empty: true` commits the empty result, with the current snapshot's columns when it found none. A first build of a table is committed either way.
+- A preview reads a `public_api` source up to `limit` records or three pages, across its `param_grid` combinations (#1185, contract 1.109.0). `total_rows`, `statistics` and the quality results count the records read; `fetch_complete` says whether those are the whole source, and `source_reported_total` gives the provider's own count for a single call. A file or URL source is read whole. A build requests pages of the dataset's `max_page_size`.
 - The removed `transforms`, top-level `normalization_mode`, and `sources[].normalization_mode` are not contract fields; the parser rejects them explicitly.
 - A spec that passes validation is atomically saved to `{output_root}/{run_id}/buildspec.yaml` before entering the pipeline. For legacy runs without a snapshot, the API returns an unavailable `404` rather than guessing from the manifest.
 - Snapshot redaction applies only to explicitly-mapped credential keys. Inline secrets are replaced with `<redacted>`, so a snapshot alone cannot re-execute a run that needs credentials; credentials must be supplied again from environment/service configuration.
@@ -136,6 +150,20 @@ When policy and implementation disagree, do not add implementation footnotes. Fi
 
 - `/query` allows only a single SELECT/CTE referencing the `dataset` physical relation at least once. CTE `dataset` shadowing, recursive CTEs, external tables/table functions, filesystem/network access, and DML/DDL are rejected.
 - Queries use a bounded capacity separate from the HTTP worker pool. The query timeout actually terminates the child process; 429/504 errors are distinguished by stable `code` values.
+- The SQL dialect is DuckDB's (contract 1.74.0, #874). A query runs on a locked DuckDB connection that can read only the pinned snapshot file.
+
+### The DuckDB cutover and client compatibility (ADR 0021, #877)
+
+Builder's tabular engine moved from Polars to DuckDB (#864–#877). The engine's name is not part of the wire. A client — Studio included (kpubdata-studio#565) — needs to know only the contract changes below; to a user it is "Builder SQL". Name DuckDB compatibility only where the dialect itself has to be explained.
+
+| Contract | What changed | What a client does |
+| :--- | :--- | :--- |
+| 1.60.0 (#867) | `provenance[].data_checksum` is `canonical-multiset-v2`, named by `data_checksum_algorithm`. The byte digest (`artifacts[].artifact_digest`) is separate. `artifact_writer` is the engine that wrote Gold — `duckdb` since #876 | Never compare checksums of different algorithms |
+| 1.70.0 (#871) | Ratio splits are `hash-sort-v2` (manifest `split_algorithm`). With the same seed, rows land in different splits than under `shuffle-v1` | Do not compare split membership row by row with an earlier run |
+| 1.74.0 (#874) | SQL, rows, aggregate, profile and export run on DuckDB. Result types are DuckDB's in Builder's dtype names: `COUNT(*)` is `int64`, an integer `SUM` is `int128` (a number or exact decimal text, by its values), an unnamed aggregate gets DuckDB's name (`count_star()`), `DESC` puts nulls last, a zoned datetime is sent in UTC. Settings and version functions and nondeterministic SQL (`random`, `now`, sampling) are `unsafe_query` | Read column names and types from each response's `columns`/`column_meta` instead of hard-coding them, and decode values by `wire_encoding` |
+| 1.76.0 (#875) | `SavedAnalysis` gains `sql_dialect` (`duckdb` or `legacy-polars`), `engine`, `engine_version`, `query_contract_version` and `migration_required` | For an analysis with `migration_required`, ask the user to review its SQL and save it as a new analysis instead of running it — a run answers 409 `analysis_migration_required` |
+
+The error codes (`query_busy` 429, `query_timeout` 504, `query_execution_failed`, `unsafe_query`, `invalid_request`) did not change. Since contract 1.107.0 (#961) a query over the deployment's memory or spill limit answers 400 `query_resource_limit` with the same fixed sentence a build or preview over its limits gives, never DuckDB's own text; it answered `query_execution_failed` before.
 
 ### Declared PII in Silver and Bronze Reads (#900)
 
@@ -143,7 +171,7 @@ Gold masks declared PII (kpubdata `license.pii_columns` + BuildSpec `sources[].g
 
 | Path | Behaviour |
 | :--- | :--- |
-| `POST /query` `stage: silver` | Queries run over a masked copy of Silver. Expressions like `upper(col)`, `substr`, `WHERE col = '…'` never see the original values. The copy is read with the same `scan_builder_parquet` the query engine uses, restoring the Builder dtypes and real column names DuckDB stored in file metadata (#891), so the response's `columns`/`column_meta` match an unmasked query (including all-null, Duration, Int128, zone). The response's `masked_columns` lists the masked columns. `stage: gold` is already masked at build time and does not change |
+| `POST /query` `stage: silver` | Queries run over a masked copy of Silver. Expressions like `upper(col)`, `substr`, `WHERE col = '…'` never see the original values. DuckDB writes the copy with the original's Builder dtypes and real column names in the file metadata (#891), so the response's `columns`/`column_meta` match an unmasked query (including all-null, Duration, Int128, zone). The response's `masked_columns` lists the masked columns. `stage: gold` is already masked at build time and does not change |
 | `POST /preview` | Masks each source's `sample`, `source_sample` (original field names — walking back through `schema.coalesce` and `rename`), and those columns' `diffs`; records `masked_columns` |
 | `GET /builds/{run_id}/stages/silver/{source}` | Masks `sample`, records `masked_columns`. Bronze stage detail has no rows |
 | `GET /artifacts/{run_id}/{file_path}` | `bronze/{source}/…` and `silver/{source}/…` files for sources with declared columns are **all 403 `declared_pii_withheld`** (with column names in `columns`). Gold files and the manifest are served as-is |

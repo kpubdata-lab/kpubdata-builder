@@ -30,7 +30,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
-from kpubdata_builder.query.engine import QueryExecutionError, QueryTimeoutError
+from kpubdata_builder.query.engine import (
+    QueryExecutionError,
+    QueryResourceLimitError,
+    QueryTimeoutError,
+)
 from kpubdata_builder.query.profile import PROFILE_ALGORITHM_VERSION, ProfilePlan
 from kpubdata_builder.query.service import QueryBusyError, QueryService
 from kpubdata_builder.service import ownership
@@ -166,6 +170,8 @@ class ProfilesApiService:
                 except QueryTimeoutError:
                     self._timeouts.record(attempt)
                     return _error(504, "query_timeout", "profiling timed out")
+                except QueryResourceLimitError as exc:
+                    return _error(400, "query_resource_limit", str(exc))
                 except QueryExecutionError:
                     return _error(400, "query_execution_failed", "profiling failed")
                 computed = result.meta.get("profile")

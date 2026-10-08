@@ -37,6 +37,9 @@ sources:
     params:
       stationName: 강남구
       dataTerm: daily
+      # The fixture was recorded at 100 rows a page; without this a build asks for
+      # the dataset's max_page_size (#1185) and no recording matches.
+      page_size: 100
 exports:
   - kind: jsonl
     output_path: data.jsonl

@@ -38,7 +38,7 @@ Medallion 파이프라인 기반 구축.
 - ✅ BuildSpec 계약 안정화 (YAML 파싱, 검증)
 - ✅ Medallion 디렉터리 재구성 (stages/bronze, silver, gold)
 - ✅ Bronze/Silver/Gold stage 구현
-- ✅ Polars 기반 tabular engine
+- ✅ Polars 기반 tabular engine (v0.1 당시; 지금은 DuckDB — ADR 0021)
 - ✅ Pipeline orchestrator
 - ✅ manifest 스키마 안정화
 
@@ -109,9 +109,9 @@ Plugin 생태계와 고급 빌드 기능.
 작업 범위의 이름이고 릴리스 번호가 아니다. 다음 Builder·Studio 릴리스는 2026-10 창
 (10/26–11/01) 이다 — kpubdata 호환성 문서 §5.1.
 
-- 🔄 **DuckDB 로 tabular 엔진 전환** — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md),
-  #864–#877. 단계마다 `tests/parity/` 기준선과 같아야 한다. 끝나면 `src/` 의 엔진은
-  DuckDB 하나이고 레거시 publish 경로만 Polars 를 쓴다. 다중 테이블 SQL(#704)은 그 다음
+- ✅ **DuckDB 로 tabular 엔진 전환** — [ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md),
+  #864–#877. `src/` 의 엔진은 DuckDB 하나이고(#876) 레거시 publish 경로만 Polars 를
+  쓴다(`legacy-publish` extra). 다중 테이블 SQL(#704)은 그 다음
 - 🔄 **배포 형태에 따른 자격 증명 수명** — [ADR 0020](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0020-credential-lifetime-by-deployment.md),
   ADR 0012 개정. 다중 사용자 배포는 키를 저장하지 않고 소유권을 강제한다
 - 🔄 **레거시 publish 파이프라인 이관** — [ADR 0018](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0018-legacy-publish-pipeline.md)

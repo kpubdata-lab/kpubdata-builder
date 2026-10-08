@@ -758,7 +758,13 @@ class TestRebuildIndex:
     def test_rebuild_restores_backup_when_swap_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If .tmp -> original replace fails, restore existing index from backup (#366)."""
+        """If .tmp -> original replace fails, restore existing index from backup (#366).
+
+        The file is swapped only for an index of another version (#1157), so this one
+        is marked as an older release's.
+        """
+        import sqlite3
+
         index = SqliteBuildIndex(tmp_path)
         index.insert_or_replace(
             run_id="old",
@@ -769,6 +775,10 @@ class TestRebuildIndex:
         index.close()
 
         index_path = tmp_path / "_builds.sqlite"
+        conn = sqlite3.connect(index_path)
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION - 1,))
+        conn.commit()
+        conn.close()
         tmp_index_path = tmp_path / "_builds.sqlite.tmp"
         original_rename = Path.rename
 
@@ -787,5 +797,6 @@ class TestRebuildIndex:
         assert index_path.exists()
         assert not (tmp_path / "_builds.sqlite.bak").exists()
 
-        restored = SqliteBuildIndex(tmp_path)
-        assert restored.get("old") is not None
+        conn = sqlite3.connect(index_path)
+        assert conn.execute("SELECT run_id FROM builds").fetchall() == [("old",)]
+        conn.close()

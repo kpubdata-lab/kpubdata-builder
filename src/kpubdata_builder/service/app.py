@@ -32,6 +32,7 @@ from ..credentials import (
     SQLiteCredentialRepository,
 )
 from ..events import BuildEventStore
+from ..events.store import events_store_path
 from ..pipeline import (
     DEFAULT_PREVIEW_SEED,
     CancellationProbe,
@@ -48,7 +49,7 @@ from ..uploads import (
     UploadRepository,
     resolve_max_upload_bytes,
 )
-from ..warehouse import TableCatalog
+from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
@@ -470,7 +471,21 @@ _BuildListEntry = dict[str, str | None]
 # 1.105.0 -> 1.106.0: the sign-up ledger is read on every request and written only on
 #   change; last_seen_at refreshes hourly; 503 signup_ledger_unavailable when it cannot
 #   be read or a first sign-in cannot be recorded (#1121, additive).
-API_CONTRACT_VERSION = "1.106.0"
+# 1.106.0 -> 1.107.0: a query-path request over the deployment's memory or spill limit
+#   answers 400 query_resource_limit with the fixed limit message instead of
+#   query_execution_failed (#961, additive).
+# 1.107.0 -> 1.108.0: auth_unavailable (503, since 1.79.0) is declared once as the
+#   shared response AuthUnavailable; the wire is unchanged (#1109, additive).
+# 1.108.0 -> 1.109.0: a preview reads up to limit records or three pages of a
+#   public_api source; SourcePreview gains fetch_complete and source_reported_total
+#   (#1185, additive).
+# 1.109.0 -> 1.110.0: a build that finds no rows is not committed over a table that has
+#   a snapshot (warehouse_failures reason empty_result) unless the source declares
+#   allow_empty, which keeps the current columns (#1186, additive).
+# 1.110.0 -> 1.111.0: in a multi-user deployment POST /builds answers 429
+#   build_owner_limit past KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER (#1189,
+#   additive).
+API_CONTRACT_VERSION = "1.111.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -528,6 +543,12 @@ class BuilderService:
         # caller write a catalog anywhere the process can reach (#703).
         self._warehouse_root = warehouse_root
         self._catalog: TableCatalog | None = None
+        # Opened on first use, so that a deployment that never materialises has no
+        # catalog file; one that is already there is opened now. A catalog this release
+        # cannot use, or cannot migrate, then stops the start and not the first request
+        # that needs it (#1096).
+        if warehouse_root is not None and (warehouse_root / CATALOG_FILENAME).is_file():
+            self._catalog = TableCatalog(warehouse_root)
         self._client_factory = client_factory
         self._build_index = make_build_index(output_root)  # #309, ADR 0003/0016
         self._store = make_artifact_store(output_root)  # ADR 0010/0016 (canonical manifest)
@@ -538,6 +559,11 @@ class BuilderService:
         # events query).
         self._event_store_lazy: BuildEventStore | None = None
         self._event_store_lock = threading.Lock()
+        # The store is created on first use so that a preview leaves no file; one that
+        # is already there is opened now, so that a store this release cannot use
+        # stops the start rather than the first build (#1096).
+        if events_store_path(output_root).exists():
+            self._event_store_lazy = BuildEventStore(output_root)
         # Upload store for kind="file" source (#498). If not explicitly injected,
         # create SQLite only when actually needed (lazy creation, `_upload_repository`
         # property) — like credential repository (no master key → None), workspaces

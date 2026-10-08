@@ -4,12 +4,17 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 
 > **상태**: ADR 0009는 제안됨(Proposed). 인증(Bearer) 구현은 B3(#385)/B4(#386) 진행 중이며, 본 문서의 Bearer 관련 절은 구현 완료 후 적용된다. 컨테이너 배포(fail-closed, HEALTHCHECK)는 이미 구현되었다.
 
-## 1. 기본 배포 형태 — internal ingress
+## 1. 기본 배포 형태 — 사용자의 브라우저가 부르는 엔드포인트
 
-**Builder는 공개 인터넷 인그레스를 갖지 않는다** (ADR 0009 결정 3). Studio가 같은 네트워크/VPC에서 호출하는 구조가 기본형이다. 공격면을 최소화하고, 허용 목록을 심층 방어로 둔다.
+**Studio 는 정적 SPA 다. Builder 를 부르는 것은 Studio 의 서버가 아니라 사용자의 브라우저다.** 그래서 Studio 를 쓰는 배포에서 Builder 는 사용자의 브라우저가 닿을 수 있는 HTTPS 주소를 가져야 한다. "Studio 가 같은 네트워크/VPC 에서 Builder 를 호출한다"는 구조는 Studio 에 서버 쪽 구성 요소가 있을 때만 성립하고, 지금의 Studio 에는 없다(kpubdata-studio#841).
 
-- ACA(Azure Container Apps) / K8s에서 Builder 서비스를 클러스터 내부 서비스로 노출.
-- Studio(정적 SPA)는 같은 네트워크에서 Builder를 호출. 외부 인터넷은 Studio 프론트만 접근.
+- 참조 배포(§12)는 Cloudflare → Caddy → Builder 로 그 주소를 내고, Studio 는 그 주소로 빌드·설정된다(`VITE_BUILDER_API_URL`, 컨테이너 이미지에서는 `BUILDER_API_URL`). Builder 컨테이너 자체는 포트를 밖으로 열지 않고 Caddy 만 연다.
+- 그 주소로 들어오는 것을 좁히는 것은 다음 둘이다. 네트워크 위치가 아니다.
+  - **인증** — `/healthz` 같은 무인증 프로브를 빼면 모든 요청은 `X-API-Key` 또는 OIDC Bearer 를 가져야 한다(§2). OIDC 배포에서는 그 위에 allowlist 와 가입 원장이 있다.
+  - **CORS** — `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 에 적은 Studio 오리진만 허용하고 기본은 전부 거부한다(§4, ADR 0006). CORS 는 다른 사이트의 페이지가 사용자의 브라우저로 Builder 를 부르는 것을 막을 뿐, 브라우저가 아닌 호출자를 막지 않는다. 그쪽을 막는 것은 인증이다.
+- 브라우저가 부르지 않는 배포 — 스케줄 워크플로만 Builder 를 부르는 경우 — 는 Builder 를 내부 서비스로만 둘 수 있고, 그럴 수 있으면 그렇게 두는 편이 공격면이 작다.
+
+> **ADR 과의 차이.** ADR 0009 결정 3(ADR 0015 가 승계)은 "Builder 는 공개 인그레스를 갖지 않는다(internal ingress)"를 배포 기본형으로 정했다. 그 전제는 Studio 가 같은 네트워크에서 Builder 를 부른다는 것인데, 위에 적은 대로 지금의 Studio 는 그렇게 동작하지 않는다. 이 절은 지금 실제로 동작하는 구조를 적은 것이고, ADR 의 문장은 고치지 않았다 — 결정을 바꾸거나(공개 엔드포인트 + 인증 + CORS 를 기본형으로) Studio 앞에 같은 오리진의 프록시를 두는 쪽으로 구조를 바꾸는 것은 메인테이너의 결정이다.
 
 ## 2. 인증 — 두 경로 병행
 
@@ -76,6 +81,69 @@ replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 
 
 그래서 재시작하면 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호를 받았을 때의 처리는
 §7, 다중 사용자 배포에서 중단된 run 의 표시는 #683 을 본다.
+
+### 6.0 이전 릴리스로 되돌렸을 때 (#1096)
+
+상태 저장소는 자기 스키마의 버전을 적어 둔다. 실행 중인 릴리스가 아는 것보다 **새로운 버전**의
+저장소를 만나면 그 저장소를 열지 않고 건드리지도 않는다. 셋 모두 기동할 때 확인하므로, 서버가
+`error:` 한 줄을 남기고 뜨지 않는다(종료 코드 1). 아직 없는 저장소는 지금처럼 처음 쓰일 때 만든다.
+
+| 저장소 | 새 버전을 만나면 | 할 수 있는 일 |
+|---|---|---|
+| 빌드 인덱스 (`_builds.sqlite`, 또는 CUBRID 의 `builds`) | 기동 거부. 예전에는 표를 지우고 다시 만들어서, 새 릴리스로 돌아가면 인덱스가 비어 있었다 | 그 저장소를 쓴 릴리스를 띄우거나, `kpubdata-builder rebuild-index` 로 이 릴리스의 인덱스를 manifest 에서 다시 만든다 — 인덱스는 파생물이다 |
+| run 이벤트 (`_build_events.sqlite`) | 기동 거부. 예전에는 버전을 보지 않고 열었다 | 그 저장소를 쓴 릴리스를 띄우거나, 업그레이드 전 백업에서 출력 디렉터리를 복구한다 — 이벤트는 다른 것에서 다시 만들 수 없다 |
+| 테이블 카탈로그 (웨어하우스의 `_warehouse.sqlite`) | 기동 거부. 예전에는 처음 쓰일 때 열려서, 기동이 아니라 그 요청이 실패했다 | 위와 같다 — 카탈로그도 다시 만들 수 없다 |
+
+**오래된 버전**: 카탈로그는 버전 사슬을 따라 올린다. 올리기 직전에 카탈로그를 SQLite 로 복사해
+옆에 둔다(`_warehouse.sqlite.v<이전 버전>.before-migration`). 사본은 마이그레이션과 같은 쓰기 잠금
+안에서 뜨므로, 사본과 마이그레이션 사이에 다른 프로세스의 쓰기가 끼지 않는다. 마이그레이션은 한
+트랜잭션이라 도중에 실패하면 이전 버전 그대로 남고, 다음 기동이 다시 시도한다. **사본은
+마이그레이션할 때마다 그 시점의 카탈로그로 바뀐다**(#1163) — 업그레이드 → 롤백(사본을 되돌려
+이전 릴리스로 운영) → 재업그레이드를 거치면, 사본은 롤백 뒤 이전 릴리스가 쓴 내용까지 담는다.
+예전에는 처음 뜬 사본을 그대로 두어서, 두 번째로 되돌릴 때 그 사이의 쓰기를 잃었다. 되돌릴 때는
+사본을 옮기지 말고 복사해 두는 편이 낫다. **사본은 카탈로그뿐이다** — 스냅샷 파일은 들어 있지 않으므로,
+그 뒤에 쓰인 것이 있는 웨어하우스에 사본만 되돌려 놓으면 그만큼을 잃는다. 전체 복구는 `warehouse
+backup` 으로 받은 백업으로 한다. 인덱스는 `serve` 가 요청을 받기 전에
+manifest 에서 다시 만든다 — 인덱스 파일이 아예 없을 때도 같다. 예전에는 비운 채로 떠서
+`rebuild-index` 를 따로 돌리기 전까지 이전 run 이 목록에 보이지 않았다. run 이 많으면 그만큼
+기동이 늦어진다(run 마다 manifest 하나를 읽는다). 그 밖의 SQLite 저장소
+(자격 증명, 업로드, 게시 영수증, 가입 원장 등)는 버전을 적지 않으며 이 표에 없다.
+
+### 6.0.1 SQLite 상태 저장소 목록과 연결 방식 (#1096)
+
+Builder 가 두는 SQLite 파일은 열 개다. 목록의 정본은 `src/kpubdata_builder/store/inventory.py` 이고,
+`tests/unit/test_state_store_inventory.py` 가 그 목록을 코드(SQLite 를 여는 모듈, 각 모듈의 timeout·저널
+모드·버전 관리)와 아래 표에 대조한다. 저장소를 더하거나 연결 방식을 바꾸면 그 파일과 이 표를 함께
+고쳐야 테스트가 통과한다.
+
+| 저장소 | 위치 | 잠금 대기 | 저널 모드 | 스키마 버전 | 잃으면 |
+|---|---|---|---|---|---|
+| 빌드 인덱스 | 출력 디렉터리의 `_builds.sqlite` | 30초 | WAL | 버전 표 | 잃어도 된다 — manifest 에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`) |
+| run 이벤트와 제출 기록 | 출력 디렉터리의 `_build_events.sqlite` | 30초 | WAL | 버전 표 | run 의 타임라인과 제출자 기록을 잃는다. 다시 만들 수 없다 |
+| 게시 영수증 | 출력 디렉터리의 `_publish_receipts.sqlite` | 30초 | WAL | 없음 — 빠진 열을 열 때 더한다 | 어떤 run 을 어디에 게시했는지와, 같은 게시가 두 번 나가는 것을 막는 근거를 잃는다. 다시 만들 수 없다 |
+| provider 자격 증명 (암호화) | 출력 디렉터리의 `.service/provider-credentials.sqlite3` | 5초 | 기본(rollback journal) | 없음 | 사용자가 저장한 provider 키를 잃는다. 각자 다시 입력해야 한다 |
+| 업로드 | 출력 디렉터리의 `.service/uploads.sqlite3` | 5초 | 기본(rollback journal) | 없음 — 빠진 열을 열 때 더한다 | 올린 파일과 그 목록을 잃는다(큰 파일의 내용은 옆의 `uploads.sqlite3.blobs/` 에 있다) |
+| provider 연결 테스트의 마지막 결과 | 출력 디렉터리의 `.service/provider_tests.sqlite3` | 30초 | 기본(rollback journal) | 없음 | 잃어도 된다 — 연결 테스트를 다시 하면 채워진다 |
+| 문서 revision 과 감사 기록 | 출력 디렉터리의 `.service/revisions.sqlite3` | 30초 | 기본(rollback journal) | 없음 | BuildSpec 과 표시 주석의 저장 이력을 잃는다. 다시 만들 수 없다 |
+| 가입 원장 | 출력 디렉터리의 `.service/users.sqlite3` | 30초 | 기본(rollback journal) | 없음 | 가입 승인·거절 기록을 잃는다. allowlist 에 없는 사용자는 다시 승인을 기다린다 |
+| 저장한 분석 | 출력 디렉터리의 `.service/analyses.sqlite3` | 30초 | 기본(rollback journal) | 없음 — 빠진 열을 열 때 더한다 | 저장한 SQL 과 그것이 읽은 스냅샷의 기록을 잃는다. 다시 만들 수 없다 |
+| 테이블 카탈로그 | 웨어하우스의 `_warehouse.sqlite` | 30초 | WAL | 버전 표 | 어떤 스냅샷이 어느 테이블의 현재 것인지를 잃는다. 다시 만들 수 없다 |
+
+CUBRID 백엔드(§6.1)를 쓰면 빌드 인덱스와 provider 자격 증명은 CUBRID 에 있고 위 파일을 쓰지 않는다.
+
+**지금의 방식.** 이 표는 정해 둔 규칙이 아니라 지금 코드가 하는 일이다. 저장소마다 다른 점은 다음과 같다.
+
+- **잠금 대기 30초가 대부분이고, 둘만 5초다**(provider 자격 증명, 업로드). 5초인 이유는 코드에 적혀 있지
+  않다. 30초로 맞추면 잠금이 걸렸을 때 요청이 실패하는 대신 더 오래 기다리게 되므로, 맞출지는 정해야 할
+  일이다.
+- **WAL 은 넷이다**(빌드 인덱스, run 이벤트, 게시 영수증, 테이블 카탈로그). 나머지는 SQLite 기본 모드다.
+- **가입 원장은 일부러 WAL 이 아니다.** WAL 데이터베이스는 쓸 수 없는 디렉터리에서 읽지 못한다(연결마다
+  `-shm` 파일을 만들어야 한다). 원장은 디스크가 읽기 전용이 되어도 이미 가입한 사용자를 들여보내야 해서
+  기본 모드로 둔다(#1121). 그래서 "전부 WAL" 은 답이 아니다.
+- **읽기 전용 연결과 백업 사본은 따로다.** 저장소의 버전만 읽는 연결(`store/schema_version.py`)은 저널
+  모드를 정하지 않고, 카탈로그의 사본(`warehouse/backup.py`, 마이그레이션 전 사본)은 기본 모드로 돌려 둔다.
+- **버전 표가 있는 것은 셋이다.** 이 셋은 더 새로운 릴리스가 쓴 저장소를 열지 않는다(§6.0). 나머지 일곱은
+  버전을 적지 않으므로 그런 확인이 없다 — 그중 셋은 빠진 열을 열 때 더하는 방식으로만 바뀌어 왔다.
 
 ### 6.1 CUBRID 상태 백엔드 (ADR 0016)
 
@@ -154,13 +222,13 @@ manifest 정책까지 승인·완료됐다는 뜻이 아니다.
 memory >= base process
         + HTTP_workers * per_HTTP_thread
         + active_build_workers * per_build_working_set
-        + query_concurrency * (per_Polars_child + 최대 8 MiB IPC payload)
+        + query_concurrency * (per_query_child + 최대 8 MiB IPC payload)
         + filesystem/cache headroom
 ```
 
 CPU 수요는 대략 `active_build_workers * build_CPU` +
-`query_concurrency * Polars_child_CPU` + HTTP overhead다. Polars child 하나도 내부적으로 여러
-thread를 사용할 수 있으므로 `query_concurrency`를 vCPU 수처럼 간주하면 안 된다. 작은 ACA
+`query_concurrency * query_child_CPU` + HTTP overhead다. query child 하나도 DuckDB 연결의
+thread(`KPUBDATA_DUCKDB_THREADS`)를 여럿 쓸 수 있으므로 `query_concurrency`를 vCPU 수처럼 간주하면 안 된다. 작은 ACA
 인스턴스는 `infra/main.bicep` 기본값인 1 vCPU/2 GiB, HTTP worker 4, async build worker 4,
 query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받지만 서로 다른 pool이라
 동시에 각각 4개까지 실행될 수 있다. 따라서 CPU/memory 중심 build를 많이 제출하는 환경에서는
@@ -181,11 +249,14 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | DuckDB thread | **연결 하나당** 기본 2. build 는 실행 중인 source 마다 연결 하나 | `KPUBDATA_DUCKDB_THREADS` |
 | DuckDB buffer memory | **연결 하나당** 기본 `1GB`. 넘으면 spill 한다 | `KPUBDATA_DUCKDB_MEMORY_LIMIT` |
 | DuckDB spill(임시 디스크) | **연결 하나당** 기본 `10GB`. 넘으면 그 질의·source 만 실패하고 디스크를 채우지 않는다 | `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` |
-| Polars 내부 thread | 프로세스마다 기본 CPU 코어 수 — 아직 Polars 를 쓰는 query child 와 bridge(#876 까지) | `POLARS_MAX_THREADS` |
+
+Builder 는 Polars 를 쓰지 않으므로(#876) `POLARS_MAX_THREADS` 는 더 이상 효과가 없다.
+query child 의 spill 디렉터리는 parent 가 질의마다 만들어 `KPUBDATA_QUERY_TEMP_DIR` 로 child 에
+넘기고, child 가 어떻게 끝나든 parent 가 지운다 — 운영자가 설정하는 값이 아니다.
 
 `KPUBDATA_QUERY_MAX_MEMORY_MB` 는 address space 상한(`RLIMIT_AS`)이라 RSS 보다 크게 잡아야
-한다 — Polars 가 import 시점에 가상 메모리를 넉넉히 예약하므로 너무 작으면 모든 질의가
-실패한다. admission 기준은 **메모리**다(#701, 소유자 결정 D3): `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
+한다 — child 의 interpreter 와 DuckDB 가 import 시점에 가상 메모리를 예약하므로 너무 작으면
+모든 질의가 실패한다. admission 기준은 **메모리**다(#701, 소유자 결정 D3): `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
 를 두면 질의 하나가 `KPUBDATA_QUERY_MAX_MEMORY_MB` 만큼 예약한다. 질의별 상한 없이 예산만
 두면 질의 하나가 예산 전체를 예약하므로 한 번에 하나씩 돈다 — 둘을 함께 설정하는 것이 맞다.
 CPU·임시 디스크·프로세스·스레드 수는 위 표의 문서화 항목이고 admission 기준이 아니다. 동시
@@ -221,7 +292,6 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 | 동시 build | `KPUBDATA_BUILDER_MAX_BUILDS=2` | 2 (동기·비동기 합계) |
 | DuckDB 연결 (build 2 × source 4 = 8) | `KPUBDATA_DUCKDB_THREADS=1`, `KPUBDATA_DUCKDB_MEMORY_LIMIT=96MB`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE=1GB` | thread 8, 메모리 768 MB, 임시 디스크 8 GB |
 | query child | `KPUBDATA_QUERY_MAX_CONCURRENCY=1`, `KPUBDATA_QUERY_MAX_MEMORY_MB=768`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB=768` | 프로세스 2, query 메모리 768 MB |
-| Polars thread | `POLARS_MAX_THREADS=1` | — |
 | 기본 프로세스·HTTP·여유 | 실측 | 약 400 MB |
 
 메모리 합은 약 1.9 GB 다(DuckDB 768 MB + query 768 MB + 기본 약 400 MB). 2 GiB 에 여유가 거의 없으므로
@@ -273,7 +343,7 @@ canonical SQL을 준비하고, cold query(새 child)와 warm filesystem-cache qu
 ## 10. Process 격리 선택
 
 query는 의도적으로 `spawn`을 사용한다. thread가 이미 실행 중인 service process를 `fork`하면
-다른 thread가 잡은 lock, logging/runtime 상태, Polars native thread-pool 상태를 child가
+다른 thread가 잡은 lock, logging/runtime 상태, DuckDB native thread 상태를 child가
 불완전하게 상속할 수 있다. startup이 짧아 보인다는 이유로 `fork`로 바꾸는 것은 안전한
 대체가 아니다.
 
@@ -352,6 +422,55 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 > fail-closed(§2, ADR 0006): 인증 수단이 하나도 없으면 컨테이너가 기동을 거부한다.
 > `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`는 재기동 사이에 동일 값을 유지해야 한다(ADR 0012).
 
+### compose 가 컨테이너에 넘기지 않는 설정 (#1108)
+
+`docker-compose.prod.app.yml` 은 Builder 컨테이너에 넘길 환경변수를 하나씩 적는다. **거기 없는 설정은
+`.env` 에 적어도 아무 일도 하지 않는다** — 값이 프로세스에 닿지 않고, 그 사실을 알리는 것도 없다.
+아래 설정이 그렇다. 쓰려면 compose 파일의 `environment` 에 `이름: ${이름:-}` 줄을 더한다.
+
+- `KPUBDATA_BUILDER_DEV_MODE` — 일부러 넘기지 않는다. 인증을 통째로 끄는 값이 프로덕션 스택에서
+  `.env` 한 줄로 켜져서는 안 된다.
+
+나머지는 지금 넘기지 않는다. 기본값이 있는 설정은 그 값으로 돈다.
+
+- **기본값이 없는 것**(`HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`,
+  `KPUBDATA_BUILDER_CUBRID_URL`, `OIDC_JWKS_URL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지 않은
+  것으로 돈다. `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` 가 없으므로 이 스택에서 `prune-cancelled --apply` 는
+  `--ttl-hours` 를 직접 주지 않는 한 아무것도 지우지 않는다.
+- **켜고 끄는 셋**(`ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
+  `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)은 기본값이 있다. `OIDC_ISSUER` 가 없는 단일 사용자
+  스택에서는 꺼져 있고, `OIDC_ISSUER` 를 설정한 다중 사용자 스택에서는 `.env` 에 무엇을 적든 켜져 있다 —
+  다중 사용자 모드가 셋을 모두 강제한다(ADR 0012). 그래서 넘기지 않아서 달라지는 것은 단일 사용자 스택에서
+  이 셋을 켤 수 없다는 점이다.
+- **이 스택은 SQLite 로만 돈다.** `KPUBDATA_BUILDER_STORAGE_BACKEND` 와 `KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는
+  뜻으로 아래 목록에 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
+
+넘기지 않는 설정 전체는 다음과 같다(`KPUBDATA_BUILDER_DEV_MODE` 는 위에 적었다).
+
+- `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
+- `OIDC_JWKS_URL`
+- `OIDC_JWKS_TTL`
+- `ENFORCE_OWNERSHIP`
+- `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT`
+- `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`
+- `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS`
+- `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`
+- `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`
+- `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`
+- `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`
+- `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
+- `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`
+- `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
+- `KPUBDATA_BUILDER_STORAGE_BACKEND`
+- `KPUBDATA_BUILDER_CUBRID_URL`
+- `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`
+- `HF_TOKEN`
+- `KAGGLE_USERNAME`
+- `KAGGLE_KEY`
+
+이 목록은 `tests/unit/test_prod_compose_settings.py` 가 설정 목록(`settings_catalog.py`)과 compose 파일에
+대조한다. 설정을 새로 만들면 compose 에 넘기거나 이 목록에 올려야 테스트가 통과한다.
+
 ### 인증 구성별 기동 (#1122)
 
 컨테이너 진입점(`docker-entrypoint.sh`)과 `serve` 가 함께 판정한다. 진입점은 인증 수단이
@@ -376,7 +495,7 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 | 작업 | OIDC 전용 배포에서 | 권한 |
 |---|---|---|
 | 가입 승인·거절, 관리 화면(`/admin/*`) | `KPUBDATA_BUILDER_ADMIN_SUBJECTS` 에 있는 사용자가 로그인해서 | 그 사용자만 관리자 |
-| 인덱스 재구축, 취소된 run 정리 | 컨테이너 안의 CLI: `docker exec kpubdata-builder kpubdata-builder rebuild-index` / `prune-cancelled` | 호스트에서 컨테이너를 다룰 수 있는 사람 — HTTP 로 열리지 않는다 |
+| 인덱스 재구축, 취소된 run 정리 | 컨테이너 안의 CLI: `docker exec kpubdata-builder kpubdata-builder rebuild-index` / `prune-cancelled`. 재구축은 서버가 떠 있어도 된다 — 인덱스를 그 자리에서 다시 채운다(#1157). 다만 인덱스의 표가 손상되어 파일째 새로 만든 경우에는 서버를 재시작해야 새 파일을 본다 | 호스트에서 컨테이너를 다룰 수 있는 사람 — HTTP 로 열리지 않는다 |
 | 스케줄 워크플로(데이터 갱신) | 서비스 키가 필요하다 — 이 소비자가 있으면 키를 함께 둔다 | 서비스 키는 관리자(`is_admin`)다. 다른 사용자의 run 은 읽지 못한다(#1072) |
 
 **서비스 키 회전과 노출 면적.** 키는 인스턴스당 하나이고 관리자 권한을 갖는다.

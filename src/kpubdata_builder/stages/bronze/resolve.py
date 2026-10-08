@@ -17,7 +17,7 @@ from ...ingestion.url_fetch import default_max_fetch_bytes
 from ...spec import JsonValue, SourceRef, expand_param_grid
 from ...spec.models import SOURCE_KINDS
 from ...uploads import UploadRepository
-from .build import SourceClient, build_bronze_artifact
+from .build import FetchBound, SourceClient, build_bronze_artifact
 from .checkpoint import CombinationCheckpoint
 from .models import BronzeArtifact, ProvenanceEvent, require_timezone_aware, utc_now
 from .writer import BronzeWriter, Scrub, new_staging_dir
@@ -63,6 +63,7 @@ def build_bronze_artifact_for_source(
     on_combination_done: Callable[[int, int], None] | None = None,
     checkpoint_path: Path | None = None,
     staging_dir: Path | None = None,
+    bound: FetchBound | None = None,
 ) -> BronzeArtifact:
     """fetches per source.kind and writes a BronzeArtifact (#498, #622).
 
@@ -80,6 +81,9 @@ def build_bronze_artifact_for_source(
     request back in its response puts the key into the records, and from there into
     every stage output, card and export (#686). Bronze is where records enter, so it
     is where exact occurrences of a key are replaced — before anything is written.
+
+    ``bound`` (#1185) stops a public_api fetch early, for a preview. A file or URL
+    source is read whole: it costs no provider quota.
     """
     scrub: Scrub | None = (
         (lambda value: scrub_secret_values(value, secret_values)) if secret_values else None
@@ -118,6 +122,7 @@ def build_bronze_artifact_for_source(
             ),
             staging_dir=staging_dir,
             scrub=scrub,
+            bound=bound,
         )
     # BuildSpec that bypassed loader validation (direct SourceRef construction) also
     # already rejected, but, resolver itself "else is public_api"implicit

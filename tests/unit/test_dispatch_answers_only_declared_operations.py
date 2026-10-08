@@ -1,9 +1,9 @@
 """The service answers only the (method, path) pairs the contract declares (#1054).
 
-``test_service_contract.py`` compares the contract with a table of routes kept by hand,
-and ``test_route_literals_in_contract.py`` (#994) checks the path literals the route
-modules match on. Neither sees a new method on a declared path, or a new path put
-together from pieces that are already declared.
+``test_route_literals_in_contract.py`` (#994) checks the path literals the route modules
+match on. It does not see a new method on a declared path, or a new path put together
+from pieces that are already declared. (``test_service_contract.py`` used to compare the
+contract with a table of routes kept by hand; that table is gone, #1109.)
 
 This asks the service itself. The dispatcher has one answer for a request no route took —
 404 ``not found: <METHOD> <path>`` — so anything else means a route answered. Every method

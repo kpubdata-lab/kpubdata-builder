@@ -46,8 +46,27 @@ Builder는 다음을 하지 않습니다.
 ### 3.3 Silver 단계
 
 - Bronze snapshot을 표 형태로 정렬
-- **단일 내부 tabular 엔진**으로 tabularize 수행 — 지금은 Polars, DuckDB 로 전환 중이다([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 전환이 끝나면 `src/` 의 엔진은 DuckDB 하나다
+- **단일 내부 tabular 엔진 DuckDB** 로 tabularize 수행([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). `src/` 는 Polars 를 import 하지 않는다(#876)
 - schema validation, statistics, preview generation 수행
+
+데이터는 다음 흐름으로 흐른다. 각 source 는 자기 DuckDB 연결 하나에서 Silver 와 Gold 를
+SQL 로 만들고, 연결이 닫힌 뒤에도 읽히는 것은 Parquet 파일이다(파일 metadata 에 Builder
+dtype 이 함께 기록된다).
+
+```text
+Bronze (file-backed JSONL)
+        ↓  duckdb_load.load_records
+DuckDB
+        ↓  normalize · validate · summarize (SQL)
+Silver relation  →  silver/table.parquet
+        ↓  select · PII mask · split · compose (SQL)
+Gold relation
+        ↓
+Parquet (gold/…/table.parquet, splits/)
+```
+
+질의(`/query`, warehouse rows·aggregate·profile·export)는 저장된 Parquet 을 잠긴 DuckDB
+연결로 읽는 자식 프로세스에서 실행된다(#874).
 
 ### 3.4 Gold 단계
 
@@ -137,8 +156,7 @@ src/kpubdata_builder/
 │   ├── silver/
 │   └── gold/
 ├── tabular/
-│   ├── duckdb_runtime.py · sql.py · dtypes.py   (ADR 0021)
-│   └── polars_*.py                              (전환이 끝나면 제거, #876)
+│   └── duckdb_runtime.py · duckdb_load.py · sql.py · dtypes.py …   (ADR 0021)
 ├── exporters/
 ├── publishers/
 ├── spec.py
@@ -155,7 +173,7 @@ build/{run_id}/
 
 - stage 구현은 `stages/bronze`, `stages/silver`, `stages/gold`에 분리합니다.
 - stage 흐름 제어는 `pipeline/orchestrator.py`가 담당합니다.
-- tabular 처리는 **단일 엔진**만 사용하며 dual-engine 전략은 두지 않습니다. 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중이고([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md)), 전환 중의 비교는 `tests/parity/` 기준선으로만 하며 production 에 두 엔진을 남기지 않습니다.
+- tabular 처리는 **단일 엔진 DuckDB** 만 사용하며 dual-engine 전략은 두지 않습니다([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md)). 이전 Polars 엔진은 테스트의 비교 기준(`tests/support/`, `tests/parity/`)으로만 남아 있고 production 코드에는 없습니다.
 - run workspace는 `build/{run_id}/bronze/`, `silver/`, `gold/`로 고정해 재현성과 디버깅 가능성을 높입니다.
 
 ## 8. Builder-Studio 연결 원칙
@@ -194,7 +212,7 @@ scripts/publish_to_hf.py  →  scripts/pipeline/{fetch,transform,package,publish
   HuggingFace/Kaggle 직접 publish(checkpoint/resume, variant, dataset card)를 담당한다.
 - GitHub Actions `publish-dataset.yml` 및 스케줄 워크플로에 연결된 **프로덕션 경로**다.
 - 해당 모듈에는 `DEPRECATED` 표시가 붙어 있으며, 프로덕션 호환을 위해서만 유지한다.
-- 이 경로는 DuckDB 전환 뒤에도 마지막 config 가 옮겨질 때까지 Polars 를 쓴다
+- 이 경로는 **레거시로서** 마지막 config 가 옮겨질 때까지 Polars 를 쓴다(`legacy-publish` extra)
   ([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md) D1). 대기오염정보 게시는 멈춰 있다
   (`scheduled-air-quality.yml` disabled, #759).
 

@@ -452,6 +452,8 @@ class SpecApiService:
                     else None
                 ),
                 "diff_truncated": p.diff_truncated,
+                "fetch_complete": p.fetch_complete,
+                "source_reported_total": p.source_reported_total,
             }
             for p, _ in masked
         ]

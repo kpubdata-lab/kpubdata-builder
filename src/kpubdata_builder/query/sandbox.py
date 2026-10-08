@@ -46,6 +46,8 @@ DATASET = "dataset"
 ORDERED_DATASET = "_kpubdata_dataset_ordered"
 #: The row position column of :data:`ORDERED_DATASET`; refused as a table column name.
 ROW_ORDER = "__kpubdata_row_order"
+#: The column DuckDB adds for a row's position in the file, compared case-folded.
+_FILE_ROW_NUMBER = "file_row_number"
 #: Set by the query engine in the child: the temporary directory it made for this query.
 TEMP_DIR_ENV = "KPUBDATA_QUERY_TEMP_DIR"
 
@@ -138,13 +140,24 @@ def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Ite
             if logical == "NullType()":
                 dtypes.setdefault(str(name), "Null")
         renamed = kv.get(KV_NAMES_KEY, {})
-        source = f"read_parquet({quote_literal(path)}, file_row_number = true)"
+        plain = f"read_parquet({quote_literal(path)})"
         placeholder = kv.get(NO_COLUMNS_KEY, {}).get("") == "true"
-        stored = [
-            row[0]
-            for row in connection.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
-            if row[0] != "file_row_number" and not (placeholder and row[0] == NO_COLUMNS)
+        described = [
+            str(row[0]) for row in connection.execute(f"DESCRIBE SELECT * FROM {plain}").fetchall()
         ]
+        stored = [name for name in described if not (placeholder and name == NO_COLUMNS)]
+        if any(name.casefold() == _FILE_ROW_NUMBER for name in described):
+            # DuckDB will not add its row-number column to a file that has a column of
+            # that name, in any letter case: the read fails outright (#1149). The
+            # position is counted instead. A window with no ordering runs as a streaming
+            # operator over the scan, and the scan keeps the file's order
+            # (``preserve_insertion_order``, on by default and not changeable here once
+            # the configuration is locked), so the count is the row's place in the file.
+            source = plain
+            row_order = "(row_number() OVER ()) - 1"
+        else:
+            source = f"read_parquet({quote_literal(path)}, file_row_number = true)"
+            row_order = "file_row_number"
         names = [renamed.get(physical, physical) for physical in stored]
         restored = [
             _restored(physical, dtypes.get(name))
@@ -153,7 +166,7 @@ def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Ite
         internal = ", ".join(f"{sql} AS _c{i}" for i, sql in enumerate(restored))
         connection.execute(
             f"CREATE VIEW {ORDERED_DATASET} AS SELECT {internal}"
-            f"{', ' if internal else ''}file_row_number AS {quote_identifier(ROW_ORDER)} "
+            f"{', ' if internal else ''}{row_order} AS {quote_identifier(ROW_ORDER)} "
             f"FROM {source}"
         )
         folded = [name.casefold() for name in names]

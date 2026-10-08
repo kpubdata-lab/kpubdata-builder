@@ -14,10 +14,17 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Collection, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
+
+from .schema_version import (
+    UnsupportedSchemaVersionError,
+    open_read_only,
+    says_damaged,
+    stored_version,
+)
 
 if TYPE_CHECKING:
     _BaseConn = sqlite3.Connection
@@ -43,6 +50,13 @@ BuildStatus = Literal["ok", "failed", "cancelled"]
 
 # Index filename
 _INDEX_FILENAME = "_builds.sqlite"
+
+#: What to do about an index a newer release wrote. The index is derived, so this
+#: release can make its own — but only when asked to.
+_NEWER_INDEX_REMEDY = (
+    "Run the release that wrote it, or rebuild the index for this release from the "
+    "run manifests with `kpubdata-builder rebuild-index`."
+)
 
 
 @dataclass(frozen=True)
@@ -124,7 +138,26 @@ class SqliteBuildIndex:
         self._output_root = output_root
         self._index_path = index_path if index_path is not None else output_root / _INDEX_FILENAME
         self._local = threading.local()
+        # Before the first ordinary connection, which sets the journal mode.
+        self._refuse_newer(stored_version(self._index_path))
         self._init_db()
+
+    def _refuse_newer(self, found: int | None) -> None:
+        """Refuse an index a newer release wrote (#1096).
+
+        An older index is dropped and made again; a newer one is not. Dropping it would
+        leave the release that wrote it with an empty index after this one stops, and
+        nothing would say so.
+        """
+        if found is None or found <= SCHEMA_VERSION:
+            return
+        raise UnsupportedSchemaVersionError(
+            store="build index",
+            location=str(self._index_path),
+            found=found,
+            supported=SCHEMA_VERSION,
+            remedy=_NEWER_INDEX_REMEDY,
+        )
 
     @property
     def _conn(self) -> sqlite3.Connection:
@@ -155,10 +188,10 @@ class SqliteBuildIndex:
                 """
             )
             # Check schema version
-            cur = self._conn.execute("SELECT version FROM schema_version")
-            row = cur.fetchone()
-            current_version = row[0] if row else None
+            cur = self._conn.execute("SELECT MAX(version) FROM schema_version")
+            current_version = cur.fetchone()[0]
 
+            self._refuse_newer(int(current_version) if current_version is not None else None)
             if current_version != SCHEMA_VERSION:
                 # Create builds table (existing table DROP and recreate)
                 self._conn.execute("DROP TABLE IF EXISTS builds")
@@ -525,14 +558,73 @@ class SqliteBuildIndex:
             # Ignore index failure
             pass
 
-    def close(self) -> None:
+    def replace_contents(self, entries: Collection[BuildEntry]) -> None:
+        """Make the index what ``entries`` say, in one transaction, in this file.
+
+        For a rebuild beside a running server (#1157): its connections stay on the
+        same file and see the result. Rows are written over, and a row ``entries`` does
+        not name is removed only when its run has no manifest — a build that finished
+        while the manifests were being scanned is in the index and not in the scan, and
+        is kept.
+
+        Unlike the other writes this one does not swallow a failure: a rebuild is asked
+        for, and one that failed leaves the index as it was.
+        """
+        scanned = {entry.run_id for entry in entries}
+        conn = self._conn
+        # The write lock from the start, so nothing is added between reading which
+        # rows are stale and removing them.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO builds
+                (run_id, status, started_at, finished_at, spec_digest, error, created_by,
+                 dataset_id, owner_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        entry.run_id,
+                        entry.status,
+                        entry.started_at,
+                        entry.finished_at,
+                        entry.spec_digest,
+                        entry.error,
+                        entry.created_by,
+                        entry.dataset_id,
+                        entry.owner_id,
+                    )
+                    for entry in entries
+                ],
+            )
+            indexed = [str(row[0]) for row in conn.execute("SELECT run_id FROM builds")]
+            stale = [
+                (run_id,)
+                for run_id in indexed
+                if run_id not in scanned
+                and not (self._output_root / run_id / "manifest.json").is_file()
+            ]
+            conn.executemany("DELETE FROM builds WHERE run_id = ?", stale)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+    def close(self, *, checkpoint: bool = True) -> None:
         """Close connection.
 
         Checkpoint WAL contents to main DB file before close, so file can be
         safely transferred by rename only.
+
+        Args:
+            checkpoint: False skips that. ``TRUNCATE`` waits for every reader, up to
+                the busy timeout, so a caller beside a running server that is not
+                about to move the file leaves the WAL to the server (#1157).
         """
         if hasattr(self._local, "conn"):
-            self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            if checkpoint:
+                self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self._local.conn.close()
             delattr(self._local, "conn")
 
@@ -609,16 +701,84 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
         )
 
 
+#: The columns of ``builds`` as this release creates it.
+_BUILDS_COLUMNS = frozenset(
+    {
+        "run_id",
+        "status",
+        "started_at",
+        "finished_at",
+        "spec_digest",
+        "error",
+        "created_by",
+        "dataset_id",
+        "owner_id",
+    }
+)
+
+
+def _has_this_releases_table(index_path: Path) -> bool:
+    """Whether ``builds`` is there with the columns this release writes.
+
+    Read on a read-only connection, as the version is. False when the file is not a
+    usable database, or is not there.
+
+    Raises:
+        sqlite3.Error: The table could not be looked at for another reason — the index
+            is locked, cannot be opened, the disk failed. That says nothing about the
+            table, and answering False would have the caller replace the file of a
+            server that is only busy (#1157).
+    """
+    if not index_path.is_file():
+        return False
+    try:
+        with closing(open_read_only(index_path)) as conn:
+            columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(builds)")}
+    except sqlite3.Error as exc:
+        if says_damaged(exc):
+            return False
+        raise
+    return columns == _BUILDS_COLUMNS
+
+
 def _rebuild_sqlite(output_root: Path) -> int:
     """Build SQLite index fresh to .tmp, then atomically replace (#366).
 
     Existing index survives if scan fails. Atomic rename works only for single-file
-    SQLite, so separate from cubrid path.
+    SQLite, so separate from cubrid path. An index of another version is never opened,
+    so this also replaces one a newer release wrote — the remedy its refusal names
+    (#1096). This release's own index is refilled in place instead (#1157).
     """
     if not output_root.exists():
         return 0
 
     index_path = output_root / _INDEX_FILENAME
+    if stored_version(index_path) == SCHEMA_VERSION and _has_this_releases_table(index_path):
+        # This release's index, which a running server may have open (#1157). Renaming
+        # a new file into its place leaves the server's connections on the file that
+        # was there: each thread that had one keeps writing builds to a file nobody
+        # else reads, and the lists differ by which thread answers. So it is filled
+        # again where it is. An index of another version is not open in a server of
+        # this release — that server refuses a newer one and remakes an older one when
+        # it starts — and is replaced by the file below.
+        #
+        # A failure here is raised, a lock that was not released in time included:
+        # replacing the file because the server was busy writing to it is the split
+        # this avoids.
+        entries = list(_iter_manifest_entries(output_root))
+        index = SqliteBuildIndex(output_root)
+        try:
+            index.replace_contents(entries)
+        finally:
+            # No checkpoint: ``TRUNCATE`` waits out the whole busy timeout for a
+            # server connection that is reading, and nothing here moves the file.
+            index.close(checkpoint=False)
+        return len(entries)
+
+    # Not this release's index, or its version says so and its table does not — missing,
+    # or not the columns this release writes. That last one is the file a rebuild is
+    # run to recover, and it is replaced as the others are. A server that has it open
+    # stays on the old file until it is restarted.
     tmp_path = output_root / f"{_INDEX_FILENAME}.tmp"
     backup_path = output_root / f"{_INDEX_FILENAME}.bak"
 
@@ -643,20 +803,41 @@ def _rebuild_sqlite(output_root: Path) -> int:
     finally:
         index.close()
 
-    # Atomic replace: backup existing index to .bak, rename .tmp to original
+    # Atomic replace: backup existing index to .bak, rename .tmp to original.
+    #
+    # The old index's ``-wal`` and ``-shm`` go with it. A process that ended without
+    # closing its connections — killed, out of memory, or a thread whose connection
+    # nobody closed — leaves them behind, and SQLite applies a ``-wal`` it finds next
+    # to a database to that database: the new index would be read as the old one,
+    # or as a mix of the two, the next time it was opened (#1096).
+    sidecars = ("-wal", "-shm")
+    for suffix in sidecars:
+        # What the scan's own connection left; ``close()`` checkpointed it.
+        Path(f"{tmp_path}{suffix}").unlink(missing_ok=True)
+        Path(f"{backup_path}{suffix}").unlink(missing_ok=True)
     backup_path.unlink(missing_ok=True)
+    moved: list[str] = []
     if index_path.exists():
         index_path.rename(backup_path)
+    for suffix in sidecars:
+        sidecar = Path(f"{index_path}{suffix}")
+        if sidecar.exists():
+            sidecar.rename(Path(f"{backup_path}{suffix}"))
+            moved.append(suffix)
 
     try:
         tmp_path.rename(index_path)
     except OSError:
-        # Restore from backup if replace fails
+        # Restore from backup if replace fails, with the files that belong to it.
         if backup_path.exists():
             backup_path.rename(index_path)
+        for suffix in moved:
+            Path(f"{backup_path}{suffix}").rename(Path(f"{index_path}{suffix}"))
         raise
     else:
         backup_path.unlink(missing_ok=True)
+        for suffix in sidecars:
+            Path(f"{backup_path}{suffix}").unlink(missing_ok=True)
 
     return count
 
@@ -666,7 +847,8 @@ def _rebuild_cubrid(output_root: Path) -> int:
     from .backend import get_engine
     from .build_index_cubrid import CubridBuildIndex
 
-    index = CubridBuildIndex(get_engine())
+    # The one place a newer index is replaced: the operator asked for it (#1096).
+    index = CubridBuildIndex(get_engine(), replace_newer=True)
     try:
         return index.rebuild(_iter_manifest_entries(output_root))
     finally:
@@ -677,7 +859,10 @@ def rebuild_index(output_root: Path) -> int:
     """Rebuild index from filesystem scan (backend-aware, ADR 0016).
 
     Scan manifest.json canonical, refill derived index. Per backend:
-    - sqlite: build to .tmp, atomically rename-replace (#366).
+    - sqlite, an index of this release's version: refilled where it is, in one
+      transaction, so a running server's connections see it (#1157). One that cannot
+      be written that way is replaced as below.
+    - sqlite, any other index or none: build to .tmp, atomically rename-replace (#366).
     - cubrid: truncate builds table, reinsert in single transaction.
 
     Args:
@@ -690,6 +875,41 @@ def rebuild_index(output_root: Path) -> int:
 
     if storage_backend() == "cubrid":
         return _rebuild_cubrid(output_root)
+    return _rebuild_sqlite(output_root)
+
+
+def bring_index_up_to_date(output_root: Path) -> int | None:
+    """Rebuild the index from the manifests when the one stored is not this release's.
+
+    ``serve`` calls this before it builds the service (#1096). Opening an older index
+    drops its table and makes it again, empty, and with no index at all an empty one is
+    made; the server then answered as healthy with every earlier run missing from its
+    lists until someone ran ``rebuild-index``. The manifests are canonical, so the
+    index is filled from them before the first request.
+
+    An index a newer release wrote is not touched here: opening it refuses.
+
+    Returns:
+        The number of runs indexed, or None when the stored index was already this
+        release's and nothing was done.
+    """
+    from .backend import storage_backend
+
+    if storage_backend() == "cubrid":
+        from .backend import get_engine
+        from .build_index_cubrid import stored_index_version
+
+        found = stored_index_version(get_engine())
+        if found is not None and found >= SCHEMA_VERSION:
+            return None
+        return _rebuild_cubrid(output_root)
+    index_path = output_root / _INDEX_FILENAME
+    found = stored_version(index_path)
+    if found is not None and found >= SCHEMA_VERSION:
+        return None
+    if found is None and index_path.exists():
+        # A file with no version in it: not ours to replace without being asked.
+        return None
     return _rebuild_sqlite(output_root)
 
 
@@ -714,6 +934,7 @@ __all__ = [
     "BuildIndex",
     "SCHEMA_VERSION",
     "SqliteBuildIndex",
+    "bring_index_up_to_date",
     "make_build_index",
     "rebuild_index",
 ]

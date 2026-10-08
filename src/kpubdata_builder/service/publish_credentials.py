@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from kpubdata_builder.credentials.store import CredentialRepository
+from kpubdata_builder.service.operations import find_operation
 
 __all__ = [
     "PUBLISH_CREDENTIAL_HEADER",
@@ -109,22 +110,14 @@ def parse_publish_credential_headers(values: Iterable[str]) -> dict[str, str]:
 
 def route_reads_publish_credentials(method: str, path: str) -> bool:
     """Whether the route uses the request's publish credentials — the operations the
-    contract declares ``X-Publish-Credential`` on (a test holds the two together).
+    contract declares ``X-Publish-Credential`` on, read from the table generated from it
+    (#1109).
 
     A malformed header is an error only there (#1105). Elsewhere the request carries no
     publish credential, exactly as if the header were absent.
     """
-    parts = path.strip("/").split("/")
-    if len(parts) < 3 or parts[0] != "builds" or parts[2] != "publish":
-        return False
-    operation = "/".join(parts[3:])
-    return (method, operation) in (
-        ("POST", ""),
-        ("POST", "reconcile"),
-        ("GET", "readiness"),
-        ("GET", "receipt"),
-        ("DELETE", "receipt"),
-    )
+    operation = find_operation(method, path)
+    return operation is not None and operation.publish_credential
 
 
 @contextmanager

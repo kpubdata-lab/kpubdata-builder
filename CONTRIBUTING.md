@@ -217,7 +217,7 @@ uv run pytest
 - Bronze는 raw fetch/snapshot/provenance에 집중하고, Silver는 **tabularize·validation·statistics·preview**에 집중하며, Gold는 split-ready/export-ready package 조립에 집중해야 합니다.
 - stage 간 승격 규칙은 Builder가 소유하므로, Studio나 exporter 관점에서 임의 의미를 다시 정의하면 안 됩니다.
 - run workspace는 `build/{run_id}/bronze/`, `silver/`, `gold/` 규칙을 기준으로 생각해야 합니다.
-- tabular 엔진은 Polars 에서 DuckDB 로 옮겨 가는 중입니다([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). 새 tabular 코드는 `tabular/duckdb_runtime.py`·`sql.py`·`dtypes.py` 위에 쓰고, 기존 Polars 코드는 그것을 대체하는 단계 전까지 최소한만 고칩니다. 각 단계는 `tests/parity/` 기준선과 같아야 합니다.
+- tabular 엔진은 DuckDB 입니다([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md), #864–#877). tabular 코드는 `tabular/duckdb_runtime.py`·`sql.py`·`dtypes.py` 위에 쓰고, `src/` 에서 Polars 를 import 하지 않습니다(`tests/unit/test_without_polars.py` 가 막습니다). 이전 Polars 엔진은 `tests/support/` 에 테스트용 비교 기준으로만 남아 있고, 동작이 바뀌는 변경은 `tests/parity/` 기준선과 같거나 그 차이를 PR 에서 설명해야 합니다.
 
 ## 6. 테스트 가이드
 

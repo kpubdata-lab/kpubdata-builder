@@ -36,7 +36,8 @@ from sqlalchemy import (
     select,
 )
 
-from .build_index import SCHEMA_VERSION, BuildEntry, BuildStatus
+from .build_index import _NEWER_INDEX_REMEDY, SCHEMA_VERSION, BuildEntry, BuildStatus
+from .schema_version import UnsupportedSchemaVersionError
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -47,11 +48,30 @@ _SCHEMA_VERSION_TABLE = "build_schema_version"
 _IN_CHUNK = 500
 
 
+def stored_index_version(engine: Engine) -> int | None:
+    """The schema version of the index in CUBRID, or None when there is none yet."""
+    version_table = Table(
+        _SCHEMA_VERSION_TABLE, MetaData(), Column("version", Integer, primary_key=True)
+    )
+    with engine.connect() as conn:
+        if _SCHEMA_VERSION_TABLE not in set(inspect(conn).get_table_names()):
+            return None
+        row = conn.execute(select(func.max(version_table.c.version))).first()
+    return int(row[0]) if row is not None and row[0] is not None else None
+
+
 class CubridBuildIndex:
     """CUBRID-based build index (ADR 0016). Implements ``BuildIndex`` Protocol."""
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, *, replace_newer: bool = False) -> None:
+        """
+        Args:
+            engine: The shared SQLAlchemy engine.
+            replace_newer: Recreate an index a newer release wrote instead of refusing
+                it. Only ``rebuild_index`` passes this (#1096).
+        """
         self._engine = engine
+        self._replace_newer = replace_newer
         self._metadata = MetaData()
         # Derived index schema. Canonical is manifest.json — if schema version changes,
         # DROP and recreate (data can be restored via rebuild_index).
@@ -79,16 +99,29 @@ class CubridBuildIndex:
         """Check schema version, recreate builds table if mismatch.
 
         Index is derivative, so DROP + recreate is safe on schema change
-        (rebuild from canonical manifest.json via rebuild_index possible).
+        (rebuild from canonical manifest.json via rebuild_index possible). An index a
+        newer release wrote is the exception: dropping it would empty that release's
+        index without a word, so it is refused unless a rebuild asked for it (#1096).
+
+        Raises:
+            UnsupportedSchemaVersionError: The index is newer than this release.
         """
         with self._engine.begin() as conn:
             existing = set(inspect(conn).get_table_names())
             version: int | None = None
             if _SCHEMA_VERSION_TABLE in existing:
-                row = conn.execute(select(self._schema_version.c.version)).first()
-                version = int(row[0]) if row is not None else None
+                row = conn.execute(select(func.max(self._schema_version.c.version))).first()
+                version = int(row[0]) if row is not None and row[0] is not None else None
             if version == SCHEMA_VERSION:
                 return
+            if version is not None and version > SCHEMA_VERSION and not self._replace_newer:
+                raise UnsupportedSchemaVersionError(
+                    store="build index",
+                    location=f"the CUBRID table {self._builds.name}",
+                    found=version,
+                    supported=SCHEMA_VERSION,
+                    remedy=_NEWER_INDEX_REMEDY,
+                )
             # Version mismatch (or first creation): recreate derived table.
             self._builds.drop(conn, checkfirst=True)
             self._schema_version.drop(conn, checkfirst=True)

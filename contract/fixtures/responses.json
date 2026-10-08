@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.106.0",
+  "contract_version": "1.111.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -710,12 +710,12 @@
                 "pm10_value": 28
               }
             ],
-            "total_rows": 25,
+            "total_rows": 2,
             "statistics": {
-              "row_count": 25,
+              "row_count": 2,
               "null_counts": {
                 "station_name": 0,
-                "pm10_value": 1
+                "pm10_value": 0
               },
               "duplicate_rate": 0.0
             },
@@ -726,7 +726,7 @@
                 "rule": "min_rows",
                 "column": null,
                 "status": "pass",
-                "actual": 25,
+                "actual": 2,
                 "threshold": 1,
                 "affected_rows": null,
                 "evaluated_rows": null,
@@ -750,7 +750,9 @@
               "changed_cells": 0,
               "changed_rows": 0
             },
-            "diff_truncated": false
+            "diff_truncated": false,
+            "fetch_complete": false,
+            "source_reported_total": 25
           }
         ]
       },
@@ -791,12 +793,12 @@
                 "pm10_value": 28
               }
             ],
-            "total_rows": 25,
+            "total_rows": 2,
             "statistics": {
-              "row_count": 25,
+              "row_count": 2,
               "null_counts": {
                 "station_name": 0,
-                "pm10_value": 1
+                "pm10_value": 0
               },
               "duplicate_rate": 0.0,
               "future_optional_field": "added by a later minor contract version"
@@ -808,7 +810,7 @@
                 "rule": "min_rows",
                 "column": null,
                 "status": "pass",
-                "actual": 25,
+                "actual": 2,
                 "threshold": 1,
                 "affected_rows": null,
                 "evaluated_rows": null,
@@ -835,6 +837,8 @@
               "future_optional_field": "added by a later minor contract version"
             },
             "diff_truncated": false,
+            "fetch_complete": false,
+            "source_reported_total": 25,
             "future_optional_field": "added by a later minor contract version"
           }
         ],
@@ -884,12 +888,12 @@
                 "pm10_value": 28
               }
             ],
-            "total_rows": 25,
+            "total_rows": 2,
             "statistics": {
-              "row_count": 25,
+              "row_count": 2,
               "null_counts": {
                 "station_name": 0,
-                "pm10_value": 1
+                "pm10_value": 0
               },
               "duplicate_rate": 0.0
             },
@@ -900,7 +904,7 @@
                 "rule": "min_rows",
                 "column": null,
                 "status": "pass",
-                "actual": 25,
+                "actual": 2,
                 "threshold": 1,
                 "affected_rows": null,
                 "evaluated_rows": null,
@@ -924,7 +928,9 @@
               "changed_cells": 0,
               "changed_rows": 0
             },
-            "diff_truncated": false
+            "diff_truncated": false,
+            "fetch_complete": false,
+            "source_reported_total": 25
           }
         ]
       },
@@ -5491,6 +5497,33 @@
       "broken_path": "$.error"
     },
     {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
+      "status": 429,
+      "example": "BuildOwnerLimit",
+      "current": {
+        "error": "you already have 2 builds queued or running; submit this one when one of them has finished",
+        "code": "build_owner_limit",
+        "limit": 2
+      },
+      "with_additive_fields": {
+        "error": "you already have 2 builds queued or running; submit this one when one of them has finished",
+        "code": "build_owner_limit",
+        "limit": 2,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "build_owner_limit",
+        "limit": 2
+      },
+      "broken_path": "$.error"
+    },
+    {
       "operation_id": "listBuilds",
       "method": "GET",
       "path": "/builds",
@@ -6012,6 +6045,30 @@
       "operation_id": "queryBuiltDataset",
       "method": "POST",
       "path": "/query",
+      "status": 400,
+      "example": "QueryResourceLimit",
+      "current": {
+        "error": "the table needs more memory or temporary disk than this deployment allows (KPUBDATA_DUCKDB_MEMORY_LIMIT, KPUBDATA_DUCKDB_MAX_TEMP_SIZE)",
+        "code": "query_resource_limit"
+      },
+      "with_additive_fields": {
+        "error": "the table needs more memory or temporary disk than this deployment allows (KPUBDATA_DUCKDB_MEMORY_LIMIT, KPUBDATA_DUCKDB_MAX_TEMP_SIZE)",
+        "code": "query_resource_limit",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "query_resource_limit"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
       "status": 403,
       "example": "Forbidden",
       "current": {
@@ -6180,6 +6237,28 @@
         "error": 12345,
         "code": "auth_throttled",
         "retry_after_seconds": 42
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "response": "AuthUnavailable",
+      "status": 503,
+      "example": "AuthUnavailable",
+      "current": {
+        "error": "auth service unavailable (jwks)",
+        "code": "auth_unavailable"
+      },
+      "with_additive_fields": {
+        "error": "auth service unavailable (jwks)",
+        "code": "auth_unavailable",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "auth_unavailable"
       },
       "broken_path": "$.error"
     },

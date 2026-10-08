@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import cast
 
 from ..spec import JsonValue
+from ..tabular.duckdb_runtime import RESOURCE_LIMIT_MESSAGE
 from .models import QueryResult
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,15 @@ class QueryExecutionError(RuntimeError):
 
 class QueryTimeoutError(QueryExecutionError):
     pass
+
+
+class QueryResourceLimitError(QueryExecutionError):
+    """The query needed more memory or spill disk than the deployment allows (#961).
+
+    Its message is always ``RESOURCE_LIMIT_MESSAGE`` — the same words a build or a
+    preview over its limits gives — never DuckDB's, which can name sizes and the spill
+    directory.
+    """
 
 
 MAX_QUERY_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -71,6 +81,27 @@ def _bounded_worker(
         except (ImportError, ValueError, OSError):
             pass
     worker(connection, table_path, canonical_sql, limit, parent_started_ns)
+
+
+#: The ``reason`` a worker sends with ``ok: False`` when the query ran out of memory or
+#: spill disk. Only this fixed word crosses the process boundary, never the exception.
+RESOURCE_LIMIT_REASON = "resource_limit"
+
+
+def failure_payload(error: BaseException) -> dict[str, object]:
+    """What a worker sends after ``error``: ``ok: False``, plus why when it was a limit.
+
+    DuckDB's out-of-memory or spill-quota error, Builder's ``ResourceLimitError`` and a
+    ``MemoryError`` from the child's address-space cap (#701) are the deployment's
+    limits; anything else is a failure the client is not told more about.
+    """
+    import duckdb
+
+    from ..tabular.duckdb_runtime import ResourceLimitError
+
+    if isinstance(error, (duckdb.OutOfMemoryException, ResourceLimitError, MemoryError)):
+        return {"ok": False, "reason": RESOURCE_LIMIT_REASON}
+    return {"ok": False}
 
 
 def _elapsed_ms(started_ns: int, ended_ns: int | None = None) -> int:
@@ -119,11 +150,11 @@ def _query_worker(
             connection.send({"ok": False})
         else:
             connection.send(payload)
-    except BaseException:
+    except BaseException as exc:
         # Engine messages can contain absolute parquet paths. Never cross the
         # process boundary with raw exceptions or tracebacks.
         with suppress(BrokenPipeError, EOFError, OSError):
-            connection.send({"ok": False})
+            connection.send(failure_payload(exc))
     finally:
         connection.close()
 
@@ -182,6 +213,8 @@ class QueryEngine:
             if process.is_alive():
                 self._stop_process(process)
             if not isinstance(payload, dict) or payload.get("ok") is not True:
+                if isinstance(payload, dict) and payload.get("reason") == RESOURCE_LIMIT_REASON:
+                    raise QueryResourceLimitError(RESOURCE_LIMIT_MESSAGE)
                 raise QueryExecutionError("query execution failed")
             columns = payload.get("columns")
             meta = payload.get("column_meta")
@@ -254,5 +287,6 @@ __all__ = [
     "MAX_QUERY_RESPONSE_BYTES",
     "QueryEngine",
     "QueryExecutionError",
+    "QueryResourceLimitError",
     "QueryTimeoutError",
 ]

@@ -51,12 +51,13 @@ import sqlite3
 import threading
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from ..store.schema_version import open_read_only, stored_version
 from .errors import (
     ImmutableSnapshot,
     SnapshotConflict,
@@ -301,6 +302,28 @@ def _utc_instant(value: str, *, field: str) -> str:
     return parsed.astimezone(timezone.utc).isoformat()
 
 
+def _migration_path(found: int) -> list[tuple[str, ...]]:
+    """The steps from ``found`` to ``SCHEMA_VERSION``, in order.
+
+    Raises:
+        SnapshotStateError: There is no path — ``found`` is newer than this code
+            knows, or older with a gap in the chain.
+    """
+    path: list[tuple[str, ...]] = []
+    version = found
+    while version != SCHEMA_VERSION:
+        steps = _MIGRATIONS.get(version)
+        if steps is None:
+            raise SnapshotStateError(
+                f"catalog schema version is {found} and this code expects "
+                f"{SCHEMA_VERSION}, with no migration from {version}. Being "
+                "canonical, this catalog is never recreated automatically."
+            )
+        path.append(steps)
+        version += 1
+    return path
+
+
 def _now() -> str:
     """Current time as a UTC ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
@@ -325,7 +348,52 @@ class TableCatalog:
         self._path = catalog_path if catalog_path is not None else root / CATALOG_FILENAME
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        # Before the first ordinary connection, which sets the journal mode: a catalog
+        # this release cannot use is refused as it was found (#1096). One it is about to
+        # migrate is copied inside the migration's own transaction (#1163).
+        found = stored_version(self._path)
+        if found is not None and found != SCHEMA_VERSION:
+            _migration_path(found)
         self._init_db()
+
+    def _copy_before_migration(self, found: int) -> Path:
+        """Copy the catalog as it is before its schema is changed (#1096, #1163).
+
+        A migration runs in one transaction, so a failure leaves the old version. This
+        is for the failure that comes after it: the release that wrote the old version
+        cannot read the new one, and the catalog cannot be rebuilt from anything.
+
+        Called inside the migration's ``BEGIN IMMEDIATE``, before anything is changed:
+        the copy is read through a separate read-only connection, which SQLite lets
+        read while the write lock is held, and no other writer can commit between the
+        copy and the migration. Another process starting at the same moment waits for
+        the lock and then finds the catalog migrated.
+
+        Every migration replaces the copy (#1163). Between two attempts only the old
+        release can write the catalog — a failed migration is rolled back — so the
+        latest copy holds everything an earlier one did and what was written since.
+        Keeping the first one lost those writes: upgrade, roll back and run the old
+        release, upgrade again, and the copy was still from before the rollback. The
+        copy is written under a name of its own and moved into place, so a crash or a
+        second process never leaves a half-written copy under the copy's name.
+
+        It is the catalog only — the snapshot files it names are not copied, and
+        putting it back over a warehouse that has moved on loses what was written since.
+        """
+        copy = self._path.with_name(f"{self._path.name}.v{found}.before-migration")
+        partial = copy.with_name(f"{copy.name}.{uuid.uuid4().hex}.partial")
+        try:
+            with (
+                closing(open_read_only(self._path)) as source,
+                closing(sqlite3.connect(str(partial))) as target,
+            ):
+                source.backup(target)
+                # Read later, perhaps read-only: a WAL database needs its -shm for that.
+                target.execute("PRAGMA journal_mode=DELETE")
+            partial.replace(copy)
+        finally:
+            partial.unlink(missing_ok=True)
+        return copy
 
     @property
     def root(self) -> Path:
@@ -385,6 +453,9 @@ class TableCatalog:
             )
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is not None and row[0] != SCHEMA_VERSION:
+                # A version with no path refuses before anything is copied or changed.
+                _migration_path(int(row[0]))
+                self._copy_before_migration(int(row[0]))
                 self._migrate(conn, int(row[0]))
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS tables ("
@@ -449,18 +520,9 @@ class TableCatalog:
             SnapshotStateError: There is no path from ``found`` to the current
                 version.
         """
-        version = found
-        while version != SCHEMA_VERSION:
-            steps = _MIGRATIONS.get(version)
-            if steps is None:
-                raise SnapshotStateError(
-                    f"catalog schema version is {found} and this code expects "
-                    f"{SCHEMA_VERSION}, with no migration from {version}. Being "
-                    "canonical, this catalog is never recreated automatically."
-                )
+        for steps in _migration_path(found):
             for statement in steps:
                 conn.execute(statement)
-            version += 1
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
 
@@ -485,6 +547,15 @@ class TableCatalog:
                 (new_id, workspace_id, logical_name),
             )
         return TableRow(new_id, workspace_id, logical_name, None, 0)
+
+    def find_table(self, workspace_id: str, logical_name: str) -> TableRow | None:
+        """The table of that name, or None when there is none yet (#1186)."""
+        row = self._conn.execute(
+            "SELECT id, workspace_id, logical_name, current_snapshot_id, revision"
+            " FROM tables WHERE workspace_id = ? AND logical_name = ?",
+            (workspace_id, logical_name),
+        ).fetchone()
+        return TableRow(*row) if row is not None else None
 
     def table_revision(self, workspace_id: str, logical_name: str) -> int:
         """The table's current revision, or 0 when it does not exist yet (#787).
