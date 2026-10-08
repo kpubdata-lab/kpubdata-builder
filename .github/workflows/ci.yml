@@ -15,9 +15,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Only a pull request's run is superseded. A run on main is that commit's record, and
-  # cancelling it when the next merge lands leaves a commit nobody tested.
+  # Only a pull request's run is superseded. A run on main is that commit's record, so
+  # each push gets a group of its own: in one shared group a newer run cancels the
+  # pending one whatever cancel-in-progress says, and a burst of merges left the
+  # middle commits untested.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -398,6 +400,10 @@ jobs:
         run: |
           results="$(jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<<"${NEEDS}")"
           releases="$(jq -r '."kpubdata-releases".outputs.versions // ""' <<<"${NEEDS}")"
+          if [ -z "${results}" ]; then
+            echo "::error::CI gate failed — it was given no upstream results"
+            exit 1
+          fi
           echo "upstream results: ${results//$'\n'/ }"
           failed=""
           for entry in ${results}; do

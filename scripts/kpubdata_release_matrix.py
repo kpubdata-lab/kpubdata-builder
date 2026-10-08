@@ -85,13 +85,17 @@ def supported_releases(
     return [str(v) for v in found]
 
 
-def locked_version(lock: Path) -> str:
-    """The ``kpubdata`` version ``uv.lock`` resolves."""
+def locked_versions(lock: Path) -> set[str]:
+    """Every ``kpubdata`` version ``uv.lock`` resolves (more than one when it forks)."""
     data = tomllib.loads(lock.read_text(encoding="utf-8"))
-    for package in data.get("package", []):
-        if package.get("name") == "kpubdata":
-            return str(Version(package["version"]))
-    raise SystemExit(f"error: no kpubdata package in {lock}")
+    found = {
+        str(Version(package["version"]))
+        for package in data.get("package", [])
+        if package.get("name") == "kpubdata"
+    }
+    if not found:
+        raise SystemExit(f"error: no kpubdata package in {lock}")
+    return found
 
 
 def _fetch() -> dict[str, list[dict[str, Any]]]:
@@ -116,8 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     releases = json.loads(args.releases.read_text(encoding="utf-8")) if args.releases else _fetch()
     versions = supported_releases(releases, specifier)
     if args.exclude_locked:
-        locked = locked_version(args.exclude_locked)
-        versions = [v for v in versions if v != locked]
+        locked = locked_versions(args.exclude_locked)
+        versions = [v for v in versions if v not in locked]
     print(json.dumps(versions))
     return 0
 

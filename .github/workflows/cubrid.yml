@@ -38,8 +38,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: cubrid-${{ github.workflow }}-${{ github.ref }}
-  # Only a pull request's run is superseded; a run on main is that commit's record.
+  # Only a pull request's run is superseded. A run on main is that commit's record, so
+  # each push gets a group of its own: in one shared group a newer run cancels the
+  # pending one whatever cancel-in-progress says, and a burst of merges left the
+  # middle commits untested.
+  group: cubrid-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

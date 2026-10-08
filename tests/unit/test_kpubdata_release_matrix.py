@@ -132,12 +132,24 @@ def test_a_lock_without_kpubdata_fails(tmp_path: Path) -> None:
     lock = _write(tmp_path / "uv.lock", '[[package]]\nname = "other"\nversion = "1.0"\n')
 
     with pytest.raises(SystemExit, match="no kpubdata package"):
-        matrix.locked_version(lock)
+        matrix.locked_versions(lock)
+
+
+def test_a_forked_lock_leaves_out_every_locked_version(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock = _write(tmp_path / "uv.lock", _LOCK.format("0.7.1") + _LOCK.format("0.7.2"))
+    releases = {"0.7.0": _FILE, "0.7.1": _FILE, "0.7.2": _FILE}
+
+    assert _run(tmp_path, releases, "--exclude-locked", str(lock)) == 0
+    assert json.loads(capsys.readouterr().out) == ["0.7.0"]
 
 
 def test_the_repository_lock_resolves_a_version_inside_the_declared_range() -> None:
     # The test matrix is what covers the locked version once it is left out here, so it
     # must be one the range admits.
-    locked = matrix.locked_version(_ROOT / "uv.lock")
+    locked = matrix.locked_versions(_ROOT / "uv.lock")
+    declared = matrix.declared_range(_ROOT / "pyproject.toml")
 
-    assert locked in matrix.declared_range(_ROOT / "pyproject.toml")
+    assert locked
+    assert all(version in declared for version in locked)

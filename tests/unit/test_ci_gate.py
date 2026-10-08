@@ -52,6 +52,12 @@ def _run(needs: dict[str, Any]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _error(completed: subprocess.CompletedProcess[str]) -> str:
+    errors = [line for line in completed.stdout.splitlines() if line.startswith("::error::")]
+    assert len(errors) == 1, completed.stdout
+    return errors[0]
+
+
 def test_every_success_passes() -> None:
     assert _run(_needs()).returncode == 0
 
@@ -62,7 +68,7 @@ def test_anything_but_success_fails(job: str, result: str) -> None:
     completed = _run(_needs(**{job: result}))
 
     assert completed.returncode == 1
-    assert f"{job}={result}" in completed.stdout
+    assert f"{job}={result}" in _error(completed)
 
 
 def test_min_deps_skipped_for_an_empty_release_list_passes() -> None:
@@ -89,7 +95,7 @@ def test_min_deps_skipped_because_the_list_failed_fails() -> None:
     completed = _run(needs)
 
     assert completed.returncode == 1
-    assert "min-deps=skipped" in completed.stdout
+    assert "min-deps=skipped" in _error(completed)
 
 
 def test_another_job_skipped_on_an_empty_release_list_fails() -> None:
@@ -99,7 +105,20 @@ def test_another_job_skipped_on_an_empty_release_list_fails() -> None:
     completed = _run(needs)
 
     assert completed.returncode == 1
-    assert "lint=skipped" in completed.stdout
+    error = _error(completed)
+    assert "lint=skipped" in error
+    assert "min-deps" not in error
+
+
+@pytest.mark.parametrize("needs", ["", "{}", "null"], ids=["empty", "no-jobs", "null"])
+def test_no_upstream_results_fails(needs: str) -> None:
+    env = {**os.environ, "NEEDS": needs}
+    completed = subprocess.run(
+        ["bash", "-e", "-c", _gate_script()], env=env, capture_output=True, text=True, check=False
+    )
+
+    assert completed.returncode != 0
+    assert "every upstream job succeeded" not in completed.stdout
 
 
 def test_min_deps_is_skipped_only_for_an_empty_list() -> None:
