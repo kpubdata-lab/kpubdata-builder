@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from ..errors import ValidationError
-from ..exporters import EXPORTER_REGISTRY
+from ..exporters import registered_exporter_kinds
 from ..tabular.cast_names import FORMATTED_CASTS, NAMED_TARGETS, TEXT_CASTS
 from .models import (
     DERIVED_KINDS,
@@ -116,8 +116,10 @@ def validate_spec(spec: BuildSpec) -> None:
                     f"exports[{i}].output_path must be a non-empty string",
                 )
             )
-        if export.kind not in EXPORTER_REGISTRY:
-            supported = sorted(EXPORTER_REGISTRY)
+        # Every kind ``get_exporter`` can serve, not the legacy instance registry alone:
+        # an exporter registered by factory is one too (#1192).
+        supported = sorted(registered_exporter_kinds())
+        if export.kind not in supported:
             msg = f"exports[{i}].kind {export.kind!r} is not supported"
             problems.append(
                 _p(
