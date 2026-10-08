@@ -909,7 +909,7 @@ def _run_serve(
         raise SystemExit(f"max_previews must be >= 1, got {max_previews}")
     # How long a synchronous build waits for a slot before 429 build_queue_full (#1040).
     # KPUBDATA_BUILDER_BUILD_WAIT_SECONDS; 0 turns a build away at once when none is free.
-    env_wait = os.environ.get("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS")
+    env_wait = os.environ.get("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "").strip()
     try:
         build_wait_seconds = float(env_wait) if env_wait else DEFAULT_BUILD_WAIT_SECONDS
     except ValueError:
@@ -1010,7 +1010,9 @@ def _count_from_env(name: str) -> int | None:
         SystemExit: It is not an integer. ``int()`` on its own ended the start with a
             traceback that did not name the variable (#1108).
     """
-    raw = os.environ.get(name)
+    # Stripped, as the start-up check reads it: a value of nothing but spaces is not
+    # set, here as there.
+    raw = os.environ.get(name, "").strip()
     if not raw:
         return None
     try:
