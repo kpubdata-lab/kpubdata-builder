@@ -12,6 +12,7 @@ from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -23,7 +24,7 @@ from kpubdata_builder.service import BuilderService
 from kpubdata_builder.stages.bronze.build import SourceClient
 from kpubdata_builder.store import SCHEMA_VERSION as INDEX_VERSION
 from kpubdata_builder.store import SqliteBuildIndex, rebuild_index
-from kpubdata_builder.store.build_index import BuildEntry, _iter_manifest_entries
+from kpubdata_builder.store.build_index import BuildEntry, BuildStatus, _iter_manifest_entries
 from kpubdata_builder.store.schema_version import UnsupportedSchemaVersionError
 
 
@@ -428,7 +429,8 @@ def test_failed_rebuild_in_place_leaves_the_index_as_it_was(tmp_path: Path) -> N
     before = _dump(path)
     index = SqliteBuildIndex(tmp_path)
     entries = _manifest_entries(tmp_path)
-    broken = [*entries, replace(entries[0], run_id="run-bad", status="not-a-status")]  # type: ignore[arg-type]
+    bad_status = cast(BuildStatus, "not-a-status")
+    broken = [*entries, replace(entries[0], run_id="run-bad", status=bad_status)]
 
     with pytest.raises(sqlite3.IntegrityError):
         index.replace_contents(broken)
@@ -446,8 +448,10 @@ def _manifest_entries(root: Path) -> list[BuildEntry]:
     [
         "DROP TABLE builds",
         "ALTER TABLE builds RENAME COLUMN status TO state",
+        "ALTER TABLE builds DROP COLUMN owner_id",
+        "ALTER TABLE builds ADD COLUMN extra TEXT",
     ],
-    ids=["table missing", "column renamed"],
+    ids=["table missing", "column renamed", "column dropped", "column added"],
 )
 def test_rebuild_recovers_an_index_of_this_version_that_cannot_be_written(
     tmp_path: Path, damage: str
@@ -487,3 +491,50 @@ def test_rebuild_in_place_does_not_wait_for_a_reader(tmp_path: Path) -> None:
         assert rebuild_index(tmp_path) == 1
 
         assert time.monotonic() - started < 10
+
+
+def test_rebuild_does_not_replace_the_file_because_the_index_was_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock that is not released in time is an error, and the index is left alone.
+
+    Falling back to a new file here would be the split of #1157 again, and silent: the
+    server writing to the index is exactly the server that would be left on the old
+    file.
+    """
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    inode = path.stat().st_ino
+
+    def impatient(self: SqliteBuildIndex) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(path), timeout=0.2)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    with closing(sqlite3.connect(path, isolation_level=None)) as server:
+        server.execute("BEGIN IMMEDIATE")
+        server.execute("INSERT INTO builds (run_id, status) VALUES ('run-server', 'ok')")
+        monkeypatch.setattr(SqliteBuildIndex, "_connect", impatient)
+
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            rebuild_index(tmp_path)
+
+        server.execute("COMMIT")
+        monkeypatch.undo()
+        # The same file, with what the server wrote and nothing of the rebuild.
+        assert path.stat().st_ino == inode
+        assert [row[0] for row in server.execute("SELECT run_id FROM builds ORDER BY run_id")] == [
+            "run-1",
+            "run-server",
+        ]
+    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+
+
+def test_a_new_index_has_the_table_the_rebuild_looks_for(tmp_path: Path) -> None:
+    """The column list is written twice; this is what keeps the two the same."""
+    from kpubdata_builder.store.build_index import _has_this_releases_table
+
+    path = _index_with_one_run(tmp_path)
+
+    assert _has_this_releases_table(path)
+    assert not _has_this_releases_table(tmp_path / "absent.sqlite")

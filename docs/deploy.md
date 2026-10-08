@@ -437,7 +437,7 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 | 작업 | OIDC 전용 배포에서 | 권한 |
 |---|---|---|
 | 가입 승인·거절, 관리 화면(`/admin/*`) | `KPUBDATA_BUILDER_ADMIN_SUBJECTS` 에 있는 사용자가 로그인해서 | 그 사용자만 관리자 |
-| 인덱스 재구축, 취소된 run 정리 | 컨테이너 안의 CLI: `docker exec kpubdata-builder kpubdata-builder rebuild-index` / `prune-cancelled` | 호스트에서 컨테이너를 다룰 수 있는 사람 — HTTP 로 열리지 않는다 |
+| 인덱스 재구축, 취소된 run 정리 | 컨테이너 안의 CLI: `docker exec kpubdata-builder kpubdata-builder rebuild-index` / `prune-cancelled`. 재구축은 서버가 떠 있어도 된다 — 인덱스를 그 자리에서 다시 채운다(#1157). 다만 인덱스의 표가 손상되어 파일째 새로 만든 경우에는 서버를 재시작해야 새 파일을 본다 | 호스트에서 컨테이너를 다룰 수 있는 사람 — HTTP 로 열리지 않는다 |
 | 스케줄 워크플로(데이터 갱신) | 서비스 키가 필요하다 — 이 소비자가 있으면 키를 함께 둔다 | 서비스 키는 관리자(`is_admin`)다. 다른 사용자의 run 은 읽지 못한다(#1072) |
 
 **서비스 키 회전과 노출 면적.** 키는 인스턴스당 하나이고 관리자 권한을 갖는다.

@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Collection, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
@@ -696,6 +696,35 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
         )
 
 
+#: The columns of ``builds`` as this release creates it.
+_BUILDS_COLUMNS = frozenset(
+    {
+        "run_id",
+        "status",
+        "started_at",
+        "finished_at",
+        "spec_digest",
+        "error",
+        "created_by",
+        "dataset_id",
+        "owner_id",
+    }
+)
+
+
+def _has_this_releases_table(index_path: Path) -> bool:
+    """Whether ``builds`` is there with the columns this release writes.
+
+    Read on a read-only connection, as the version is. False when it cannot be read.
+    """
+    try:
+        with closing(sqlite3.connect(f"{index_path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+            columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(builds)")}
+    except sqlite3.Error:
+        return False
+    return columns == _BUILDS_COLUMNS
+
+
 def _rebuild_sqlite(output_root: Path) -> int:
     """Build SQLite index fresh to .tmp, then atomically replace (#366).
 
@@ -708,7 +737,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
         return 0
 
     index_path = output_root / _INDEX_FILENAME
-    if stored_version(index_path) == SCHEMA_VERSION:
+    if stored_version(index_path) == SCHEMA_VERSION and _has_this_releases_table(index_path):
         # This release's index, which a running server may have open (#1157). Renaming
         # a new file into its place leaves the server's connections on the file that
         # was there: each thread that had one keeps writing builds to a file nobody
@@ -716,23 +745,24 @@ def _rebuild_sqlite(output_root: Path) -> int:
         # again where it is. An index of another version is not open in a server of
         # this release — that server refuses a newer one and remakes an older one when
         # it starts — and is replaced by the file below.
+        #
+        # A failure here is raised, a lock that was not released in time included:
+        # replacing the file because the server was busy writing to it is the split
+        # this avoids.
         entries = list(_iter_manifest_entries(output_root))
+        index = SqliteBuildIndex(output_root)
         try:
-            index = SqliteBuildIndex(output_root)
-            try:
-                index.replace_contents(entries)
-            finally:
-                # No checkpoint: ``TRUNCATE`` waits out the whole busy timeout for a
-                # server connection that is reading, and nothing here moves the file.
-                index.close(checkpoint=False)
-            return len(entries)
-        except sqlite3.DatabaseError:
-            # The version is this release's but the index is not usable as it is — the
-            # table is missing, or is not the shape this release writes. That is the
-            # file a rebuild is run to recover, so it is replaced as one of another
-            # version is. A server that has it open was not getting an index from it.
-            pass
+            index.replace_contents(entries)
+        finally:
+            # No checkpoint: ``TRUNCATE`` waits out the whole busy timeout for a
+            # server connection that is reading, and nothing here moves the file.
+            index.close(checkpoint=False)
+        return len(entries)
 
+    # Not this release's index, or its version says so and its table does not — missing,
+    # or not the columns this release writes. That last one is the file a rebuild is
+    # run to recover, and it is replaced as the others are. A server that has it open
+    # stays on the old file until it is restarted.
     tmp_path = output_root / f"{_INDEX_FILENAME}.tmp"
     backup_path = output_root / f"{_INDEX_FILENAME}.bak"
 
