@@ -297,7 +297,9 @@ def replay_air_station() -> dict[str, Any]:
             {
                 "provider": "datago",
                 "dataset": "air_station",
-                "params": {"stationName": "강남구", "dataTerm": "daily"},
+                # The fixture's recorded page size (#1185: a build otherwise asks for
+                # the dataset's max_page_size, which no recording matches).
+                "params": {"stationName": "강남구", "dataTerm": "daily", "page_size": 100},
             }
         ],
     }

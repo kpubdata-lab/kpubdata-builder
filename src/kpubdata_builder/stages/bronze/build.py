@@ -11,6 +11,7 @@ Main components:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
@@ -56,6 +57,34 @@ class PaginatedSourceDataset(SourceDataset, Protocol):
     def list_all(self, **params: JsonValue) -> Iterable[DatasetResult]: ...
 
 
+@dataclass(frozen=True)
+class FetchBound:
+    """Where a preview's fetch stops (#1185): at ``rows`` records or ``pages`` pages.
+
+    The budget is shared by every call of a source, ``param_grid`` combinations
+    included, so a preview makes at most ``pages`` requests however the source is
+    split. A build has no bound: it reads the whole source.
+    """
+
+    rows: int
+    pages: int
+
+    def __post_init__(self) -> None:
+        if self.rows < 1 or self.pages < 1:
+            raise ValueError(f"a fetch bound needs rows and pages >= 1, got {self}")
+
+
+@dataclass
+class _Budget:
+    rows: int
+    pages: int
+    stopped_early: bool = False
+
+    @property
+    def spent(self) -> bool:
+        return self.rows <= 0 or self.pages <= 0
+
+
 class SourceClient(Protocol):
     """Minimum client shape used in bronze stage."""
 
@@ -75,6 +104,7 @@ def build_bronze_artifact(
     checkpoint: CombinationCheckpoint | None = None,
     staging_dir: Path | None = None,
     scrub: Scrub | None = None,
+    bound: FetchBound | None = None,
 ) -> BronzeArtifact:
     """Fetch raw records from a compatible client and write them as Bronze.
 
@@ -104,6 +134,12 @@ def build_bronze_artifact(
         staging_dir: where the records are written; a fresh private directory if
             omitted. The artifact points into it until :meth:`BronzeArtifact.discard`.
         scrub: applied to every record before it is written (#686).
+        bound: stop at this many records or pages (#1185), for a preview. Pages are
+            then requested at ``bound.rows`` records, or the dataset's
+            ``max_page_size`` if smaller. Without a bound, pages are requested at
+            ``max_page_size`` so a build makes as few requests as the provider allows.
+            A ``page_size`` in the parameters is the caller's and is kept either way.
+            Cannot be combined with ``checkpoint``.
 
     Returns:
         BronzeArtifact: the staged records and their provenance.
@@ -122,13 +158,21 @@ def build_bronze_artifact(
         # validator blocks at declaration, but also block direct library call path.
         raise ValueError("param_combinations must not be empty")
     calls = combinations if combinations is not None else (resolved_params,)
+    if bound is not None and checkpoint is not None:
+        raise ValueError("a bounded fetch is a preview and keeps no checkpoint")
 
     dataset = client.dataset(source_key)
+    page_size = _page_size(dataset, bound)
+    budget = _Budget(rows=bound.rows, pages=bound.pages) if bound is not None else None
     call_totals: list[CallTotal] = []
     use_checkpoint = checkpoint if combinations is not None else None
     resumed = use_checkpoint.load(calls) if use_checkpoint is not None else {}
     with BronzeWriter(staging_dir or new_staging_dir(), scrub=scrub) as writer:
         for done, call_params in enumerate(calls, start=1):
+            if budget is not None and budget.spent:
+                # Combinations not reached are what the preview leaves out.
+                budget.stopped_early = True
+                break
             # Written in combination order. Order change alters raw_records.jsonl
             # bytes and artifact_id follows—R1 rebuild determinism depends on it.
             index = done - 1
@@ -138,7 +182,9 @@ def build_bronze_artifact(
                 call_totals.append(total)
             elif use_checkpoint is not None:
                 with use_checkpoint.fragment(index) as fragment:
-                    reported = _fetch_call(dataset, call_params, fragment.write_batch)
+                    reported = _fetch_call(
+                        dataset, call_params, fragment.write_batch, page_size=page_size
+                    )
                     total = _call_total(index, reported, fetched=fragment.record_count)
                     use_checkpoint.finish(
                         fragment, index=index, params=call_params, call_total=total
@@ -147,7 +193,9 @@ def build_bronze_artifact(
                 call_totals.append(total)
             else:
                 before = writer.record_count
-                reported = _fetch_call(dataset, call_params, writer.write_batch)
+                reported = _fetch_call(
+                    dataset, call_params, writer.write_batch, page_size=page_size, budget=budget
+                )
                 call_totals.append(
                     _call_total(index, reported, fetched=writer.record_count - before)
                 )
@@ -180,25 +228,91 @@ def build_bronze_artifact(
         provenance=provenance,
         call_totals=tuple(call_totals),
         resumed_combinations=len(resumed),
+        stopped_early=budget is not None and budget.stopped_early,
     )
+
+
+def _page_size(dataset: SourceDataset, bound: FetchBound | None) -> int | None:
+    """The ``page_size`` to request (#1185); None leaves the provider's default.
+
+    The largest page is only a request size: a dataset whose description cannot be
+    read is fetched at the default size, not failed here.
+    """
+    try:
+        query_support = getattr(getattr(dataset, "ref", None), "query_support", None)
+        largest = getattr(query_support, "max_page_size", None)
+    except Exception:  # noqa: BLE001 - see docstring
+        largest = None
+    if isinstance(largest, bool) or not isinstance(largest, int) or largest < 1:
+        largest = None
+    if bound is None:
+        return largest
+    return bound.rows if largest is None else min(bound.rows, largest)
 
 
 def _fetch_call(
     dataset: SourceDataset,
     params: dict[str, JsonValue],
     write: Callable[[Iterable[dict[str, JsonValue]]], object],
+    *,
+    page_size: int | None = None,
+    budget: _Budget | None = None,
 ) -> list[int | None]:
-    """Fetch one call page by page, handing each page to ``write``; returns page totals."""
-    batches: Iterable[DatasetResult] = (
-        dataset.list_all(**params)
-        if isinstance(dataset, PaginatedSourceDataset)
-        else (dataset.list(**params),)
-    )
+    """Fetch one call page by page, handing each page to ``write``; returns page totals.
+
+    With a ``budget``, pages stop once it is spent. ``max_pages`` is passed too, because
+    kpubdata's spec datasets request every page before yielding the first (#481): only
+    ``max_pages`` stops their requests, so it is the pages the remaining rows need, not
+    the whole page budget. At that limit kpubdata yields the pages it has and then
+    raises; the generator is closed after the last page asked for, before that.
+    """
+    call_params = dict(params)
+    if page_size is not None and "page_size" not in call_params:
+        call_params["page_size"] = page_size
+    batches: Iterable[DatasetResult]
+    max_pages: int | None = None
+    if not isinstance(dataset, PaginatedSourceDataset):
+        batches = (dataset.list(**call_params),)
+    elif budget is None:
+        batches = dataset.list_all(**call_params)
+    else:
+        max_pages = _pages_needed(budget, call_params.get("page_size"))
+        batches = dataset.list_all(max_pages=max_pages, **call_params)
     reported: list[int | None] = []
-    for batch in batches:
-        write(batch.items)
-        reported.append(_reported_total(batch))
+    iterator = iter(batches)
+    try:
+        for batch in iterator:
+            written = write(batch.items)
+            reported.append(_reported_total(batch))
+            if budget is None:
+                continue
+            budget.pages -= 1
+            budget.rows -= written if isinstance(written, int) else 0
+            if budget.spent or len(reported) == max_pages:
+                budget.stopped_early = budget.stopped_early or _has_more(batch)
+                break
+    finally:
+        close = getattr(iterator, "close", None)
+        if callable(close):
+            close()
     return reported
+
+
+def _pages_needed(budget: _Budget, page_size: JsonValue) -> int:
+    """Pages the budget's remaining rows take at ``page_size``, within its pages."""
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size < 1:
+        return budget.pages
+    return max(1, min(budget.pages, -(-budget.rows // page_size)))
+
+
+def _has_more(batch: object) -> bool:
+    """Whether a page says another follows; a page that cannot say counts as yes."""
+    if not hasattr(batch, "next_page") and not hasattr(batch, "next_cursor"):
+        return True
+    return (
+        getattr(batch, "next_page", None) is not None
+        or getattr(batch, "next_cursor", None) is not None
+    )
 
 
 def _reported_total(batch: object) -> int | None:

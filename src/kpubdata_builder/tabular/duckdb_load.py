@@ -795,6 +795,29 @@ class _DtypeParser:
         raise ValueError(f"no loader node for dtype {self.text!r}")
 
 
+def write_empty_like(
+    connection: duckdb.DuckDBPyConnection, source: Path | str, target: Path | str
+) -> None:
+    """Write ``target`` with no rows and the columns of ``source`` (#1186).
+
+    The stored columns and their Parquet types are ``source``'s, and so is the Builder
+    metadata — the dtypes and the restored names — so every reader sees the columns
+    ``source`` has. Other writers' metadata is not carried.
+    """
+    location = os.fspath(source)
+    kv = _kv_metadata(connection, location)
+    metadata = ", ".join(
+        f"{quote_literal(key)}: {quote_literal(kv[key])}"
+        for key in (KV_KEY, KV_NAMES_KEY)
+        if key in kv
+    )
+    options = f", KV_METADATA {{{metadata}}}" if metadata else ""
+    connection.execute(
+        f"COPY (SELECT * FROM read_parquet({quote_literal(location)}) LIMIT 0) "
+        f"TO {quote_literal(os.fspath(target))} (FORMAT PARQUET{options})"
+    )
+
+
 def _kv_metadata(connection: duckdb.DuckDBPyConnection, path: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for key, value in connection.execute(

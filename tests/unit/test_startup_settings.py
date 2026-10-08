@@ -17,6 +17,7 @@ from kpubdata_builder.cli import main
 from kpubdata_builder.ingestion.url_fetch import default_max_fetch_bytes
 from kpubdata_builder.service import startup_settings
 from kpubdata_builder.service.auth_throttle import AuthFailureThrottle
+from kpubdata_builder.service.build_limits import resolve_owner_build_limit
 from kpubdata_builder.service.probe_limit import probe_interval_seconds
 from kpubdata_builder.service.request_credentials import _ttl_seconds
 from kpubdata_builder.service.startup_settings import check_settings
@@ -253,6 +254,12 @@ _FALLBACK_CASES: list[tuple[str, Callable[[], object], list[str], list[str]]] = 
         ["7"],
     ),
     (
+        "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER",
+        resolve_owner_build_limit,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
         "KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES",
         _upload_limit("max_total_bytes"),
         ["big", "-1"],
@@ -445,6 +452,8 @@ def test_a_count_that_cannot_be_used_is_a_problem(
         ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "inf"),
         ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "-1"),
         ("KPUBDATA_BUILDER_PORT", "abc"),
+        # Nothing but spaces: the entrypoint passes it to --port, which refuses it.
+        ("KPUBDATA_BUILDER_PORT", "  "),
         ("KPUBDATA_BUILDER_PORT", "65536"),
         ("KPUBDATA_BUILDER_PORT", "-1"),
     ],
@@ -468,6 +477,8 @@ def test_a_serve_value_that_cannot_be_used_is_a_problem(
         ("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "2.5"),
         ("KPUBDATA_BUILDER_PORT", "0"),
         ("KPUBDATA_BUILDER_PORT", "8000"),
+        # argparse's int() takes spaces around a number, so this is a usable port.
+        ("KPUBDATA_BUILDER_PORT", " 8000 "),
     ],
 )
 def test_a_serve_value_that_can_be_used_is_not_reported(

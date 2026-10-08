@@ -9,6 +9,7 @@ list of those that are not — and the deployment guide tells operators which th
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -257,6 +258,9 @@ def test_a_variable_reaches_the_process_as_one_it_accepts(
         elif name in MAY_BE_EMPTY:
             # Left empty, as the deployments this name is listed for leave it: what is
             # checked is that an empty one is accepted, not the template's placeholder.
+            # The compose file does not come here today — both names have a ``:-``
+            # default — but ``${VAR?…}`` on one of them would, and the test of that
+            # form below runs this with such a file.
             monkeypatch.setenv(name, "")
         else:
             assert name in template, f"{name} is required but the template does not set it"
@@ -431,9 +435,12 @@ def test_requiring_a_value_of_a_setting_some_deployments_leave_empty_is_refused(
     with pytest.raises(AssertionError, match="some deployments leave it empty"):
         test_a_required_variable_is_one_the_template_sets()
 
-    # Required to be set, but allowed to be empty, is another matter.
+    # Required to be set, but allowed to be empty, is another matter — and the value
+    # the process is then checked with is the empty one, not the template's placeholder.
     compose.write_text(real.replace(line[0], f"      {name}: ${{{name}?needed}}"), "utf-8")
     test_a_required_variable_is_one_the_template_sets()
+    test_a_variable_reaches_the_process_as_one_it_accepts(monkeypatch)
+    assert os.environ[name] == ""
 
 
 @pytest.mark.parametrize(

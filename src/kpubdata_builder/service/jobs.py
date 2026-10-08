@@ -65,7 +65,7 @@ class BuildJobRunner(Protocol):
 #: How often ``wait_until_idle`` looks at the registry.
 _IDLE_POLL_SECONDS = 0.05
 
-SubmitStatus = Literal["accepted", "existing", "queue_full", "shutting_down"]
+SubmitStatus = Literal["accepted", "existing", "queue_full", "owner_limit", "shutting_down"]
 
 # Result of ``AsyncBuildJobRegistry.request_cancel``. Each value maps to exactly one HTTP
 # response (``BuilderService.cancel_build``) — deterministic regardless of races.
@@ -204,6 +204,8 @@ class BuildJobSnapshot:
 class BuildJobSubmitResult:
     status: SubmitStatus
     snapshot: BuildJobSnapshot | None = None
+    #: The owner limit that refused it (#1189), for ``owner_limit``.
+    owner_limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +280,7 @@ class AsyncBuildJobRegistry:
         max_queued: int,
         dataset_id: str | None = None,
         retry_of: str | None = None,
+        max_active_per_owner: int | None = None,
     ) -> tuple[str, BuildJobSnapshot | None]:
         """Check existence/queue capacity/create in **single lock scope** (#482 follow-up).
 
@@ -285,9 +288,15 @@ class AsyncBuildJobRegistry:
         between calls. Concurrent POST with same run_id both pass existence check, call
         ``on_accept`` twice, log event twice, exceed queue limit.
 
-        Returns: ``("existing"|"queue_full"|"closed"|"created", snapshot|None)``.
-        ``"closed"`` once ``close_and_fail_queued`` has run (#1118): decided under the
-        same lock, so no job is created after the queue was emptied for shutdown.
+        Returns: ``("existing"|"queue_full"|"owner_limit"|"closed"|"created",
+        snapshot|None)``. ``"closed"`` once ``close_and_fail_queued`` has run (#1118):
+        decided under the same lock, so no job is created after the queue was emptied
+        for shutdown.
+
+        ``max_active_per_owner`` (#1189): the owner — ``owner_id``, else ``created_by``
+        — may have that many jobs queued, running or cancelling; one more is
+        ``"owner_limit"``. Counted under the same lock, so two submissions arriving
+        together cannot both take the last place. A job with no owner is not counted.
         """
         now = _utc_now_text()
         with self._lock:
@@ -296,6 +305,16 @@ class AsyncBuildJobRegistry:
                 return "existing", existing
             if self._closed:
                 return "closed", None
+            owner = owner_id or created_by
+            if max_active_per_owner is not None and owner is not None:
+                active = sum(
+                    1
+                    for job in self._jobs.values()
+                    if job.status in ("queued", "running", "cancelling")
+                    and (job.owner_id or job.created_by) == owner
+                )
+                if active >= max_active_per_owner:
+                    return "owner_limit", None
             queued = sum(1 for job in self._jobs.values() if job.status == "queued")
             if queued >= max_queued:
                 return "queue_full", None
@@ -626,9 +645,13 @@ class AsyncBuildExecutor:
         on_enqueue_failure: Callable[[], None] | None = None,
         dataset_id: str | None = None,
         retry_of: str | None = None,
+        max_active_per_owner: int | None = None,
     ) -> BuildJobSubmitResult:
-        """Queue job. If "existing"/"queue_full", new submission not counted, so
-        ``on_accept`` not called.
+        """Queue job. If "existing"/"queue_full"/"owner_limit", new submission not
+        counted, so ``on_accept`` not called.
+
+        ``max_active_per_owner`` (#1189) is the most jobs one owner may have queued or
+        running; None is no limit.
 
         ``owner_id`` passes only to ``registry.create()`` — persisted in snapshot (#496
         follow-up, active run ownership check) — NOT passed to ``runner`` invocation
@@ -666,9 +689,12 @@ class AsyncBuildExecutor:
             max_queued=self._max_queue_size,
             dataset_id=dataset_id,
             retry_of=retry_of,
+            max_active_per_owner=max_active_per_owner,
         )
         if outcome == "existing":
             return BuildJobSubmitResult(status="existing", snapshot=snapshot)
+        if outcome == "owner_limit":
+            return BuildJobSubmitResult(status="owner_limit", owner_limit=max_active_per_owner)
         if outcome == "queue_full":
             return BuildJobSubmitResult(status="queue_full")
         if outcome == "closed":
