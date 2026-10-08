@@ -73,6 +73,11 @@ concurrency:
   # are one group, so the same release is never published by two runs at once.
   group: docker-${{ inputs.ref && format('refs/tags/{0}', inputs.ref) || github.ref }}
   # Only a pull request's build is superseded; a publish is never cut off half-way.
+  # Pushes to main share one group on purpose: a group keeps one pending run, so when
+  # merges come close together the publish still waiting is replaced by the newer
+  # one. The moving tags `:main` and `:latest` need only the newest main; the commit
+  # whose publish was replaced gets no `sha-` image. ci.yml differs because there each
+  # commit's result is that commit's record.
   cancel-in-progress: ${{ github.event_name == 'pull_request' && !inputs.publish }}
 
 jobs:

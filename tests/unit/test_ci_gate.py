@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -19,6 +20,12 @@ import pytest
 import yaml
 
 _CI = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+
+#: The tests that run the gate's shell need what the runner has. The ones that only
+#: read the workflow's YAML do not, and run everywhere.
+runs_the_gate = pytest.mark.skipif(
+    shutil.which("bash") is None or shutil.which("jq") is None, reason="needs bash and jq"
+)
 
 
 def _jobs() -> dict[str, Any]:
@@ -58,10 +65,12 @@ def _error(completed: subprocess.CompletedProcess[str]) -> str:
     return errors[0]
 
 
+@runs_the_gate
 def test_every_success_passes() -> None:
     assert _run(_needs()).returncode == 0
 
 
+@runs_the_gate
 @pytest.mark.parametrize("result", ["failure", "cancelled", "skipped"])
 @pytest.mark.parametrize("job", ["lint", "test", "min-deps", "kpubdata-releases"])
 def test_anything_but_success_fails(job: str, result: str) -> None:
@@ -71,6 +80,7 @@ def test_anything_but_success_fails(job: str, result: str) -> None:
     assert f"{job}={result}" in _error(completed)
 
 
+@runs_the_gate
 def test_min_deps_skipped_for_an_empty_release_list_passes() -> None:
     needs = _needs(min_deps="skipped")
     needs["kpubdata-releases"]["outputs"] = {"versions": "[]"}
@@ -81,6 +91,7 @@ def test_min_deps_skipped_for_an_empty_release_list_passes() -> None:
     assert "min-deps skipped" in completed.stdout
 
 
+@runs_the_gate
 @pytest.mark.parametrize("result", ["failure", "cancelled"])
 def test_min_deps_failing_on_an_empty_release_list_still_fails(result: str) -> None:
     needs = _needs(min_deps=result)
@@ -89,6 +100,7 @@ def test_min_deps_failing_on_an_empty_release_list_still_fails(result: str) -> N
     assert _run(needs).returncode == 1
 
 
+@runs_the_gate
 def test_min_deps_skipped_because_the_list_failed_fails() -> None:
     needs = _needs(kpubdata_releases="failure", min_deps="skipped")
 
@@ -98,6 +110,7 @@ def test_min_deps_skipped_because_the_list_failed_fails() -> None:
     assert "min-deps=skipped" in _error(completed)
 
 
+@runs_the_gate
 def test_another_job_skipped_on_an_empty_release_list_fails() -> None:
     needs = _needs(lint="skipped", min_deps="skipped")
     needs["kpubdata-releases"]["outputs"] = {"versions": "[]"}
@@ -110,6 +123,7 @@ def test_another_job_skipped_on_an_empty_release_list_fails() -> None:
     assert "min-deps" not in error
 
 
+@runs_the_gate
 @pytest.mark.parametrize("needs", ["", "{}", "null"], ids=["empty", "no-jobs", "null"])
 def test_no_upstream_results_fails(needs: str) -> None:
     env = {**os.environ, "NEEDS": needs}
