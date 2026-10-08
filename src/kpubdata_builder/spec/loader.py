@@ -359,6 +359,11 @@ def _parse_sources(value: object) -> tuple[SourceRef, ...]:
         gold_obj = mapping.get("gold")
         if gold_obj is not None:
             source = replace(source, gold=_parse_gold(gold_obj, prefix=f"{prefix}.gold"))
+        allow_empty = mapping.get("allow_empty", False)
+        if not isinstance(allow_empty, bool):
+            raise TypeError(f"{prefix}.allow_empty must be true or false")
+        if allow_empty:
+            source = replace(source, allow_empty=True)
         parsed_sources.append(source)
     return tuple(parsed_sources)
 

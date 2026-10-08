@@ -287,6 +287,27 @@ sources:
   `pii_declaration_unavailable` 로 거부한다(fail closed). 자세한 것은 [API_CONTRACT.md](./API_CONTRACT.md) 의 "Silver·Bronze 읽기의
   선언된 PII".
 
+#### `sources[].allow_empty` — 행이 없는 결과로 테이블을 바꿀지 (#1186)
+
+```yaml
+sources:
+  - provider: datago
+    dataset: air_station
+    params: {stationName: 강남구, dataTerm: daily}
+    allow_empty: true
+```
+
+- 기본값은 `false` 다. 빌드가 행을 하나도 찾지 못했는데(조건에 맞는 행이 없거나
+  `gold.filters` 가 모두 걸러 낸 경우) 그 테이블에 이미 스냅샷이 있으면, 빈 결과를 커밋하지
+  않는다. 현재 스냅샷이 그대로 남고, 빌드는 409 로 `warehouse_failures` 에 사유
+  `empty_result` 를 적는다. 같은 데이터셋을 다른 조건으로 다시 추가해도 첫 테이블의 행을
+  잃지 않는다.
+- `true` 면 빈 결과를 커밋한다. 행이 없어 컬럼도 없으면 현재 스냅샷의 컬럼과 dtype 을
+  이어받는다. 컬럼 없는 테이블은 SQL 로 읽을 수 없기 때문이다. 날마다 0건이 정상일 수 있는
+  원천(재난문자, 당일 공고 등)에 쓴다.
+- 테이블의 첫 빌드는 어느 쪽이든 커밋된다.
+- canonical snapshot 에는 `true` 일 때만 실린다. 선언하지 않은 spec 의 digest 는 그대로다.
+
 ### 4.5 `exports` (배열)
 
 각 export 대상은 다음 필드를 가집니다.

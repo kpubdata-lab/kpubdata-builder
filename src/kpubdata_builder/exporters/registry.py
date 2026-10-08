@@ -85,6 +85,17 @@ def register_exporter_instance(exporter: BaseExporter, *, override: bool = False
 register_exporter = register_exporter_instance
 
 
+def registered_exporter_kinds() -> frozenset[str]:
+    """Every kind ``get_exporter`` can serve: both registries together (#1192).
+
+    The answer to "is this kind supported" for anything that does not go on to build
+    the exporter — spec validation, above all. It read the legacy instance registry
+    alone, so an exporter registered the way ADR 0004 and ``AGENTS.md`` say to, by
+    factory, was found by ``get_exporter`` and refused by validation.
+    """
+    return frozenset(_EXPORTER_FACTORIES) | frozenset(EXPORTER_REGISTRY)
+
+
 def get_exporter(name: str) -> BaseExporter:
     """looks up registered exporter by kind name."""
     # factory registry takes precedence (ADR 0004)
@@ -93,8 +104,9 @@ def get_exporter(name: str) -> BaseExporter:
     # legacy instance registry fallback
     if name in EXPORTER_REGISTRY:
         return EXPORTER_REGISTRY[name]
-    registered = sorted(set(_EXPORTER_FACTORIES) | set(EXPORTER_REGISTRY))
-    raise KeyError(f"unknown exporter kind: {name!r}; registered: {registered}")
+    raise KeyError(
+        f"unknown exporter kind: {name!r}; registered: {sorted(registered_exporter_kinds())}"
+    )
 
 
 def load_entry_point_exporters(*, override: bool = False) -> list[str]:
@@ -151,4 +163,5 @@ __all__ = [
     "register_exporter",
     "register_exporter_factory",
     "register_exporter_instance",
+    "registered_exporter_kinds",
 ]
