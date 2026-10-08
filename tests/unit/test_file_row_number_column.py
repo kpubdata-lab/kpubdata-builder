@@ -58,7 +58,13 @@ def test_the_sandbox_opens_it_and_reads_the_column(tmp_path: Path, name: str) ->
 
 @pytest.mark.parametrize("threads", [1, 4])
 def test_the_counted_position_is_the_rows_place_in_the_file(tmp_path: Path, threads: int) -> None:
-    """Over many row groups and with several threads, where an unordered count would show."""
+    """Over many row groups and with several threads, where an unordered count would show.
+
+    The count is in file order because the scan is: DuckDB's ``preserve_insertion_order``,
+    which is on by default and which the sandbox does not set. A change that turns it
+    off — in the sandbox's connection settings, or a DuckDB release that changes the
+    default or how a window with no ordering runs — is meant to fail here.
+    """
     rows = 120_000
     shuffled = list(range(rows))
     random.Random(1149).shuffle(shuffled)
@@ -82,6 +88,12 @@ def test_the_counted_position_is_the_rows_place_in_the_file(tmp_path: Path, thre
             f'SELECT count(*), min("{ROW_ORDER}"), max("{ROW_ORDER}") FROM {ORDERED_DATASET}'
         ).fetchone()
 
+        preserved = sandbox.connection.execute(
+            "SELECT current_setting('preserve_insertion_order')"
+        ).fetchone()
+
+    # The ground the count stands on, stated: see the docstring.
+    assert preserved == (True,)
     assert misplaced == (0,)
     assert page == [(100000,), (100001,), (100002,)]
     assert extent == (rows, 0, rows - 1)
