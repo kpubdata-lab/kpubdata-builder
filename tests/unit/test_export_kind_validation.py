@@ -8,6 +8,7 @@ nothing showed.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -55,10 +56,21 @@ class _EntryPointExporter(_Exporter):
 
 
 @pytest.fixture(autouse=True)
-def _own_registries(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Copies of both registries, so what a test registers ends with the test."""
-    monkeypatch.setattr(registry, "_EXPORTER_FACTORIES", dict(registry._EXPORTER_FACTORIES))
-    monkeypatch.setattr(registry, "EXPORTER_REGISTRY", dict(registry.EXPORTER_REGISTRY))
+def _own_registries() -> Iterator[None]:
+    """What a test registers ends with the test.
+
+    The registries stay the same objects: code that imported one of them holds the
+    object, and would not see a copy put in its place.
+    """
+    factories = dict(registry._EXPORTER_FACTORIES)
+    instances = dict(registry.EXPORTER_REGISTRY)
+    try:
+        yield
+    finally:
+        registry._EXPORTER_FACTORIES.clear()
+        registry._EXPORTER_FACTORIES.update(factories)
+        registry.EXPORTER_REGISTRY.clear()
+        registry.EXPORTER_REGISTRY.update(instances)
 
 
 def _spec(kind: str) -> BuildSpec:
@@ -121,7 +133,9 @@ def test_a_kind_nobody_registered_is_refused_and_told_what_there_is() -> None:
     assert problem.path == "exports[0].kind"
     # The factory-only kind is among the ones the hint offers.
     offered = (problem.hint or "").removeprefix("Use one of: ").split(", ")
-    assert set(offered) == _BUILT_IN | {"by-factory"}
+    # At least: an installed plugin, or another test's registration, may add to them.
+    assert set(offered) >= _BUILT_IN | {"by-factory"}
+    assert "xml" not in offered
 
 
 def test_validation_and_get_exporter_agree_on_every_kind() -> None:
