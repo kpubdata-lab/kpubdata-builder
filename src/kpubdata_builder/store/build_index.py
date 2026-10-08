@@ -715,12 +715,20 @@ _BUILDS_COLUMNS = frozenset(
 def _has_this_releases_table(index_path: Path) -> bool:
     """Whether ``builds`` is there with the columns this release writes.
 
-    Read on a read-only connection, as the version is. False when it cannot be read.
+    Read on a read-only connection, as the version is. False when the file cannot be
+    read as a database at all.
+
+    Raises:
+        sqlite3.OperationalError: The index is locked. That says nothing about its
+            table, and answering False would have the caller replace the file of a
+            server that is only busy (#1157).
     """
     try:
         with closing(sqlite3.connect(f"{index_path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
             columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(builds)")}
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        if "locked" in str(exc).lower():
+            raise
         return False
     return columns == _BUILDS_COLUMNS
 
