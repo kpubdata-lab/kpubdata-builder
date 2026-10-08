@@ -228,6 +228,13 @@ SETTINGS: tuple[Setting, ...] = (
         required="선택",
     ),
     Setting(
+        name="KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER",
+        group="builds",
+        description="다중 사용자 배포에서 사용자 한 명이 동시에 대기·실행 중으로 둘 수 있는 비동기 build 수(#1189). 넘으면 `POST /builds` 가 429 `build_owner_limit` 로 답하고, 큐는 다른 사용자에게 열려 있다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다",
+        default="`2`",
+        required="선택",
+    ),
+    Setting(
         name="KPUBDATA_BUILDER_MAX_PREVIEWS",
         group="builds",
         description="동시에 도는 preview 수의 상한(`serve --max-previews`, #1028). 넘는 preview 는 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` 까지 기다리고, 그래도 자리가 없으면 429 `preview_queue_full` 로 답한다(#1068)",

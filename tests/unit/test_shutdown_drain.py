@@ -15,6 +15,7 @@ import pytest
 from kpubdata_builder.service import BuilderService
 from kpubdata_builder.service import app as app_module
 from kpubdata_builder.service import http as http_module
+from kpubdata_builder.service.build_limits import MAX_ACTIVE_BUILDS_PER_OWNER_ENV
 from kpubdata_builder.service.providers import ProviderDescriptor
 
 from .test_ephemeral_credentials import _ALICE, _CANARY, _SPEC, _Recorder
@@ -64,6 +65,8 @@ def test_queued_jobs_end_unstarted_and_the_running_one_finishes(
 ) -> None:
     gate = threading.Event()
     recorder = _Recorder(gate=gate)
+    # Three jobs of one owner: the per-owner limit (#1189) is not what this tests.
+    monkeypatch.setenv(MAX_ACTIVE_BUILDS_PER_OWNER_ENV, "0")
     service = _service(tmp_path, monkeypatch, recorder)
     try:
         for run_id in ("running", "queued-1", "queued-2"):
