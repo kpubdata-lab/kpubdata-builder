@@ -4,12 +4,17 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 
 > **상태**: ADR 0009는 제안됨(Proposed). 인증(Bearer) 구현은 B3(#385)/B4(#386) 진행 중이며, 본 문서의 Bearer 관련 절은 구현 완료 후 적용된다. 컨테이너 배포(fail-closed, HEALTHCHECK)는 이미 구현되었다.
 
-## 1. 기본 배포 형태 — internal ingress
+## 1. 기본 배포 형태 — 사용자의 브라우저가 부르는 엔드포인트
 
-**Builder는 공개 인터넷 인그레스를 갖지 않는다** (ADR 0009 결정 3). Studio가 같은 네트워크/VPC에서 호출하는 구조가 기본형이다. 공격면을 최소화하고, 허용 목록을 심층 방어로 둔다.
+**Studio 는 정적 SPA 다. Builder 를 부르는 것은 Studio 의 서버가 아니라 사용자의 브라우저다.** 그래서 Studio 를 쓰는 배포에서 Builder 는 사용자의 브라우저가 닿을 수 있는 HTTPS 주소를 가져야 한다. "Studio 가 같은 네트워크/VPC 에서 Builder 를 호출한다"는 구조는 Studio 에 서버 쪽 구성 요소가 있을 때만 성립하고, 지금의 Studio 에는 없다(kpubdata-studio#841).
 
-- ACA(Azure Container Apps) / K8s에서 Builder 서비스를 클러스터 내부 서비스로 노출.
-- Studio(정적 SPA)는 같은 네트워크에서 Builder를 호출. 외부 인터넷은 Studio 프론트만 접근.
+- 참조 배포(§12)는 Cloudflare → Caddy → Builder 로 그 주소를 내고, Studio 는 그 주소로 빌드·설정된다(`VITE_BUILDER_API_URL`, 컨테이너 이미지에서는 `BUILDER_API_URL`). Builder 컨테이너 자체는 포트를 밖으로 열지 않고 Caddy 만 연다.
+- 그 주소로 들어오는 것을 좁히는 것은 다음 둘이다. 네트워크 위치가 아니다.
+  - **인증** — `/healthz` 같은 무인증 프로브를 빼면 모든 요청은 `X-API-Key` 또는 OIDC Bearer 를 가져야 한다(§2). OIDC 배포에서는 그 위에 allowlist 와 가입 원장이 있다.
+  - **CORS** — `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 에 적은 Studio 오리진만 허용하고 기본은 전부 거부한다(§4, ADR 0006). CORS 는 다른 사이트의 페이지가 사용자의 브라우저로 Builder 를 부르는 것을 막을 뿐, 브라우저가 아닌 호출자를 막지 않는다. 그쪽을 막는 것은 인증이다.
+- 브라우저가 부르지 않는 배포 — 스케줄 워크플로만 Builder 를 부르는 경우 — 는 Builder 를 내부 서비스로만 둘 수 있고, 그럴 수 있으면 그렇게 두는 편이 공격면이 작다.
+
+> **ADR 과의 차이.** ADR 0009 결정 3(ADR 0015 가 승계)은 "Builder 는 공개 인그레스를 갖지 않는다(internal ingress)"를 배포 기본형으로 정했다. 그 전제는 Studio 가 같은 네트워크에서 Builder 를 부른다는 것인데, 위에 적은 대로 지금의 Studio 는 그렇게 동작하지 않는다. 이 절은 지금 실제로 동작하는 구조를 적은 것이고, ADR 의 문장은 고치지 않았다 — 결정을 바꾸거나(공개 엔드포인트 + 인증 + CORS 를 기본형으로) Studio 앞에 같은 오리진의 프록시를 두는 쪽으로 구조를 바꾸는 것은 메인테이너의 결정이다.
 
 ## 2. 인증 — 두 경로 병행
 
