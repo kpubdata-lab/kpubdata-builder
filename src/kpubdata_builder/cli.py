@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import sqlite3
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -967,6 +968,12 @@ def _run_serve(
         # (#1096). This is what a rolled-back deployment meets. The catalog says it
         # with its own error, as it did before it was opened at start.
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except sqlite3.OperationalError as exc:
+        # A state store that could not be opened or read to begin with — locked by
+        # another process, on a disk that cannot be written. Said in one line as the
+        # refusals above are; the store is as it was (#1157).
+        print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
         return 1
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
