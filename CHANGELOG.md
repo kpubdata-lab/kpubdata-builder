@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- The table catalog's pre-migration copy is the latest state, not the first one (#1163). The copy `_warehouse.sqlite.v<old>.before-migration` was kept once made. After an upgrade, a rollback to the old release, which then wrote to the catalog, and a second upgrade, the copy was still from before the rollback, and putting it back the second time lost those writes. Now:
+  - Every migration replaces the copy. It is written under a name of its own and moved into place, and a failed copy leaves no partial file. Two servers starting at once used to share one `.partial` name, and one of them failed.
+  - The copy is taken inside the migration's `BEGIN IMMEDIATE`, through a read-only connection. No other writer can commit between the copy and the migration.
+  - The copy no longer depends on the version read before the server opens the catalog, which finds nothing when the file is locked.
+  - Not changed: `warehouse backup` still does not include the copy.
 ### Fixed
 
 - `rebuild-index` beside a running server no longer splits the index (#1157). It built a new file and renamed it into the old one's place, and `docs/deploy.md` says to run it with `docker exec` in the serving container. Each thread of the server that already had a connection stayed on the file that was there, so a build it recorded afterwards went to a file nobody else read: the same list differed by which thread answered, until a restart. An index of this release's version is now refilled where it is, in one transaction — the server's connections see the result — and a row the scan did not find is removed only when its run has no manifest, so a build that finished during the scan is kept. An index of another version is still replaced by a new file: a server of this release never has one open. So is one of this version whose `builds` table is missing or does not have the columns this release writes, since that is the file a rebuild is run to recover; a server running at the time stays on the old file, so restart it after that recovery. Any other failure of the refill, a lock that was not released in time included, is an error and leaves the index as it was. The rebuild does not checkpoint the WAL when it is done, which waited out the busy timeout for a server connection that was reading.

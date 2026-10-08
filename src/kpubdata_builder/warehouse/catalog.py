@@ -349,42 +349,54 @@ class TableCatalog:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         # Before the first ordinary connection, which sets the journal mode: a catalog
-        # this release cannot use is refused as it was found, and one it is about to
-        # migrate is copied first (#1096).
+        # this release cannot use is refused as it was found (#1096). One it is about to
+        # migrate is copied inside the migration's own transaction (#1163).
         found = stored_version(self._path)
         if found is not None and found != SCHEMA_VERSION:
             _migration_path(found)
-            self._copy_before_migration(found)
         self._init_db()
 
     def _copy_before_migration(self, found: int) -> Path:
-        """Copy the catalog as it is before its schema is changed (#1096).
+        """Copy the catalog as it is before its schema is changed (#1096, #1163).
 
         A migration runs in one transaction, so a failure leaves the old version. This
         is for the failure that comes after it: the release that wrote the old version
         cannot read the new one, and the catalog cannot be rebuilt from anything.
 
-        The copy is taken through SQLite, so it is consistent, and is kept beside the
-        catalog. One that is already there for this version is left: it is from the
-        first attempt, which is the state worth having. It is the catalog only — the
-        snapshot files it names are not copied, and putting it back over a warehouse
-        that has moved on loses what was written since.
+        Called inside the migration's ``BEGIN IMMEDIATE``, before anything is changed:
+        the copy is read through a separate read-only connection, which SQLite lets
+        read while the write lock is held, and no other writer can commit between the
+        copy and the migration. Another process starting at the same moment waits for
+        the lock and then finds the catalog migrated.
+
+        Every migration replaces the copy (#1163). Between two attempts only the old
+        release can write the catalog — a failed migration is rolled back — so the
+        latest copy holds everything an earlier one did and what was written since.
+        Keeping the first one lost those writes: upgrade, roll back and run the old
+        release, upgrade again, and the copy was still from before the rollback. The
+        copy is written under a name of its own and moved into place, so a crash or a
+        second process never leaves a half-written copy under the copy's name.
+
+        It is the catalog only — the snapshot files it names are not copied, and
+        putting it back over a warehouse that has moved on loses what was written since.
         """
         copy = self._path.with_name(f"{self._path.name}.v{found}.before-migration")
-        if copy.exists():
-            return copy
-        partial = copy.with_name(f"{copy.name}.partial")
-        partial.unlink(missing_ok=True)
-        with (
-            closing(
-                sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True)
-            ) as source,
-            closing(sqlite3.connect(str(partial))) as target,
-        ):
-            source.backup(target)
-            # Read later, perhaps read-only: a WAL database needs its -shm for that.
-            target.execute("PRAGMA journal_mode=DELETE")
-        partial.replace(copy)
+        partial = copy.with_name(f"{copy.name}.{uuid.uuid4().hex}.partial")
+        try:
+            with (
+                closing(
+                    sqlite3.connect(
+                        f"{self._path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0
+                    )
+                ) as source,
+                closing(sqlite3.connect(str(partial))) as target,
+            ):
+                source.backup(target)
+                # Read later, perhaps read-only: a WAL database needs its -shm for that.
+                target.execute("PRAGMA journal_mode=DELETE")
+            partial.replace(copy)
+        finally:
+            partial.unlink(missing_ok=True)
         return copy
 
     @property
@@ -445,6 +457,9 @@ class TableCatalog:
             )
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is not None and row[0] != SCHEMA_VERSION:
+                # A version with no path refuses before anything is copied or changed.
+                _migration_path(int(row[0]))
+                self._copy_before_migration(int(row[0]))
                 self._migrate(conn, int(row[0]))
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS tables ("
