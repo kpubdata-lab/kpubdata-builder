@@ -10,7 +10,10 @@ list of those that are not — and the deployment guide tells operators which th
 from __future__ import annotations
 
 import re
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import pytest
 import yaml
@@ -58,44 +61,67 @@ NOT_PASSED: frozenset[str] = frozenset(
 _BRACED = re.compile(r"^\$\{(?P<name>\w+)(?:(?P<op>:?[-?])(?P<default>[^}$]*))?\}$")
 #: ``$VAR``, which compose reads as ``${VAR}``.
 _BARE = re.compile(r"^\$(?P<name>[A-Za-z_]\w*)$")
-
-#: A variable compose refuses to start without (``${VAR:?message}``).
-REQUIRED = object()
-
-
-def _builder() -> dict[str, object]:
-    compose = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
-    return dict(compose["services"]["builder"])
+#: Any variable a text names, in either form, once ``$$`` is out of the way.
+_ANY_VARIABLE = re.compile(r"\$(?:\{(\w+)|([A-Za-z_]\w*))")
 
 
-def _environment() -> dict[str, object]:
-    """The variables the compose names for the container, by name.
+@dataclass(frozen=True)
+class Substitution:
+    """A value compose fills in from ``.env`` or the host."""
+
+    name: str
+    #: What the process gets when the variable is not set; None when it is required.
+    default: str | None
+    #: ``${VAR:?…}`` requires a value that is not empty; ``${VAR?…}`` only that it is set.
+    required: Literal["non-empty", "set"] | None = None
+
+
+def _compose_text() -> str:
+    return _COMPOSE.read_text(encoding="utf-8")
+
+
+def _environment() -> dict[str, str | None]:
+    """The variables the compose names for the container: each name and its text.
+
+    Read from the YAML nodes, not from loaded values. Compose passes a plain scalar as
+    the text that was written — ``yes``, ``on``, ``010`` — where PyYAML would make a
+    bool or a number of it; and a variable written with no value is passed through
+    from the host, which is ``None`` here.
 
     The file writes them as a mapping. A list (``- FOO=bar``) or an ``env_file`` would
-    pass variables these tests do not read, so either is refused here rather than
-    looked through.
+    pass variables these tests do not read, so either is refused rather than looked
+    through.
     """
-    builder = _builder()
-    assert "env_file" not in builder, "an env_file passes variables this test cannot see"
-    environment = builder["environment"]
-    assert isinstance(environment, dict), "environment must be a mapping, not a list"
-    return dict(environment)
+    root = yaml.compose(_compose_text(), Loader=yaml.SafeLoader)
+    builder = _child(_child(root, "services"), "builder")
+    assert isinstance(builder, yaml.MappingNode)
+    keys = {key.value for key, _ in builder.value}
+    assert "env_file" not in keys, "an env_file passes variables this test cannot see"
+    environment = _child(builder, "environment")
+    assert isinstance(environment, yaml.MappingNode), "environment must be a mapping, not a list"
+    values: dict[str, str | None] = {}
+    for key, value in environment.value:
+        assert isinstance(value, yaml.ScalarNode), f"{key.value}: not a single value"
+        is_null = value.tag == "tag:yaml.org,2002:null" and value.style is None
+        values[str(key.value)] = None if is_null else str(value.value)
+    return values
 
 
-def _literal(value: object) -> str:
-    """A value compose passes as written, as the process receives it."""
-    # YAML reads ``true`` and ``8000`` as a bool and an int; compose passes them as the
-    # text that was written. ``str(True)`` is "True", which is not what was written.
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
+def _child(node: yaml.Node | None, name: str) -> yaml.Node:
+    assert isinstance(node, yaml.MappingNode), f"no mapping to look up {name!r} in"
+    for key, value in node.value:
+        if key.value == name:
+            return value
+    raise AssertionError(f"the compose file has no {name!r}")
 
 
-def _substituted(value: object) -> tuple[str, object] | None:
-    """``(name, what the process gets when .env does not set it)``, or None for a literal.
+def _literal(text: str) -> str:
+    """A value compose passes as written, as the process receives it: ``$$`` is ``$``."""
+    return text.replace("$$", "$")
 
-    What the process gets is the default, the empty string where there is none, or
-    ``REQUIRED`` for ``${VAR:?…}`` — compose does not start without that one.
+
+def _substituted(value: str | None) -> Substitution | None:
+    """How compose fills ``value`` in, or None when it is a literal.
 
     Raises:
         AssertionError: The value is one this cannot follow: a ``$`` that is not the
@@ -104,18 +130,32 @@ def _substituted(value: object) -> tuple[str, object] | None:
     # ``FOO:`` with nothing after it hands the container whatever the host has by that
     # name: a variable this file does not show.
     assert value is not None, "a variable with no value is passed through from the host"
-    text = _literal(value)
     # ``$$`` is how a literal dollar is written; what is left of ``$`` is a substitution.
-    if "$" not in text.replace("$$", ""):
+    if "$" not in value.replace("$$", ""):
         return None
-    bare = _BARE.match(text)
+    bare = _BARE.match(value)
     if bare:
-        return bare["name"], ""
-    match = _BRACED.match(text)
-    assert match, f"a substitution this test does not understand: {text!r}"
-    if match["op"] in (":?", "?"):
-        return match["name"], REQUIRED
-    return match["name"], match["default"] or ""
+        return Substitution(bare["name"], "")
+    match = _BRACED.match(value)
+    assert match, f"a substitution this test does not understand: {value!r}"
+    if match["op"] == ":?":
+        return Substitution(match["name"], None, "non-empty")
+    if match["op"] == "?":
+        return Substitution(match["name"], None, "set")
+    return Substitution(match["name"], match["default"] or "")
+
+
+def _template() -> dict[str, str]:
+    """The variables ``.env.app.example`` sets — the lines that are not commented out."""
+    lines = _ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+    pairs = (line.split("=", 1) for line in lines if re.match(r"^[A-Z][A-Z0-9_]*=", line))
+    return {name: value.strip() for name, value in pairs}
+
+
+def _template_names() -> set[str]:
+    """Every variable the template names, set or commented out."""
+    text = _ENV_EXAMPLE.read_text(encoding="utf-8")
+    return set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", text, re.MULTILINE))
 
 
 def _settings() -> set[str]:
@@ -133,30 +173,54 @@ def test_every_setting_is_passed_or_listed_as_not_passed() -> None:
 def test_each_variable_is_passed_under_its_own_name() -> None:
     """``FOO: ${BAR:-}`` would hand one setting another's value."""
     for name, value in _environment().items():
-        substituted = _substituted(value)
-        if substituted:
-            assert substituted[0] == name
+        substitution = _substituted(value)
+        if substitution:
+            assert substitution.name == name
 
 
-def test_a_variable_left_out_of_dotenv_reaches_the_process_as_one_it_accepts(
+def test_a_required_variable_is_one_the_template_sets() -> None:
+    """``${VAR:?…}`` stops the stack when VAR is missing, so the template must set it.
+
+    Requiring a variable the template leaves commented out — an optional setting —
+    would make the stack refuse to start for an operator who followed the template.
+    ``:?`` also refuses an empty value, which is how some deployments are told to
+    leave a setting (an API key, in an OIDC-only one): requiring it would rule those
+    out, and the template line for it has to hold a value.
+    """
+    template = _template()
+    for name, value in _environment().items():
+        substitution = _substituted(value)
+        if substitution is None or substitution.required is None:
+            continue
+        assert name in template, f"{name} is required but the template does not set it"
+        if substitution.required == "non-empty":
+            assert template[name], (
+                f"{name} is required to be non-empty; the template leaves it empty"
+            )
+
+
+def test_a_variable_reaches_the_process_as_one_it_accepts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Compose passes ``${VAR:-default}`` whether or not ``.env`` sets VAR.
+    """Compose hands the process a value for every variable it names.
 
-    Unset, the process gets the default — the empty string for most. Every reader has
-    to take that as "not set": one that tried to parse it would stop the stack on a
-    variable the operator never wrote.
+    Left out of ``.env``, that is the default — the empty string for most. Every reader
+    has to take that as "not set": one that tried to parse it would stop the stack on
+    a variable the operator never wrote. A required variable has no default; it is
+    given what the template sets, since the stack does not start without one.
     """
+    template = _template()
     for setting in catalog.SETTINGS:
         monkeypatch.delenv(setting.name, raising=False)
     for name, value in _environment().items():
-        substituted = _substituted(value)
-        if substituted is None:
+        substitution = _substituted(value)
+        if substitution is None:
+            assert value is not None
             monkeypatch.setenv(name, _literal(value))
-        elif isinstance(substituted[1], str):
-            monkeypatch.setenv(name, substituted[1])
-        # A required variable has no value when it is left out: the stack does not
-        # start, and there is no process to hand anything to.
+        elif substitution.default is not None:
+            monkeypatch.setenv(name, substitution.default)
+        else:
+            monkeypatch.setenv(name, template[name])
 
     report = check_settings()
 
@@ -166,11 +230,10 @@ def test_a_variable_left_out_of_dotenv_reaches_the_process_as_one_it_accepts(
 
 def test_the_example_dotenv_names_only_what_the_stack_reads() -> None:
     """A line in the template that nothing passes on would be a setting that does nothing."""
-    template = _ENV_EXAMPLE.read_text(encoding="utf-8")
-    named = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]+)=", template, re.MULTILINE))
-    substituted = set(re.findall(r"\$\{([A-Z0-9_]+)", _COMPOSE.read_text(encoding="utf-8")))
+    text = _compose_text().replace("$$", "")
+    substituted = {braced or bare for braced, bare in _ANY_VARIABLE.findall(text)}
 
-    assert named <= substituted
+    assert _template_names() <= substituted
 
 
 def test_the_guide_lists_the_settings_that_are_not_passed() -> None:
@@ -178,7 +241,8 @@ def test_the_guide_lists_the_settings_that_are_not_passed() -> None:
     start = guide.index("### compose 가 컨테이너에 넘기지 않는 설정")
     section = guide[start : guide.index("\n### ", start + 1)]
 
-    listed = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", section)) & _settings()
+    # The list items, one setting each; the prose around them names other variables.
+    listed = set(re.findall(r"^- `([A-Z][A-Z0-9_]+)`", section, re.MULTILINE))
 
     assert listed == NOT_PASSED
 
@@ -187,20 +251,20 @@ def test_the_guide_lists_the_settings_that_are_not_passed() -> None:
     ("value", "expected"),
     [
         ("0.0.0.0", None),
-        (8000, None),
-        (True, None),
+        ("8000", None),
+        ("true", None),
         ("costs $$5", None),
-        ("${FOO:-}", ("FOO", "")),
-        ("${FOO:-128MB}", ("FOO", "128MB")),
-        ("${FOO-x}", ("FOO", "x")),
-        ("${FOO}", ("FOO", "")),
-        ("$FOO", ("FOO", "")),
-        ("${FOO:?must be set}", ("FOO", REQUIRED)),
-        ("${FOO?x}", ("FOO", REQUIRED)),
+        ("${FOO:-}", Substitution("FOO", "")),
+        ("${FOO:-128MB}", Substitution("FOO", "128MB")),
+        ("${FOO-x}", Substitution("FOO", "x")),
+        ("${FOO}", Substitution("FOO", "")),
+        ("$FOO", Substitution("FOO", "")),
+        ("${FOO:?must be set}", Substitution("FOO", None, "non-empty")),
+        ("${FOO?x}", Substitution("FOO", None, "set")),
     ],
 )
 def test_substitutions_are_read_as_compose_reads_them(
-    value: object, expected: tuple[str, object] | None
+    value: str, expected: Substitution | None
 ) -> None:
     assert _substituted(value) == expected
 
@@ -217,14 +281,113 @@ def test_substitutions_are_read_as_compose_reads_them(
         None,
     ],
 )
-def test_a_substitution_the_test_cannot_follow_is_refused(value: object) -> None:
+def test_a_substitution_the_test_cannot_follow_is_refused(value: str | None) -> None:
     with pytest.raises(AssertionError):
         _substituted(value)
 
 
-def test_a_literal_is_passed_as_it_was_written() -> None:
-    """Not as Python spells what YAML made of it."""
-    assert _literal(True) == "true"
-    assert _literal(False) == "false"
-    assert _literal(8000) == "8000"
+def test_a_literal_reaches_the_process_with_its_dollars_unescaped() -> None:
+    assert _literal("costs $$5") == "costs $5"
     assert _literal("0.0.0.0") == "0.0.0.0"
+
+
+def test_values_are_read_as_the_text_that_was_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not as PyYAML's idea of them: compose passes ``yes`` as ``yes``, not as a bool."""
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "services:\n"
+        "  builder:\n"
+        "    environment:\n"
+        "      A: yes\n"
+        "      B: on\n"
+        "      C: 010\n"
+        "      D: 1_000\n"
+        '      E: "8000"\n'
+        "      F: ''\n"
+        "      G:\n"
+        "      H: ~\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "_COMPOSE", compose)
+
+    assert _environment() == {
+        "A": "yes",
+        "B": "on",
+        "C": "010",
+        "D": "1_000",
+        "E": "8000",
+        "F": "",
+        "G": None,
+        "H": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("environment", "message"),
+    [
+        ("    environment:\n      - FOO=bar\n", "mapping"),
+        ("    env_file: .env\n    environment:\n      FOO: bar\n", "env_file"),
+    ],
+)
+def test_a_form_that_hides_variables_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: str, message: str
+) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(f"services:\n  builder:\n{environment}", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_COMPOSE", compose)
+
+    with pytest.raises(AssertionError, match=message):
+        _environment()
+
+
+@pytest.mark.parametrize(
+    ("line", "template", "accepted"),
+    [
+        # An optional setting the template leaves commented out.
+        ("FOO: ${FOO:?needed}", "# FOO=\n", False),
+        # Set, but empty: ``:?`` refuses it, ``?`` does not.
+        ("FOO: ${FOO:?needed}", "FOO=\n", False),
+        ("FOO: ${FOO?needed}", "FOO=\n", True),
+        ("FOO: ${FOO:?needed}", "FOO=value\n", True),
+        ("FOO: $FOO", "# FOO=\n", True),
+    ],
+)
+def test_requiring_a_variable_the_template_does_not_set_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str, template: str, accepted: bool
+) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(f"services:\n  builder:\n    environment:\n      {line}\n", "utf-8")
+    example = tmp_path / ".env.app.example"
+    example.write_text(template, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_COMPOSE", compose)
+    monkeypatch.setattr(sys.modules[__name__], "_ENV_EXAMPLE", example)
+
+    if accepted:
+        test_a_required_variable_is_one_the_template_sets()
+    else:
+        with pytest.raises(AssertionError, match="FOO is required"):
+            test_a_required_variable_is_one_the_template_sets()
+
+
+def test_a_bare_variable_counts_as_read_by_the_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``FOO: $FOO`` reads FOO as much as ``FOO: ${FOO}`` does."""
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "services:\n  builder:\n    image: ${IMAGE:-x}\n    environment:\n"
+        "      FOO: $FOO\n      PRICE: costs $$NOTAVARIABLE\n",
+        encoding="utf-8",
+    )
+    example = tmp_path / ".env.app.example"
+    example.write_text("IMAGE=y\n# FOO=1\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_COMPOSE", compose)
+    monkeypatch.setattr(sys.modules[__name__], "_ENV_EXAMPLE", example)
+
+    test_the_example_dotenv_names_only_what_the_stack_reads()
+
+    example.write_text("NOTAVARIABLE=1\n", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        test_the_example_dotenv_names_only_what_the_stack_reads()

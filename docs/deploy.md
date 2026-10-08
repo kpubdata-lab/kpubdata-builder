@@ -426,13 +426,19 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 - `KPUBDATA_BUILDER_DEV_MODE` — 일부러 넘기지 않는다. 인증을 통째로 끄는 값이 프로덕션 스택에서
   `.env` 한 줄로 켜져서는 안 된다.
 
-나머지는 지금 넘기지 않는다. 기본값이 있는 설정은 그 값으로 돌고, 기본값이 없는 것(`HF_TOKEN`,
-`KAGGLE_USERNAME`, `KAGGLE_KEY`, `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`, `KPUBDATA_BUILDER_CUBRID_URL`,
-`OIDC_JWKS_URL`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
-`KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지
-않은 것으로 돈다 — 켜고 끄는 셋은 꺼진 채이고, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` 가 없으면 이
-스택에서 `prune-cancelled --apply` 는 `--ttl-hours` 를 직접 주지 않는 한 아무것도 지우지 않는다. `KPUBDATA_BUILDER_STORAGE_BACKEND` 와
-`KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는 뜻으로 여기 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
+나머지는 지금 넘기지 않는다. 기본값이 있는 설정은 그 값으로 돈다.
+
+- **기본값이 없는 것**(`HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`,
+  `KPUBDATA_BUILDER_CUBRID_URL`, `OIDC_JWKS_URL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지 않은
+  것으로 돈다. `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` 가 없으므로 이 스택에서 `prune-cancelled --apply` 는
+  `--ttl-hours` 를 직접 주지 않는 한 아무것도 지우지 않는다.
+- **켜고 끄는 셋**(`ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
+  `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)은 기본값이 있다. `OIDC_ISSUER` 가 없는 단일 사용자
+  스택에서는 꺼져 있고, `OIDC_ISSUER` 를 설정한 다중 사용자 스택에서는 `.env` 에 무엇을 적든 켜져 있다 —
+  다중 사용자 모드가 셋을 모두 강제한다(ADR 0012). 그래서 넘기지 않아서 달라지는 것은 단일 사용자 스택에서
+  이 셋을 켤 수 없다는 점이다.
+- **이 스택은 SQLite 로만 돈다.** `KPUBDATA_BUILDER_STORAGE_BACKEND` 와 `KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는
+  뜻으로 아래 목록에 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
 
 - `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
 - `OIDC_JWKS_URL`
