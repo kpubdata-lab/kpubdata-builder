@@ -173,3 +173,85 @@ def test_each_of_two_owners_gets_a_full_page_of_their_own(service: BuilderServic
 
     assert mine == ["mine-10", "mine-09", "mine-08", "mine-07"]
     assert theirs == ["theirs-10", "theirs-09", "theirs-08", "theirs-07"]
+
+
+# ---------------------------------------------------------------- nobody else's runs
+
+#: A machine caller with the deployment's API key: it owns what it made, like anyone.
+SERVICE = Principal(kind="service", identifier="scheduler", owner_id="service:scheduler")
+
+#: Whose run each id below is. ``collision`` is another person's run that carries the
+#: requester's label in ``created_by`` — the owner id decides, not the label.
+_OWNERS: dict[str, Principal] = {
+    **{f"mine-{n}": ME for n in range(1, 5)},
+    **{f"theirs-{n}": OTHER for n in range(5, 12)},
+    **{f"service-{n}": SERVICE for n in range(12, 15)},
+}
+_COLLISION = "collision-15"
+
+
+def _populate_index(service: BuilderService) -> None:
+    for run_id, owner in _OWNERS.items():
+        _index(service, run_id, int(run_id.rsplit("-", 1)[1]), owner)
+    service._build_index.insert_or_replace(
+        run_id=_COLLISION,
+        status="ok",
+        started_at="2026-01-15T10:00:00Z",
+        finished_at="2026-01-15T10:05:00Z",
+        created_by=ME.label,
+        owner_id=OTHER.owner_id,
+    )
+
+
+def _populate_disk(root: Path) -> None:
+    for run_id, owner in _OWNERS.items():
+        _manifest(root, run_id, int(run_id.rsplit("-", 1)[1]), owner)
+    _manifest(root, _COLLISION, 15, OTHER)
+    manifest = root / _COLLISION / "manifest.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["created_by"] = ME.label
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _owned_by(principal: Principal) -> set[str]:
+    return {run_id for run_id, owner in _OWNERS.items() if owner is principal}
+
+
+@pytest.mark.parametrize("where", ["index", "disk"])
+@pytest.mark.parametrize("who", [ME, OTHER, SERVICE], ids=["me", "other", "service"])
+def test_no_limit_shows_a_run_of_anyone_else(
+    service: BuilderService, tmp_path: Path, where: str, who: Principal
+) -> None:
+    """Whatever the limit, on either path: only the requester's own runs (#1191, #1198).
+
+    The lists above compare exact answers; this one states the rule itself, for every
+    limit from one to more than there are runs, for a person, another person and the
+    API key, and with a run whose label says one owner and whose owner id says another.
+    """
+    if where == "index":
+        _populate_index(service)
+    else:
+        _populate_disk(tmp_path)
+    total = len(_OWNERS) + 1
+    # The collision run is OTHER's by owner id, whatever its label says.
+    own = _owned_by(who) | ({_COLLISION} if who is OTHER else set())
+
+    for limit in range(1, total + 3):
+        listed = _ids(service, limit=limit, principal=who)
+
+        assert set(listed) <= own, f"limit={limit}: {set(listed) - own} are not theirs"
+        assert len(listed) == min(limit, len(own)), f"limit={limit}"
+        assert len(set(listed)) == len(listed)
+
+
+@pytest.mark.parametrize("where", ["index", "disk"])
+def test_a_run_with_my_label_and_another_owner_id_is_not_mine(
+    service: BuilderService, tmp_path: Path, where: str
+) -> None:
+    if where == "index":
+        _populate_index(service)
+    else:
+        _populate_disk(tmp_path)
+
+    assert _COLLISION not in _ids(service, limit=50, principal=ME)
+    assert _COLLISION in _ids(service, limit=50, principal=OTHER)
