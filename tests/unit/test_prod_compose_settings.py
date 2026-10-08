@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
@@ -54,12 +53,43 @@ NOT_PASSED: frozenset[str] = frozenset(
     }
 )
 
-_SUBSTITUTION = re.compile(r"^\$\{(?P<name>[A-Z0-9_]+):-(?P<default>[^}]*)\}$")
+#: ``${VAR}``, ``${VAR:-default}``, ``${VAR-default}``, ``${VAR:?message}``, ``${VAR?message}``.
+_SUBSTITUTION = re.compile(r"^\$\{(?P<name>\w+)(?:(?P<op>:?[-?])(?P<default>[^}]*))?\}$")
 
 
-def _environment() -> dict[str, Any]:
+def _builder() -> dict[str, object]:
     compose = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
-    return dict(compose["services"]["builder"]["environment"])
+    return dict(compose["services"]["builder"])
+
+
+def _environment() -> dict[str, object]:
+    """The variables the compose names for the container, by name.
+
+    The file writes them as a mapping. A list (``- FOO=bar``) or an ``env_file`` would
+    pass variables these tests do not read, so either is refused here rather than
+    looked through.
+    """
+    builder = _builder()
+    assert "env_file" not in builder, "an env_file passes variables this test cannot see"
+    environment = builder["environment"]
+    assert isinstance(environment, dict), "environment must be a mapping, not a list"
+    return dict(environment)
+
+
+def _substituted(value: object) -> tuple[str, str] | None:
+    """``(name, what the process gets when .env does not set it)``, or None for a literal.
+
+    Raises:
+        AssertionError: The value has a ``${`` this does not understand, or requires
+            the variable (``${VAR:?…}``): an unset one stops compose, and has no value.
+    """
+    text = str(value)
+    if "${" not in text:
+        return None
+    match = _SUBSTITUTION.match(text)
+    assert match, f"a substitution this test does not understand: {text!r}"
+    assert match["op"] not in (":?", "?"), f"{text!r} stops compose when the variable is unset"
+    return match["name"], match["default"] or ""
 
 
 def _settings() -> set[str]:
@@ -77,9 +107,9 @@ def test_every_setting_is_passed_or_listed_as_not_passed() -> None:
 def test_each_variable_is_passed_under_its_own_name() -> None:
     """``FOO: ${BAR:-}`` would hand one setting another's value."""
     for name, value in _environment().items():
-        match = _SUBSTITUTION.match(str(value))
-        if match:
-            assert match["name"] == name
+        substituted = _substituted(value)
+        if substituted:
+            assert substituted[0] == name
 
 
 def test_a_variable_left_out_of_dotenv_reaches_the_process_as_one_it_accepts(
@@ -94,8 +124,8 @@ def test_a_variable_left_out_of_dotenv_reaches_the_process_as_one_it_accepts(
     for setting in catalog.SETTINGS:
         monkeypatch.delenv(setting.name, raising=False)
     for name, value in _environment().items():
-        match = _SUBSTITUTION.match(str(value))
-        monkeypatch.setenv(name, match["default"] if match else str(value))
+        substituted = _substituted(value)
+        monkeypatch.setenv(name, substituted[1] if substituted else str(value))
 
     report = check_settings()
 
@@ -120,3 +150,25 @@ def test_the_guide_lists_the_settings_that_are_not_passed() -> None:
     listed = set(re.findall(r"`([A-Z][A-Z0-9_]+)`", section)) & _settings()
 
     assert listed == NOT_PASSED
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0.0.0.0", None),
+        ("${FOO:-}", ("FOO", "")),
+        ("${FOO:-128MB}", ("FOO", "128MB")),
+        ("${FOO-x}", ("FOO", "x")),
+        ("${FOO}", ("FOO", "")),
+    ],
+)
+def test_substitutions_are_read_as_compose_reads_them(
+    value: str, expected: tuple[str, str] | None
+) -> None:
+    assert _substituted(value) == expected
+
+
+@pytest.mark.parametrize("value", ["${FOO:?must be set}", "${FOO?x}", "prefix-${FOO}", "${FOO:+x}"])
+def test_a_substitution_the_test_cannot_follow_is_refused(value: str) -> None:
+    with pytest.raises(AssertionError):
+        _substituted(value)

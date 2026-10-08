@@ -426,7 +426,10 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 - `KPUBDATA_BUILDER_DEV_MODE` — 일부러 넘기지 않는다. 인증을 통째로 끄는 값이 프로덕션 스택에서
   `.env` 한 줄로 켜져서는 안 된다.
 
-나머지는 지금 넘기지 않을 뿐이고, 코드 기본값으로 돈다.
+나머지는 지금 넘기지 않는다. 기본값이 있는 설정은 그 값으로 돌고, 기본값이 없는 것(`HF_TOKEN`,
+`KAGGLE_USERNAME`, `KAGGLE_KEY`, `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`, `KPUBDATA_BUILDER_CUBRID_URL`,
+`OIDC_JWKS_URL`)은 설정되지 않은 것으로 돈다. `KPUBDATA_BUILDER_STORAGE_BACKEND` 와
+`KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는 뜻으로 여기 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
 
 - `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
 - `OIDC_JWKS_URL`
