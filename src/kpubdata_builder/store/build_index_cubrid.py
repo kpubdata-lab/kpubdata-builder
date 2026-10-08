@@ -196,7 +196,12 @@ class CubridBuildIndex:
         return [self._row_to_entry(r) for r in rows]
 
     def list_recent_owned(
-        self, *, limit: int, principal_owner_id: str | None, principal_label: str
+        self,
+        *,
+        limit: int,
+        principal_owner_id: str | None,
+        principal_label: str,
+        dataset_id: str | None = None,
     ) -> list[BuildEntry]:
         # Apply ownership filter in WHERE before LIMIT (#527) — same policy as service.auth.
         # principal_owns(). NULL comparison naturally fail-closed.
@@ -208,6 +213,9 @@ class CubridBuildIndex:
             )
         else:
             cond = b.created_by == principal_label
+        if dataset_id is not None:
+            # Also before LIMIT (#1191).
+            cond = and_(cond, b.dataset_id == dataset_id)
         stmt = select(self._builds).where(cond).order_by(b.finished_at.desc()).limit(limit)
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).all()

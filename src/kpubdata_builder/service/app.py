@@ -485,7 +485,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.110.0 -> 1.111.0: in a multi-user deployment POST /builds answers 429
 #   build_owner_limit past KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER (#1189,
 #   additive).
-API_CONTRACT_VERSION = "1.111.0"
+# 1.111.0 -> 1.112.0: a provider's refusal of a source is stated by its reason;
+#   BuildOutcome and SourcePreview gain reason, source_fetch_failed metrics.reason
+#   (#1187, additive).
+API_CONTRACT_VERSION = "1.112.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

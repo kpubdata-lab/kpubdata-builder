@@ -271,6 +271,50 @@ def test_index_is_built_on_start_when_there_is_none(  # type: ignore[no-untyped-
         fresh.dispose()
 
 
+def test_build_index_owner_filter_comes_before_the_limit(engine) -> None:  # type: ignore[no-untyped-def]
+    """The requester's runs, and one dataset's, are cut after they are picked (#1191)."""
+    idx = CubridBuildIndex(engine)
+    ids = ["cbx-own-air", "cbx-own-bike", *[f"cbx-theirs-{n}" for n in range(3)]]
+    try:
+        idx.insert_or_replace(
+            "cbx-own-air", "ok", None, "2026-01-01T00:00:00Z", dataset_id="air", owner_id="oidc:me"
+        )
+        idx.insert_or_replace(
+            "cbx-own-bike",
+            "ok",
+            None,
+            "2026-01-02T00:00:00Z",
+            dataset_id="bike",
+            owner_id="oidc:me",
+        )
+        for n in range(3):
+            idx.insert_or_replace(
+                f"cbx-theirs-{n}",
+                "ok",
+                None,
+                f"2026-02-0{n + 1}T00:00:00Z",
+                dataset_id="air",
+                owner_id="oidc:other",
+            )
+
+        def owned(limit: int, dataset_id: str | None = None) -> list[str]:
+            rows = idx.list_recent_owned(
+                limit=limit,
+                principal_owner_id="oidc:me",
+                principal_label="oidc:me-label",
+                dataset_id=dataset_id,
+            )
+            return [row.run_id for row in rows]
+
+        assert owned(1) == ["cbx-own-bike"]
+        assert owned(5) == ["cbx-own-bike", "cbx-own-air"]
+        assert owned(1, "air") == ["cbx-own-air"]
+        assert owned(5, "no-such-dataset") == []
+    finally:
+        for run_id in ids:
+            idx.delete(run_id)
+
+
 def test_build_index_monitoring_queries(engine) -> None:  # type: ignore[no-untyped-def]
     """Validate that upstream monitoring (#516/#527) methods work on real CUBRID."""
     idx = CubridBuildIndex(engine)

@@ -260,6 +260,8 @@ class BuildRunsApiService:
                 ),
                 # A provider that echoes the request would put the key into the data.
                 secret_values=tuple(provider_keys.values()),
+                # By provider, to say which provider's key a refusal was about (#1187).
+                provider_keys=dict(provider_keys),
             )
         finally:
             if takes_slot:
@@ -283,6 +285,7 @@ class BuildRunsApiService:
                 "status": outcome.status,
                 "stages_completed": list(outcome.stages_completed),
                 "error": redact_secret_text(outcome.error, secret_values),
+                "reason": outcome.reason,
             }
             for outcome in result.outcomes
         ]

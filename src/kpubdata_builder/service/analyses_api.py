@@ -38,6 +38,7 @@ from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.service.warehouse_api import WarehouseApiService, parse_table_query
 from kpubdata_builder.spec import JsonValue
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
 from kpubdata_builder.warehouse import TableCatalog, WarehouseError
 
 _MAX_NAME_LENGTH = 200
@@ -160,7 +161,7 @@ class AnalysisStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         """One connection per call: committed on success, rolled back on error, closed."""
-        with closing(sqlite3.connect(self._path, timeout=30)) as conn, conn:
+        with closing(sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)) as conn, conn:
             yield conn
 
     def put(self, analysis: SavedAnalysis) -> None:
