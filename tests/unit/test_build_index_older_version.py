@@ -36,8 +36,14 @@ def _run(root: Path, run_id: str, **manifest: object) -> None:
 
 
 def _older_index(root: Path, *, version: int = SCHEMA_VERSION - 1) -> None:
-    """An index as an earlier release left it: its own columns, its own version, one row."""
+    """An index as an earlier release left it: its own columns, its own version, one row.
+
+    In WAL mode, as every release has made it. A file still in rollback mode would have
+    two openers race to change the journal mode, which SQLite refuses at once rather
+    than waiting — a race of first creation, not of opening an older index.
+    """
     with closing(sqlite3.connect(root / _INDEX)) as conn, conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT)")
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
         # No owner_id column: what version 4 had.
