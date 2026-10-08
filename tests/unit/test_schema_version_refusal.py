@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from kpubdata_builder.service import BuilderService
 from kpubdata_builder.stages.bronze.build import SourceClient
 from kpubdata_builder.store import SCHEMA_VERSION as INDEX_VERSION
 from kpubdata_builder.store import SqliteBuildIndex, rebuild_index
+from kpubdata_builder.store.build_index import BuildEntry, _iter_manifest_entries
 from kpubdata_builder.store.schema_version import UnsupportedSchemaVersionError
 
 
@@ -426,7 +428,7 @@ def test_failed_rebuild_in_place_leaves_the_index_as_it_was(tmp_path: Path) -> N
     before = _dump(path)
     index = SqliteBuildIndex(tmp_path)
     entries = _manifest_entries(tmp_path)
-    broken = [*entries, entries[0].__class__(**{**entries[0].__dict__, "status": "not-a-status"})]
+    broken = [*entries, replace(entries[0], run_id="run-bad", status="not-a-status")]  # type: ignore[arg-type]
 
     with pytest.raises(sqlite3.IntegrityError):
         index.replace_contents(broken)
@@ -435,7 +437,53 @@ def test_failed_rebuild_in_place_leaves_the_index_as_it_was(tmp_path: Path) -> N
     assert _dump(path) == before
 
 
-def _manifest_entries(root: Path) -> list[object]:
-    from kpubdata_builder.store.build_index import _iter_manifest_entries
-
+def _manifest_entries(root: Path) -> list[BuildEntry]:
     return list(_iter_manifest_entries(root))
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "DROP TABLE builds",
+        "ALTER TABLE builds RENAME COLUMN status TO state",
+    ],
+    ids=["table missing", "column renamed"],
+)
+def test_rebuild_recovers_an_index_of_this_version_that_cannot_be_written(
+    tmp_path: Path, damage: str
+) -> None:
+    """The version says this release's and the table does not: still what a rebuild is for.
+
+    Refilling in place fails on such a file, and the rebuild used to replace the file
+    whatever was in it. It falls back to that.
+    """
+    _write_run(tmp_path, "run-ok", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute(damage)
+
+    assert rebuild_index(tmp_path) == 1
+
+    index = SqliteBuildIndex(tmp_path)
+    recovered = index.get("run-ok")
+    assert recovered is not None and recovered.owner_id == "oidc:a"
+    assert index.get("run-1") is None
+    index.close()
+    assert not [item.name for item in tmp_path.iterdir() if item.name.endswith((".tmp", ".bak"))]
+
+
+def test_rebuild_in_place_does_not_wait_for_a_reader(tmp_path: Path) -> None:
+    """A server connection in a read transaction holds back a ``TRUNCATE`` checkpoint
+    for the whole busy timeout; the rebuild leaves the WAL to the server instead."""
+    import time
+
+    _write_run(tmp_path, "run-a", owner_id="oidc:a", errors=[])
+    path = _index_with_one_run(tmp_path)
+    with closing(sqlite3.connect(path)) as reader:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM builds").fetchone()
+        started = time.monotonic()
+
+        assert rebuild_index(tmp_path) == 1
+
+        assert time.monotonic() - started < 10

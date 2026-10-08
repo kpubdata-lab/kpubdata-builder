@@ -606,14 +606,20 @@ class SqliteBuildIndex:
             conn.rollback()
             raise
 
-    def close(self) -> None:
+    def close(self, *, checkpoint: bool = True) -> None:
         """Close connection.
 
         Checkpoint WAL contents to main DB file before close, so file can be
         safely transferred by rename only.
+
+        Args:
+            checkpoint: False skips that. ``TRUNCATE`` waits for every reader, up to
+                the busy timeout, so a caller beside a running server that is not
+                about to move the file leaves the WAL to the server (#1157).
         """
         if hasattr(self._local, "conn"):
-            self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            if checkpoint:
+                self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self._local.conn.close()
             delattr(self._local, "conn")
 
@@ -711,12 +717,21 @@ def _rebuild_sqlite(output_root: Path) -> int:
         # this release — that server refuses a newer one and remakes an older one when
         # it starts — and is replaced by the file below.
         entries = list(_iter_manifest_entries(output_root))
-        index = SqliteBuildIndex(output_root)
         try:
-            index.replace_contents(entries)
-        finally:
-            index.close()
-        return len(entries)
+            index = SqliteBuildIndex(output_root)
+            try:
+                index.replace_contents(entries)
+            finally:
+                # No checkpoint: ``TRUNCATE`` waits out the whole busy timeout for a
+                # server connection that is reading, and nothing here moves the file.
+                index.close(checkpoint=False)
+            return len(entries)
+        except sqlite3.DatabaseError:
+            # The version is this release's but the index is not usable as it is — the
+            # table is missing, or is not the shape this release writes. That is the
+            # file a rebuild is run to recover, so it is replaced as one of another
+            # version is. A server that has it open was not getting an index from it.
+            pass
 
     tmp_path = output_root / f"{_INDEX_FILENAME}.tmp"
     backup_path = output_root / f"{_INDEX_FILENAME}.bak"
@@ -798,7 +813,10 @@ def rebuild_index(output_root: Path) -> int:
     """Rebuild index from filesystem scan (backend-aware, ADR 0016).
 
     Scan manifest.json canonical, refill derived index. Per backend:
-    - sqlite: build to .tmp, atomically rename-replace (#366).
+    - sqlite, an index of this release's version: refilled where it is, in one
+      transaction, so a running server's connections see it (#1157). One that cannot
+      be written that way is replaced as below.
+    - sqlite, any other index or none: build to .tmp, atomically rename-replace (#366).
     - cubrid: truncate builds table, reinsert in single transaction.
 
     Args:
