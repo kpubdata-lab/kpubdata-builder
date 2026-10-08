@@ -187,8 +187,18 @@ class BuildEventRecorder:
             metrics={"records": record_count},
         )
 
-    def source_fetch_failed(self, source_key: str, *, message: str) -> None:
-        self._record("source_fetch_failed", "fail", source_key=source_key, message=message)
+    def source_fetch_failed(
+        self, source_key: str, *, message: str, reason: str | None = None
+    ) -> None:
+        # A provider's refusal carries its reason (#1187) in metrics, the event's only
+        # structured field.
+        self._record(
+            "source_fetch_failed",
+            "fail",
+            source_key=source_key,
+            message=message,
+            metrics={"reason": reason} if reason is not None else None,
+        )
 
     # --- medallion stage -------------------------------------------------
 
