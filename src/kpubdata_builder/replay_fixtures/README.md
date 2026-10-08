@@ -12,3 +12,8 @@ Each `*.meta.json` records the request and the SHA-256 of its `*.raw.json`; the
 package's tests check the two still agree. The service key in the recording is
 `[REDACTED]`. To add a fixture, record it in kpubdata (`make record`) and copy both
 files here — never write one by hand.
+
+Replay matches every request parameter, the page size included. A Public API source
+that replays `gangnam_full_page` must say `page_size: 100` in its `params`, as the
+recording did: otherwise a build asks for the dataset's `max_page_size` and a preview
+for its `limit` (#1185), and no recording matches.
