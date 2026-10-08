@@ -13,7 +13,6 @@ and left out here until they are corrected — see the test at the bottom.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -40,13 +39,10 @@ _CURRENT = [
 
 
 def _pinned_range() -> str:
-    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    (requirement,) = [
-        dependency
-        for dependency in project["dependencies"]
-        if re.match(r"kpubdata\s*[<>=!~]", dependency)
-    ]
-    return _normal(requirement.removeprefix("kpubdata"))
+    # tomllib is 3.11+ and this project supports 3.10, so the line is read as text.
+    text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    (requirement,) = re.findall(r'^\s*"kpubdata\s*([<>=!~][^"]*)",?\s*$', text, re.MULTILINE)
+    return _normal(requirement)
 
 
 def _normal(text: str) -> str:
