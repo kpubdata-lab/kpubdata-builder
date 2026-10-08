@@ -116,8 +116,8 @@ Builder 가 두는 SQLite 파일은 열 개다. 목록의 정본은 `src/kpubdat
 | 빌드 인덱스 | 출력 디렉터리의 `_builds.sqlite` | 30초 | WAL | 버전 표 | 잃어도 된다 — manifest 에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`) |
 | run 이벤트와 제출 기록 | 출력 디렉터리의 `_build_events.sqlite` | 30초 | WAL | 버전 표 | run 의 타임라인과 제출자 기록을 잃는다. 다시 만들 수 없다 |
 | 게시 영수증 | 출력 디렉터리의 `_publish_receipts.sqlite` | 30초 | WAL | 없음 — 빠진 열을 열 때 더한다 | 어떤 run 을 어디에 게시했는지와, 같은 게시가 두 번 나가는 것을 막는 근거를 잃는다. 다시 만들 수 없다 |
-| provider 자격 증명 (암호화) | 출력 디렉터리의 `.service/provider-credentials.sqlite3` | 5초 | 기본(rollback journal) | 없음 | 사용자가 저장한 provider 키를 잃는다. 각자 다시 입력해야 한다 |
-| 업로드 | 출력 디렉터리의 `.service/uploads.sqlite3` | 5초 | 기본(rollback journal) | 없음 — 빠진 열을 열 때 더한다 | 올린 파일과 그 목록을 잃는다(큰 파일의 내용은 옆의 `uploads.sqlite3.blobs/` 에 있다) |
+| provider 자격 증명 (암호화) | 출력 디렉터리의 `.service/provider-credentials.sqlite3` | 30초 | 기본(rollback journal) | 없음 | 사용자가 저장한 provider 키를 잃는다. 각자 다시 입력해야 한다 |
+| 업로드 | 출력 디렉터리의 `.service/uploads.sqlite3` | 30초 | 기본(rollback journal) | 없음 — 빠진 열을 열 때 더한다 | 올린 파일과 그 목록을 잃는다(큰 파일의 내용은 옆의 `uploads.sqlite3.blobs/` 에 있다) |
 | provider 연결 테스트의 마지막 결과 | 출력 디렉터리의 `.service/provider_tests.sqlite3` | 30초 | 기본(rollback journal) | 없음 | 잃어도 된다 — 연결 테스트를 다시 하면 채워진다 |
 | 문서 revision 과 감사 기록 | 출력 디렉터리의 `.service/revisions.sqlite3` | 30초 | 기본(rollback journal) | 없음 | BuildSpec 과 표시 주석의 저장 이력을 잃는다. 다시 만들 수 없다 |
 | 가입 원장 | 출력 디렉터리의 `.service/users.sqlite3` | 30초 | 기본(rollback journal) | 없음 | 가입 승인·거절 기록을 잃는다. allowlist 에 없는 사용자는 다시 승인을 기다린다 |
@@ -128,9 +128,10 @@ CUBRID 백엔드(§6.1)를 쓰면 빌드 인덱스와 provider 자격 증명은 
 
 **지금의 방식.** 이 표는 정해 둔 규칙이 아니라 지금 코드가 하는 일이다. 저장소마다 다른 점은 다음과 같다.
 
-- **잠금 대기 30초가 대부분이고, 둘만 5초다**(provider 자격 증명, 업로드). 5초인 이유는 코드에 적혀 있지
-  않다. 30초로 맞추면 잠금이 걸렸을 때 요청이 실패하는 대신 더 오래 기다리게 되므로, 맞출지는 정해야 할
-  일이다.
+- **잠금 대기는 모두 30초다.** 저장소를 여는 모든 연결이 한 값(`sqlite_settings.BUSY_TIMEOUT_SECONDS`)을
+  쓴다. provider 자격 증명과 업로드만 5초였는데 이유가 적혀 있지 않았고, 같은 잠금 뒤에서 어떤 요청은 5초에
+  실패하고 다른 요청은 계속 기다렸다. 30초는 요청 소켓이 열려 있을 수 있는 시간(`service/http.py`)과 같다.
+  카탈로그의 사본을 뜨는 연결도 SQLite 기본값(5초) 대신 이 값을 쓴다.
 - **WAL 은 넷이다**(빌드 인덱스, run 이벤트, 게시 영수증, 테이블 카탈로그). 나머지는 SQLite 기본 모드다.
 - **가입 원장은 일부러 WAL 이 아니다.** WAL 데이터베이스는 쓸 수 없는 디렉터리에서 읽지 못한다(연결마다
   `-shm` 파일을 만들어야 한다). 원장은 디스크가 읽기 전용이 되어도 이미 가입한 사용자를 들여보내야 해서

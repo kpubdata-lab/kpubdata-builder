@@ -16,6 +16,7 @@ from pathlib import Path
 
 from kpubdata_builder.service.providers import ProviderTestResult
 from kpubdata_builder.spec import JsonValue
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
 
 
 class ProviderTestLog:
@@ -35,7 +36,7 @@ class ProviderTestLog:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        with closing(sqlite3.connect(self._path, timeout=30)) as conn, conn:
+        with closing(sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)) as conn, conn:
             yield conn
 
     def record(self, owner_id: str, result: ProviderTestResult) -> None:

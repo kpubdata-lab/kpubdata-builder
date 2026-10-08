@@ -57,6 +57,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 from ..store.schema_version import open_read_only, stored_version
 from .errors import (
     ImmutableSnapshot,
@@ -385,7 +387,7 @@ class TableCatalog:
         try:
             with (
                 closing(open_read_only(self._path)) as source,
-                closing(sqlite3.connect(str(partial))) as target,
+                closing(sqlite3.connect(str(partial), timeout=BUSY_TIMEOUT_SECONDS)) as target,
             ):
                 source.backup(target)
                 # Read later, perhaps read-only: a WAL database needs its -shm for that.
@@ -421,7 +423,7 @@ class TableCatalog:
         writer — which is exactly the gap the compare-and-swap exists to close.
         Running in autocommit and issuing ``BEGIN IMMEDIATE`` explicitly avoids it.
         """
-        conn = sqlite3.connect(str(self._path), timeout=30.0, isolation_level=None)
+        conn = sqlite3.connect(str(self._path), timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")

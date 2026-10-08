@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
 from kpubdata_builder.store.inventory import NOT_STORES, STORES, StateStore
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -67,17 +68,72 @@ def test_file_name_is_the_one_the_code_uses(store: StateStore) -> None:
     assert any(f'"{name}"' in text for text in used_in), name
 
 
-@pytest.mark.parametrize("store", STORES, ids=_IDS)
-def test_timeout_is_the_one_the_module_connects_with(store: StateStore) -> None:
-    source = _source(store)
-    seconds = {float(value) for value in re.findall(r"(?<!\w)timeout=(\d+(?:\.\d+)?)", source)}
-    # A ``PRAGMA busy_timeout`` set beside it is in milliseconds and has to agree.
-    seconds |= {int(value) / 1000 for value in re.findall(r"busy_timeout=(\d+)", source)}
-    milliseconds = re.search(r"^_BUSY_TIMEOUT_MS = ([\d_]+)$", source, re.MULTILINE)
-    if milliseconds:
-        seconds.add(int(milliseconds[1].replace("_", "")) / 1000)
+#: How a connection may state its lock wait: the shared constant, or a name of the
+#: module's own that the tests below hold to it.
+_WAITS = {"BUSY_TIMEOUT_SECONDS", "PROBE_TIMEOUT_SECONDS", "_BUSY_TIMEOUT_MS / 1000"}
 
-    assert seconds == {store.timeout_seconds}
+
+def _connects(module: str) -> list[tuple[int, str | None]]:
+    """Every ``sqlite3.connect`` call in ``module``: its line and its ``timeout``, as written."""
+    source = (_SRC / module).read_text(encoding="utf-8")
+    calls: list[tuple[int, str | None]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "connect"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "sqlite3"
+        ):
+            continue
+        timeout = next((kw.value for kw in node.keywords if kw.arg == "timeout"), None)
+        calls.append((node.lineno, None if timeout is None else ast.unparse(timeout)))
+    return calls
+
+
+@pytest.mark.parametrize("module", sorted(_modules_that_open_sqlite()))
+def test_every_connection_waits_the_one_time_for_a_lock(module: str) -> None:
+    """No store has a wait of its own, and none is left to SQLite's default of five."""
+    calls = _connects(module)
+
+    assert calls, module
+    assert [(line, wait) for line, wait in calls if wait not in _WAITS] == []
+
+
+def test_the_names_a_module_gives_the_wait_are_the_one_wait() -> None:
+    from kpubdata_builder.service import user_ledger
+    from kpubdata_builder.store import schema_version
+
+    assert schema_version.PROBE_TIMEOUT_SECONDS == BUSY_TIMEOUT_SECONDS
+    assert user_ledger._BUSY_TIMEOUT_MS == BUSY_TIMEOUT_SECONDS * 1000
+    # The ledger also sets the wait by pragma, from the same name.
+    assert "PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}" in (_SRC / "service/user_ledger.py").read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize("store", STORES, ids=_IDS)
+def test_the_list_states_the_one_wait(store: StateStore) -> None:
+    assert store.timeout_seconds == BUSY_TIMEOUT_SECONDS
+
+
+def test_the_check_sees_a_connection_with_a_wait_of_its_own(tmp_path: Path) -> None:
+    """What the check above is for: it reads the call, not a comment beside it."""
+    tree = ast.parse(
+        "import sqlite3\n"
+        "a = sqlite3.connect(path, timeout=5.0)\n"
+        "b = sqlite3.connect(path)\n"
+        "c = sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)\n"
+    )
+    waits = [
+        None
+        if (value := next((kw.value for kw in node.keywords if kw.arg == "timeout"), None)) is None
+        else ast.unparse(value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+
+    assert [wait in _WAITS for wait in waits] == [False, False, True]
 
 
 @pytest.mark.parametrize("store", STORES, ids=_IDS)

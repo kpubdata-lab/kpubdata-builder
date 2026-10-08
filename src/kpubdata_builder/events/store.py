@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 from ..spec.models import JsonValue
 from ..store.schema_version import UnsupportedSchemaVersionError, stored_version
 from .models import BuildEvent, EventName, EventStatus, StageName
@@ -132,9 +134,7 @@ class BuildEventStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(
-            str(self._db_path), timeout=30.0
-        )  # busy_timeout: wait for concurrency contention
+        conn = sqlite3.connect(str(self._db_path), timeout=BUSY_TIMEOUT_SECONDS)
         conn.execute("PRAGMA journal_mode=WAL")  # Allow concurrent reads + parallel appends
         return conn
 

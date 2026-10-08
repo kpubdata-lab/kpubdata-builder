@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+
 from .schema_version import (
     UnsupportedSchemaVersionError,
     open_read_only,
@@ -37,8 +39,8 @@ else:
 # this column is only derived lookup value for dataset→run query performance.
 # Schema version 5: added owner_id column (#505). Canonical is manifest.json, this column
 # is only derived lookup value for canonical stable owner identity. This index is derived,
-# so schema change DROP and recreate table — existing index data lost but
-# rebuilding via rebuild_index() from manifest.json restores it.
+# so a schema change makes the table again and fills it from manifest.json in the same
+# transaction (``_init_db``); nothing in it is kept across a version.
 SCHEMA_VERSION = 5
 
 #: Run ids per ``IN (...)`` lookup in ``count_builds`` — under SQLite's 999-variable
@@ -119,6 +121,30 @@ class BuildIndex(Protocol):
     def close(self) -> None: ...
 
 
+#: One entry written over whatever the index holds for its run.
+_INSERT_ENTRY = """
+    INSERT OR REPLACE INTO builds
+    (run_id, status, started_at, finished_at, spec_digest, error, created_by,
+     dataset_id, owner_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+
+def _row_of(entry: BuildEntry) -> tuple[str | None, ...]:
+    """``entry`` in the column order of ``_INSERT_ENTRY``."""
+    return (
+        entry.run_id,
+        entry.status,
+        entry.started_at,
+        entry.finished_at,
+        entry.spec_digest,
+        entry.error,
+        entry.created_by,
+        entry.dataset_id,
+        entry.owner_id,
+    )
+
+
 class SqliteBuildIndex:
     """Single-file SQLite-based build index (ADR 0003, default implementation).
 
@@ -145,7 +171,7 @@ class SqliteBuildIndex:
     def _refuse_newer(self, found: int | None) -> None:
         """Refuse an index a newer release wrote (#1096).
 
-        An older index is dropped and made again; a newer one is not. Dropping it would
+        An older index is made again from the manifests; a newer one is not. Dropping it would
         leave the release that wrote it with an empty index after this one stops, and
         nothing would say so.
         """
@@ -168,34 +194,50 @@ class SqliteBuildIndex:
 
     def _connect(self) -> sqlite3.Connection:
         """Create and configure new SQLite connection."""
-        conn = sqlite3.connect(
-            str(self._index_path),
-            timeout=30.0,  # busy_timeout: wait time on concurrency contention
-        )
+        conn = sqlite3.connect(str(self._index_path), timeout=BUSY_TIMEOUT_SECONDS)
         conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging: allow concurrent reads
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_db(self) -> None:
-        """Initialize database schema."""
-        with self._transaction():
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS schema_version (
-                    version INTEGER PRIMARY KEY,
-                    applied_at TEXT DEFAULT (datetime('now'))
-                )
-                """
-            )
-            # Check schema version
-            cur = self._conn.execute("SELECT MAX(version) FROM schema_version")
-            current_version = cur.fetchone()[0]
+        """Make the schema this release's, and never leave an older index empty.
 
-            self._refuse_newer(int(current_version) if current_version is not None else None)
-            if current_version != SCHEMA_VERSION:
-                # Create builds table (existing table DROP and recreate)
-                self._conn.execute("DROP TABLE IF EXISTS builds")
-                self._conn.execute(
+        The index is derived, so its table is made again rather than altered when the
+        version changes. An index an older release wrote is filled from the manifests
+        in the same transaction (#1096): it used to be left empty and stamped with this
+        release's version, and from then on nothing could tell that every earlier run
+        was missing from it — ``serve`` fills an index before it starts, but anything
+        else that opened one emptied it for good. A file that was not there is made
+        empty, as before: there is nothing it could have lost.
+        """
+        conn = self._conn
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.commit()
+        found = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        self._refuse_newer(int(found) if found is not None else None)
+        if found == SCHEMA_VERSION:
+            return
+        # Read before the write lock is taken: a scan of every run's manifest is slow,
+        # and nothing else can write the index while it is held.
+        entries = list(_iter_manifest_entries(self._output_root)) if found is not None else []
+        # One transaction, begun by hand: ``sqlite3`` begins none of its own before a
+        # ``DROP`` or a ``CREATE``, so each would otherwise be committed as it ran and a
+        # failure half-way would leave an index with no table.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Again, under the lock: another process may have done all this meanwhile.
+            current = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            self._refuse_newer(int(current) if current is not None else None)
+            if current != SCHEMA_VERSION:
+                conn.execute("DROP TABLE IF EXISTS builds")
+                conn.execute(
                     """
                     CREATE TABLE builds (
                         run_id TEXT PRIMARY KEY,
@@ -211,21 +253,21 @@ class SqliteBuildIndex:
                     """
                 )
                 # finished_at index (latest builds first query)
-                self._conn.execute(
+                conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_builds_finished_at ON builds(finished_at DESC)"
                 )
                 # dataset_id index (#488): dataset→run query. legacy runs without snapshot have
                 # dataset_id NULL, naturally excluded from dataset grouping.
-                self._conn.execute(
+                conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_builds_dataset_id ON builds(dataset_id)"
                 )
-                # Record schema version
-                self._conn.execute(
-                    f"INSERT INTO schema_version (version) VALUES ({SCHEMA_VERSION})"
-                )
-                self._conn.execute(
-                    "DELETE FROM schema_version WHERE version != ?", (SCHEMA_VERSION,)
-                )
+                conn.executemany(_INSERT_ENTRY, [_row_of(entry) for entry in entries])
+                conn.execute(f"INSERT INTO schema_version (version) VALUES ({SCHEMA_VERSION})")
+                conn.execute("DELETE FROM schema_version WHERE version != ?", (SCHEMA_VERSION,))
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
@@ -576,28 +618,7 @@ class SqliteBuildIndex:
         # rows are stale and removing them.
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.executemany(
-                """
-                INSERT OR REPLACE INTO builds
-                (run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                 dataset_id, owner_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        entry.run_id,
-                        entry.status,
-                        entry.started_at,
-                        entry.finished_at,
-                        entry.spec_digest,
-                        entry.error,
-                        entry.created_by,
-                        entry.dataset_id,
-                        entry.owner_id,
-                    )
-                    for entry in entries
-                ],
-            )
+            conn.executemany(_INSERT_ENTRY, [_row_of(entry) for entry in entries])
             indexed = [str(row[0]) for row in conn.execute("SELECT run_id FROM builds")]
             stale = [
                 (run_id,)
@@ -881,11 +902,12 @@ def rebuild_index(output_root: Path) -> int:
 def bring_index_up_to_date(output_root: Path) -> int | None:
     """Rebuild the index from the manifests when the one stored is not this release's.
 
-    ``serve`` calls this before it builds the service (#1096). Opening an older index
-    drops its table and makes it again, empty, and with no index at all an empty one is
-    made; the server then answered as healthy with every earlier run missing from its
-    lists until someone ran ``rebuild-index``. The manifests are canonical, so the
-    index is filled from them before the first request.
+    ``serve`` calls this before it builds the service (#1096). With no index at all an
+    empty one is made when the service opens it, and the server then answered as
+    healthy with every earlier run missing from its lists until someone ran
+    ``rebuild-index``. The manifests are canonical, so the index is filled from them
+    before the first request. An older release's index is filled here too, into a new
+    file; opening one anywhere else fills it where it is (``SqliteBuildIndex._init_db``).
 
     An index a newer release wrote is not touched here: opening it refuses.
 
