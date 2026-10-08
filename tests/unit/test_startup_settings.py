@@ -524,3 +524,103 @@ def test_serve_does_not_judge_the_port_variable(
 
     assert main(["serve", "--output-dir", str(tmp_path)]) == 0
     assert len(calls) == 1
+
+
+def _effective() -> dict[str, Callable[[], bool]]:
+    """Each flag as the deployment ends up treating it: on or off, whoever decided."""
+    from kpubdata_builder.service import publish_credentials
+    from kpubdata_builder.service.auth import _is_dev_mode
+    from kpubdata_builder.service.ownership import enforce_ownership
+    from kpubdata_builder.service.providers import require_own_provider_credential
+
+    return {
+        "KPUBDATA_BUILDER_DEV_MODE": _is_dev_mode,
+        "ENFORCE_OWNERSHIP": enforce_ownership,
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL": require_own_provider_credential,
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": lambda: (
+            not publish_credentials.server_fallback_allowed()
+        ),
+    }
+
+
+_MODES: dict[str, dict[str, str]] = {
+    "single-user": {},
+    "OIDC": {"OIDC_ISSUER": "https://id.example.com/realms/x"},
+    "ENFORCE_OWNERSHIP": {"ENFORCE_OWNERSHIP": "true"},
+}
+
+
+@pytest.mark.parametrize("mode", sorted(_MODES))
+@pytest.mark.parametrize("name", sorted(startup_settings.FLAGS))
+@pytest.mark.parametrize("value", ["yes", "on", "enabled", "true", "1", "false", "0"])
+def test_no_flag_that_is_on_is_said_to_be_off(
+    monkeypatch: pytest.MonkeyPatch, mode: str, name: str, value: str
+) -> None:
+    """In every kind of deployment: "read as off" is said only of a flag that is off.
+
+    A multi-user deployment turns three of them on whatever they say (ADR 0012). The
+    check compared each value with the words its reader takes and said "read as off"
+    of ``ENFORCE_OWNERSHIP=yes`` under OIDC — where ownership is enforced.
+    """
+    for variable, setting in _MODES[mode].items():
+        monkeypatch.setenv(variable, setting)
+    if _MODES[mode].get(name):
+        pytest.skip("the mode is this flag, written as on")
+    monkeypatch.setenv(name, value)
+
+    on = _effective()[name]()
+    about = [warning for warning in check_settings().warnings if warning.startswith(f"{name} ")]
+
+    for warning in about:
+        assert ("read as off" in warning) == (not on), warning
+        assert ("turns it on whatever it says" in warning) == on, warning
+    if not on and value not in ("false", "0"):
+        assert len(about) == 1
+
+
+@pytest.mark.parametrize(
+    ("mode", "name", "value"),
+    [
+        ("OIDC", "ENFORCE_OWNERSHIP", "yes"),
+        ("OIDC", "ENFORCE_OWNERSHIP", "false"),
+        ("OIDC", "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL", "yes"),
+        ("ENFORCE_OWNERSHIP", "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL", "yes"),
+        ("ENFORCE_OWNERSHIP", "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL", "0"),
+    ],
+)
+def test_a_switch_the_deployment_forces_on_is_said_to_be_ignored(
+    monkeypatch: pytest.MonkeyPatch, mode: str, name: str, value: str
+) -> None:
+    for variable, setting in _MODES[mode].items():
+        monkeypatch.setenv(variable, setting)
+    monkeypatch.setenv(name, value)
+
+    assert _effective()[name]() is True
+    (warning,) = [w for w in check_settings().warnings if w.startswith(f"{name} ")]
+
+    assert "is ignored" in warning
+    assert "read as off" not in warning
+
+
+@pytest.mark.parametrize("name", _COUNTS)
+def test_a_count_of_nothing_but_spaces_is_not_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """To the check and to ``serve`` alike: the check passed it and ``serve`` then stopped."""
+    calls = _serve_calls(monkeypatch)
+    monkeypatch.setenv(name, "   ")
+
+    assert check_settings().problems == []
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+    assert len(calls) == 1
+
+
+def test_a_wait_bound_of_nothing_but_spaces_is_not_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _serve_calls(monkeypatch)
+    monkeypatch.setenv("KPUBDATA_BUILDER_BUILD_WAIT_SECONDS", "  ")
+
+    assert check_settings().problems == []
+    assert main(["serve", "--output-dir", str(tmp_path)]) == 0
+    assert len(calls) == 1

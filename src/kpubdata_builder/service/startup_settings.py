@@ -35,7 +35,9 @@ from ..query.service import (
 )
 from ..store.backend import cubrid_url, storage_backend
 from ..tabular.duckdb_runtime import BuildProfile
+from .auth import oidc_enabled
 from .http import shutdown_grace_seconds
+from .ownership import multi_user_mode
 
 #: Settings ``serve`` reads itself, each with a flag that takes precedence. A value the
 #: flag overrides is never read, so the caller says which those are.
@@ -231,6 +233,23 @@ def _is_port(raw: str) -> bool:
     return value is not None and 0 <= value <= 65535
 
 
+def _forced_on(name: str) -> bool:
+    """Whether the deployment turns ``name`` on whatever the variable says.
+
+    Sign-in through OIDC makes a deployment multi-user, and so does
+    ``ENFORCE_OWNERSHIP``; a multi-user deployment keeps each user's runs apart and
+    uses nobody's credentials but the requester's (ADR 0012).
+    """
+    if name == "ENFORCE_OWNERSHIP":
+        return oidc_enabled()
+    if name in (
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL",
+        "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL",
+    ):
+        return multi_user_mode()
+    return False
+
+
 def check_settings(*, overridden: Collection[str] = ()) -> SettingsReport:
     """Every setting that cannot be used as written, found without starting anything.
 
@@ -257,8 +276,17 @@ def check_settings(*, overridden: Collection[str] = ()) -> SettingsReport:
     for name, (strips, on_words) in FLAGS.items():
         raw = os.environ.get(name, "")
         # A reader that does not strip judges the value as written: ``"true "`` is off.
-        written = raw.strip() if strips else raw
-        if written and written.lower() not in on_words | _OFF_WORDS:
+        written = (raw.strip() if strips else raw).lower()
+        if not written or written in on_words:
+            continue
+        if _forced_on(name):
+            # Whatever it says: a warning that it "is read as off" would tell an
+            # operator that a switch which is on is off.
+            report.warnings.append(
+                f"{name} is {raw!r}, which is ignored: this deployment serves more than "
+                "one user, and that turns it on whatever it says"
+            )
+        elif written not in _OFF_WORDS:
             accepted = "/".join(sorted(on_words))
             report.warnings.append(
                 f"{name} is {raw!r}, which is neither {accepted} nor false/0; it is read as off"

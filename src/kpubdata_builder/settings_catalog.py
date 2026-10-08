@@ -69,7 +69,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         name="KPUBDATA_BUILDER_DEV_MODE",
         group="access",
-        description="`true`/`1`이면 인증 생략 (**로컬 개발 전용**, ADR 0006). 기동 시 경고 로그를 남기고, `OIDC_ISSUER`와 함께 설정되면 기동 거부",
+        description="`true`/`1`이면 인증 생략 (**로컬 개발 전용**, ADR 0006). 기동 시 경고 로그를 남기고, `OIDC_ISSUER` 나 `ENFORCE_OWNERSHIP` 과 함께 설정되면 기동 거부(#1072)",
         default="미설정",
         required="선택",
     ),
@@ -181,7 +181,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         name="KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL",
         group="credentials",
-        description="`true` 면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683). **`env_keys` 를 지원하는 kpubdata 가 필요하다**(0.8.0 에는 없다): 없으면 `serve` 가 기동을 거부하고(종료 코드 1), 그 kpubdata 로 키 없는 클라이언트를 만들려는 시도도 오류로 끝난다 — 환경변수 키로 조용히 내려가지 않는다(#990).",
+        description="`true`/`1`/`yes`/`on` 이면 **데이터 조회**에도 요청자 자신의 provider 키만 쓰고 운영자 키로 내려가지 않는다(F-07). 폴백을 두면 공유 배포에서 한 사람의 질의가 운영자 쿼터를 쓰고 운영자 신원으로 제공기관에 찍힌다. 미설정이면 폴백 허용(단일 사용자 배포 기본 동작). **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜지고**, 키는 요청의 `X-Provider-Key` 헤더로만 받아 요청·작업 동안만 메모리에 둔다(#683). **`env_keys` 를 지원하는 kpubdata 가 필요하다**(0.8.0 에는 없다): 없으면 `serve` 가 기동을 거부하고(종료 코드 1), 그 kpubdata 로 키 없는 클라이언트를 만들려는 시도도 오류로 끝난다 — 환경변수 키로 조용히 내려가지 않는다(#990).",
         default="미설정",
         required="선택",
     ),

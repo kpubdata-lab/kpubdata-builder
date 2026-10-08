@@ -254,6 +254,10 @@ def test_a_variable_reaches_the_process_as_one_it_accepts(
             # the substitution keeps an empty value, the process gets nothing.
             kept_empty = substitution.keeps_empty and template.get(name) == ""
             monkeypatch.setenv(name, "" if kept_empty else substitution.default)
+        elif name in MAY_BE_EMPTY:
+            # Left empty, as the deployments this name is listed for leave it: what is
+            # checked is that an empty one is accepted, not the template's placeholder.
+            monkeypatch.setenv(name, "")
         else:
             assert name in template, f"{name} is required but the template does not set it"
             monkeypatch.setenv(name, template[name])
