@@ -70,7 +70,7 @@ def test_file_name_is_the_one_the_code_uses(store: StateStore) -> None:
 
 #: How a connection may state its lock wait: the shared constant, or a name of the
 #: module's own that the tests below hold to it.
-_WAITS = {"BUSY_TIMEOUT_SECONDS", "PROBE_TIMEOUT_SECONDS", "_BUSY_TIMEOUT_MS / 1000"}
+_WAITS = {"BUSY_TIMEOUT_SECONDS", "PROBE_TIMEOUT_SECONDS"}
 
 
 def _connects(module: str) -> list[tuple[int, str | None]]:
@@ -101,15 +101,27 @@ def test_every_connection_waits_the_one_time_for_a_lock(module: str) -> None:
 
 
 def test_the_names_a_module_gives_the_wait_are_the_one_wait() -> None:
-    from kpubdata_builder.service import user_ledger
+    from kpubdata_builder import sqlite_settings
     from kpubdata_builder.store import schema_version
 
     assert schema_version.PROBE_TIMEOUT_SECONDS == BUSY_TIMEOUT_SECONDS
-    assert user_ledger._BUSY_TIMEOUT_MS == BUSY_TIMEOUT_SECONDS * 1000
-    # The ledger also sets the wait by pragma, from the same name.
-    assert "PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}" in (_SRC / "service/user_ledger.py").read_text(
-        encoding="utf-8"
-    )
+    assert sqlite_settings.BUSY_TIMEOUT_MS == BUSY_TIMEOUT_SECONDS * 1000
+
+
+@pytest.mark.parametrize("module", sorted(_modules_that_open_sqlite()))
+def test_a_wait_set_by_pragma_is_the_one_wait_too(module: str) -> None:
+    """``PRAGMA busy_timeout`` is in milliseconds and was once written as a number."""
+    source = (_SRC / module).read_text(encoding="utf-8")
+
+    pragmas = re.findall(r"PRAGMA busy_timeout\s*=\s*([^\"\s)]+)", source)
+
+    assert [value for value in pragmas if value != "{BUSY_TIMEOUT_MS}"] == []
+
+
+def test_the_pragma_check_sees_a_number() -> None:
+    assert re.findall(
+        r"PRAGMA busy_timeout\s*=\s*([^\"\s)]+)", 'c.execute("PRAGMA busy_timeout=30000")'
+    ) == ["30000"]
 
 
 @pytest.mark.parametrize("store", STORES, ids=_IDS)
@@ -138,9 +150,12 @@ def test_the_check_sees_a_connection_with_a_wait_of_its_own(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("store", STORES, ids=_IDS)
 def test_journal_mode_is_the_one_the_module_sets(store: StateStore) -> None:
-    sets_wal = re.search(r'execute\(\s*"PRAGMA journal_mode\s*=\s*WAL"', _source(store)) is not None
+    source = _source(store)
+    sets_wal = re.search(r"\benable_wal\(", source) is not None
 
     assert sets_wal == (store.journal == "wal")
+    # Through the one helper, which waits for another connection doing the same (#1210).
+    assert re.search(r'execute\(\s*"PRAGMA journal_mode\s*=\s*WAL"', source) is None
 
 
 @pytest.mark.parametrize("store", STORES, ids=_IDS)

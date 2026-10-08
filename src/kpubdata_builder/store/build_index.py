@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS, enable_wal
 
 from .schema_version import (
     UnsupportedSchemaVersionError,
@@ -164,6 +164,8 @@ class SqliteBuildIndex:
         self._output_root = output_root
         self._index_path = index_path if index_path is not None else output_root / _INDEX_FILENAME
         self._local = threading.local()
+        # Whether there was a file before this opens it: connecting makes one.
+        self._was_there = self._index_path.exists()
         # Before the first ordinary connection, which sets the journal mode.
         self._refuse_newer(stored_version(self._index_path))
         self._init_db()
@@ -195,7 +197,7 @@ class SqliteBuildIndex:
     def _connect(self) -> sqlite3.Connection:
         """Create and configure new SQLite connection."""
         conn = sqlite3.connect(str(self._index_path), timeout=BUSY_TIMEOUT_SECONDS)
-        conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging: allow concurrent reads
+        enable_wal(conn)  # Write-Ahead Logging: allow concurrent reads
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
@@ -207,8 +209,10 @@ class SqliteBuildIndex:
         in the same transaction (#1096): it used to be left empty and stamped with this
         release's version, and from then on nothing could tell that every earlier run
         was missing from it — ``serve`` fills an index before it starts, but anything
-        else that opened one emptied it for good. A file that was not there is made
-        empty, as before: there is nothing it could have lost.
+        else that opened one emptied it for good. A file that was there with no version
+        in it is filled the same way: whatever it held, an empty index under this
+        release's version would say nothing was missing. Only a file that was not there
+        is made empty: there is nothing it could have lost.
         """
         conn = self._conn
         conn.execute(
@@ -226,7 +230,7 @@ class SqliteBuildIndex:
             return
         # Read before the write lock is taken: a scan of every run's manifest is slow,
         # and nothing else can write the index while it is held.
-        entries = list(_iter_manifest_entries(self._output_root)) if found is not None else []
+        entries = list(_iter_manifest_entries(self._output_root)) if self._was_there else []
         # One transaction, begun by hand: ``sqlite3`` begins none of its own before a
         # ``DROP`` or a ``CREATE``, so each would otherwise be committed as it ran and a
         # failure half-way would leave an index with no table.

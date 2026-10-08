@@ -57,7 +57,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, cast
 
-from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_MS, BUSY_TIMEOUT_SECONDS, enable_wal
 
 from ..store.schema_version import open_read_only, stored_version
 from .errors import (
@@ -424,9 +424,9 @@ class TableCatalog:
         Running in autocommit and issuing ``BEGIN IMMEDIATE`` explicitly avoids it.
         """
         conn = sqlite3.connect(str(self._path), timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
-        conn.execute("PRAGMA journal_mode=WAL")
+        enable_wal(conn)
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         return conn
 
     @contextmanager

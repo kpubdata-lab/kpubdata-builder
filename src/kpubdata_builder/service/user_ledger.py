@@ -50,7 +50,7 @@ from typing import Literal
 
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.spec import JsonValue
-from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_MS, BUSY_TIMEOUT_SECONDS
 
 SignupStatus = Literal["pending", "approved", "rejected"]
 
@@ -68,7 +68,6 @@ LAST_SEEN_REFRESH_SECONDS = 3600.0
 #: database" — the very case this module exists to survive. In the default rollback
 #: journal mode a reader creates nothing. What that costs is a reader waiting out a
 #: writer's commit, and a request writes at most once an hour for a user.
-_BUSY_TIMEOUT_MS = int(BUSY_TIMEOUT_SECONDS * 1000)
 
 
 class LedgerUnavailableError(Exception):
@@ -131,8 +130,8 @@ class UserLedger:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        with closing(sqlite3.connect(self._path, timeout=_BUSY_TIMEOUT_MS / 1000)) as conn:
-            conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        with closing(sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)) as conn:
+            conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
             with conn:
                 yield conn
 

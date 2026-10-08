@@ -185,6 +185,23 @@ def test_an_index_that_was_not_there_is_made_empty_without_a_scan(
     assert _stored(tmp_path)[0] == SCHEMA_VERSION
 
 
+def test_a_file_with_no_version_in_it_is_filled_too(tmp_path: Path) -> None:
+    """``serve`` leaves such a file alone as not its own; opening it must not empty it."""
+    _run(tmp_path, "earlier")
+    with closing(sqlite3.connect(tmp_path / _INDEX)) as conn, conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE builds (run_id TEXT PRIMARY KEY, status TEXT NOT NULL)")
+        conn.execute("INSERT INTO builds VALUES ('from-somewhere', 'ok')")
+    assert build_index.bring_index_up_to_date(tmp_path) is None
+
+    index = SqliteBuildIndex(tmp_path)
+    try:
+        assert [entry.run_id for entry in index.list_builds()] == ["earlier"]
+    finally:
+        index.close()
+    assert _stored(tmp_path) == (SCHEMA_VERSION, set(build_index._BUILDS_COLUMNS), {"earlier"})
+
+
 def test_a_rebuild_scans_the_manifests_once(tmp_path: Path, scans: list[Path]) -> None:
     """The new file a rebuild writes into is not filled a second time by being opened."""
     _run(tmp_path, "earlier")
