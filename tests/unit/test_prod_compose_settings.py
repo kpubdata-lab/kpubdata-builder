@@ -56,6 +56,17 @@ NOT_PASSED: frozenset[str] = frozenset(
     }
 )
 
+#: Settings some deployments are told to leave empty, so the stack must not require a
+#: value of them. An OIDC-only deployment sets no API key (#1122), and a multi-user one
+#: is told not to set the credential master key it does not use (#990). ``${VAR:?…}``
+#: on one of these would stop exactly those deployments.
+MAY_BE_EMPTY: frozenset[str] = frozenset(
+    {
+        "KPUBDATA_BUILDER_API_KEY",
+        "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY",
+    }
+)
+
 #: ``${VAR}``, ``${VAR:-default}``, ``${VAR-default}``, ``${VAR:?message}``, ``${VAR?message}``.
 #: A default holds no ``$`` of its own: ``${FOO:-$BAR}`` would be another variable's value.
 _BRACED = re.compile(r"^\$\{(?P<name>\w+)(?:(?P<op>:?[-?])(?P<default>[^}$]*))?\}$")
@@ -74,6 +85,9 @@ class Substitution:
     default: str | None
     #: ``${VAR:?…}`` requires a value that is not empty; ``${VAR?…}`` only that it is set.
     required: Literal["non-empty", "set"] | None = None
+    #: ``${VAR-x}`` uses the default only when VAR is unset: an empty ``VAR=`` stays empty.
+    #: ``${VAR:-x}`` uses it for an empty one too.
+    keeps_empty: bool = False
 
 
 def _compose_text() -> str:
@@ -142,14 +156,24 @@ def _substituted(value: str | None) -> Substitution | None:
         return Substitution(match["name"], None, "non-empty")
     if match["op"] == "?":
         return Substitution(match["name"], None, "set")
-    return Substitution(match["name"], match["default"] or "")
+    return Substitution(match["name"], match["default"] or "", keeps_empty=match["op"] == "-")
 
 
 def _template() -> dict[str, str]:
     """The variables ``.env.app.example`` sets — the lines that are not commented out."""
     lines = _ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
     pairs = (line.split("=", 1) for line in lines if re.match(r"^[A-Z][A-Z0-9_]*=", line))
-    return {name: value.strip() for name, value in pairs}
+    return {name: _dotenv_value(value) for name, value in pairs}
+
+
+def _dotenv_value(text: str) -> str:
+    """The value of a ``.env`` line as compose reads it: quotes off, a trailing comment off."""
+    text = text.strip()
+    if text[:1] in ("'", '"'):
+        closing = text.find(text[0], 1)
+        return text[1:closing] if closing > 0 else text[1:]
+    # Unquoted, a ``#`` after whitespace starts a comment.
+    return re.split(r"\s+#", text, maxsplit=1)[0].strip()
 
 
 def _template_names() -> set[str]:
@@ -183,15 +207,21 @@ def test_a_required_variable_is_one_the_template_sets() -> None:
 
     Requiring a variable the template leaves commented out — an optional setting —
     would make the stack refuse to start for an operator who followed the template.
-    ``:?`` also refuses an empty value, which is how some deployments are told to
-    leave a setting (an API key, in an OIDC-only one): requiring it would rule those
-    out, and the template line for it has to hold a value.
+
+    The template cannot say everything, though: it sets an API key, and a comment
+    beside it tells an OIDC-only deployment to leave it empty. So the settings that a
+    supported deployment leaves empty are named in ``MAY_BE_EMPTY``, and ``:?`` — which
+    refuses an empty value — is refused on them whatever the template holds.
     """
     template = _template()
     for name, value in _environment().items():
         substitution = _substituted(value)
         if substitution is None or substitution.required is None:
             continue
+        if name in MAY_BE_EMPTY:
+            assert substitution.required != "non-empty", (
+                f"{name} is required to be non-empty, but some deployments leave it empty"
+            )
         assert name in template, f"{name} is required but the template does not set it"
         if substitution.required == "non-empty":
             assert template[name], (
@@ -207,7 +237,9 @@ def test_a_variable_reaches_the_process_as_one_it_accepts(
     Left out of ``.env``, that is the default — the empty string for most. Every reader
     has to take that as "not set": one that tried to parse it would stop the stack on
     a variable the operator never wrote. A required variable has no default; it is
-    given what the template sets, since the stack does not start without one.
+    given what the template sets, since the stack does not start without one — and
+    what the template sets is a placeholder, so this says only that the placeholder is
+    a value the reader takes, not that a real one would be.
     """
     template = _template()
     for setting in catalog.SETTINGS:
@@ -218,8 +250,12 @@ def test_a_variable_reaches_the_process_as_one_it_accepts(
             assert value is not None
             monkeypatch.setenv(name, _literal(value))
         elif substitution.default is not None:
-            monkeypatch.setenv(name, substitution.default)
+            # The template followed as it is: where it sets the variable to nothing and
+            # the substitution keeps an empty value, the process gets nothing.
+            kept_empty = substitution.keeps_empty and template.get(name) == ""
+            monkeypatch.setenv(name, "" if kept_empty else substitution.default)
         else:
+            assert name in template, f"{name} is required but the template does not set it"
             monkeypatch.setenv(name, template[name])
 
     report = check_settings()
@@ -230,8 +266,12 @@ def test_a_variable_reaches_the_process_as_one_it_accepts(
 
 def test_the_example_dotenv_names_only_what_the_stack_reads() -> None:
     """A line in the template that nothing passes on would be a setting that does nothing."""
-    text = _compose_text().replace("$$", "")
-    substituted = {braced or bare for braced, bare in _ANY_VARIABLE.findall(text)}
+    substituted: set[str] = set()
+    for token in yaml.scan(_compose_text(), Loader=yaml.SafeLoader):
+        # Scalars only: a ``$FOO`` in a comment is not read by anything.
+        if isinstance(token, yaml.ScalarToken):
+            text = str(token.value).replace("$$", "")
+            substituted |= {braced or bare for braced, bare in _ANY_VARIABLE.findall(text)}
 
     assert _template_names() <= substituted
 
@@ -256,7 +296,7 @@ def test_the_guide_lists_the_settings_that_are_not_passed() -> None:
         ("costs $$5", None),
         ("${FOO:-}", Substitution("FOO", "")),
         ("${FOO:-128MB}", Substitution("FOO", "128MB")),
-        ("${FOO-x}", Substitution("FOO", "x")),
+        ("${FOO-x}", Substitution("FOO", "x", keeps_empty=True)),
         ("${FOO}", Substitution("FOO", "")),
         ("$FOO", Substitution("FOO", "")),
         ("${FOO:?must be set}", Substitution("FOO", None, "non-empty")),
@@ -369,6 +409,65 @@ def test_requiring_a_variable_the_template_does_not_set_is_refused(
     else:
         with pytest.raises(AssertionError, match="FOO is required"):
             test_a_required_variable_is_one_the_template_sets()
+
+
+@pytest.mark.parametrize("name", sorted(MAY_BE_EMPTY))
+def test_requiring_a_value_of_a_setting_some_deployments_leave_empty_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """With the real template, which sets both: it is the name that refuses, not the value."""
+    assert _template().get(name), f"the template is expected to set {name}"
+    real = _compose_text()
+    line = re.search(rf"^      {name}: .*$", real, re.MULTILINE)
+    assert line, f"the compose file is expected to pass {name}"
+    compose = tmp_path / "compose.yml"
+    monkeypatch.setattr(sys.modules[__name__], "_COMPOSE", compose)
+
+    compose.write_text(real.replace(line[0], f"      {name}: ${{{name}:?needed}}"), "utf-8")
+    with pytest.raises(AssertionError, match="some deployments leave it empty"):
+        test_a_required_variable_is_one_the_template_sets()
+
+    # Required to be set, but allowed to be empty, is another matter.
+    compose.write_text(real.replace(line[0], f"      {name}: ${{{name}?needed}}"), "utf-8")
+    test_a_required_variable_is_one_the_template_sets()
+
+
+@pytest.mark.parametrize(
+    ("line", "value"),
+    [
+        ("plain", "plain"),
+        ("  spaced  ", "spaced"),
+        ('"quoted # not a comment"', "quoted # not a comment"),
+        ("'single'", "single"),
+        ("value # a comment", "value"),
+        ("https://example.com/#fragment", "https://example.com/#fragment"),
+        ("", ""),
+    ],
+)
+def test_a_dotenv_value_is_read_as_compose_reads_it(line: str, value: str) -> None:
+    assert _dotenv_value(line) == value
+
+
+def test_a_variable_named_only_in_a_comment_is_not_read_by_the_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "services:\n  builder:\n    # see $COMMENTED and ${ALSO_COMMENTED}\n"
+        "    environment:\n      FOO: ${FOO:-}  # and $TRAILING\n",
+        encoding="utf-8",
+    )
+    example = tmp_path / ".env.app.example"
+    monkeypatch.setattr(sys.modules[__name__], "_COMPOSE", compose)
+    monkeypatch.setattr(sys.modules[__name__], "_ENV_EXAMPLE", example)
+
+    example.write_text("# FOO=1\n", encoding="utf-8")
+    test_the_example_dotenv_names_only_what_the_stack_reads()
+
+    for name in ("COMMENTED", "ALSO_COMMENTED", "TRAILING"):
+        example.write_text(f"{name}=1\n", encoding="utf-8")
+        with pytest.raises(AssertionError):
+            test_the_example_dotenv_names_only_what_the_stack_reads()
 
 
 def test_a_bare_variable_counts_as_read_by_the_stack(

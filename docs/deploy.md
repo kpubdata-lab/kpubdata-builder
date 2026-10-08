@@ -440,6 +440,8 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 - **이 스택은 SQLite 로만 돈다.** `KPUBDATA_BUILDER_STORAGE_BACKEND` 와 `KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는
   뜻으로 아래 목록에 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
 
+넘기지 않는 설정 전체는 다음과 같다(`KPUBDATA_BUILDER_DEV_MODE` 는 위에 적었다).
+
 - `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
 - `OIDC_JWKS_URL`
 - `OIDC_JWKS_TTL`
