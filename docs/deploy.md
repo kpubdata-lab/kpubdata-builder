@@ -417,6 +417,41 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 > fail-closed(§2, ADR 0006): 인증 수단이 하나도 없으면 컨테이너가 기동을 거부한다.
 > `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`는 재기동 사이에 동일 값을 유지해야 한다(ADR 0012).
 
+### compose 가 컨테이너에 넘기지 않는 설정 (#1108)
+
+`docker-compose.prod.app.yml` 은 Builder 컨테이너에 넘길 환경변수를 하나씩 적는다. **거기 없는 설정은
+`.env` 에 적어도 아무 일도 하지 않는다** — 값이 프로세스에 닿지 않고, 그 사실을 알리는 것도 없다.
+아래 설정이 그렇다. 쓰려면 compose 파일의 `environment` 에 `이름: ${이름:-}` 줄을 더한다.
+
+- `KPUBDATA_BUILDER_DEV_MODE` — 일부러 넘기지 않는다. 인증을 통째로 끄는 값이 프로덕션 스택에서
+  `.env` 한 줄로 켜져서는 안 된다.
+
+나머지는 지금 넘기지 않을 뿐이고, 코드 기본값으로 돈다.
+
+- `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
+- `OIDC_JWKS_URL`
+- `OIDC_JWKS_TTL`
+- `ENFORCE_OWNERSHIP`
+- `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT`
+- `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`
+- `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS`
+- `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`
+- `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`
+- `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`
+- `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`
+- `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
+- `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`
+- `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
+- `KPUBDATA_BUILDER_STORAGE_BACKEND`
+- `KPUBDATA_BUILDER_CUBRID_URL`
+- `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`
+- `HF_TOKEN`
+- `KAGGLE_USERNAME`
+- `KAGGLE_KEY`
+
+이 목록은 `tests/unit/test_prod_compose_settings.py` 가 설정 목록(`settings_catalog.py`)과 compose 파일에
+대조한다. 설정을 새로 만들면 compose 에 넘기거나 이 목록에 올려야 테스트가 통과한다.
+
 ### 인증 구성별 기동 (#1122)
 
 컨테이너 진입점(`docker-entrypoint.sh`)과 `serve` 가 함께 판정한다. 진입점은 인증 수단이
