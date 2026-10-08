@@ -54,7 +54,13 @@ NOT_PASSED: frozenset[str] = frozenset(
 )
 
 #: ``${VAR}``, ``${VAR:-default}``, ``${VAR-default}``, ``${VAR:?message}``, ``${VAR?message}``.
-_SUBSTITUTION = re.compile(r"^\$\{(?P<name>\w+)(?:(?P<op>:?[-?])(?P<default>[^}]*))?\}$")
+#: A default holds no ``$`` of its own: ``${FOO:-$BAR}`` would be another variable's value.
+_BRACED = re.compile(r"^\$\{(?P<name>\w+)(?:(?P<op>:?[-?])(?P<default>[^}$]*))?\}$")
+#: ``$VAR``, which compose reads as ``${VAR}``.
+_BARE = re.compile(r"^\$(?P<name>[A-Za-z_]\w*)$")
+
+#: A variable compose refuses to start without (``${VAR:?message}``).
+REQUIRED = object()
 
 
 def _builder() -> dict[str, object]:
@@ -76,19 +82,39 @@ def _environment() -> dict[str, object]:
     return dict(environment)
 
 
-def _substituted(value: object) -> tuple[str, str] | None:
+def _literal(value: object) -> str:
+    """A value compose passes as written, as the process receives it."""
+    # YAML reads ``true`` and ``8000`` as a bool and an int; compose passes them as the
+    # text that was written. ``str(True)`` is "True", which is not what was written.
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _substituted(value: object) -> tuple[str, object] | None:
     """``(name, what the process gets when .env does not set it)``, or None for a literal.
 
+    What the process gets is the default, the empty string where there is none, or
+    ``REQUIRED`` for ``${VAR:?…}`` — compose does not start without that one.
+
     Raises:
-        AssertionError: The value has a ``${`` this does not understand, or requires
-            the variable (``${VAR:?…}``): an unset one stops compose, and has no value.
+        AssertionError: The value is one this cannot follow: a ``$`` that is not the
+            whole of the value, a default with a ``$`` in it, or no value at all.
     """
-    text = str(value)
-    if "${" not in text:
+    # ``FOO:`` with nothing after it hands the container whatever the host has by that
+    # name: a variable this file does not show.
+    assert value is not None, "a variable with no value is passed through from the host"
+    text = _literal(value)
+    # ``$$`` is how a literal dollar is written; what is left of ``$`` is a substitution.
+    if "$" not in text.replace("$$", ""):
         return None
-    match = _SUBSTITUTION.match(text)
+    bare = _BARE.match(text)
+    if bare:
+        return bare["name"], ""
+    match = _BRACED.match(text)
     assert match, f"a substitution this test does not understand: {text!r}"
-    assert match["op"] not in (":?", "?"), f"{text!r} stops compose when the variable is unset"
+    if match["op"] in (":?", "?"):
+        return match["name"], REQUIRED
     return match["name"], match["default"] or ""
 
 
@@ -125,7 +151,12 @@ def test_a_variable_left_out_of_dotenv_reaches_the_process_as_one_it_accepts(
         monkeypatch.delenv(setting.name, raising=False)
     for name, value in _environment().items():
         substituted = _substituted(value)
-        monkeypatch.setenv(name, substituted[1] if substituted else str(value))
+        if substituted is None:
+            monkeypatch.setenv(name, _literal(value))
+        elif isinstance(substituted[1], str):
+            monkeypatch.setenv(name, substituted[1])
+        # A required variable has no value when it is left out: the stack does not
+        # start, and there is no process to hand anything to.
 
     report = check_settings()
 
@@ -156,19 +187,44 @@ def test_the_guide_lists_the_settings_that_are_not_passed() -> None:
     ("value", "expected"),
     [
         ("0.0.0.0", None),
+        (8000, None),
+        (True, None),
+        ("costs $$5", None),
         ("${FOO:-}", ("FOO", "")),
         ("${FOO:-128MB}", ("FOO", "128MB")),
         ("${FOO-x}", ("FOO", "x")),
         ("${FOO}", ("FOO", "")),
+        ("$FOO", ("FOO", "")),
+        ("${FOO:?must be set}", ("FOO", REQUIRED)),
+        ("${FOO?x}", ("FOO", REQUIRED)),
     ],
 )
 def test_substitutions_are_read_as_compose_reads_them(
-    value: str, expected: tuple[str, str] | None
+    value: object, expected: tuple[str, object] | None
 ) -> None:
     assert _substituted(value) == expected
 
 
-@pytest.mark.parametrize("value", ["${FOO:?must be set}", "${FOO?x}", "prefix-${FOO}", "${FOO:+x}"])
-def test_a_substitution_the_test_cannot_follow_is_refused(value: str) -> None:
+@pytest.mark.parametrize(
+    "value",
+    [
+        "prefix-${FOO}",
+        "prefix-$FOO",
+        "${FOO:+x}",
+        "${FOO:-$BAR}",
+        "${FOO:-${BAR}}",
+        "$FOO$BAR",
+        None,
+    ],
+)
+def test_a_substitution_the_test_cannot_follow_is_refused(value: object) -> None:
     with pytest.raises(AssertionError):
         _substituted(value)
+
+
+def test_a_literal_is_passed_as_it_was_written() -> None:
+    """Not as Python spells what YAML made of it."""
+    assert _literal(True) == "true"
+    assert _literal(False) == "false"
+    assert _literal(8000) == "8000"
+    assert _literal("0.0.0.0") == "0.0.0.0"

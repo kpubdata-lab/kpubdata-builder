@@ -428,7 +428,10 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 
 나머지는 지금 넘기지 않는다. 기본값이 있는 설정은 그 값으로 돌고, 기본값이 없는 것(`HF_TOKEN`,
 `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`, `KPUBDATA_BUILDER_CUBRID_URL`,
-`OIDC_JWKS_URL`)은 설정되지 않은 것으로 돈다. `KPUBDATA_BUILDER_STORAGE_BACKEND` 와
+`OIDC_JWKS_URL`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
+`KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지
+않은 것으로 돈다 — 켜고 끄는 셋은 꺼진 채이고, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` 가 없으면 이
+스택에서 `prune-cancelled --apply` 는 `--ttl-hours` 를 직접 주지 않는 한 아무것도 지우지 않는다. `KPUBDATA_BUILDER_STORAGE_BACKEND` 와
 `KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는 뜻으로 여기 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
 
 - `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
