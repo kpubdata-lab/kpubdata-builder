@@ -14,6 +14,7 @@ single-user deployment has one owner and applies none.
 from __future__ import annotations
 
 import os
+import threading
 
 from .ownership import multi_user_mode
 
@@ -53,7 +54,8 @@ def resolve_build_time_limit() -> float | None:
 
     Counted from when the job leaves the queue (#1119): time spent waiting for a build
     slot is not running time. An unset, malformed, negative or non-finite value is the
-    default; the start-up check reports a malformed one (``startup_settings``).
+    default; the start-up check reports a malformed one (``startup_settings``). A
+    number larger than a timer can wait is read as the longest one it can.
     """
     raw = os.environ.get(BUILD_TIME_LIMIT_ENV, "").strip()
     value = float(DEFAULT_BUILD_TIME_LIMIT_SECONDS)
@@ -63,7 +65,9 @@ def resolve_build_time_limit() -> float | None:
         except ValueError:
             parsed = -1.0
         if parsed >= 0 and parsed != float("inf"):
-            value = parsed
+            # No longer than a timer can wait: a larger number raises in the timer's
+            # thread instead of counting down.
+            value = min(parsed, threading.TIMEOUT_MAX)
     return value or None
 
 

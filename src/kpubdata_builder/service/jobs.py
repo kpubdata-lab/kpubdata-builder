@@ -813,11 +813,7 @@ class AsyncBuildExecutor:
         # running. Reaching it asks for cancellation, which the pipeline honours at its
         # next safe boundary; a job that ends before then is not affected.
         limit = self._time_limit()
-        timer = (
-            threading.Timer(limit, self._expire, args=(run_id, cancellation))
-            if limit is not None
-            else None
-        )
+        timer = threading.Timer(limit, self._expire, args=(run_id,)) if limit is not None else None
         if timer is not None:
             timer.daemon = True
             timer.start()
@@ -858,9 +854,15 @@ class AsyncBuildExecutor:
         """The running-time limit for a job starting now (#1119); read per job."""
         return resolve_build_time_limit()
 
-    def _expire(self, run_id: str, cancellation: RunCancellation) -> None:
-        """A job ran past its time limit: ask it to stop at its next safe boundary."""
-        if cancellation.request():
+    def _expire(self, run_id: str) -> None:
+        """A job ran past its time limit: ask it to stop at its next safe boundary.
+
+        Asked through the registry, as a user's cancel is, so the job reads
+        ``cancelling`` until it stops. Only a request that this call made counts as the
+        time limit's: a job that someone already asked to cancel keeps that reason.
+        """
+        outcome, _ = self.registry.request_cancel(run_id)
+        if outcome == "cancelling":
             with self._expired_lock:
                 self._expired.add(run_id)
             _logger.warning("build job %s ran past its time limit; cancelling", run_id)

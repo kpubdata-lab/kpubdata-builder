@@ -24,8 +24,8 @@ from kpubdata_builder.spec import JsonValue
 _COMBINATIONS = 40
 
 
-def _spec() -> str:
-    grid = ", ".join(str(i) for i in range(_COMBINATIONS))
+def _spec(combinations: int = _COMBINATIONS) -> str:
+    grid = ", ".join(str(i) for i in range(combinations))
     return (
         "dataset_id: air\ntitle: Air\ndescription: d\nsources:\n"
         "  - provider: datago\n    dataset: air_station\n    alias: m\n"
@@ -127,12 +127,80 @@ def test_a_timer_that_fires_after_the_build_ended_changes_nothing(
         executor.shutdown()
 
 
+def _blocked_job(executor: AsyncBuildExecutor, release: threading.Event) -> None:
+    """Submit a job whose runner waits for ``release``, and wait until it is running."""
+    started = threading.Event()
+
+    def runner(*_args: object) -> ServiceResponse:
+        started.set()
+        release.wait(5)
+        return ServiceResponse(409, {"error": "cancelled"})
+
+    assert (
+        executor.submit(spec_yaml="s", run_id="r", created_by=None, runner=runner).status
+        == "accepted"
+    )
+    assert started.wait(5)
+
+
+def _status_becomes(executor: AsyncBuildExecutor, status: str) -> None:
+    pause = threading.Event()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        snapshot = executor.get("r")
+        if snapshot is not None and snapshot.status == status:
+            return
+        pause.wait(0.01)
+    raise AssertionError(f"the job did not become {status}")
+
+
+def test_a_job_past_its_limit_reads_cancelling_until_it_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Between the limit and the next safe boundary the job is being cancelled, and says
+    so, as it does after a user's cancel — not ``running``."""
+    monkeypatch.setenv(BUILD_TIME_LIMIT_ENV, "0.05")
+    executor = AsyncBuildExecutor(max_workers=1)
+    release = threading.Event()
+    try:
+        _blocked_job(executor, release)
+
+        _status_becomes(executor, "cancelling")
+        assert executor.ran_past_time_limit("r")
+
+        release.set()
+        _status_becomes(executor, "cancelled")
+    finally:
+        release.set()
+        executor.shutdown()
+
+
+def test_a_limit_reached_after_a_user_cancel_does_not_claim_the_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user asked first and the job has not reached a boundary yet when the limit
+    passes: the cancellation stays the user's."""
+    monkeypatch.setenv(BUILD_TIME_LIMIT_ENV, "60")
+    executor = AsyncBuildExecutor(max_workers=1)
+    release = threading.Event()
+    try:
+        _blocked_job(executor, release)
+        assert executor.request_cancel("r")[0] == "cancelling"
+
+        executor._expire("r")  # the timer's callback, without waiting a minute for it
+
+        assert not executor.ran_past_time_limit("r")
+    finally:
+        release.set()
+        executor.shutdown()
+
+
 def test_zero_turns_the_limit_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(BUILD_TIME_LIMIT_ENV, "0")
     source = _SlowSource(delay=0.01)
     service = BuilderService(output_root=tmp_path, client_factory=lambda **_: source)
 
-    assert service.submit_build(_spec(), run_id="r").status_code == 202
+    assert service.submit_build(_spec(combinations=3), run_id="r").status_code == 202
 
     assert _wait(service, "r")["status"] == "succeeded"
     assert resolve_build_time_limit() is None
@@ -157,7 +225,15 @@ def test_a_user_cancel_keeps_its_own_message(
 
 @pytest.mark.parametrize(
     ("raw", "limit"),
-    [("", 21600.0), ("90", 90.0), ("0", None), ("-5", 21600.0), ("inf", 21600.0), ("x", 21600.0)],
+    [
+        ("", 21600.0),
+        ("90", 90.0),
+        ("0", None),
+        ("-5", 21600.0),
+        ("inf", 21600.0),
+        ("x", 21600.0),
+        ("1e30", threading.TIMEOUT_MAX),
+    ],
 )
 def test_the_setting_is_read_with_a_default(
     raw: str, limit: float | None, monkeypatch: pytest.MonkeyPatch
