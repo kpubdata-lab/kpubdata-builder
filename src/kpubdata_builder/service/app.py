@@ -53,7 +53,13 @@ from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
-from . import pii_reads, provider_probe, publish_credentials, request_credentials
+from . import (
+    pii_reads,
+    provider_probe,
+    publish_credentials,
+    request_credentials,
+    request_log,
+)
 from . import publish as publish_service
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
@@ -1763,6 +1769,8 @@ def _admit(
     # a few 401s due to token expiry doesn't get throttled during subsequent normal
     # use.
     service._auth_throttle.record_success(client_id)
+    # For the request's log line (#1100): who it is from, as an opaque owner.
+    request_log.note_principal(principal)
     return principal
 
 

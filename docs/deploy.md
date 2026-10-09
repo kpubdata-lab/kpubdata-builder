@@ -567,6 +567,30 @@ KPUBDATA_BUILDER_TRUSTED_PROXIES=172.18.0.0/16
 > 한도가 아니라 남용 완화가 목적).
 
 
+## 요청 로그 (#1100)
+
+Builder 는 답한 요청마다 한 줄을 남긴다. 표준 logging 의 `kpubdata_builder.request` 로거로 나가고, 배포가 핸들러를 붙이지 않았으면 stderr 로 나간다(관리자 감사 로그 `kpubdata_builder.admin_audit` 와 같은 방식). 한 줄은 JSON 이다.
+
+```json
+{"ts":"2026-10-09T14:51:07.412Z","event":"request","request_id":"3f9c1a7b2d40","method":"GET","route":"/builds/{run_id}","status":404,"duration_ms":3.2,"principal":"oidc","owner":"5b1e0c7a94d2f6e3"}
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `ts` | 답을 다 보낸 시각, UTC |
+| `request_id` | 응답의 `X-Request-ID` 헤더와 같은 값. 사용자가 신고한 요청을 이 값으로 찾는다 |
+| `route` | 계약의 경로 **템플릿**. 실제 경로가 아니다 — 경로에는 run id, 테이블 이름, 파일 이름이 들어 있다. 계약에 없는 경로는 `unmatched` |
+| `status`, `duration_ms` | HTTP 상태와, 요청 줄을 받은 때부터 답을 다 보낼 때까지 걸린 시간 |
+| `code` | 답의 `code` 가 있을 때만(`unauthorized`, `auth_throttled`, `provider_credential_required` …). Builder 가 정한 어휘뿐이다 |
+| `principal` | `oidc` / `service` / `dev`, 인증되지 않은 요청은 `null` |
+| `owner` | 같은 사용자의 줄을 묶는 값. 아래 참고 |
+
+**줄에 들어가지 않는 것.** 헤더(`Authorization`, `X-API-Key`, `X-Provider-Key`, `X-Publish-Credential`, `Cookie` 포함), 쿼리 문자열, 요청·응답 본문, 실제 경로. 이 모듈은 그 값들을 받지 않는다 — 지우는 것이 아니라 처음부터 넘기지 않는다. `tests/unit/test_request_log.py` 가 실제 서버에 각 자리마다 표식 값을 실어 보내고 어느 줄에도 없음을 확인한다.
+
+**`owner` 는 누구인지 말하지 않는다.** `owner_id` 를 프로세스가 시작할 때 만든 키로 HMAC 한 값의 앞 16자다. 키는 어디에도 저장하지 않으므로 값에서 `owner_id` 를 되찾을 수 없고, **재시작하면 같은 사용자의 값이 달라진다.** 재시작을 넘어 같은 사용자를 이어 보아야 한다면 키를 배포가 주는 설정으로 바꿔야 하는데, 그 키의 보관과 접근이 곧 로그의 접근 정책이 되므로 정하지 않고 남겨 두었다.
+
+**보관은 배포의 일이다.** Builder 는 줄을 내보내기만 한다. 얼마나 두고 누가 읽는지는 로그 수집 설정이 정한다. Docker 의 로그 rotation 은 용량만 제한하고 컨테이너를 다시 만든 뒤의 보존을 보장하지 않는다.
+
 ## 관련
 
 - [ADR 0006](./adrs/0006-service-auth-and-deployment.md) — 인증·배포(fail-closed, Docker)

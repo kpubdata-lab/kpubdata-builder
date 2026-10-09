@@ -17,6 +17,7 @@ import mimetypes
 import os
 import sys
 import threading
+import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,7 @@ from urllib.parse import urlsplit
 from ..spec import JsonValue
 from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
+from . import request_log
 from .app import BuilderService, FileResponse, dispatch, refuse_before_body
 from .auth import validate_dev_mode, validate_oidc_config
 from .publish_credentials import PUBLISH_CREDENTIAL_HEADER
@@ -234,7 +236,31 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
         timeout = _SOCKET_TIMEOUT_SECONDS
 
         def _dispatch(self, method: str) -> None:
+            """Answer the request, and write its one log line whatever the answer (#1100)."""
+            started = time.perf_counter()
             self._request_id = uuid.uuid4().hex[:12]
+            self._answered: tuple[int, object] | None = None
+            # Pool threads answer one request after another: the requester noted for the
+            # one before must not be this one's.
+            request_log.begin()
+            try:
+                self._answer(method)
+            finally:
+                if self._answered is not None:
+                    status, code = self._answered
+                    request_log.record(
+                        request_id=self._request_id,
+                        method=method,
+                        # The template, never the path: a path names runs, tables, files.
+                        route=request_log.route_of(
+                            method, urlsplit(getattr(self, "path", "")).path
+                        ),
+                        status=status,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                        code=code,
+                    )
+
+        def _answer(self, method: str) -> None:
             # Route using only path component to prevent query string leaking into
             # path/run_id, pass query separately to dispatch (#252). Must parse before
             # reading body because body size limit selection requires method+path.
@@ -375,6 +401,7 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
 
         def _write(self, status_code: int, body: dict[str, JsonValue]) -> None:
             payload = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
+            self._answered = (status_code, body.get("code"))
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
@@ -404,12 +431,15 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                 self._write(500, {"error": "failed to read file"})
                 return
 
+            self._answered = (response.status_code, None)
             self.send_response(response.status_code)
             self.send_header(
                 "Content-Type", _content_type_header(_get_mime_type(response.file_path))
             )
             self.send_header("Content-Length", str(size))
             self.send_header("Content-Disposition", f'attachment; filename="{response.filename}"')
+            if hasattr(self, "_request_id"):
+                self.send_header("X-Request-ID", self._request_id)
             self._send_cors_headers(origin=self.headers.get("Origin"))
             self.end_headers()
 
