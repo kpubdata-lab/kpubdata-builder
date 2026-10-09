@@ -10,6 +10,9 @@ name: Security
 # gains an advisory without anyone touching this repository. They are not part of
 # ci.yml's `CI gate`: whether a new advisory should block every open pull request is a
 # branch-protection decision (#520), not something this file decides.
+#
+# Timeouts are about twice each job's p95 over 40 runs (2026-10): CodeQL 2 minutes,
+# the audit and the scan well under one.
 
 on:
   pull_request:
@@ -23,13 +26,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a pull request's run is superseded. A run on main is that commit's record, so
+  # each push gets a group of its own: in one shared group a newer run cancels the
+  # pending one whatever cancel-in-progress says, and a burst of merges left the
+  # middle commits untested.
+  group: security-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-audit:
     name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -48,6 +56,8 @@ jobs:
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    # A scheduled run scans main's whole history, not one pull request's commits.
+    timeout-minutes: 10
     env:
       GITLEAKS_VERSION: "8.28.0"
     steps:
@@ -111,6 +121,7 @@ jobs:
   codeql:
     name: CodeQL (python)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       security-events: write

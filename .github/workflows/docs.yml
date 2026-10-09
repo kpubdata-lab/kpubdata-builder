@@ -17,6 +17,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # The strict build takes under a minute in ci.yml; the upload and the Pages
+    # deployment are the rest. Ten minutes stops a deployment that hangs.
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

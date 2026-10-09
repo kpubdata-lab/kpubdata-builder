@@ -73,12 +73,20 @@ concurrency:
   # are one group, so the same release is never published by two runs at once.
   group: docker-${{ inputs.ref && format('refs/tags/{0}', inputs.ref) || github.ref }}
   # Only a pull request's build is superseded; a publish is never cut off half-way.
+  # Pushes to main share one group on purpose: a group keeps one pending run, so when
+  # merges come close together the publish still waiting is replaced by the newer
+  # one. The moving tags `:main` and `:latest` need only the newest main; the commit
+  # whose publish was replaced gets no `sha-` image. ci.yml differs because there each
+  # commit's result is that commit's record.
   cancel-in-progress: ${{ github.event_name == 'pull_request' && !inputs.publish }}
 
 jobs:
   build:
     name: docker build and scan
     runs-on: ubuntu-latest
+    # p95 1.5 minutes over 40 runs (2026-10), from a warm layer cache; a change to
+    # uv.lock rebuilds the dependency layer from nothing.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -140,6 +148,9 @@ jobs:
   publish:
     name: publish GHCR image
     runs-on: ubuntu-latest
+    # p95 3.5 minutes over 15 runs (2026-10), from a warm cache. Two images for two
+    # platforms, arm64 emulated, make a cold build far slower than a warm one.
+    timeout-minutes: 45
     needs: build
     if: ${{ github.event_name != 'pull_request' || inputs.publish }}
     outputs:
