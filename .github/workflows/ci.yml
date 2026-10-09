@@ -4,7 +4,7 @@ name: CI
 # 데이터셋 발행 워크플로(publish-dataset.yml)와 분리된, 코드 품질 전용 CI다 (#214).
 #
 # --no-sources: [tool.uv.sources]의 editable ../kpubdata 오버라이드를 무시하고
-# pyproject의 버전 핀(>=0.6.0,<0.7, #575)대로 PyPI에서 kpubdata를 해석한다.
+# pyproject의 버전 핀(#575)대로 PyPI에서 kpubdata를 해석한다.
 
 on:
   pull_request:

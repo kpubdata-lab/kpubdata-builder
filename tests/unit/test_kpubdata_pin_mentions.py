@@ -33,12 +33,7 @@ _SELF = "tests/unit/test_kpubdata_pin_mentions.py"
 #: change that found them did not have. Correcting one means taking it off this list
 #: in the same change: the test below fails for a name left here that is no longer
 #: stale, and for a stale file that is not here.
-KNOWN_STALE: frozenset[str] = frozenset(
-    {
-        ".github/workflows/ci.yml",
-        ".github/workflows/cubrid.yml",
-    }
-)
+KNOWN_STALE: frozenset[str] = frozenset()
 
 
 def _pinned_range() -> str:

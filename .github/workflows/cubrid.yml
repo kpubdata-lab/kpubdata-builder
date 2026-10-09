@@ -8,7 +8,7 @@ name: CUBRID integration
 # 띄울 수 없으므로 `docker run --privileged` 로 기동한다(러너에 docker 존재).
 #
 # --no-sources: [tool.uv.sources]의 editable ../kpubdata 오버라이드를 무시하고
-# pyproject 핀(>=0.6.0,<0.7)대로 PyPI 에서 kpubdata 를 해석한다(ci.yml 과 동일).
+# pyproject 핀대로 PyPI 에서 kpubdata 를 해석한다(ci.yml 과 동일).
 
 on:
   pull_request:

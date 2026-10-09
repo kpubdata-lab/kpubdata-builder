@@ -851,16 +851,16 @@ wheels = [
 
 [[package]]
 name = "kpubdata"
-version = "0.9.0"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pyyaml" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/37/3df78daeb7d361942e7220d0afe226bb651d8c7a2ed0b101ce0ace2157db/kpubdata-0.9.0.tar.gz", hash = "sha256:18f71e9c7cf075ddf98df64ac9b84733d6dda1df607ad43069c140d48b849dac", size = 1444287, upload-time = "2026-10-06T02:47:42.667Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/87/6413804adfa6bb3db7b73d9e213a8af0a45b9eb34f9565c4e213b863b858/kpubdata-0.10.0.tar.gz", hash = "sha256:4edffefd4d7d19348d55695e312b5ad01e682cfa060a279d4c8553e52b15f292", size = 1523473, upload-time = "2026-10-09T01:47:07.546Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/15/f6d923459bb91049b68254a761e9a1fb052894620e1e5f3ab5b4f57ee0e1/kpubdata-0.9.0-py3-none-any.whl", hash = "sha256:bd42e41e803df5d00d3cd0d96d63c5e724d0a30af49cf612c6093c1b9406c21f", size = 239629, upload-time = "2026-10-06T02:47:41.171Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/7c/dffb8257b0879056318a8ee3d68d69689849dd88a88d566333cc6c5f5d42/kpubdata-0.10.0-py3-none-any.whl", hash = "sha256:05ede180dc6fbb076742eb731755c35e5128cf25c48297bcd06bff710684efa5", size = 249342, upload-time = "2026-10-09T01:47:05.761Z" },
 ]
 
 [[package]]
@@ -925,7 +925,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=0.23,<3" },
     { name = "huggingface-hub", marker = "extra == 'publish'", specifier = ">=0.23,<3" },
     { name = "kaggle", marker = "extra == 'publish'", specifier = ">=1.6,<2" },
-    { name = "kpubdata", specifier = ">=0.9.0,<0.10" },
+    { name = "kpubdata", specifier = ">=0.10.0,<0.11" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9,<10" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<3" },

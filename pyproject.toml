@@ -32,8 +32,12 @@ dependencies = [
   # `Client(env_keys=False)`, which the multi-user mode needs to keep the operator's
   # keys out of a request (#990, kpubdata#780), and it is breaking: unknown `Client`
   # arguments are refused, HTTP 401 is `AuthError`, a total count of zero is `0`, and
-  # NODATA is an empty result on every path. Pin to the 0.9 line; compat policy: #213.
-  "kpubdata>=0.9.0,<0.10",
+  # NODATA is an empty result on every path. 0.10.0 reads the bundled specs once per
+  # process and copies only a provider's own, which a per-request BYOK client needs
+  # (#1183, kpubdata#868); it is breaking too: `list_all` refuses a page that repeats
+  # the one before it, and seoul/kipris report an empty result as 0. Pin to the 0.10
+  # line; compat policy: #213.
+  "kpubdata>=0.10.0,<0.11",
   "cryptography>=50,<51",
   # The tabular engine the DuckDB migration moves to (ADR 0021, #866). 1.2.0 is the first
   # release with every sandbox setting the query profile needs — allowed_paths,
