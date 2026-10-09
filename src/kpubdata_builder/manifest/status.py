@@ -68,4 +68,37 @@ def run_status_from_manifest(
     return status
 
 
-__all__ = ["run_status_from_manifest", "status_from_manifest"]
+def run_failure_summary(manifest: dict[str, object]) -> str | None:
+    """Why a run failed, in one line for its index entry and the admin list (#1120).
+
+    The manifest is the record; the index holds this projection of it, so a rebuild of
+    the index from the manifests gives the same line. The first ``failures`` entry
+    decides; a manifest written before #1120 falls back to its first ``errors`` entry,
+    then to its first refused table commit. None for a run nothing in failed.
+
+    Every source of the line is already safe to show: fixed sentences and public
+    messages, written after the run's keys were redacted from the manifest.
+    """
+    failures = manifest.get("failures")
+    if isinstance(failures, list):
+        for failure in failures:
+            if isinstance(failure, dict):
+                key, summary = failure.get("source_key"), failure.get("summary")
+                if isinstance(summary, str) and summary:
+                    return f"{key}: {summary}" if isinstance(key, str) and key else summary
+    errors = manifest.get("errors")
+    if isinstance(errors, list):
+        for error in errors:
+            if isinstance(error, str) and error:
+                return error
+    warehouse = manifest.get("warehouse_failures")
+    if isinstance(warehouse, dict):
+        for key, failure in warehouse.items():
+            if isinstance(failure, dict):
+                detail = failure.get("detail") or failure.get("reason")
+                if isinstance(detail, str) and detail:
+                    return f"{key}: {detail}"
+    return None
+
+
+__all__ = ["run_failure_summary", "run_status_from_manifest", "status_from_manifest"]

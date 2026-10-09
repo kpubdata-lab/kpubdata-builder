@@ -25,6 +25,28 @@ MANIFEST_SCHEMA_VERSION = "1.0.0"
 
 
 @dataclass(frozen=True)
+class RunFailure:
+    """Why one part of a run failed (#1120), in words safe to show its owner and an admin.
+
+    Attributes:
+        source_key: The source, the composition's name, or the table's source key.
+        stage: Where it stopped: ``bronze``, ``silver``, ``gold``, ``export``,
+            ``composition`` or ``warehouse``.
+        code: A stable code: a provider's refusal reason (``application_required``,
+            ``rate_limited`` …, #1187), ``pipeline_failed`` for any other source
+            failure, ``composition_failed``, or the table commit's reason
+            (``conflict``, ``empty_result``, ``commit_failed``).
+        summary: The same fixed or public sentence the run's ``errors`` hold — never a
+            provider's text, a key, a path or a row.
+    """
+
+    source_key: str
+    stage: str
+    code: str
+    summary: str
+
+
+@dataclass(frozen=True)
 class BuildManifest:
     """Execution summary artifact for build audit.
 
@@ -112,6 +134,9 @@ class BuildManifest:
     composition: CompositionProvenance | None = None
     #: Sources whose warehouse commit failed after they built, by reason (#788).
     warehouse_failures: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: Each failure of the run with its stage and code (#1120), in order: sources, then
+    #: the composition, then table commits. Empty for a run nothing in failed.
+    failures: tuple[RunFailure, ...] = ()
     #: What each source's ``gold`` selection did (#659): Silver rows in, Gold rows out,
     #: and the rule. ``row_counts`` stays Silver's — the count quality was measured on.
     gold_selection: dict[str, dict[str, JsonValue]] = field(default_factory=dict)

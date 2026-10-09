@@ -33,7 +33,7 @@ import yaml
 from typing_extensions import assert_never
 
 from ..events import BuildEvent, BuildEventStore
-from ..manifest import run_status_from_manifest
+from ..manifest import run_failure_summary, run_status_from_manifest
 from ..pipeline import CancellationProbe, run_build
 from ..spec import BuildSpec, JsonValue
 from ..stages._path_safety import validate_path_segment
@@ -365,6 +365,9 @@ class BuildRunsApiService:
                 started_at=started_at,
                 finished_at=finished_at,
                 spec_digest=result.spec_digest,
+                # Why it failed, projected from the manifest (#1120): the index never
+                # carried it, so a failed run's reason was null everywhere it is listed.
+                error=run_failure_summary(manifest_data),
                 created_by=manifest_data.get("created_by"),
                 owner_id=manifest_data.get("owner_id"),
                 # dataset_id from canonical spec this run actually executed

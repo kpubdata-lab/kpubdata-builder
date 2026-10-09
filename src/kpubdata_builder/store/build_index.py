@@ -675,7 +675,7 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
 
     import yaml
 
-    from ..manifest import run_status_from_manifest
+    from ..manifest import run_failure_summary, run_status_from_manifest
     from ..spec.serializer import BUILDSPEC_SNAPSHOT_FILENAME, compute_spec_digest
 
     if not output_root.exists():
@@ -729,7 +729,9 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
             started_at=manifest.get("started_at"),
             finished_at=manifest.get("finished_at"),
             spec_digest=spec_digest,
-            error=None,
+            # Projected from the manifest as a build writes it (#1120), so a rebuild
+            # keeps each failed run's reason.
+            error=run_failure_summary(manifest),
             created_by=manifest.get("created_by"),
             dataset_id=dataset_id,
             owner_id=manifest.get("owner_id"),
@@ -830,6 +832,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
                 started_at=entry.started_at,
                 finished_at=entry.finished_at,
                 spec_digest=entry.spec_digest,
+                error=entry.error,
                 created_by=entry.created_by,
                 dataset_id=entry.dataset_id,
                 owner_id=entry.owner_id,

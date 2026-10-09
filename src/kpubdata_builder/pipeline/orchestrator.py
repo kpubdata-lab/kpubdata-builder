@@ -45,6 +45,7 @@ from ..manifest import (
     BuildManifest,
     CompositionProvenance,
     JoinKeyProvenance,
+    RunFailure,
     SchemaSummary,
     SourceProvenance,
     build_schema_summary,
@@ -1496,6 +1497,54 @@ def _pii_unmasked_warnings(pii_masking: Mapping[str, PiiMaskResult]) -> tuple[st
     return tuple(warnings)
 
 
+_STAGES = ("bronze", "silver", "gold")
+
+
+def _run_failures(
+    outcomes: Sequence[SourceBuildOutcome],
+    composition_outcome: CompositionOutcome | None,
+    warehouse_failures: Mapping[str, Mapping[str, str]],
+) -> tuple[RunFailure, ...]:
+    """Each failure of the run with where it stopped and a stable code (#1120).
+
+    A source stopped at the first stage it did not complete; one that completed Gold
+    failed in its export. The summary is the outcome's own public message (#954,
+    #1187), the sentence the run's ``errors`` already hold.
+    """
+    failures: list[RunFailure] = []
+    for outcome in outcomes:
+        if outcome.status != "failed":
+            continue
+        stage = next((s for s in _STAGES if s not in outcome.stages_completed), "export")
+        failures.append(
+            RunFailure(
+                source_key=outcome.source_key,
+                stage=stage,
+                code=outcome.reason or "pipeline_failed",
+                summary=outcome.error or "the source failed",
+            )
+        )
+    if composition_outcome is not None and composition_outcome.status == "failed":
+        failures.append(
+            RunFailure(
+                source_key=composition_outcome.name,
+                stage="composition",
+                code="composition_failed",
+                summary=composition_outcome.error or "the composition failed",
+            )
+        )
+    for key, failure in warehouse_failures.items():
+        failures.append(
+            RunFailure(
+                source_key=key,
+                stage="warehouse",
+                code=failure.get("reason", "commit_failed"),
+                summary=failure.get("detail", "the table was not committed"),
+            )
+        )
+    return tuple(failures)
+
+
 def _empty_result(
     catalog: TableCatalog,
     *,
@@ -1983,6 +2032,7 @@ def run_build(
         drift_evaluation=drift_evaluation,
         composition=composition_provenance,
         warehouse_failures=warehouse_failures,
+        failures=_run_failures(outcomes, composition_outcome, warehouse_failures),
         gold_selection={key: value.body() for key, value in gold_selection.items()},
         pii_masking={key: value.body() for key, value in pii_masking.items()},
         reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,
