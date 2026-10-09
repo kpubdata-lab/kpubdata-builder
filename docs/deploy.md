@@ -581,13 +581,15 @@ Builder 는 답한 요청마다 한 줄을 남긴다. 표준 logging 의 `kpubda
 | `request_id` | 응답의 `X-Request-ID` 헤더와 같은 값. 사용자가 신고한 요청을 이 값으로 찾는다 |
 | `route` | 계약의 경로 **템플릿**. 실제 경로가 아니다 — 경로에는 run id, 테이블 이름, 파일 이름이 들어 있다. 계약에 없는 경로는 `unmatched` |
 | `status`, `duration_ms` | HTTP 상태와, 요청 줄을 받은 때부터 답을 다 보낼 때까지 걸린 시간 |
-| `code` | 답의 `code` 가 있을 때만(`unauthorized`, `auth_throttled`, `provider_credential_required` …). Builder 가 정한 어휘뿐이다 |
+| `code` | 답의 `code` 가 있을 때만(`unauthorized`, `auth_throttled`, `provider_credential_required` …). `request_log.KNOWN_CODES` 목록에 있는 값만 그대로 쓰고, 목록에 없는 값은 `other` 로 쓴다 — 코드처럼 생긴 다른 값이 줄에 들어가지 않게 한다 |
 | `principal` | `oidc` / `service` / `dev`, 인증되지 않은 요청은 `null` |
 | `owner` | 같은 사용자의 줄을 묶는 값. 아래 참고 |
 
 **줄에 들어가지 않는 것.** 헤더(`Authorization`, `X-API-Key`, `X-Provider-Key`, `X-Publish-Credential`, `Cookie` 포함), 쿼리 문자열, 요청·응답 본문, 실제 경로. 이 모듈은 그 값들을 받지 않는다 — 지우는 것이 아니라 처음부터 넘기지 않는다. `tests/unit/test_request_log.py` 가 실제 서버에 각 자리마다 표식 값을 실어 보내고 어느 줄에도 없음을 확인한다.
 
 **`owner` 는 누구인지 말하지 않는다.** `owner_id` 를 프로세스가 시작할 때 만든 키로 HMAC 한 값의 앞 16자다. 키는 어디에도 저장하지 않으므로 값에서 `owner_id` 를 되찾을 수 없고, **재시작하면 같은 사용자의 값이 달라진다.** 재시작을 넘어 같은 사용자를 이어 보아야 한다면 키를 배포가 주는 설정으로 바꿔야 하는데, 그 키의 보관과 접근이 곧 로그의 접근 정책이 되므로 정하지 않고 남겨 두었다.
+
+**줄이 남지 않는 경우.** 핸들러에 닿기 전에 표준 라이브러리가 직접 답하는 요청 — 잘못된 요청 줄, 너무 긴 헤더, `HEAD` 처럼 지원하지 않는 메서드 — 과 CORS preflight(`OPTIONS`)는 줄을 남기지 않는다. 동시 연결 한도에서 바로 거절한 503 은 남긴다: 요청을 읽지 않았으므로 `method` 는 `-`, `route` 는 `unread` 이고, 그 응답에는 `X-Request-ID` 가 없어 줄의 `request_id` 로 응답을 찾을 수는 없다.
 
 **보관은 배포의 일이다.** Builder 는 줄을 내보내기만 한다. 얼마나 두고 누가 읽는지는 로그 수집 설정이 정한다. Docker 의 로그 rotation 은 용량만 제한하고 컨테이너를 다시 만든 뒤의 보존을 보장하지 않는다.
 

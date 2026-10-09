@@ -8,7 +8,8 @@ no query, no body and no path.** A path carries run ids, table names and file na
 query, a body and a header can carry a key. The line names the *route* — the contract's
 template, ``/builds/{run_id}`` — and a path no route matches is ``unmatched``, never the
 path itself. The only text of the answer it keeps is ``code``, which is Builder's own
-fixed vocabulary (``auth_throttled``, ``provider_credential_required``, …).
+fixed vocabulary (``auth_throttled``, ``provider_credential_required``, …), and only a
+code on the list here is written.
 
 ``owner`` says that two lines are the same user without saying who: a keyed hash of the
 principal's ``owner_id``, under a key made when the process starts and kept nowhere. It
@@ -34,7 +35,16 @@ from datetime import datetime, timezone
 from ._contract_operations import OPERATIONS
 from .auth import Principal
 
-__all__ = ["UNMATCHED_ROUTE", "begin", "note_principal", "record", "route_of"]
+__all__ = [
+    "KNOWN_CODES",
+    "OTHER_CODE",
+    "UNMATCHED_ROUTE",
+    "UNREAD_ROUTE",
+    "begin",
+    "note_principal",
+    "record",
+    "route_of",
+]
 
 _request_logger = logging.getLogger("kpubdata_builder.request")
 # The service configures no logging, so the root's WARNING threshold would drop every
@@ -43,6 +53,95 @@ _request_logger.setLevel(logging.INFO)
 
 #: What a line says of a path no route of the contract matches.
 UNMATCHED_ROUTE = "unmatched"
+
+#: The route of an answer given before the request was read: the server was at its
+#: limit of connections and refused this one at once, so there is no method or path.
+UNREAD_ROUTE = "unread"
+
+#: Every ``code`` an answer of Builder's carries at its top. A line keeps a code only
+#: when it is one of these: a route that one day answers with a stored document or a
+#: provider's response beside a ``code`` of its own could otherwise put a value that
+#: merely looks like a code — a key made of letters and digits does — into the log.
+#: ``tests/unit/test_request_log.py`` reads the source and the contract and fails when
+#: a code written there is missing here.
+KNOWN_CODES = frozenset(
+    {
+        "analysis_migration_required",
+        "analysis_not_found",
+        "artifact_unavailable",
+        "auth_throttled",
+        "auth_unavailable",
+        "build_owner_limit",
+        "build_queue_full",
+        "catalog_unavailable",
+        "credential_in_content",
+        "credential_storage_disabled",
+        "credential_unavailable",
+        "credentials_required",
+        "declared_pii_withheld",
+        "email_not_verified",
+        "export_blocked_pii",
+        "export_expired",
+        "export_forbidden_by_license",
+        "export_not_found",
+        "export_quota_exceeded",
+        "export_unavailable",
+        "forbidden",
+        "gold_unavailable",
+        "invalid_context",
+        "invalid_provider_key",
+        "invalid_publish_credential",
+        "invalid_request",
+        "license_missing",
+        "mixed_units",
+        "pii_declaration_unavailable",
+        "preview_queue_full",
+        "probe_rate_limited",
+        "probe_unavailable",
+        "provider_client_unavailable",
+        "provider_credential_required",
+        "provider_key_required",
+        "publish_conflict",
+        "publish_failed",
+        "publish_in_progress",
+        "publish_state_unknown",
+        "query_busy",
+        "query_execution_failed",
+        "query_resource_limit",
+        "query_timeout",
+        "receipt_not_found",
+        "reconcile_unavailable",
+        "redistribution_forbidden",
+        "result_too_large",
+        "retry_of_in_progress",
+        "revision_conflict",
+        "revision_not_found",
+        "row_limit_exceeded",
+        "run_id_completed",
+        "run_id_ended",
+        "server_overloaded",
+        "shutting_down",
+        "signup_ledger_unavailable",
+        "signup_pending",
+        "signup_rejected",
+        "snapshot_not_found",
+        "snapshot_unavailable",
+        "table_not_found",
+        "token_expired",
+        "too_many_groups",
+        "unauthorized",
+        "unsafe_query",
+        "unsupported_target",
+        "upload_quota_exceeded",
+        "url_source_forbidden",
+        "user_not_found",
+        "warehouse_not_configured",
+    }
+)
+
+#: What a line says of a ``code`` that is not one of :data:`KNOWN_CODES`: that the
+#: answer had one, and nothing of what it was.
+OTHER_CODE = "other"
 
 #: The key of ``owner``. Made here, once per process, and written nowhere.
 _OWNER_KEY = secrets.token_bytes(32)
@@ -54,9 +153,6 @@ _requester: ContextVar[tuple[str, str | None] | None] = ContextVar(
 
 _fallback_handler: logging.Handler | None = None
 _output_lock = threading.Lock()
-
-#: ``code`` is copied from an answer only when it looks like one of Builder's codes.
-_CODE_MAX_LENGTH = 64
 
 _ROUTES: dict[str, list[tuple[tuple[str, ...], str]]] = {}
 for _method, _template, *_rest in OPERATIONS:
@@ -141,9 +237,9 @@ def _ensure_output() -> None:
 
 
 def _code_of(code: object) -> str | None:
-    if not isinstance(code, str) or not code or len(code) > _CODE_MAX_LENGTH:
+    if not isinstance(code, str) or not code:
         return None
-    return code if code.replace("_", "").isalnum() and code.isascii() else None
+    return code if code in KNOWN_CODES else OTHER_CODE
 
 
 def record(
@@ -163,8 +259,8 @@ def record(
         route: :func:`route_of`'s answer — a template, not a path.
         status: The HTTP status of the answer.
         duration_ms: From the request line to the end of the answer.
-        code: The answer's ``code``, when it has one. Anything that does not look like
-            one of Builder's codes is left out.
+        code: The answer's ``code``, when it has one. One of :data:`KNOWN_CODES` is
+            written as it is; any other text is written as :data:`OTHER_CODE`.
     """
     requester = _requester.get()
     line: dict[str, object] = {

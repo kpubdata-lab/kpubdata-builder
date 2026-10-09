@@ -561,6 +561,17 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
             client_address,
             self._max_inflight,
         )
+        # A line for this answer too (#1100), though the request was never read: it has
+        # no method, no route and no requester, and the answer carries no X-Request-ID.
+        request_log.begin()
+        request_log.record(
+            request_id=uuid.uuid4().hex[:12],
+            method="-",
+            route=request_log.UNREAD_ROUTE,
+            status=503,
+            duration_ms=0.0,
+            code="server_overloaded",
+        )
         try:
             cast(_socket, request).sendall(_overloaded_response(_get_allowed_origins()))
         except OSError:
