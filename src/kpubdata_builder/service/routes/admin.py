@@ -23,11 +23,15 @@ from typing import TYPE_CHECKING, cast
 from urllib.parse import parse_qs
 
 from ... import logging_redaction
+from ...pipeline.failures import reason_sentence
 from ...spec import JsonValue
+from ...stages.gold.compose import COMPOSITION_FAILURE_SUMMARIES
 from .. import ownership as ownership_module
 from .. import publish_credentials
 from ..admin_audit import record_admin_action
 from ..auth import Principal
+from ..build_runs_api import INTERRUPTED_CODE, SHUTDOWN_QUEUED_ERROR
+from ..jobs import BuildJobSnapshot
 from ..responses import ServiceResponse
 from ..user_ledger import SignupStatus
 from ._types import RouteResponse
@@ -108,6 +112,59 @@ def _reason(error: str | None) -> str | None:
     return logging_redaction.redact(error) if error else None
 
 
+_STAGES = ("bronze", "silver", "gold")
+_COMMIT_REASONS = frozenset({"conflict", "empty_result", "commit_failed"})
+
+
+def _job_failure_line(job: BuildJobSnapshot) -> str | None:
+    """A job row's failure line for an administrator, made only of Builder's words (#1221).
+
+    The job's ``error`` is written for the run's owner: a failed build's is the first
+    failed source's or composition's message, which can name the data's columns or a
+    join key's value. An administrator sees every owner's runs, so the line is built
+    from what the build response carries in Builder's own vocabulary — a source key, a
+    refusal reason, the stages completed, a commit's reason — as the index line is
+    (#1219). A failure without a build response gets a fixed line by kind. The owner's
+    ``GET /builds/{run_id}`` keeps the full message.
+    """
+    if job.error is None and job.status != "failed":
+        return None
+    raw = getattr(job, "response", None)
+    response = raw if isinstance(raw, dict) else {}
+    outcomes = response.get("outcomes")
+    if isinstance(outcomes, list):
+        for outcome in outcomes:
+            if not isinstance(outcome, dict) or outcome.get("status") != "failed":
+                continue
+            key = str(outcome.get("source_key") or "source")
+            reason = outcome.get("reason")
+            sentence = reason_sentence(reason) if isinstance(reason, str) else None
+            if sentence is not None:
+                return f"{key}: {sentence}"
+            completed = outcome.get("stages_completed")
+            done = completed if isinstance(completed, list) else []
+            stage = next((s for s in _STAGES if s not in done), "export")
+            return f"{key}: the source failed at the {stage} stage"
+    composition = response.get("composition")
+    if isinstance(composition, dict) and composition.get("status") == "failed":
+        name = str(composition.get("name") or "composition")
+        return f"{name}: {COMPOSITION_FAILURE_SUMMARIES['composition_failed']}"
+    warehouse = response.get("warehouse_failures")
+    if isinstance(warehouse, dict):
+        for key, failure in warehouse.items():
+            reason = failure.get("reason") if isinstance(failure, dict) else None
+            code = f" ({reason})" if reason in _COMMIT_REASONS else ""
+            return f"{key}: the table was not committed{code}"
+    error = job.error or ""
+    if error.startswith(f"{INTERRUPTED_CODE}:"):
+        return "the run lost its provider keys before it finished (credentials_required)"
+    if error == SHUTDOWN_QUEUED_ERROR:
+        return "the server shut down before this job started"
+    if error.startswith("internal error"):
+        return "the build failed with an internal error"
+    return "the build failed"
+
+
 def _admin_runs(service: BuilderService, principal: Principal, query: str) -> ServiceResponse:
     """Return metadata only for all owners' runs: status, times, failure reason, owner.
 
@@ -161,7 +218,8 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
                 "started_at": None,
                 "finished_at": finished,
                 "owner_id": job.owner_id,
-                "error": _reason(job.error),
+                # Never the job's own message, which is the owner's (#1221).
+                "error": _job_failure_line(job),
             },
         )
     for entry in entries:
