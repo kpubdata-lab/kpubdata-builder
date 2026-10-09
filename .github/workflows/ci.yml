@@ -15,13 +15,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a pull request's run is superseded. A run on main is that commit's record, so
+  # each push gets a group of its own: in one shared group a newer run cancels the
+  # pending one whatever cancel-in-progress says, and a burst of merges left the
+  # middle commits untested.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
     name: Lint & type check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -83,6 +88,9 @@ jobs:
   test:
     name: Tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Twice the slowest leg's p95 over 33 runs (2026-10): about 11 minutes for a plain
+    # leg, 20 for the one that measures coverage.
+    timeout-minutes: ${{ matrix.python-version == '3.12' && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -102,28 +110,16 @@ jobs:
       # -n auto: one worker per vCPU (pytest-xdist). The suite takes about 9 minutes on
       # one core; the runner has four.
       - name: Run tests
+        if: matrix.python-version != '3.12'
         run: uv run --no-sources pytest -n auto
 
-  coverage:
-    # 커버리지 게이트 (#594). 지금 도달한 수준이 조용히 내려가지 않게 잠근다.
-    # 하한은 pyproject 의 [tool.coverage.report] fail_under 한 곳에서만 관리한다.
-    # 테스트 매트릭스에 --cov 를 얹지 않고 이 잡 하나만 계측하는 이유: 5개 잡 전부에
-    # 계측을 걸어도 얻는 정보는 같은데 비용만 5배다.
-    name: Coverage gate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --extra dev --no-sources
-
+      # The coverage gate (#594) locks the level reached so far against a silent drop.
+      # The floor lives in one place, pyproject's [tool.coverage.report] fail_under. One
+      # leg measures it: every leg would report the same thing at four times the cost.
+      # It is the 3.12 leg because the gate has always measured on 3.12, and it used to
+      # be a job of its own that ran the whole suite a second time.
       - name: Run tests with coverage
+        if: matrix.python-version == '3.12'
         run: uv run --no-sources pytest -n auto --cov --cov-report=term-missing
 
   docs:
@@ -133,6 +129,7 @@ jobs:
     # request; docs.yml still does the deploy.
     name: Docs build (strict)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -153,8 +150,13 @@ jobs:
     # #832). This lists every released, unyanked kpubdata inside the range
     # pyproject.toml declares, from PyPI at run time, so a new release in range is
     # tested the day it appears. It fails rather than return a shorter list.
+    #
+    # The version uv.lock resolves is left out: the Tests matrix installs exactly that
+    # one, so a min-deps leg for it ran the same suite on the same packages a second
+    # time. When it is the only release in range, nothing is left and min-deps skips.
     name: List supported kpubdata releases
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       versions: ${{ steps.list.outputs.versions }}
     steps:
@@ -167,8 +169,8 @@ jobs:
       - name: List releases in the declared range
         id: list
         run: |
-          versions=$(uv run --no-project --python 3.12 --with packaging python scripts/kpubdata_release_matrix.py)
-          echo "kpubdata releases under test: ${versions}" >> "$GITHUB_STEP_SUMMARY"
+          versions=$(uv run --no-project --python 3.12 --with packaging python scripts/kpubdata_release_matrix.py --exclude-locked uv.lock)
+          echo "kpubdata releases under test beside the locked one: ${versions}" >> "$GITHUB_STEP_SUMMARY"
           echo "versions=${versions}" >> "$GITHUB_OUTPUT"
 
   min-deps:
@@ -181,7 +183,11 @@ jobs:
     # release added or dropped from the range changes no branch protection.
     name: kpubdata ${{ matrix.kpubdata }}
     needs: [kpubdata-releases]
+    # An empty matrix is an error, so the job is skipped instead. `CI gate` accepts that
+    # skip only when the list came back empty, never when the list job failed.
+    if: needs.kpubdata-releases.outputs.versions != '[]'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -216,6 +222,7 @@ jobs:
   duckdb-floor:
     name: DuckDB floor
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -253,6 +260,7 @@ jobs:
   studio-drift:
     name: Studio drift
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -358,6 +366,7 @@ jobs:
   release-freeze:
     name: Release freeze
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -378,20 +387,41 @@ jobs:
   gate:
     name: CI gate
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, docs, kpubdata-releases, min-deps, duckdb-floor, studio-drift, release-freeze]
+    timeout-minutes: 5
+    needs: [lint, test, docs, kpubdata-releases, min-deps, duckdb-floor, studio-drift, release-freeze]
     # `always()` so a failed job still reaches this step. Without it the gate is
     # skipped when something upstream fails, and a skipped required check is the same
     # absence this job exists to remove.
     if: always()
     steps:
+      # One skip is allowed: min-deps, when the release list job succeeded and left no
+      # release beside the locked one. Failed, cancelled and any other skip still fail.
       - name: Every job this gate covers must have succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          results="${{ join(needs.*.result, ' ') }}"
-          echo "upstream results: ${results}"
-          for result in ${results}; do
-            if [ "${result}" != "success" ]; then
-              echo "::error::CI gate failed — upstream results were: ${results}"
-              exit 1
+          results="$(jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<<"${NEEDS}")"
+          releases="$(jq -r '."kpubdata-releases".outputs.versions // ""' <<<"${NEEDS}")"
+          if [ -z "${results}" ]; then
+            echo "::error::CI gate failed — it was given no upstream results"
+            exit 1
+          fi
+          echo "upstream results: ${results//$'\n'/ }"
+          failed=""
+          for entry in ${results}; do
+            job="${entry%%=*}"
+            result="${entry#*=}"
+            if [ "${result}" = "success" ]; then
+              continue
             fi
+            if [ "${job}" = "min-deps" ] && [ "${result}" = "skipped" ] && [ "${releases}" = "[]" ]; then
+              echo "min-deps skipped: no released kpubdata in range beside the locked one"
+              continue
+            fi
+            failed="${failed} ${entry}"
           done
+          if [ -n "${failed}" ]; then
+            echo "::error::CI gate failed — upstream results were:${failed}"
+            exit 1
+          fi
           echo "every upstream job succeeded"

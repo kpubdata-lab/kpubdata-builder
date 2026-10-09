@@ -38,12 +38,26 @@ ENV UV_LINK_MODE=copy \
 
 WORKDIR /app
 
-# 매니페스트를 먼저 복사해 의존성 레이어를 캐시한다 (소스 변경 시에도 재사용).
-COPY pyproject.toml uv.lock ./
-COPY src/ ./src/
-COPY README.md LICENSE ./
+# 비루트로 실행한다. 예전에는 root 로 돌았다 — 컨테이너 탈출이나 임의 파일 쓰기가
+# 가능한 결함이 생기면 그 권한이 그대로 공격자의 권한이 된다. 이 서비스는 /data
+# 쓰기 말고는 특권이 필요 없다.
+#
+# uid/gid 를 고정한다. 볼륨은 컨테이너보다 오래 사는데, 재빌드마다 uid 가 바뀌면
+# 기존 /data 를 읽지 못한다.
+#
+# The user exists before anything is installed, and installs as itself, so /app is
+# builder's from the start. A `chown -R /app` after the install copied the whole
+# virtual environment into one more layer (135 MB) and took most of a rebuild.
+#
+# /data: 빌드 산출물(아티팩트·매니페스트) 영속 볼륨의 기본 위치.
+RUN groupadd --system --gid 10001 builder \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /app --no-create-home builder \
+    && mkdir -p /data \
+    && chown builder:builder /app /data
 
 # --no-sources: editable ../kpubdata 무시, PyPI 핀 사용 (#213).
+# --locked: uv.lock 이 pyproject 와 어긋나면 고치지 않고 빌드를 멈춘다(CI 의
+# `uv lock --check --no-sources` 와 같은 해상도).
 # dev extra(mypy/pytest/ruff)는 배포 이미지에서 제외한다.
 #
 # EXTRAS: 배포 이미지에 포함할 optional extra 그룹(#373).
@@ -59,26 +73,27 @@ COPY README.md LICENSE ./
 # 배포가 기동 시점에 "pyjwt 가 없다"로 거부된다 — Studio 는 Bearer 만 보내므로, Studio 가
 # 붙는 배포는 이 extra 없이는 성립하지 않는다. OIDC 를 켜지 않은 배포에는 영향이 없다.
 ARG EXTRAS="publish auth"
-RUN if [ -z "${EXTRAS}" ]; then \
-      uv sync --no-sources; \
-    else \
-      _flags=""; for _e in ${EXTRAS}; do _flags="$_flags --extra $_e"; done; \
-      uv sync --no-sources $_flags; \
-    fi; \
-    rm -rf /root/.cache/uv /bin/uv /bin/uvx
 
-# 빌드 산출물(아티팩트·매니페스트) 영속 볼륨의 기본 위치.
-RUN mkdir -p /data
+# Dependencies first, from the manifests alone, so that a change to src/ reuses this
+# layer. It used to come after `COPY src/`, and every source change reinstalled every
+# dependency. The cache mount keeps uv's download cache between local builds and out
+# of the image.
+COPY --chown=builder:builder pyproject.toml uv.lock ./
+USER builder
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=10001,gid=10001 \
+    _flags=""; for _e in ${EXTRAS}; do _flags="$_flags --extra $_e"; done; \
+    UV_CACHE_DIR=/tmp/uv-cache uv sync --locked --no-sources --no-install-project $_flags
 
-# 비루트로 실행한다. 예전에는 root 로 돌았다 — 컨테이너 탈출이나 임의 파일 쓰기가
-# 가능한 결함이 생기면 그 권한이 그대로 공격자의 권한이 된다. 이 서비스는 /data
-# 쓰기 말고는 특권이 필요 없다.
-#
-# uid/gid 를 고정한다. 볼륨은 컨테이너보다 오래 사는데, 재빌드마다 uid 가 바뀌면
-# 기존 /data 를 읽지 못한다.
-RUN groupadd --system --gid 10001 builder \
-    && useradd --system --uid 10001 --gid 10001 --home-dir /app --no-create-home builder \
-    && chown -R builder:builder /app /data
+# Then the project itself.
+COPY --chown=builder:builder src/ ./src/
+COPY --chown=builder:builder README.md LICENSE ./
+RUN --mount=type=cache,target=/tmp/uv-cache,uid=10001,gid=10001 \
+    _flags=""; for _e in ${EXTRAS}; do _flags="$_flags --extra $_e"; done; \
+    UV_CACHE_DIR=/tmp/uv-cache uv sync --locked --no-sources $_flags
+
+# Nothing runs uv after this.
+USER root
+RUN rm -rf /bin/uv /bin/uvx
 VOLUME /data
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

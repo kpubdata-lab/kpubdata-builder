@@ -73,12 +73,20 @@ concurrency:
   # are one group, so the same release is never published by two runs at once.
   group: docker-${{ inputs.ref && format('refs/tags/{0}', inputs.ref) || github.ref }}
   # Only a pull request's build is superseded; a publish is never cut off half-way.
+  # Pushes to main share one group on purpose: a group keeps one pending run, so when
+  # merges come close together the publish still waiting is replaced by the newer
+  # one. The moving tags `:main` and `:latest` need only the newest main; the commit
+  # whose publish was replaced gets no `sha-` image. ci.yml differs because there each
+  # commit's result is that commit's record.
   cancel-in-progress: ${{ github.event_name == 'pull_request' && !inputs.publish }}
 
 jobs:
   build:
     name: docker build and scan
     runs-on: ubuntu-latest
+    # p95 1.5 minutes over 40 runs (2026-10), from a warm layer cache; a change to
+    # uv.lock rebuilds the dependency layer from nothing.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -113,8 +121,15 @@ jobs:
           context: .
           load: true
           tags: kpubdata-builder:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Each build keeps its own cache scope (one scope per image and platform set).
+          # They all shared the default scope, where each `cache-to` replaces the
+          # scope's index: the single-platform check, the two-platform publish and the
+          # CUBRID image overwrote one another, and a run found only the layers of
+          # whichever build wrote last. This one also reads what the last publish left.
+          cache-from: |
+            type=gha,scope=ci
+            type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=ci
 
       # Each authentication configuration starts, or refuses to, the way a deployment
       # would (#1122): OIDC only, service key only, both, neither, an example key, OIDC
@@ -133,6 +148,9 @@ jobs:
   publish:
     name: publish GHCR image
     runs-on: ubuntu-latest
+    # p95 3.5 minutes over 15 runs (2026-10), from a warm cache. Two images for two
+    # platforms, arm64 emulated, make a cold build far slower than a warm one.
+    timeout-minutes: 45
     needs: build
     if: ${{ github.event_name != 'pull_request' || inputs.publish }}
     outputs:
@@ -174,8 +192,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
           sbom: true
           provenance: mode=max
 
@@ -197,8 +215,12 @@ jobs:
             EXTRAS=publish auth cubrid
           tags: ghcr.io/kpubdata-lab/kpubdata-builder:cubrid
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Its own scope: its dependency layer differs from the default image's. The
+          # layers before it are the default image's, so the publish scope is read too.
+          cache-from: |
+            type=gha,scope=cubrid
+            type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=cubrid
           sbom: true
           provenance: mode=max
 

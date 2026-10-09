@@ -12,8 +12,13 @@ name: Cross-repo contract
 # 실제 `kpubdata.Client`로 Bronze→Silver→Gold 전 구간을 태운다(네트워크·API 키 없음).
 #
 # PR마다 돌리지 않는 이유: upstream main이 깨졌을 때 Builder의 무관한 PR까지
-# 빨갛게 만들지 않기 위해서다. 대신 매일·수동·main push에서 돌리고, kpubdata 경계에
+# 빨갛게 만들지 않기 위해서다. 대신 매일·수동으로 돌리고, kpubdata 경계에
 # 직접 닿는 파일이 바뀐 PR에서만 함께 돌린다.
+#
+# It no longer runs on every push to main. That run took about 8 minutes on every
+# merge, most of them changes the pull request trigger below had no reason to check,
+# and what it found the nightly run finds within a day — the alarm here is for
+# kpubdata main moving, which a Builder merge does not cause.
 #
 # Independence Rule 12 (#832): this job is an early warning, not a compatibility
 # contract. kpubdata `main` is not a release, so a pass here promises nothing to a user
@@ -26,8 +31,6 @@ on:
     # 매일 18:00 UTC (KST 03:00).
     - cron: "0 18 * * *"
   workflow_dispatch:
-  push:
-    branches: [main]
   pull_request:
     paths:
       - "src/kpubdata_builder/stages/bronze/**"
@@ -41,12 +44,15 @@ permissions:
 
 concurrency:
   group: cross-repo-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a pull request's run is superseded; a scheduled or dispatched run finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   contract:
     name: kpubdata main ↔ Builder
     runs-on: ubuntu-latest
+    # Twice the p95 of 35 runs (8.5 minutes, 2026-10).
+    timeout-minutes: 20
     steps:
       - name: Checkout builder
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -83,6 +89,7 @@ jobs:
           KPUBDATA_REPLAY_DIR: ${{ github.workspace }}/.kpubdata-src/tests/fixtures
         run: uv run --no-sync pytest tests/integration -v
 
+      # tests/integration ran in the step above, verbosely; it is not run twice.
       - name: Full suite against kpubdata main
         env:
           KPUBDATA_MODE: replay
@@ -91,4 +98,4 @@ jobs:
           # pin allows still keeps it private (scripts/check_kpubdata_imports.py).
           KPUBDATA_IMPORT_GATE_TARGET: unreleased
           KPUBDATA_REPLAY_DIR: ${{ github.workspace }}/.kpubdata-src/tests/fixtures
-        run: uv run --no-sync pytest -q -n auto
+        run: uv run --no-sync pytest -q -n auto --ignore=tests/integration
