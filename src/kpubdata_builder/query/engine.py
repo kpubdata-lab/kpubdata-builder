@@ -126,13 +126,24 @@ def _query_worker(
     try:
         from .result import to_wire
         from .sandbox import open_sandbox
+        from .stored_columns import stored_null_outputs
 
         bounded_sql = f"SELECT * FROM ({canonical_sql}) AS _kpubdata_result LIMIT {limit + 1}"
         with open_sandbox(table_path) as sandbox:
             # Startup ends after spawn, imports and the locked connection, before the query.
             startup_ms = _elapsed_ms(parent_started_ns)
             engine_started_ns = time.monotonic_ns()
-            result = to_wire(sandbox.connection.sql(bounded_sql))
+            relation = sandbox.connection.sql(bounded_sql)
+            # A stored Null column read as it is stays Null, as a page of rows reports
+            # it: DuckDB types the sandbox's NULL as an INTEGER.
+            null = stored_null_outputs(
+                canonical_sql,
+                relation.columns,
+                columns=sandbox.columns,
+                null_columns=[n for n, dtype in sandbox.dtypes.items() if dtype == "Null"],
+            )
+            stored = None if null is None else ["Null" if flag else None for flag in null]
+            result = to_wire(relation, stored=stored)
             engine_execution_ms = _elapsed_ms(engine_started_ns)
         # Wire-encoded by column (#735): a Decimal or an out-of-range integer arrives as
         # its exact decimal text, and `column_meta` says which columns that applies to.

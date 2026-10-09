@@ -223,9 +223,9 @@ def test_a_silver_query_reports_the_same_dtypes_with_and_without_declared_pii(
     assert masked.body["columns"] == unmasked.body["columns"]
     assert masked.body["column_meta"] == unmasked.body["column_meta"]
     meta = {m["name"]: m for m in cast(list[dict[str, JsonValue]], masked.body["column_meta"])}
-    # DuckDB types a Null column INTEGER in any projection (#874); the point is that
-    # masking does not change it.
-    assert meta["memo"]["logical_type"] == "int32"
+    # A stored Null column read as it is stays Null (#1227), in the masked copy as in
+    # the table; the point is that masking does not change it.
+    assert meta["memo"]["logical_type"] == "null"
     _no_phone(masked.body)
 
 
