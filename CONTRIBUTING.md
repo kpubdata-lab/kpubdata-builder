@@ -102,11 +102,11 @@ CI(`publish-dataset.yml`)와 패키지 배포 환경에서는 `--no-sources` 플
 uv sync --extra dev --extra publish --no-sources
 ```
 
-`--no-sources`는 `[tool.uv.sources]`를 무시하고, `pyproject.toml`의 `dependencies`에 명시된 **PyPI 릴리스 핀**(`kpubdata>=0.9.0,<0.10`)을 직접 설치합니다. 형제 디렉터리가 없어도 작동합니다.
+`--no-sources`는 `[tool.uv.sources]`를 무시하고, `pyproject.toml`의 `dependencies`에 명시된 **PyPI 릴리스 핀**(`kpubdata>=0.10.0,<0.11`)을 직접 설치합니다. 형제 디렉터리가 없어도 작동합니다.
 
-#### 핀 범위(`>=0.9.0,<0.10`)를 이렇게 설정한 이유
+#### 핀 범위(`>=0.10.0,<0.11`)를 이렇게 설정한 이유
 
-`kpubdata-builder`는 `kpubdata`의 공개 API만 씁니다(kpubdata ADR 0007, `scripts/check_kpubdata_imports.py`). kpubdata 0.9.0은 `Client(env_keys=False)` 가 들어간 첫 릴리스입니다 — 다중 사용자 모드가 운영자 키를 요청에서 떼어 놓는 데 필요합니다(#990, kpubdata#780). breaking 릴리스이기도 합니다: 모르는 `Client` 인자를 거부하고, HTTP 401 이 `AuthError` 가 되고, 건수 0 을 `None` 이 아니라 `0` 으로 보고하고, NODATA 가 모든 경로에서 빈 결과입니다. 그래서 0.9 라인에 고정합니다.
+`kpubdata-builder`는 `kpubdata`의 공개 API만 씁니다(kpubdata ADR 0007, `scripts/check_kpubdata_imports.py`). kpubdata 0.10.0은 패키지에 든 spec 파일을 프로세스당 한 번만 읽는 첫 릴리스입니다(kpubdata#822, kpubdata#868). Builder 는 요청마다 새 `Client` 를 만드는데, 0.9.0 에서는 그때마다 provider 수만큼 모든 spec 파일을 다시 읽었습니다(#1183). breaking 릴리스이기도 합니다: seoul 과 kipris 가 빈 결과의 건수를 `None` 이 아니라 `0` 으로 보고합니다(다른 provider 는 0.9.0 부터 그랬습니다). 다중 사용자 모드가 운영자 키를 요청에서 떼어 놓는 데 필요한 `Client(env_keys=False)`(#990, kpubdata#780)는 0.9.0 부터 있으므로 이 하한에서도 그대로 씁니다. 그래서 0.10 라인에 고정합니다.
 
 핀의 정본은 `pyproject.toml`의 `dependencies`입니다. 이 표와 어긋나면 `pyproject.toml`이 맞습니다.
 
@@ -115,7 +115,7 @@ uv sync --extra dev --extra publish --no-sources
 | 환경 | 명령 | `kpubdata` 소스 |
 | :--- | :--- | :--- |
 | 로컬 개발 | `uv sync --extra dev` | `../kpubdata` (editable, 형제 디렉터리 필요) |
-| CI / 배포 | `uv sync ... --no-sources` | PyPI (`kpubdata>=0.9.0,<0.10`) |
+| CI / 배포 | `uv sync ... --no-sources` | PyPI (`kpubdata>=0.10.0,<0.11`) |
 
 ## 3. 브랜치 전략과 협업 규칙
 
