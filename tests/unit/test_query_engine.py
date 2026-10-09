@@ -54,12 +54,23 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def test_timeout_leaves_child_not_alive(tmp_path: Path) -> None:
+def test_timeout_leaves_child_not_alive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The timeout is reached once the child has published its pid, not seconds later.
+
+    The subject is the child's state after the engine times out; waiting out a real
+    timeout only added its length to every run (#1184). Windows spawn imports the test
+    module in a fresh interpreter, so the wait for the pid keeps the spawn multiplier.
+    """
     pid_file = tmp_path / "child.pid"
-    # Windows spawn imports the test module in a fresh interpreter, so leave
-    # enough time for the worker to publish its PID before exercising timeout.
-    timeout_seconds = 5 * spawn_timeout_multiplier()
-    engine = QueryEngine(timeout_seconds=timeout_seconds, worker=_sleeping_worker)
+
+    def timed_out(self: Connection, timeout: float | None = 0.0) -> bool:
+        deadline = time.monotonic() + 20 * spawn_timeout_multiplier()
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return False
+
+    monkeypatch.setattr(Connection, "poll", timed_out)
+    engine = QueryEngine(timeout_seconds=60, worker=_sleeping_worker)
 
     with pytest.raises(QueryTimeoutError):
         engine.execute(pid_file, "SELECT * FROM dataset", limit=1)
