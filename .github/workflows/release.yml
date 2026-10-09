@@ -148,9 +148,11 @@ jobs:
     name: Gate, tag and release
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.mode == 'release') ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'release' &&
+       github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.merged == true &&
+       github.event.pull_request.base.ref == 'main' &&
        startsWith(github.event.pull_request.head.ref, 'release/'))
     timeout-minutes: 30
     permissions:
