@@ -17,7 +17,10 @@ from kpubdata_builder.cli import main
 from kpubdata_builder.ingestion.url_fetch import default_max_fetch_bytes
 from kpubdata_builder.service import startup_settings
 from kpubdata_builder.service.auth_throttle import AuthFailureThrottle
-from kpubdata_builder.service.build_limits import resolve_owner_build_limit
+from kpubdata_builder.service.build_limits import (
+    resolve_build_time_limit,
+    resolve_owner_build_limit,
+)
 from kpubdata_builder.service.probe_limit import probe_interval_seconds
 from kpubdata_builder.service.request_credentials import _ttl_seconds
 from kpubdata_builder.service.startup_settings import check_settings
@@ -252,6 +255,12 @@ _FALLBACK_CASES: list[tuple[str, Callable[[], object], list[str], list[str]]] = 
         _upload_limit("max_files"),
         ["many", "-1", "1.5"],
         ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS",
+        resolve_build_time_limit,
+        ["soon", "-1", "inf", "nan"],
+        ["7", "0"],
     ),
     (
         "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER",
