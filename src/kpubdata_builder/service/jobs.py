@@ -177,6 +177,8 @@ class BuildJobSnapshot:
     dataset_id: str | None = None
     #: The earlier run this one retries (#1042). On the wire, unlike the two above.
     retry_of: str | None = None
+    #: The submission asked for new tables only (#1223). Internal: read by the worker.
+    if_absent: bool = False
 
     def to_body(self) -> dict[str, JsonValue]:
         body: dict[str, JsonValue] = {
@@ -281,6 +283,7 @@ class AsyncBuildJobRegistry:
         dataset_id: str | None = None,
         retry_of: str | None = None,
         max_active_per_owner: int | None = None,
+        if_absent: bool = False,
     ) -> tuple[str, BuildJobSnapshot | None]:
         """Check existence/queue capacity/create in **single lock scope** (#482 follow-up).
 
@@ -327,6 +330,7 @@ class AsyncBuildJobRegistry:
                 owner_id=owner_id,
                 dataset_id=dataset_id,
                 retry_of=retry_of,
+                if_absent=if_absent,
             )
             self._jobs[run_id] = snapshot
             self._cancellations[run_id] = RunCancellation()
@@ -646,6 +650,7 @@ class AsyncBuildExecutor:
         dataset_id: str | None = None,
         retry_of: str | None = None,
         max_active_per_owner: int | None = None,
+        if_absent: bool = False,
     ) -> BuildJobSubmitResult:
         """Queue job. If "existing"/"queue_full"/"owner_limit", new submission not
         counted, so ``on_accept`` not called.
@@ -690,6 +695,7 @@ class AsyncBuildExecutor:
             dataset_id=dataset_id,
             retry_of=retry_of,
             max_active_per_owner=max_active_per_owner,
+            if_absent=if_absent,
         )
         if outcome == "existing":
             return BuildJobSubmitResult(status="existing", snapshot=snapshot)
@@ -865,6 +871,7 @@ def _transition(
         dataset_id=current.dataset_id,
         # And so is the retry link: it is a fact about the run, not about one state (#1042).
         retry_of=current.retry_of,
+        if_absent=current.if_absent,
     )
 
 

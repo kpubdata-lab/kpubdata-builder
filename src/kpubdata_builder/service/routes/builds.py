@@ -18,7 +18,7 @@ from ._guards import (
     check_run_exists,
     refuse_missing_provider_keys,
 )
-from ._parsing import optional_retry_of, optional_run_id, spec_from_body
+from ._parsing import optional_if_absent, optional_retry_of, optional_run_id, spec_from_body
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -55,6 +55,9 @@ def route(
         denied = check_retry_of(service, run_id, retry_of, principal)
         if denied is not None:
             return denied
+        if_absent = optional_if_absent(body)
+        if isinstance(if_absent, ServiceResponse):
+            return if_absent
         # A build that needs a key the request does not carry would be accepted, wait
         # and fail later with nothing to say why (#1070). Refused here, nothing is made.
         refused = refuse_missing_provider_keys(service, spec)
@@ -66,6 +69,7 @@ def route(
             created_by=principal.label,
             owner_id=principal.owner_id,
             retry_of=retry_of,
+            **({"if_absent": True} if if_absent else {}),
         )
 
     # The sole cancel endpoint as specified in ADR 0008 (#481). Do not add aliases.
