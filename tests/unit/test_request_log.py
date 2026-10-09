@@ -6,6 +6,7 @@ deployment's log collector would be handed.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import threading
@@ -17,12 +18,13 @@ from http.server import HTTPServer
 from pathlib import Path
 
 import pytest
+import yaml
 
 from kpubdata_builder import cli
-from kpubdata_builder.service import BuilderService, request_log
+from kpubdata_builder.service import BuilderService, build_runs_api, pii_reads, request_log
 from kpubdata_builder.service._contract_operations import OPERATIONS
-from kpubdata_builder.service.auth import Principal
-from kpubdata_builder.service.http import make_handler
+from kpubdata_builder.service.auth import AuthError, Principal
+from kpubdata_builder.service.http import BoundedThreadingHTTPServer, make_handler
 
 _API_KEY = "marker-value-of-the-api-key"
 #: Values that must be in no line, each sent where a deployment's users send secrets.
@@ -217,8 +219,14 @@ def test_no_line_holds_a_header_a_query_a_body_or_a_path_value(base: str, lines:
     assert {key for line in lines.parsed() for key in line} <= allowed
 
 
-def test_a_code_that_is_not_one_of_builders_is_left_out(lines: _Lines) -> None:
-    for code in ("has space", "x" * 65, 'quote"d', 7, None, "", "키"):
+def test_a_code_that_is_not_one_of_builders_is_not_written(lines: _Lines) -> None:
+    """A value that only looks like a code — a key of letters and digits does — is not kept."""
+    looks_like_one = "letters_and_digits_0123456789"
+    for code in ("has space", "x" * 65, 'quote"d', "키", looks_like_one, "Unauthorized"):
+        request_log.record(
+            request_id="r", method="GET", route="/x", status=400, duration_ms=1.0, code=code
+        )
+    for code in (7, None, ""):
         request_log.record(
             request_id="r", method="GET", route="/x", status=400, duration_ms=1.0, code=code
         )
@@ -226,7 +234,114 @@ def test_a_code_that_is_not_one_of_builders_is_left_out(lines: _Lines) -> None:
         request_id="r", method="GET", route="/x", status=400, duration_ms=1.0, code="auth_throttled"
     )
 
-    assert [line.get("code") for line in lines.parsed()] == [None] * 7 + ["auth_throttled"]
+    assert [line.get("code") for line in lines.parsed()] == (
+        [request_log.OTHER_CODE] * 6 + [None] * 3 + ["auth_throttled"]
+    )
+    assert looks_like_one not in "\n".join(lines.lines)
+
+
+def _literal_codes_in_the_source() -> dict[str, str]:
+    """Every ``"code": "<text>"`` written in a dict of the package, with where it is."""
+    found: dict[str, str] = {}
+    package = Path(request_log.__file__).resolve().parents[1]
+    for source in sorted(package.rglob("*.py")):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values, strict=True):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "code"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    found.setdefault(value.value, f"{source.relative_to(package)}:{value.lineno}")
+    return found
+
+
+def test_every_code_written_in_the_source_is_a_known_code() -> None:
+    """A new code is added to the list, or its lines say only ``other``."""
+    written = _literal_codes_in_the_source()
+
+    assert len(written) > 40, "the scan found too few codes to be reading the source"
+    missing = {
+        code: where for code, where in written.items() if code not in request_log.KNOWN_CODES
+    }
+    assert missing == {}
+
+
+def test_every_code_the_contract_names_is_a_known_code() -> None:
+    contract = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "contract" / "builder-api.yaml").read_text("utf-8")
+    )
+    named: set[str] = set()
+
+    def walk(node: object, key: str | None = None) -> None:
+        if isinstance(node, dict):
+            if key == "code" and isinstance(node.get("enum"), list):
+                named.update(item for item in node["enum"] if isinstance(item, str))
+            # An example answer: `code: unsafe_query` beside its `error`.
+            example = node.get("code")
+            if isinstance(example, str) and "error" in node:
+                named.add(example)
+            for child_key, child in node.items():
+                walk(child, child_key)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child, key)
+
+    walk(contract)
+
+    assert len(named) > 20, "the walk found too few codes to be reading the contract"
+    assert named - request_log.KNOWN_CODES == set()
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        build_runs_api.INTERRUPTED_CODE,
+        pii_reads.DECLARED_PII_WITHHELD,
+        pii_reads.PII_DECLARATION_UNAVAILABLE,
+        AuthError("r").code,
+        AuthError("r", expired=True).code,
+        AuthError("r", email_unverified=True).code,
+        AuthError("r", status_code=503).code,
+    ],
+)
+def test_the_codes_that_are_not_written_as_literals_are_known_too(code: str) -> None:
+    assert code in request_log.KNOWN_CODES
+
+
+def test_a_connection_refused_at_the_limit_leaves_a_line(tmp_path: Path, lines: _Lines) -> None:
+    """The request is never read: the line has no method, route or requester."""
+
+    class _Socket:
+        def sendall(self, data: bytes) -> None:
+            return
+
+        def shutdown(self, how: int) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    service = BuilderService(output_root=tmp_path, client_factory=cli._create_client)
+    server = BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0), make_handler(service), max_workers=1, max_pending_requests=0
+    )
+    try:
+        server._reject(_Socket(), ("10.0.0.1", 1))  # type: ignore[arg-type]
+    finally:
+        server.server_close()
+
+    (line,) = lines.parsed()
+    assert (line["route"], line["status"], line["code"]) == (
+        request_log.UNREAD_ROUTE,
+        503,
+        "server_overloaded",
+    )
+    assert line["principal"] is None and line["owner"] is None
+    assert "10.0.0.1" not in lines.lines[0]
 
 
 # ------------------------------------------------------------------ owner
