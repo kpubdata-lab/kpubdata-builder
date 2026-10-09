@@ -6,7 +6,12 @@ name: Publish dataset
 # - workflow_dispatch: 운영자가 수동(백필 포함)으로 실행한다.
 #
 # Atomic publish 원칙(로컬 빌드 → 검증 → 단일 HF commit)은 scripts/publish_to_hf.py가
-# 담당한다. 시크릿(API key)이 없으면 라이브 실행을 건너뛰어 no-op으로 성공 처리한다.
+# 담당한다.
+#
+# A run without the secrets it needs fails (#1190). It used to print a notice and exit 0,
+# so every scheduled publish since at least 2026-08-01 was green while nothing was
+# published, and notify-failure never ran. This workflow runs only on a schedule or by
+# hand, never for a pull request, so a missing secret is always a misconfiguration.
 # 데이터셋별 cron 스케줄은 시크릿/구성이 준비된 뒤 별도 스케줄 워크플로에서
 # 본 워크플로를 호출해 활성화한다(DATA_FRESHNESS.md의 스케줄 표 참고).
 
@@ -77,7 +82,7 @@ jobs:
           esac
           uv run --no-sources python scripts/check_config_licence.py "${CONFIG}"
 
-      - name: Publish dataset (atomic, guarded by secrets)
+      - name: Publish dataset (atomic; fails without its secrets)
         env:
           KPUBDATA_DATAGO_API_KEY: ${{ secrets.KPUBDATA_DATAGO_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -85,8 +90,8 @@ jobs:
           MODE: ${{ inputs.mode }}
         run: |
           if [ -z "${KPUBDATA_DATAGO_API_KEY}" ]; then
-            echo "::notice::KPUBDATA_DATAGO_API_KEY 미설정 — 라이브 실행을 건너뜁니다(no-op)."
-            exit 0
+            echo "::error::KPUBDATA_DATAGO_API_KEY is not set, so ${CONFIG} cannot be fetched. Register the repository secret (kpubdata-lab/kpubdata#791); a run without it fails rather than passing as a no-op (#1190)."
+            exit 1
           fi
           # 라이브 퍼블리시(--local-only/--dry-run 이 아닌 모드)는 HF_TOKEN 이 필요하다.
           # 빌드를 모두 수행한 뒤 업로드에서 뒤늦게 실패(late failure)하지 않도록
@@ -96,8 +101,8 @@ jobs:
               ;;
             *)
               if [ -z "${HF_TOKEN}" ]; then
-                echo "::notice::HF_TOKEN 미설정 — 라이브 퍼블리시를 건너뜁니다(no-op)."
-                exit 0
+                echo "::error::HF_TOKEN is not set, so ${CONFIG} cannot be published. Register the repository secret (kpubdata-lab/kpubdata#791), or run with --local-only or --dry-run (#1190)."
+                exit 1
               fi
               ;;
           esac
