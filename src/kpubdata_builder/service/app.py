@@ -490,7 +490,10 @@ _BuildListEntry = dict[str, str | None]
 #   (#1187, additive).
 # 1.112.0 -> 1.113.0: a failed run's manifest records its failures with stage and
 #   code, and the build index projects the first into its error (#1120, additive).
-API_CONTRACT_VERSION = "1.113.0"
+# 1.113.0 -> 1.114.0: POST /build and POST /builds take if_absent; a table that already
+#   has a snapshot is then a warehouse_failures entry with reason table_exists (#1223,
+#   additive).
+API_CONTRACT_VERSION = "1.114.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1168,6 +1171,7 @@ class BuilderService:
         retry_of: str | None = None,
         principal: Principal | None = None,
         cancellation: CancellationProbe | None = None,
+        if_absent: bool = False,
     ) -> ServiceResponse:
         """Execute the pipeline and return the result (see ``BuildRunsApiService.build``)."""
         return self._build_runs.build(
@@ -1180,6 +1184,7 @@ class BuilderService:
             retry_of=retry_of,
             principal=principal,
             cancellation=cancellation,
+            if_absent=if_absent,
         )
 
     def submit_build(
@@ -1190,6 +1195,7 @@ class BuilderService:
         created_by: str | None = None,
         owner_id: str | None = None,
         retry_of: str | None = None,
+        if_absent: bool = False,
     ) -> ServiceResponse:
         """Queue an async build job (#482).
 
@@ -1205,6 +1211,7 @@ class BuilderService:
             job_credentials=(self._job_credentials if ownership_module.multi_user_mode() else None),
             job_keys=self.request_keys_a_build_uses(spec_yaml),
             retry_of=retry_of,
+            if_absent=if_absent,
         )
 
     def build_status(self, run_id: str) -> ServiceResponse:
@@ -1367,6 +1374,9 @@ class BuilderService:
         # runs every job that is not a retry.
         retry_of = snapshot.retry_of if snapshot is not None else None
         build = self.build if retry_of is None else partial(self.build, retry_of=retry_of)
+        if snapshot is not None and snapshot.if_absent:
+            # The submission asked for new tables (#1223).
+            build = partial(build, if_absent=True)
         try:
             with request_credentials.request_scope(keys):
                 # The keys were there when the job was submitted (#1070) and are not

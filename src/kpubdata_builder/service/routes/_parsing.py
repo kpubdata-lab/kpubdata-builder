@@ -46,6 +46,16 @@ def optional_run_id(body: Mapping[str, JsonValue] | None) -> str | None | Servic
     return run_id
 
 
+def optional_if_absent(body: Mapping[str, JsonValue] | None) -> bool | ServiceResponse:
+    """Whether the build's tables must be new (#1223); absent or null is False."""
+    if body is None or body.get("if_absent") is None:
+        return False
+    value = body["if_absent"]
+    if not isinstance(value, bool):
+        return ServiceResponse(400, {"error": "'if_absent' must be true or false"})
+    return value
+
+
 def optional_retry_of(body: Mapping[str, JsonValue] | None) -> str | None | ServiceResponse:
     """The earlier run a build says it retries (#1042), when the body names one."""
     if body is None or "retry_of" not in body or body["retry_of"] is None:

@@ -1576,6 +1576,15 @@ def _run_failures(
     return tuple(failures)
 
 
+#: The refusal of a build that asked for new tables (#1223) where one exists.
+_TABLE_EXISTS: dict[str, str] = {
+    "reason": "table_exists",
+    "detail": "the build asked for a new table and one already exists; the existing "
+    "snapshot stays current. Build under another dataset id, or refresh the table "
+    "without if_absent",
+}
+
+
 def _empty_result(
     catalog: TableCatalog,
     *,
@@ -1671,6 +1680,7 @@ def run_build(
     owner_id: str | None = None,
     manifest_owner_id: str | None = None,
     retry_of: str | None = None,
+    if_absent: bool = False,
     upload_repository: UploadRepository | None = None,
     event_store: BuildEventStore | None = None,
     cancellation: CancellationProbe | None = None,
@@ -1971,6 +1981,13 @@ def run_build(
                 if outcome.source_key in gold_selection
                 else row_counts.get(outcome.source_key)
             )
+            # A build asked to make new tables (#1223) commits only where none is there
+            # yet. The table existing when the build started is refused here; one made
+            # while it ran is refused by the commit's compare-and-swap below, against
+            # revision 0, in the commit's own transaction.
+            if if_absent and start_revisions.get(outcome.source_key, 0) > 0:
+                warehouse_failures[outcome.source_key] = dict(_TABLE_EXISTS)
+                continue
             if table_rows == 0:
                 refused = _empty_result(
                     catalog,
@@ -2004,6 +2021,10 @@ def run_build(
                     coverage=snapshot_coverage(provenance_by_key.get(outcome.source_key)),
                 )
             except SnapshotConflict:
+                if if_absent:
+                    # Another build made the table while this one ran (#1223).
+                    warehouse_failures[outcome.source_key] = dict(_TABLE_EXISTS)
+                    continue
                 # Another build committed this table after this one started (#787).
                 # Not retried (#699): this run's data is older than what is current.
                 warehouse_failures[outcome.source_key] = {
