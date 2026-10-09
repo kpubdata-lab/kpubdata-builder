@@ -28,12 +28,15 @@ classifiers = [
 ]
 dependencies = [
   # Builder depends on the kpubdata public API only (ADR 0007 in kpubdata,
-  # scripts/check_kpubdata_imports.py). 0.9.0 is the first release with
-  # `Client(env_keys=False)`, which the multi-user mode needs to keep the operator's
-  # keys out of a request (#990, kpubdata#780), and it is breaking: unknown `Client`
-  # arguments are refused, HTTP 401 is `AuthError`, a total count of zero is `0`, and
-  # NODATA is an empty result on every path. Pin to the 0.9 line; compat policy: #213.
-  "kpubdata>=0.9.0,<0.10",
+  # scripts/check_kpubdata_imports.py). 0.10.0 is the first release that reads the
+  # bundled specs once per process (kpubdata#822, kpubdata#868): Builder builds a new
+  # `Client` for every request, and on 0.9.0 each one read every spec file again for
+  # every provider (#1183). It is breaking for seoul and kipris, whose empty result now
+  # reports a total count of `0`, as the other providers have since 0.9.0. The floor
+  # still gives `Client(env_keys=False)`, which the multi-user mode needs to keep the
+  # operator's keys out of a request (#990, kpubdata#780). Pin to the 0.10 line; compat
+  # policy: #213.
+  "kpubdata>=0.10.0,<0.11",
   "cryptography>=50,<51",
   # The tabular engine the DuckDB migration moves to (ADR 0021, #866). 1.2.0 is the first
   # release with every sandbox setting the query profile needs — allowed_paths,

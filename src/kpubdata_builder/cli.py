@@ -489,7 +489,7 @@ def client_keeps_environment_keys_out() -> bool:
 
     kpubdata 0.8.0 has no such option and accepts any keyword without an error, so
     passing ``env_keys=False`` to it does nothing and says nothing. Asking the signature
-    is the only way to know the option is honoured. Builder's pin is the 0.9 line, which
+    is the only way to know the option is honoured. Every release Builder's pin allows
     has it; the check stays for an environment that installed something older anyway.
     """
     import inspect
