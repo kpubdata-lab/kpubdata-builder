@@ -29,7 +29,7 @@ from kpubdata_builder.service.auth_throttle import (
 )
 from kpubdata_builder.service.http import make_handler
 
-from .test_service import _FakeClient
+from .test_service import _CLIENT_TIMEOUT, _FakeClient
 
 _PROXY = "172.18.0.2"
 _TRUSTED = parse_trusted_proxies("172.18.0.0/16")
@@ -97,7 +97,7 @@ def _status(server: str, *, forwarded_for: str | None) -> int:
         headers["X-Forwarded-For"] = forwarded_for
     request = urllib.request.Request(f"{server}/version", headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=2.0) as response:
+        with urllib.request.urlopen(request, timeout=_CLIENT_TIMEOUT) as response:
             return int(response.status)
     except urllib.error.HTTPError as exc:
         json.loads(exc.read())

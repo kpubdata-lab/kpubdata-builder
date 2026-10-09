@@ -107,9 +107,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --no-sources --python ${{ matrix.python-version }}
 
+      # -n auto: one worker per vCPU (pytest-xdist). The suite takes about 9 minutes on
+      # one core; the runner has four.
       - name: Run tests
         if: matrix.python-version != '3.12'
-        run: uv run --no-sources pytest
+        run: uv run --no-sources pytest -n auto
 
       # The coverage gate (#594) locks the level reached so far against a silent drop.
       # The floor lives in one place, pyproject's [tool.coverage.report] fail_under. One
@@ -118,7 +120,7 @@ jobs:
       # be a job of its own that ran the whole suite a second time.
       - name: Run tests with coverage
         if: matrix.python-version == '3.12'
-        run: uv run --no-sources pytest --cov --cov-report=term-missing
+        run: uv run --no-sources pytest -n auto --cov --cov-report=term-missing
 
   docs:
     # The documentation site is built with `--strict`, where a broken link is an error.
@@ -212,7 +214,7 @@ jobs:
           test "${installed}" = "${KPUBDATA_VERSION}"
 
       - name: Run tests against kpubdata ${{ matrix.kpubdata }}
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest -n auto
 
   # DuckDB's floor (#866): 1.2.0 is pyproject's lower bound because it is the first
   # release with every sandbox setting Builder relies on. The lock resolves the newest

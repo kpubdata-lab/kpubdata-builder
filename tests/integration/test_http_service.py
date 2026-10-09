@@ -47,6 +47,12 @@ from kpubdata_builder.service import API_CONTRACT_VERSION, BuilderService
 from kpubdata_builder.service.http import _MAX_BODY_BYTES, make_handler
 from kpubdata_builder.spec import JsonValue
 
+#: How long a test client waits for the in-process server. No test here is about the
+#: client timing out; it only stops a hung server from hanging the suite. Five seconds
+#: is too short for `POST /build` on a loaded machine (pytest -n auto beside other
+#: work), as two seconds was in tests/unit/test_service.py.
+_CLIENT_TIMEOUT = 30.0
+
 VALID_SPEC_YAML = (
     """
 dataset_id: dataset.sample
@@ -126,7 +132,7 @@ def _post(base_url: str, path: str, payload: dict[str, JsonValue]) -> tuple[int,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as resp:
             return resp.status, cast(dict[str, object], json.loads(resp.read()))
     except urllib.error.HTTPError as exc:
         return exc.code, cast(dict[str, object], json.loads(exc.read()))
@@ -134,7 +140,7 @@ def _post(base_url: str, path: str, payload: dict[str, JsonValue]) -> tuple[int,
 
 class TestVersionRoundTrip:
     def test_get_version_returns_200(self, http_server: str) -> None:
-        with urllib.request.urlopen(f"{http_server}/version", timeout=5.0) as resp:
+        with urllib.request.urlopen(f"{http_server}/version", timeout=_CLIENT_TIMEOUT) as resp:
             assert resp.status == 200
             assert resp.headers["Content-Type"] == "application/json; charset=utf-8"
             body = cast(dict[str, object], json.loads(resp.read()))
@@ -173,7 +179,7 @@ class TestBuildRoundTrip:
         _post(http_server, "/build", {"spec": VALID_SPEC_YAML, "run_id": "http-manifest"})
 
         with urllib.request.urlopen(
-            f"{http_server}/builds/http-manifest/manifest", timeout=5.0
+            f"{http_server}/builds/http-manifest/manifest", timeout=_CLIENT_TIMEOUT
         ) as resp:
             assert resp.status == 200
             body = cast(dict[str, object], json.loads(resp.read()))
@@ -186,7 +192,9 @@ class TestArtifactsRoundTrip:
     def test_get_artifacts_returns_200_after_build(self, http_server: str) -> None:
         _post(http_server, "/build", {"spec": VALID_SPEC_YAML, "run_id": "http-art"})
 
-        with urllib.request.urlopen(f"{http_server}/artifacts/http-art", timeout=5.0) as resp:
+        with urllib.request.urlopen(
+            f"{http_server}/artifacts/http-art", timeout=_CLIENT_TIMEOUT
+        ) as resp:
             assert resp.status == 200
             body = cast(dict[str, object], json.loads(resp.read()))
         assert body["run_id"] == "http-art"
@@ -198,7 +206,7 @@ class TestArtifactsRoundTrip:
 def _http_get_bytes(url: str) -> tuple[int, bytes]:
     """Send HTTP GET and return (status, raw body bytes). HTTPError normalized to status."""
     try:
-        with urllib.request.urlopen(url, timeout=5.0) as resp:
+        with urllib.request.urlopen(url, timeout=_CLIENT_TIMEOUT) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
@@ -308,7 +316,7 @@ class TestBuildsRoundTrip:
     def test_get_builds_returns_200_after_build(self, http_server: str) -> None:
         _post(http_server, "/build", {"spec": VALID_SPEC_YAML, "run_id": "http-list"})
 
-        with urllib.request.urlopen(f"{http_server}/builds", timeout=5.0) as resp:
+        with urllib.request.urlopen(f"{http_server}/builds", timeout=_CLIENT_TIMEOUT) as resp:
             assert resp.status == 200
             body = cast(dict[str, object], json.loads(resp.read()))
         builds = body["builds"]
@@ -320,7 +328,7 @@ class TestEmptyBodyRequest:
     def test_get_with_no_body_succeeds(self, http_server: str) -> None:
         # GET request must be processed normally even without Content-Length/body.
         req = urllib.request.Request(f"{http_server}/version", method="GET")
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as resp:
             assert resp.status == 200
 
 
@@ -328,7 +336,7 @@ class TestOversizedBodyRequest:
     def test_oversized_body_returns_413(self, http_server: str) -> None:
         host_port = http_server.removeprefix("http://")
         host, port = host_port.split(":")
-        conn = http.client.HTTPConnection(host, int(port), timeout=5.0)
+        conn = http.client.HTTPConnection(host, int(port), timeout=_CLIENT_TIMEOUT)
         try:
             conn.putrequest("POST", "/validate")
             conn.putheader("Content-Type", "application/json")
@@ -351,7 +359,7 @@ class TestInvalidJsonRequest:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=5.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 400
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert "invalid JSON body" in str(body.get("error", ""))
@@ -366,7 +374,7 @@ class TestNonObjectJsonRequest:
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(req, timeout=5.0)
+            urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 400
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert "object" in str(body.get("error", ""))
@@ -375,5 +383,5 @@ class TestNonObjectJsonRequest:
 class TestUnknownPathRequest:
     def test_unknown_path_returns_404(self, http_server: str) -> None:
         with pytest.raises(urllib.error.HTTPError) as exc_info:
-            urllib.request.urlopen(f"{http_server}/nope", timeout=5.0)
+            urllib.request.urlopen(f"{http_server}/nope", timeout=_CLIENT_TIMEOUT)
         assert exc_info.value.code == 404
