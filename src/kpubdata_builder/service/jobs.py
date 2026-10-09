@@ -861,11 +861,16 @@ class AsyncBuildExecutor:
         ``cancelling`` until it stops. Only a request that this call made counts as the
         time limit's: a job that someone already asked to cancel keeps that reason.
         """
-        outcome, _ = self.registry.request_cancel(run_id)
-        if outcome == "cancelling":
-            with self._expired_lock:
-                self._expired.add(run_id)
-            _logger.warning("build job %s ran past its time limit; cancelling", run_id)
+        # One lock scope asks and records, and ``ran_past_time_limit`` takes the same
+        # lock: a job that stops right after being asked cannot be read before its
+        # reason is recorded. Lock order: this lock, then the registry's; never the
+        # reverse.
+        with self._expired_lock:
+            outcome, _ = self.registry.request_cancel(run_id)
+            if outcome != "cancelling":
+                return
+            self._expired.add(run_id)
+        _logger.warning("build job %s ran past its time limit; cancelling", run_id)
 
     def ran_past_time_limit(self, run_id: str) -> bool:
         """Whether this job was cancelled because it reached the time limit (#1119)."""
@@ -888,6 +893,10 @@ class AsyncBuildExecutor:
             and self._on_cancelled is not None
         ):
             self._on_cancelled(run_id)
+        # The reason has been read by the hook above; a finished job needs it no more,
+        # and keeping it would grow this set for the life of the process.
+        with self._expired_lock:
+            self._expired.discard(run_id)
 
 
 def _transition(

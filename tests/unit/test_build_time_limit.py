@@ -170,6 +170,12 @@ def test_a_job_past_its_limit_reads_cancelling_until_it_stops(
 
         release.set()
         _status_becomes(executor, "cancelled")
+        # The reason is dropped once the job ended, so the set does not grow for ever.
+        pause = threading.Event()
+        deadline = time.monotonic() + 5
+        while executor.ran_past_time_limit("r") and time.monotonic() < deadline:
+            pause.wait(0.01)
+        assert not executor.ran_past_time_limit("r")
     finally:
         release.set()
         executor.shutdown()
