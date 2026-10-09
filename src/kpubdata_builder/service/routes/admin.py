@@ -113,7 +113,7 @@ def _reason(error: str | None) -> str | None:
 
 
 _STAGES = ("bronze", "silver", "gold")
-_COMMIT_REASONS = frozenset({"conflict", "empty_result", "commit_failed"})
+_COMMIT_REASONS = frozenset({"conflict", "empty_result", "table_exists", "commit_failed"})
 
 
 def _job_failure_line(job: BuildJobSnapshot) -> str | None:

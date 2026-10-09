@@ -76,7 +76,9 @@ _UNRECORDED_FAILURE = (
 )
 
 #: The reasons a table commit is refused for (``warehouse_failures[].reason``).
-_COMMIT_REASONS: frozenset[str] = frozenset({"conflict", "empty_result", "commit_failed"})
+_COMMIT_REASONS: frozenset[str] = frozenset(
+    {"conflict", "empty_result", "table_exists", "commit_failed"}
+)
 
 
 def run_failure_summary(manifest: dict[str, object]) -> str | None:

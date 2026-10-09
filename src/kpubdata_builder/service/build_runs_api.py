@@ -157,8 +157,13 @@ class BuildRunsApiService:
         retry_of: str | None = None,
         principal: Principal | None = None,
         cancellation: CancellationProbe | None = None,
+        if_absent: bool = False,
     ) -> ServiceResponse:
         """Execute pipeline and return result.
+
+        ``if_absent`` (#1223): the build's tables must be new. A table that has a
+        snapshot is not committed over; its source is a ``warehouse_failures`` entry
+        with reason ``table_exists`` and the request answers 409.
 
         Response code policy:
             - All sources succeed: 200
@@ -249,6 +254,7 @@ class BuildRunsApiService:
                 owner_id=owner_id,
                 manifest_owner_id=manifest_owner_id,
                 retry_of=retry_of,
+                if_absent=if_absent,
                 upload_repository=self._upload_repository_for(spec_or_error),
                 event_store=self._event_store(),
                 cancellation=cancellation,
@@ -404,6 +410,7 @@ class BuildRunsApiService:
         job_credentials: JobCredentials | None = None,
         job_keys: Mapping[str, str] | None = None,
         retry_of: str | None = None,
+        if_absent: bool = False,
     ) -> ServiceResponse:
         """Queue async build job and return initial state (#482).
 
@@ -519,6 +526,7 @@ class BuildRunsApiService:
                 owner_id=owner_id,
                 dataset_id=_declared_dataset_id(spec_yaml),
                 retry_of=retry_of,
+                if_absent=if_absent,
                 # Read per submission, like the upload limits: the deployment's mode
                 # comes from the environment (#1189).
                 max_active_per_owner=resolve_owner_build_limit(),

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.113.0"
+  version: "1.114.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.114.0 lets a build ask for new tables only (#1223, additive). `POST /build` and `POST /builds` take `if_absent`; with it, a table that already has a snapshot is not committed over, and its source is a `warehouse_failures` entry with the new reason `table_exists` (409). The check is the commit's compare-and-swap against revision 0, so a table made by another build while this one ran is refused too. Studio sends it for a "new table" choice; a refresh leaves it out.
     v1.113.0 records why a run failed (#1120, additive). A manifest of a run in which something failed gains `failures`: one entry per failure — each failed source, a failed composition, each refused table commit — with `source_key`, `stage` (`bronze`, `silver`, `gold`, `export`, `composition` or `warehouse`), a stable `code` (a provider refusal's `SourceFailureReason`, `pipeline_failed`, a failed join's `join_key_missing`/`join_key_type_mismatch`/`join_null_key`/`join_cardinality_mismatch`/`join_duplicate_key`/`join_output_column_conflict`, `composition_failed`, or the table commit's `conflict`/`empty_result`/`commit_failed`) and a `summary` that is a fixed sentence chosen by the code and the stage. An error's own message is not copied into `summary`: it stays in the run's `errors`, which only the run's owner reads, because it can name the data's columns and a join key's value. The build index projects the first failure into its `error`, which nothing wrote before, so `GET /admin/runs` showed every failed run's `error` as null; a rebuild of the index from the manifests keeps it. A failed run whose manifest was written before this version gets a fixed line there, not its `errors`. A manifest of a successful run has no `failures`.
     v1.112.0 says why a provider refused a source (#1187, additive). A failed source's `error` was "pipeline failed for source 'X'" whatever the provider said, a key without an application for the dataset included. A refusal is now stated by its `reason` — `application_required`, `auth_unknown`, `params_invalid`, `rate_limited`, `temporarily_unavailable`, `network_error` or `retired`, the probe's words (`SourceFailureReason`) — with a fixed sentence saying what to do next; the provider's own text is never returned. `BuildOutcome` and `SourcePreview` gain `reason` (null when no provider refused), and a `source_fetch_failed` event carries it as `metrics.reason`.
     v1.111.0 limits each user's share of the async build queue (#1189, additive). The queue counted queued jobs for the whole service, so one user's submissions filled it and every other user's `POST /builds` was refused with `build_queue_full`. In a multi-user deployment an owner may now have `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` builds (default 2, chosen without measurement; `0` turns it off) queued, running or cancelling; one more is refused with 429 `build_owner_limit`, whose body gives the `limit`, and nothing is recorded for that run. The service-wide limit still applies. A single-user deployment has no owner limit, and the synchronous `POST /build` is unchanged.
@@ -6953,6 +6954,17 @@ components:
             `cancelled`, or a run a restart interrupted. One that is `queued`, `running`
             or `cancelling` is refused with `retry_of_in_progress`. Recorded on the
             job (`BuildJob.retry_of`) and in the manifest (`retry_of`).
+        if_absent:
+          type: [boolean, "null"]
+          default: false
+          description: >-
+            Since 1.114.0 (#1223). The build's tables must be new. A table that already
+            has a snapshot is not committed over — whether it was there when the build
+            started or was made while it ran — and its source is a `warehouse_failures`
+            entry with reason `table_exists`; the request answers 409 and the existing
+            snapshot stays. The check is the commit's compare-and-swap against revision
+            0, in the commit's transaction, so two builds racing for one new id cannot
+            both win. Leave it out for a refresh. A non-boolean is 400.
 
     VersionResponse:
       type: object
@@ -7943,15 +7955,16 @@ components:
             (`conflict` when another build committed the table after this run
             started, `empty_result` when the build found no rows and the table already
             has a snapshot, which stays current (#1186, since 1.110.0; the source's
-            `allow_empty` lets it commit), `commit_failed` otherwise) and a
-            human-readable detail.
+            `allow_empty` lets it commit), `table_exists` when the request said
+            `if_absent` and the table already has a snapshot (#1223, since 1.114.0),
+            `commit_failed` otherwise) and a human-readable detail.
           additionalProperties:
             type: object
             required: [reason, detail]
             properties:
               reason:
                 type: string
-                enum: [conflict, empty_result, commit_failed]
+                enum: [conflict, empty_result, table_exists, commit_failed]
               detail:
                 type: string
 

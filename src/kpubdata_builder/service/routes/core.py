@@ -16,7 +16,7 @@ from ._guards import (
     check_retry_of,
     refuse_missing_provider_keys,
 )
-from ._parsing import optional_retry_of, optional_run_id, spec_from_body
+from ._parsing import optional_if_absent, optional_retry_of, optional_run_id, spec_from_body
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -113,6 +113,9 @@ def route(
         denied = check_retry_of(service, run_id, retry_of, principal, in_progress_status=400)
         if denied is not None:
             return denied
+        if_absent = optional_if_absent(body)
+        if isinstance(if_absent, ServiceResponse):
+            return if_absent
         # The same refusal ``POST /builds`` gives (#1070), before anything is fetched.
         refused = refuse_missing_provider_keys(service, spec)
         if refused is not None:
@@ -121,6 +124,9 @@ def route(
         # ``build`` with the signature it had before #1042 keeps working for every other
         # request.
         build = service.build if retry_of is None else partial(service.build, retry_of=retry_of)
+        if if_absent:
+            # Passed only when asked for, as retry_of is (#1223).
+            build = partial(build, if_absent=True)
         return build(
             spec,
             run_id=run_id,
