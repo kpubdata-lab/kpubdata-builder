@@ -89,6 +89,8 @@ services:
       KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS: ${KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS:-}
       # 사용자별 동시 비동기 build 수(#1189). 비워 두면 코드 기본값(2)이다.
       KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER: ${KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER:-}
+      # 비동기 build 한 건의 실행 시간 상한(초, #1119). 비워 두면 코드 기본값(6시간)이다.
+      KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS: ${KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS:-}
     ports:
       # 기본은 루프백이다. 예전 기본값("8000")은 모든 인터페이스에 공개돼서,
       # Caddy 없이 올리면 TLS 없는 8000 으로 API 키가 평문으로 오갔다. 헬스체크는

@@ -101,6 +101,14 @@ SHUTDOWN_CANCELLED_MESSAGE = (
 )
 
 
+#: What a job that ran past ``KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS`` is told (#1119).
+TIME_LIMIT_CANCELLED_MESSAGE = (
+    "build cancelled at a safe stage boundary: it ran longer than this server allows "
+    "(KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS); narrow the request or ask the "
+    "operator about the limit"
+)
+
+
 class BuildRunsApiService:
     """Runs a build, queues one, reports on it and cancels it."""
 
@@ -845,6 +853,8 @@ class BuildRunsApiService:
                     message=(
                         SHUTDOWN_CANCELLED_MESSAGE
                         if run_id in self._cancelled_for_shutdown
+                        else TIME_LIMIT_CANCELLED_MESSAGE
+                        if self._async_builds.ran_past_time_limit(run_id)
                         else "build cancelled at a safe stage boundary"
                     ),
                 )

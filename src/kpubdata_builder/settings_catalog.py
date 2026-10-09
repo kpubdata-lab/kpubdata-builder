@@ -228,6 +228,13 @@ SETTINGS: tuple[Setting, ...] = (
         required="선택",
     ),
     Setting(
+        name="KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS",
+        group="builds",
+        description="비동기 build 한 건이 실행을 시작한 뒤 돌 수 있는 시간(초, #1119). 큐에서 기다린 시간은 세지 않는다. 넘으면 취소를 요청하고, build 는 다음 안전한 단계 경계에서 멈춰 `cancelled` 로 끝나며 그 `run_cancelled` 이벤트가 이유를 말한다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다",
+        default="`21600` (6시간)",
+        required="선택",
+    ),
+    Setting(
         name="KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER",
         group="builds",
         description="다중 사용자 배포에서 사용자 한 명이 동시에 대기·실행 중으로 둘 수 있는 비동기 build 수(#1189). 넘으면 `POST /builds` 가 429 `build_owner_limit` 로 답하고, 큐는 다른 사용자에게 열려 있다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다",

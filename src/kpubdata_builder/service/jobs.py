@@ -16,6 +16,7 @@ Cancellation (#481) design summary:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 from ..spec import JsonValue
+from .build_limits import resolve_build_time_limit
 from .build_slots import BuildSlots
 
 _logger = logging.getLogger(__name__)
@@ -618,6 +620,10 @@ class AsyncBuildExecutor:
         # doesn't read private ``ThreadPoolExecutor._max_workers`` (#516).
         self._max_workers = max_workers
         self._max_queue_size = max_queue_size
+        # Jobs cancelled for running past the time limit (#1119), so their cancellation
+        # event can say why.
+        self._expired: set[str] = set()
+        self._expired_lock = threading.Lock()
         # Called exactly once when running job actually terminates as cancelled at safe
         # boundary (#481). Caller (BuilderService) appends termination event
         # (run_cancelled) via hook — called from worker thread, so hook must not
@@ -800,10 +806,18 @@ class AsyncBuildExecutor:
     ) -> None:
         if not self.registry.begin_run(run_id):
             return
+        cancellation = self.registry.cancellation(run_id)
+        if cancellation is None:  # pragma: no cover - create() always makes one together
+            cancellation = RunCancellation()
+        # The running-time limit (#1119), counted from here: waiting for a slot is not
+        # running. Reaching it asks for cancellation, which the pipeline honours at its
+        # next safe boundary; a job that ends before then is not affected.
+        limit = self._time_limit()
+        timer = threading.Timer(limit, self._expire, args=(run_id,)) if limit is not None else None
+        if timer is not None:
+            timer.daemon = True
+            timer.start()
         try:
-            cancellation = self.registry.cancellation(run_id)
-            if cancellation is None:  # pragma: no cover - create() always makes one together
-                cancellation = RunCancellation()
             response = runner(spec_yaml, run_id, created_by, cancellation)
         except Exception as exc:  # noqa: BLE001 - any failure must terminate job
             # Old path caught only RuntimeError — other exceptions leaked from worker thread,
@@ -815,6 +829,11 @@ class AsyncBuildExecutor:
             _logger.exception("build job %s failed with an unhandled exception", run_id)
             self._finish(run_id, failed=True, error=f"internal error: {type(exc).__name__}")
             return
+        finally:
+            # Stopped as soon as the runner returns: a limit reached after the build
+            # ended must not turn a finished job into a cancelled one.
+            if timer is not None:
+                timer.cancel()
         if response.status_code < 400:
             self._finish(run_id, failed=False, response=response.body)
             return
@@ -830,6 +849,28 @@ class AsyncBuildExecutor:
             response=response.body,
             error=error if isinstance(error, str) else "build failed",
         )
+
+    def _time_limit(self) -> float | None:
+        """The running-time limit for a job starting now (#1119); read per job."""
+        return resolve_build_time_limit()
+
+    def _expire(self, run_id: str) -> None:
+        """A job ran past its time limit: ask it to stop at its next safe boundary.
+
+        Asked through the registry, as a user's cancel is, so the job reads
+        ``cancelling`` until it stops. Only a request that this call made counts as the
+        time limit's: a job that someone already asked to cancel keeps that reason.
+        """
+        outcome, _ = self.registry.request_cancel(run_id)
+        if outcome == "cancelling":
+            with self._expired_lock:
+                self._expired.add(run_id)
+            _logger.warning("build job %s ran past its time limit; cancelling", run_id)
+
+    def ran_past_time_limit(self, run_id: str) -> bool:
+        """Whether this job was cancelled because it reached the time limit (#1119)."""
+        with self._expired_lock:
+            return run_id in self._expired
 
     def _finish(
         self,
