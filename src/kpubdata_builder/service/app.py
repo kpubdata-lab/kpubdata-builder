@@ -488,7 +488,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.111.0 -> 1.112.0: a provider's refusal of a source is stated by its reason;
 #   BuildOutcome and SourcePreview gain reason, source_fetch_failed metrics.reason
 #   (#1187, additive).
-API_CONTRACT_VERSION = "1.112.0"
+# 1.112.0 -> 1.113.0: a failed run's manifest records its failures with stage and
+#   code, and the build index projects the first into its error (#1120, additive).
+API_CONTRACT_VERSION = "1.113.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

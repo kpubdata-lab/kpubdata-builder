@@ -105,6 +105,9 @@ def manifest_writer(manifest: BuildManifest, output_path: Path) -> None:
         payload["warehouse_failures"] = {
             key: dict(value) for key, value in manifest.warehouse_failures.items()
         }
+    # additive (#1120): only when something failed, so a successful run keeps its shape.
+    if manifest.failures:
+        payload["failures"] = [asdict(failure) for failure in manifest.failures]
     # additive (#659): only when a source declares a Gold selection.
     if manifest.gold_selection:
         payload["gold_selection"] = {

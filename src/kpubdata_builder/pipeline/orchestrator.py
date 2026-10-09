@@ -45,6 +45,8 @@ from ..manifest import (
     BuildManifest,
     CompositionProvenance,
     JoinKeyProvenance,
+    RunFailure,
+    RunFailureStage,
     SchemaSummary,
     SourceProvenance,
     build_schema_summary,
@@ -89,7 +91,11 @@ from ..stages.bronze.persist import persist_bronze_artifact
 from ..stages.bronze.resolve import build_bronze_artifact_for_source, source_identity
 from ..stages.gold.build import build_gold_package
 from ..stages.gold.card import build_dataset_card
-from ..stages.gold.compose import CompositionError, build_composed_gold_package
+from ..stages.gold.compose import (
+    COMPOSITION_FAILURE_SUMMARIES,
+    CompositionError,
+    build_composed_gold_package,
+)
 from ..stages.gold.persist import persist_gold_package
 from ..stages.gold.pii import (
     PiiMaskResult,
@@ -253,12 +259,15 @@ class CompositionOutcome:
         name: combined Gold dataset name (CompositionSpec.name).
         status: "ok" | "failed" (join itself failed) | "skipped"
             (referenced source failed; join not attempted).
-        error: failure/skip reason.
+        error: failure/skip reason, in words for the run's owner.
+        code: which rule a failed join broke (``CompositionError.code``, #1120);
+            None when it did not fail or failed outside the join's own checks.
     """
 
     name: str
     status: str
     error: str | None = None
+    code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1352,7 +1361,9 @@ def _compose(
         )
     except CompositionError as exc:
         return _CompositionPipelineResult(
-            outcome=CompositionOutcome(name=composition.name, status="failed", error=str(exc))
+            outcome=CompositionOutcome(
+                name=composition.name, status="failed", error=str(exc), code=exc.code
+            )
         )
 
     if stats.duplicate_key_warning:
@@ -1494,6 +1505,75 @@ def _pii_unmasked_warnings(pii_masking: Mapping[str, PiiMaskResult]) -> tuple[st
                 "gold.publish_unmasked (#689)"
             )
     return tuple(warnings)
+
+
+_STAGES: tuple[RunFailureStage, ...] = ("bronze", "silver", "gold")
+
+
+def _failed_stage(completed: Sequence[str]) -> RunFailureStage:
+    """The first stage a failed source did not complete; ``export`` after Gold."""
+    for stage in _STAGES:
+        if stage not in completed:
+            return stage
+    return "export"
+
+
+def _run_failures(
+    outcomes: Sequence[SourceBuildOutcome],
+    composition_outcome: CompositionOutcome | None,
+    warehouse_failures: Mapping[str, Mapping[str, str]],
+) -> tuple[RunFailure, ...]:
+    """Each failure of the run with where it stopped and a stable code (#1120).
+
+    A source stopped at the first stage it did not complete; one that completed Gold
+    failed in its export.
+
+    Every summary is a sentence Builder wrote, because the build index copies it into
+    the line ``/admin/runs`` serves for all owners' runs. A provider's refusal has its
+    fixed sentence (#1187). Any other source failure and a failed composition are
+    stated by stage and code only: their messages are public to the run's owner (#954)
+    and stay in ``errors``, but they name the data's columns and, for a join, a key's
+    value. A refused table commit's detail is Builder's own text.
+    """
+    failures: list[RunFailure] = []
+    for outcome in outcomes:
+        if outcome.status != "failed":
+            continue
+        stage = _failed_stage(outcome.stages_completed)
+        failures.append(
+            RunFailure(
+                source_key=outcome.source_key,
+                stage=stage,
+                code=outcome.reason or "pipeline_failed",
+                summary=(
+                    outcome.error
+                    if outcome.reason and outcome.error
+                    else f"the source failed at the {stage} stage"
+                ),
+            )
+        )
+    if composition_outcome is not None and composition_outcome.status == "failed":
+        code = composition_outcome.code or "composition_failed"
+        if code not in COMPOSITION_FAILURE_SUMMARIES:
+            code = "composition_failed"
+        failures.append(
+            RunFailure(
+                source_key=composition_outcome.name,
+                stage="composition",
+                code=code,
+                summary=COMPOSITION_FAILURE_SUMMARIES[code],
+            )
+        )
+    for key, failure in warehouse_failures.items():
+        failures.append(
+            RunFailure(
+                source_key=key,
+                stage="warehouse",
+                code=failure.get("reason", "commit_failed"),
+                summary=failure.get("detail", "the table was not committed"),
+            )
+        )
+    return tuple(failures)
 
 
 def _empty_result(
@@ -1983,6 +2063,7 @@ def run_build(
         drift_evaluation=drift_evaluation,
         composition=composition_provenance,
         warehouse_failures=warehouse_failures,
+        failures=_run_failures(outcomes, composition_outcome, warehouse_failures),
         gold_selection={key: value.body() for key, value in gold_selection.items()},
         pii_masking={key: value.body() for key, value in pii_masking.items()},
         reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,

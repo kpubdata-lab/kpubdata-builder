@@ -68,4 +68,48 @@ def run_status_from_manifest(
     return status
 
 
-__all__ = ["run_status_from_manifest", "status_from_manifest"]
+#: The line for a failed run whose manifest has no ``failures`` (#1120). Its ``errors``
+#: are not copied: they were written for the run's owner, and a manifest from before the
+#: public-message rule (#225) holds raw exception text there.
+_UNRECORDED_FAILURE = (
+    "the run failed; its manifest was written before failure reasons were recorded"
+)
+
+#: The reasons a table commit is refused for (``warehouse_failures[].reason``).
+_COMMIT_REASONS: frozenset[str] = frozenset({"conflict", "empty_result", "commit_failed"})
+
+
+def run_failure_summary(manifest: dict[str, object]) -> str | None:
+    """Why a run failed, in one line for its index entry and the admin list (#1120).
+
+    The manifest is the record; the index holds this projection of it, so a rebuild of
+    the index from the manifests gives the same line. The first ``failures`` entry
+    decides. None for a run nothing in failed.
+
+    The line is served to an administrator for every owner's runs, so it is made only
+    of what Builder wrote for that purpose: a ``failures`` summary is a fixed sentence
+    (``RunFailure``). A manifest written before #1120 has no ``failures``; its
+    ``errors`` are messages for the run's owner — a failed join names a key's value,
+    and old manifests hold raw exception text — so they are never copied. Such a run
+    gets a fixed line, or its refused table commit's reason code.
+    """
+    failures = manifest.get("failures")
+    if isinstance(failures, list):
+        for failure in failures:
+            if isinstance(failure, dict):
+                key, summary = failure.get("source_key"), failure.get("summary")
+                if isinstance(summary, str) and summary:
+                    return f"{key}: {summary}" if isinstance(key, str) and key else summary
+    if manifest.get("errors"):
+        return _UNRECORDED_FAILURE
+    warehouse = manifest.get("warehouse_failures")
+    if isinstance(warehouse, dict):
+        for key, failure in warehouse.items():
+            reason = failure.get("reason") if isinstance(failure, dict) else None
+            code = reason if isinstance(reason, str) and reason in _COMMIT_REASONS else None
+            suffix = f" ({code})" if code else ""
+            return f"{key}: the table was not committed{suffix}"
+    return None
+
+
+__all__ = ["run_failure_summary", "run_status_from_manifest", "status_from_manifest"]

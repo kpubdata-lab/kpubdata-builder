@@ -39,8 +39,33 @@ _ALLOWED_OBSERVED: dict[str, frozenset[str]] = {
 _names = itertools.count()
 
 
+#: What a failed composition is called where its message may not be shown (#1120):
+#: a code and a fixed sentence. A ``CompositionError`` message is written for the run's
+#: owner and names the tables' columns and an offending join key's value; a list that
+#: serves other owners' runs (the build index, ``/admin/runs``) gets only these.
+COMPOSITION_FAILURE_SUMMARIES: dict[str, str] = {
+    "join_key_missing": "a join key column is missing from the source it is declared for",
+    "join_key_type_mismatch": "the join key columns have different types on the two sides",
+    "join_null_key": "rows with a null join key were refused (on_null_key='fail')",
+    "join_cardinality_mismatch": "the join keys do not have the declared cardinality",
+    "join_duplicate_key": (
+        "join keys repeat on both sides and were refused (on_duplicate_key='fail')"
+    ),
+    "join_output_column_conflict": "the join would produce two columns with the same name",
+    "composition_failed": "the composition failed",
+}
+
+
 class CompositionError(RuntimeError):
-    """composition (join) execution failure. orchestrator treats it the same as source failure."""
+    """composition (join) execution failure. orchestrator treats it the same as source failure.
+
+    ``code`` is a key of ``COMPOSITION_FAILURE_SUMMARIES``: which rule the join broke,
+    without the columns and key values the message carries (#1120).
+    """
+
+    def __init__(self, message: str, *, code: str = "composition_failed") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -97,19 +122,22 @@ def _validate_join_keys(left: TableHandle, right: TableHandle, join: JoinSpec) -
         if left_column not in left.columns:
             raise CompositionError(
                 f"{_key_label(join, index, 'left')} {left_column!r} not found in "
-                f"{join.left!r} columns: {sorted(left.columns)}"
+                f"{join.left!r} columns: {sorted(left.columns)}",
+                code="join_key_missing",
             )
         if right_column not in right.columns:
             raise CompositionError(
                 f"{_key_label(join, index, 'right')} {right_column!r} not found in "
-                f"{join.right!r} columns: {sorted(right.columns)}"
+                f"{join.right!r} columns: {sorted(right.columns)}",
+                code="join_key_missing",
             )
         left_dtype = left.dtypes[left.columns.index(left_column)]
         right_dtype = right.dtypes[right.columns.index(right_column)]
         if left_dtype != right_dtype:
             raise CompositionError(
                 f"composition join key dtype mismatch: {join.left}.{left_column} "
-                f"({left_dtype}) vs {join.right}.{right_column} ({right_dtype})"
+                f"({left_dtype}) vs {join.right}.{right_column} ({right_dtype})",
+                code="join_key_type_mismatch",
             )
 
 
@@ -232,7 +260,8 @@ def _output_columns(
         output = f"{name}_{join.right}" if name in taken else name
         if output in taken:
             raise CompositionError(
-                f"composition join output would have two columns named {output!r}"
+                f"composition join output would have two columns named {output!r}",
+                code="join_output_column_conflict",
             )
         taken.add(output)
         out.append((output, "r", physical, node))
@@ -281,7 +310,8 @@ def build_composed_gold_package(
             if count:
                 raise CompositionError(
                     f"composition {dataset_name!r}: {count} {side} row(s) of {alias!r} have "
-                    "a null join key and can never match (on_null_key='fail')"
+                    "a null join key and can never match (on_null_key='fail')",
+                    code="join_null_key",
                 )
 
     # Only the keys present on both sides can multiply rows (#698).
@@ -314,7 +344,8 @@ def build_composed_gold_package(
         raise CompositionError(
             f"composition {dataset_name!r}: declared cardinality {join.cardinality!r} but "
             f"the intersecting keys are {observed!r}; e.g. key "
-            f"{_worst_key(keys, ' OR '.join(conditions))}"
+            f"{_worst_key(keys, ' OR '.join(conditions))}",
+            code="join_cardinality_mismatch",
         )
 
     duplicate_key_warning = int(amplifying) > 0
@@ -323,7 +354,8 @@ def build_composed_gold_package(
             f"composition {dataset_name!r}: {int(amplifying)} join key(s) repeat on both "
             f"sides and would multiply output rows, e.g. key "
             f"{_worst_key(keys, 'ln > 1 AND rn > 1')} "
-            "(on_duplicate_key='fail')"
+            "(on_duplicate_key='fail')",
+            code="join_duplicate_key",
         )
 
     output = _output_columns(left, right, join)

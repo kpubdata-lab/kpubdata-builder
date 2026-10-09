@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from .composition import CompositionProvenance, JoinKeyProvenance
 from .environment import BuildEnvironment, capture_build_environment
-from .models import MANIFEST_SCHEMA_VERSION, BuildManifest
+from .models import MANIFEST_SCHEMA_VERSION, BuildManifest, RunFailure, RunFailureStage
 from .provenance import (
     FetchCoverage,
     SourceProvenance,
@@ -27,13 +27,15 @@ from .provenance import (
     summarize_reported_totals,
 )
 from .schema_summary import FieldSummary, SchemaSummary, build_schema_summary
-from .status import run_status_from_manifest, status_from_manifest
+from .status import run_failure_summary, run_status_from_manifest, status_from_manifest
 from .writer import manifest_writer, write_manifest
 
 __all__ = [
     "MANIFEST_SCHEMA_VERSION",
     "BuildEnvironment",
     "BuildManifest",
+    "RunFailure",
+    "RunFailureStage",
     "CompositionProvenance",
     "FetchCoverage",
     "FieldSummary",
@@ -48,6 +50,7 @@ __all__ = [
     "compute_inputs_fingerprint",
     "manifest_writer",
     "snapshot_coverage",
+    "run_failure_summary",
     "run_status_from_manifest",
     "status_from_manifest",
     "summarize_reported_totals",
