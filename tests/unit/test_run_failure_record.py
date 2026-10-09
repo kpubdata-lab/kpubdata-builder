@@ -1,9 +1,15 @@
-"""A failed run says why, in its manifest and wherever it is listed (#1120).
+"""A failed run says why, in its manifest and in the administrator's run list (#1120).
 
 The build index has an ``error`` column that nothing wrote: a build and a rebuild both
-left it null, so ``/admin/runs`` showed a failed run with no reason, and so did every
-list read from the index. The manifest now records each failure with its stage and a
-stable code, and the index holds a one-line projection of it.
+left it null, so ``/admin/runs`` showed a failed run with no reason. The manifest now
+records each failure with its stage and a stable code, and the index holds a one-line
+projection of it.
+
+``/admin/runs`` serves that line for every owner's runs, so it is made of fixed
+sentences only. An error's own message — which can name the data's columns and, for a
+failed join, a key's value — stays in the manifest's ``errors``, which only the run's
+owner reads. Who may call ``/admin/runs`` is tested in ``test_admin_role.py``
+(``TestAccessGate``).
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.store.build_index import rebuild_index
 
 _CANARY = "canary-secret-1120"
+_USER = Principal(kind="oidc", identifier="user1234", owner_id="oidc:user")
 _ADMIN = Principal(kind="oidc", identifier="admin123", owner_id="oidc:admin", is_admin=True)
 _CONTRACT = Path(__file__).parents[2] / "contract" / "builder-api.yaml"
 
@@ -107,7 +114,120 @@ def test_a_later_stage_failure_names_that_stage(tmp_path: Path) -> None:
     (failure,) = _manifest(tmp_path, "r1")["failures"]
     assert failure["stage"] == "silver"
     assert failure["code"] == "pipeline_failed"
+    assert failure["summary"] == "the source failed at the silver stage"
+    assert _indexed(service)["r1"] == "m: the source failed at the silver stage"
+
+
+def test_a_public_message_stays_with_the_owner(tmp_path: Path) -> None:
+    """A validation error's message is public to the run's owner and names a column of
+    the data. The owner reads it in ``errors``; the record an administrator is served
+    from does not hold it."""
+    service = _service(tmp_path, _Source())
+    column = f"col_{_CANARY}".replace("-", "_")
+    missing = f"    schema:\n      required: [{column}]\n"
+
+    assert service.build(_spec(missing), run_id="r1").status_code == 502
+
+    manifest = _manifest(tmp_path, "r1")
+    assert column in str(manifest["errors"])
+    assert column not in str(manifest["failures"])
+    assert column not in str(_indexed(service))
+    assert column not in str(_admin_reasons(service))
+
+
+def test_a_failed_join_does_not_put_a_key_value_in_the_admin_list(tmp_path: Path) -> None:
+    """A join refused for a repeated key names the key's value in its message. That
+    value is a row's data: it reaches the owner's ``errors`` and nothing an
+    administrator is served from, before or after a rebuild of the index."""
+    source = _Source()
+    source.answer = [{"id": _CANARY, "v": 1}, {"id": _CANARY, "v": 2}]
+    service = _service(tmp_path, source)
+    spec = (
+        "dataset_id: air\ntitle: Air\ndescription: d\nsources:\n"
+        "  - provider: datago\n    dataset: air_station\n    alias: a\n"
+        "  - provider: datago\n    dataset: air_station\n    alias: b\n"
+        "composition:\n  name: combined\n"
+        "  join: {left: a, right: b, left_key: id, right_key: id, on_duplicate_key: fail}\n"
+        "exports:\n  - kind: jsonl\n    output_path: data.jsonl\n"
+    )
+
+    assert service.build(spec, run_id="r1").status_code == 502
+
+    manifest = _manifest(tmp_path, "r1")
+    assert _CANARY in str(manifest["errors"])
+    (failure,) = manifest["failures"]
+    assert (failure["source_key"], failure["stage"]) == ("combined", "composition")
+    assert failure["code"] == "join_duplicate_key"
+    assert _CANARY not in str(failure)
+    line = f"combined: {failure['summary']}"
+    assert _indexed(service)["r1"] == line
+    assert _admin_reasons(service)["r1"] == line
+    service._build_index.close()
+
+    assert rebuild_index(tmp_path) == 1
+
+    rebuilt = _service(tmp_path, source)
+    assert _indexed(rebuilt)["r1"] == line
+    assert _CANARY not in str(_admin_reasons(rebuilt))
+
+
+def test_a_manifest_without_failures_keeps_its_errors_out_of_a_rebuilt_index(
+    tmp_path: Path,
+) -> None:
+    """A manifest written before #1120 has ``errors`` and no ``failures``. A rebuild of
+    the index gives such a run a fixed line, not the text of its ``errors``."""
+    source = _Source()
+    source.answer = [{"id": _CANARY, "v": 1}, {"id": _CANARY, "v": 2}]
+    service = _service(tmp_path, source)
+    spec = (
+        "dataset_id: air\ntitle: Air\ndescription: d\nsources:\n"
+        "  - provider: datago\n    dataset: air_station\n    alias: a\n"
+        "  - provider: datago\n    dataset: air_station\n    alias: b\n"
+        "composition:\n  name: combined\n"
+        "  join: {left: a, right: b, left_key: id, right_key: id, on_duplicate_key: fail}\n"
+        "exports:\n  - kind: jsonl\n    output_path: data.jsonl\n"
+    )
+    assert service.build(spec, run_id="r1").status_code == 502
+    service._build_index.close()
+    path = tmp_path / "r1" / "manifest.json"
+    older = _manifest(tmp_path, "r1")
+    del older["failures"]
+    assert _CANARY in str(older["errors"])
+    path.write_text(json.dumps(older), encoding="utf-8")
+
+    assert rebuild_index(tmp_path) == 1
+
+    rebuilt = _service(tmp_path, source)
+    reason = _indexed(rebuilt)["r1"]
+    assert reason is not None and "before failure reasons were recorded" in reason
+    assert _CANARY not in str(_admin_reasons(rebuilt))
+
+
+def test_the_owner_facing_build_list_does_not_return_the_reason(tmp_path: Path) -> None:
+    source = _Source()
+    source.answer = kpubdata.AuthError("refused", provider="datago", provider_code="30")
+    service = _service(tmp_path, source)
+    assert service.build(_spec(), run_id="r1").status_code == 502
     assert _indexed(service)["r1"] is not None
+
+    response = service.list_builds()
+
+    assert response.status_code == 200
+    (build,) = cast(list[dict[str, Any]], cast(dict[str, Any], response.body)["builds"])
+    assert build["run_id"] == "r1"
+    assert "error" not in build
+
+
+def test_a_user_who_is_not_an_administrator_is_refused_the_reasons(tmp_path: Path) -> None:
+    source = _Source()
+    source.answer = kpubdata.AuthError("refused", provider="datago", provider_code="30")
+    service = _service(tmp_path, source)
+    assert service.build(_spec(), run_id="r1").status_code == 502
+
+    response = admin.route(service, "GET", "/admin/runs", None, "", _USER)
+
+    assert response is not None and response.status_code == 403
+    assert "r1" not in str(response.body)
 
 
 def test_a_refused_table_commit_is_a_failure_too(tmp_path: Path) -> None:
@@ -161,15 +281,25 @@ def test_a_secret_in_an_error_reaches_neither_the_record_nor_the_lists(tmp_path:
     assert _CANARY not in str(_indexed(service))
     assert _CANARY not in str(_admin_reasons(service))
     (failure,) = _manifest(tmp_path, "r1")["failures"]
-    assert failure["summary"] == "pipeline failed for source 'm'"
+    assert failure["summary"] == "the source failed at the bronze stage"
 
 
 @pytest.mark.parametrize(
     ("manifest", "line"),
     [
         ({}, None),
-        ({"errors": ["a: broke"]}, "a: broke"),
-        ({"warehouse_failures": {"m": {"reason": "conflict", "detail": "newer"}}}, "m: newer"),
+        (
+            {"errors": ["a: broke"]},
+            "the run failed; its manifest was written before failure reasons were recorded",
+        ),
+        (
+            {"warehouse_failures": {"m": {"reason": "conflict", "detail": "newer"}}},
+            "m: the table was not committed (conflict)",
+        ),
+        (
+            {"warehouse_failures": {"m": {"reason": "rows: 1, 2", "detail": "newer"}}},
+            "m: the table was not committed",
+        ),
         (
             {
                 "failures": [{"source_key": "a", "stage": "gold", "code": "x", "summary": "s"}],
@@ -179,7 +309,7 @@ def test_a_secret_in_an_error_reaches_neither_the_record_nor_the_lists(tmp_path:
         ),
     ],
 )
-def test_the_summary_reads_older_manifests_too(
+def test_the_summary_of_an_older_manifest_copies_none_of_its_text(
     manifest: dict[str, object], line: str | None
 ) -> None:
     assert run_failure_summary(manifest) == line

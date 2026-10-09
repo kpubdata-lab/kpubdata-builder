@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from .composition import CompositionProvenance, JoinKeyProvenance
 from .environment import BuildEnvironment, capture_build_environment
-from .models import MANIFEST_SCHEMA_VERSION, BuildManifest, RunFailure
+from .models import MANIFEST_SCHEMA_VERSION, BuildManifest, RunFailure, RunFailureStage
 from .provenance import (
     FetchCoverage,
     SourceProvenance,
@@ -35,6 +35,7 @@ __all__ = [
     "BuildEnvironment",
     "BuildManifest",
     "RunFailure",
+    "RunFailureStage",
     "CompositionProvenance",
     "FetchCoverage",
     "FieldSummary",

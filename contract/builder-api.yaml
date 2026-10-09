@@ -20,7 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
-    v1.113.0 records why a run failed (#1120, additive). A manifest of a run in which something failed gains `failures`: one entry per failure — each failed source, a failed composition, each refused table commit — with `source_key`, `stage` (`bronze`, `silver`, `gold`, `export`, `composition` or `warehouse`), a stable `code` (a provider refusal's `SourceFailureReason`, `pipeline_failed`, `composition_failed`, or the table commit's `conflict`/`empty_result`/`commit_failed`) and the `summary` the run's `errors` already hold. The build index projects the first of them into its `error`, which nothing wrote before, so `GET /admin/runs` showed every failed run's `error` as null; a rebuild of the index from the manifests keeps it. A manifest of a successful run has no `failures`.
+    v1.113.0 records why a run failed (#1120, additive). A manifest of a run in which something failed gains `failures`: one entry per failure — each failed source, a failed composition, each refused table commit — with `source_key`, `stage` (`bronze`, `silver`, `gold`, `export`, `composition` or `warehouse`), a stable `code` (a provider refusal's `SourceFailureReason`, `pipeline_failed`, a failed join's `join_key_missing`/`join_key_type_mismatch`/`join_null_key`/`join_cardinality_mismatch`/`join_duplicate_key`/`join_output_column_conflict`, `composition_failed`, or the table commit's `conflict`/`empty_result`/`commit_failed`) and a `summary` that is a fixed sentence chosen by the code and the stage. An error's own message is not copied into `summary`: it stays in the run's `errors`, which only the run's owner reads, because it can name the data's columns and a join key's value. The build index projects the first failure into its `error`, which nothing wrote before, so `GET /admin/runs` showed every failed run's `error` as null; a rebuild of the index from the manifests keeps it. A failed run whose manifest was written before this version gets a fixed line there, not its `errors`. A manifest of a successful run has no `failures`.
     v1.112.0 says why a provider refused a source (#1187, additive). A failed source's `error` was "pipeline failed for source 'X'" whatever the provider said, a key without an application for the dataset included. A refusal is now stated by its `reason` — `application_required`, `auth_unknown`, `params_invalid`, `rate_limited`, `temporarily_unavailable`, `network_error` or `retired`, the probe's words (`SourceFailureReason`) — with a fixed sentence saying what to do next; the provider's own text is never returned. `BuildOutcome` and `SourcePreview` gain `reason` (null when no provider refused), and a `source_fetch_failed` event carries it as `metrics.reason`.
     v1.111.0 limits each user's share of the async build queue (#1189, additive). The queue counted queued jobs for the whole service, so one user's submissions filled it and every other user's `POST /builds` was refused with `build_queue_full`. In a multi-user deployment an owner may now have `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` builds (default 2, chosen without measurement; `0` turns it off) queued, running or cancelling; one more is refused with 429 `build_owner_limit`, whose body gives the `limit`, and nothing is recorded for that run. The service-wide limit still applies. A single-user deployment has no owner limit, and the synchronous `POST /build` is unchanged.
     v1.110.0 keeps a table's rows when a build finds none (#1186, additive). A build whose source returned no rows replaced the table's current snapshot with an empty one, and with no rows there were no columns, so SQL on the table failed — a second add of the same dataset under other conditions lost the first add's rows without a word. Such a commit is now refused over a table that has a snapshot: `warehouse_failures` names the source with the new reason `empty_result`, the request answers 409, and the current snapshot stays. A source that may legitimately be empty declares `allow_empty: true` (`SourceRef`); its empty result is committed with the current snapshot's columns when it found none. A first build of a table is committed as before.
@@ -8007,8 +8007,9 @@ components:
           description: >-
             Since 1.113.0 (#1120). Each failure of the run, in order: sources, then the
             composition, then table commits. Absent when nothing failed. `summary` is
-            the public sentence the run's `errors` hold — never a provider's text, a
-            key, a path or a row.
+            a fixed sentence chosen by `code` and `stage` — never a provider's text, an
+            error's message, a key, a path, a column or a row. The message written for
+            the run's owner is in `errors`.
           items:
             type: object
             required: [source_key, stage, code, summary]
@@ -8022,7 +8023,10 @@ components:
                 type: string
                 description: >-
                   A `SourceFailureReason` for a provider's refusal, `pipeline_failed`
-                  for any other source failure, `composition_failed`, or a refused
+                  for any other source failure, a failed join's `join_key_missing`,
+                  `join_key_type_mismatch`, `join_null_key`, `join_cardinality_mismatch`,
+                  `join_duplicate_key` or `join_output_column_conflict`,
+                  `composition_failed` for any other composition failure, or a refused
                   table commit's `warehouse_failures` reason.
               summary:
                 type: string

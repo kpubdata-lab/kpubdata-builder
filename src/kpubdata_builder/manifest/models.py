@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 from ..quality.models import DriftEvaluation, QualityCheckResult, SchemaDriftFinding
 from ..spec import JsonValue
@@ -24,24 +25,33 @@ from .schema_summary import SchemaSummary
 MANIFEST_SCHEMA_VERSION = "1.0.0"
 
 
+#: Where a part of a run stopped (#1120); the contract's ``failures[].stage`` enum.
+RunFailureStage = Literal["bronze", "silver", "gold", "export", "composition", "warehouse"]
+
+
 @dataclass(frozen=True)
 class RunFailure:
     """Why one part of a run failed (#1120), in words safe to show its owner and an admin.
 
+    The build index copies ``summary`` into its ``error``, which ``GET /admin/runs``
+    serves for every owner's runs. So nothing here is taken from an error's message:
+    a message written for the run's owner can name the columns of the data or a join
+    key's value. That detail stays in the manifest's ``errors``, which only the owner
+    reads.
+
     Attributes:
         source_key: The source, the composition's name, or the table's source key.
-        stage: Where it stopped: ``bronze``, ``silver``, ``gold``, ``export``,
-            ``composition`` or ``warehouse``.
+        stage: Where it stopped.
         code: A stable code: a provider's refusal reason (``application_required``,
             ``rate_limited`` …, #1187), ``pipeline_failed`` for any other source
-            failure, ``composition_failed``, or the table commit's reason
-            (``conflict``, ``empty_result``, ``commit_failed``).
-        summary: The same fixed or public sentence the run's ``errors`` hold — never a
-            provider's text, a key, a path or a row.
+            failure, a composition's ``join_*`` code or ``composition_failed``, or the
+            table commit's reason (``conflict``, ``empty_result``, ``commit_failed``).
+        summary: A sentence Builder wrote, chosen by the code and the stage — never a
+            provider's text, an error's message, a key, a path, a column or a row.
     """
 
     source_key: str
-    stage: str
+    stage: RunFailureStage
     code: str
     summary: str
 
