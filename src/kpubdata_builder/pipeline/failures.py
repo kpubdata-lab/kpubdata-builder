@@ -240,6 +240,18 @@ def source_failure(
     return SourceFailure(message, reason)
 
 
+def reason_sentence(reason: str) -> str | None:
+    """The fixed sentence of a refusal reason (#1187), or None for a word that is not one.
+
+    For a list that serves other owners' runs (#1221): the sentence holds nothing of
+    the run's data, so it can be shown wherever the reason is.
+    """
+    for known, sentence in _REASON_MESSAGES.items():
+        if known == reason:
+            return sentence
+    return None
+
+
 def generic_failure_message(source_key: str) -> str:
     """Generic message returned for a source whose error text is not public."""
     return f"pipeline failed for source {source_key!r}"
