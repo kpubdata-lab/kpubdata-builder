@@ -60,13 +60,16 @@ Builder HTTP 서비스를 로컬 개발 이상으로 운영하기 위한 배포�
 
 Builder 는 **프로세스 하나**로 돈다. replica 를 2개 이상 띄울 수 없다. 배포 시:
 
-- `minReplicas: 1, maxReplicas: 1` 고정.
+- 인스턴스는 하나다. 오케스트레이터에 올린다면 replica 를 1 로 고정한다.
+- **롤링 배포를 하지 않는다.** 새 프로세스와 옛 프로세스가 같은 `/data` 를 함께 여는 시간이
+  생기면 안 된다. 옛 컨테이너를 내린 뒤 새 컨테이너를 올린다(compose 의 `up -d` 가 그렇게 한다).
 - `/data` 는 **로컬 블록 볼륨**으로 마운트한다 — 산출물·인덱스·SQLite 저장소가 여기에 있다.
   compose 는 named volume `builder-data` 를 쓴다.
 - **네트워크 파일시스템(NFS, Azure Files) 위에 SQLite를 올리지 말 것** — 파일 잠금이
-  불안정하다 (ADR 0010 §5). 예전 이 절은 `/data` 에 Azure Files 를 마운트하라고 하면서
-  같은 곳에서 그 위에 SQLite 를 올리지 말라고 했다. 두 문장은 함께 지킬 수 없다 —
-  인프라 쪽 정리는 #1097 이다.
+  불안정하다 (ADR 0010 §5). 저장소에 있던 Azure Container Apps 템플릿은 `/data` 를 Azure
+  Files 에 두었기 때문에 없앴다(#1097, `infra/README.md`).
+- 재기동해도 `/data` 가 남는지는 `scripts/data_volume_smoke.py` 가 `Docker` 워크플로에서
+  확인한다: 실제 compose 로 올리고, `/data` 에 쓰고, 컨테이너를 내렸다가 다시 올려 읽는다.
 
 replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 백엔드 분리(`ArtifactStore`,
 `make_build_index()`)는 구현되어 있고 CUBRID 백엔드(ADR 0016)도 있지만, 아래는 여전히
@@ -186,7 +189,8 @@ docker run --rm -p 8000:8000 \
 
 - `GET /healthz` — 무인증 liveness probe (#372). 프로브가 API 키를 못 실을 때 사용.
 - `Dockerfile` `HEALTHCHECK` — urllib로 `/healthz` 폴링 (#372).
-- `SIGTERM` — 우아운 종료(진행 중 요청 drain, #374). ACA/K8s 롤링 업데이트 대응.
+- `SIGTERM` — 우아한 종료(진행 중 요청 drain, #374). 컨테이너를 내릴 때(`docker stop`,
+  compose 의 재배포) 받는 신호다.
   비동기 빌드는 이렇게 끝난다(#1118). 대기 중인 작업은 시작하지 않고 `failed`
   (`interrupted: …`)로 끝나며 키를 버린다 — 가져오거나 쓴 것이 없으므로 새 `run_id` 로 다시
   제출하면 된다. 그 뒤의 제출은 503 `shutting_down` 이다. 실행 중인 빌드는
@@ -237,11 +241,11 @@ memory >= base process
 
 CPU 수요는 대략 `active_build_workers * build_CPU` +
 `query_concurrency * query_child_CPU` + HTTP overhead다. query child 하나도 DuckDB 연결의
-thread(`KPUBDATA_DUCKDB_THREADS`)를 여럿 쓸 수 있으므로 `query_concurrency`를 vCPU 수처럼 간주하면 안 된다. 작은 ACA
-인스턴스는 `infra/main.bicep` 기본값인 1 vCPU/2 GiB, HTTP worker 4, async build worker 4,
+thread(`KPUBDATA_DUCKDB_THREADS`)를 여럿 쓸 수 있으므로 `query_concurrency`를 vCPU 수처럼 간주하면 안 된다. 작은
+인스턴스(1 vCPU/2 GiB)는 HTTP worker 4, async build worker 4,
 query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받지만 서로 다른 pool이라
 동시에 각각 4개까지 실행될 수 있다. 따라서 CPU/memory 중심 build를 많이 제출하는 환경에서는
-이 기본 ACA 크기만으로 안전하다고 가정하지 말고 working set과 throttling을 관찰해야 한다.
+이 크기만으로 안전하다고 가정하지 말고 working set과 throttling을 관찰해야 한다.
 
 한 호스트에 동시에 존재할 수 있는 실행 단위 전체 — 각각 따로 설정되므로 **합**을 호스트와
 대조해야 한다(#701):
@@ -294,7 +298,7 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 `MAX_WORKERS` 값을 따른다 — 그 값만 설정해 둔
 배포의 비동기 worker 수는 그대로이고, 이제 그 수가 두 경로 합계의 상한이다.
 
-**1 vCPU / 2 GiB 예시** (`infra/main.bicep` 기본 크기). 동시 build 를 둘로 묶고 나머지를 맞춘다.
+**1 vCPU / 2 GiB 예시.** 동시 build 를 둘로 묶고 나머지를 맞춘다.
 
 | 항목 | 설정 | 합 |
 | :--- | :--- | :--- |
