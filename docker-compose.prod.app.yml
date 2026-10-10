@@ -82,7 +82,13 @@ services:
       OIDC_ALLOWED_EMAILS: ${OIDC_ALLOWED_EMAILS:-}
       KPUBDATA_BUILDER_ADMIN_SUBJECTS: ${KPUBDATA_BUILDER_ADMIN_SUBJECTS:-}
       KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT: ${KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT:-}
-      KPUBDATA_BUILDER_TRUSTED_PROXIES: ${KPUBDATA_BUILDER_TRUSTED_PROXIES:-}
+      # 인증 실패 스로틀이 X-Forwarded-For 를 읽어도 되는 peer (#1098). 기본값은 아래
+      # caddy 서비스의 고정 주소 하나다 — 대역이 아니다. Caddy 가 그 헤더를 자기가 정한
+      # 클라이언트 주소로 다시 쓰므로(ops/caddy/Caddyfile) Builder 는 Caddy 만 믿는다.
+      # caddy 프로필 없이 올리면 그 주소를 쓰는 컨테이너가 없어 헤더는 읽히지 않는다.
+      # 이 기본값은 아래 CADDY_IPV4 의 기본값과 같아야 한다
+      # (tests/unit/test_prod_proxy_chain.py). CADDY_IPV4 를 바꾸면 이 값도 함께 적는다.
+      KPUBDATA_BUILDER_TRUSTED_PROXIES: ${KPUBDATA_BUILDER_TRUSTED_PROXIES:-172.28.250.2}
       # 사용자별 업로드 한도(#1045). 비워 두면 코드 기본값(50개 / 1 GiB / 30일)이다.
       KPUBDATA_BUILDER_UPLOAD_MAX_FILES: ${KPUBDATA_BUILDER_UPLOAD_MAX_FILES:-}
       KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES: ${KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES:-}
@@ -144,10 +150,15 @@ services:
       - "443:443"
     volumes:
       - ./ops/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Caddy 가 신뢰하는 앞단(Cloudflare 엣지 대역). Caddyfile 이 import 한다 (#1098).
+      - ./ops/caddy/trusted_proxies.caddy:/etc/caddy/trusted_proxies.caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
-      - app-net
+      app-net:
+        # 고정 주소. Builder 의 KPUBDATA_BUILDER_TRUSTED_PROXIES 기본값이 이 주소다.
+        # 네트워크를 다시 만들어도 바뀌지 않는다.
+        ipv4_address: ${CADDY_IPV4:-172.28.250.2}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
       interval: 30s
@@ -163,3 +174,12 @@ volumes:
 networks:
   app-net:
     name: kpubdata-builder-app-net
+    # 대역을 고정한다 (#1098). Docker 가 고르게 두면 Caddy 의 주소를 미리 알 수 없어
+    # Builder 가 네트워크 대역 전체를 신뢰해야 했다. ip_range 는 주소를 지정하지 않은
+    # 컨테이너(builder)가 받는 범위이고, Caddy 의 고정 주소는 그 밖에 둔다 — 다른
+    # 컨테이너가 Caddy 의 주소를 받는 일이 없다.
+    # 호스트의 다른 네트워크와 겹치면 세 값을 .env 에서 함께 바꾼다.
+    ipam:
+      config:
+        - subnet: ${APP_NET_SUBNET:-172.28.250.0/24}
+          ip_range: ${APP_NET_IP_RANGE:-172.28.250.128/25}

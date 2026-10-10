@@ -11,6 +11,20 @@
 	# email ops@example.com
 	# 로컬/IP-only 검증 시 자동 HTTPS를 끄려면 아래 주석을 해제한다.
 	# auto_https off
+
+	# 클라이언트 주소를 정하는 규칙 (#1098). Builder 의 인증 실패 스로틀은 클라이언트
+	# 주소별로 세므로, 이 주소가 위조되면 남의 한도를 쓰거나 자기 한도를 피할 수 있다.
+	#
+	# - trusted_proxies: TCP peer 가 Cloudflare 엣지(trusted_proxies.caddy 의 대역)일
+	#   때에만 그 요청의 X-Forwarded-For 를 읽는다. 다른 peer 가 보낸 헤더는 읽지 않고
+	#   peer 주소를 클라이언트로 본다.
+	# - trusted_proxies_strict: 헤더를 오른쪽부터 읽어 신뢰하는 프록시가 아닌 첫 주소를
+	#   고른다. Cloudflare 는 자기가 본 주소를 오른쪽에 덧붙이므로, 클라이언트가 직접 써
+	#   보낸 왼쪽 값에는 닿지 않는다. 이 줄이 없으면 Caddy 는 가장 왼쪽 값을 고른다.
+	servers {
+		import trusted_proxies.caddy
+		trusted_proxies_strict
+	}
 }
 
 # Caddy 자체 헬스 엔드포인트 (compose healthcheck 및 Cloudflare 상태 확인용).
@@ -26,6 +40,10 @@
 	# 그 외 모든 요청은 Builder 백엔드로 프록시. 인증(X-API-Key / Bearer)은
 	# Builder가 직접 검증한다 (ADR 0006/0015) — Caddy는 인증을 대행하지 않는다.
 	reverse_proxy {$BACKEND_UPSTREAM} {
+		# Builder 에는 위 규칙으로 정한 주소 하나만 넘긴다 (#1098). 받은
+		# X-Forwarded-For 를 그대로 이어 붙이지 않고 다시 쓴다 — Builder 는 Caddy 만
+		# 신뢰하면 되고, Cloudflare 대역을 Builder 에 다시 적을 필요가 없다.
+		header_up X-Forwarded-For {http.vars.client_ip}
 		health_uri /healthz
 		health_interval 15s
 		health_timeout 5s

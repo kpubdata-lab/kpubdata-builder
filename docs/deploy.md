@@ -545,23 +545,101 @@ peer 가 그중 하나일 때에만 `X-Forwarded-For` 를 읽는다. 오른쪽�
 보낸 왼쪽 부분에는 닿지 않는다. 주소로 읽히지 않는 항목은 경고 로그(값이 아니라 몇 번째 항목인지)와 함께 버린다(호스트
 이름은 쓸 수 없다).
 
-```bash
-# compose 의 Caddy 가 Builder 와 같은 Docker 네트워크에 있을 때: 그 네트워크의 대역
-KPUBDATA_BUILDER_TRUSTED_PROXIES=172.18.0.0/16
+#### 저장소의 구성: Cloudflare → Caddy → Builder (#1098)
+
+`docker-compose.prod.app.yml` 을 `--profile caddy` 로 올리면 아래 구성이 된다. 따로 적을
+값은 없다.
+
+```text
+클라이언트 ──▶ Cloudflare 엣지 ──▶ Caddy (80/443) ──▶ Builder (8000)
+                X-Forwarded-For 에        클라이언트 주소를 정해        Caddy 의 주소에서 온
+                자기가 본 주소를 덧붙임    X-Forwarded-For 를 다시 씀     요청의 헤더만 읽음
 ```
 
-- 적을 값은 **Builder 가 보는 프록시의 주소**다. compose 에서는 Caddy 컨테이너가 붙은
-  네트워크의 대역이다(`docker network inspect kpubdata-builder-app-net` 의 `Subnet`).
-- **프록시가 여러 겹이면 각 겹이 앞 겹을 신뢰해야 한다.** Cloudflare → Caddy → Builder
-  에서 Caddy 는 기본적으로 앞단을 신뢰하지 않고 `X-Forwarded-For` 를 자기가 본 peer
-  (Cloudflare 의 주소)로 바꿔 쓴다. 그 상태로 이 변수만 켜면 Builder 는 사용자 대신
-  Cloudflare 엣지 주소로 묶는다. 실제 클라이언트 주소까지 내려오게 하려면 Caddy 의
-  `trusted_proxies` 에 Cloudflare 대역을 적어야 한다 — 저장소의 `ops/caddy/Caddyfile` 은
-  그렇게 설정돼 있지 않다.
+| 겹 | 신뢰하는 것 | 어디에 적혀 있나 |
+|---|---|---|
+| Caddy | Cloudflare 가 공개한 엣지 대역 | `ops/caddy/trusted_proxies.caddy` (Caddyfile 의 `servers` 블록이 import) |
+| Builder | Caddy 컨테이너의 고정 주소 하나 | compose 의 `KPUBDATA_BUILDER_TRUSTED_PROXIES` 기본값 `172.28.250.2` = `CADDY_IPV4` 의 기본값 |
+
+- **Caddy 는 peer 가 Cloudflare 대역일 때에만 `X-Forwarded-For` 를 읽는다.**
+  `trusted_proxies_strict` 로 오른쪽부터 읽어 Cloudflare 가 덧붙인 주소를 고른다 —
+  클라이언트가 직접 써 보낸 왼쪽 값에는 닿지 않는다. 그 밖의 peer 가 보낸 헤더는 읽지
+  않고 peer 주소를 클라이언트로 본다.
+- **Caddy 는 정한 주소 하나로 `X-Forwarded-For` 를 다시 쓴다**
+  (`header_up X-Forwarded-For {http.vars.client_ip}`). Builder 가 받는 값은 항상 Caddy 가
+  쓴 주소 하나다. `CF-Connecting-IP` 와 `Forwarded` 는 Caddy 도 Builder 도 읽지 않는다.
+- **Builder 는 대역이 아니라 Caddy 의 주소 하나를 신뢰한다.** compose 네트워크의 대역
+  (`APP_NET_SUBNET`)과 Caddy 의 주소(`CADDY_IPV4`)가 고정돼 있고, 주소를 지정하지 않은
+  컨테이너는 `APP_NET_IP_RANGE` 에서 받으므로 다른 컨테이너가 Caddy 의 주소를 받지
+  않는다. 네트워크를 다시 만들어도 주소는 같다. 호스트의 다른 네트워크와 겹치면 세 값을
+  `.env` 에서 함께 바꾸고, `KPUBDATA_BUILDER_TRUSTED_PROXIES` 에도 새 `CADDY_IPV4` 를
+  적는다 — 그 기본값은 `CADDY_IPV4` 를 따라 바뀌지 않는다.
+- 이 구성은 `scripts/proxy_chain_smoke.py` 가 실제 compose·Caddyfile·이미지로 올려
+  확인한다(`Docker` 워크플로). 위조한 `X-Forwarded-For`·`CF-Connecting-IP`·`Forwarded`
+  가 반영되지 않는지, 한 클라이언트의 실패가 다른 클라이언트를 막지 않는지, Builder
+  포트로 직접 보낸 위조 헤더가 무시되는지를 본다. CI 러너는 Cloudflare 대역에서 요청을
+  보낼 수 없으므로, 그 검사에서는 `trusted_proxies.caddy` 를 시험용 컨테이너의 주소
+  하나로 바꿔 넣는다. **실제 Cloudflare 를 거친 요청으로는 확인하지 않았다** — 첫 배포
+  때 아래 "배포 후 확인" 을 한다.
+
+#### origin 에 직접 닿는 경로를 막는다
+
+위 설정은 위조한 헤더를 믿지 않게 할 뿐, origin(VM 의 80/443)에 Cloudflare 를 거치지
+않고 닿는 것 자체를 막지는 않는다. 그 경로로 온 요청은 실제 peer 주소로 세므로 남의
+한도를 쓰지는 못하지만, Cloudflare 의 WAF·rate limit 을 우회한다. 그리고 Cloudflare
+대역 안에서 나오는 다른 고객의 트래픽(예: Workers)은 Caddy 에게 엣지와 구분되지 않는다.
+
+- VM 의 방화벽(보안 그룹)에서 80/443 을 **Cloudflare 대역에서만** 허용한다. 대역은
+  `ops/caddy/trusted_proxies.caddy` 와 같은 목록이다.
+- Builder 의 포트(8000)는 기본이 루프백 바인딩이다(`BUILDER_BIND`). 공개하지 않는다.
+- Cloudflare 대역 안의 다른 고객까지 막으려면 Cloudflare 의 Authenticated Origin
+  Pulls(origin 이 Cloudflare 의 클라이언트 인증서를 요구) 또는 Tunnel 을 쓴다. 저장소의
+  Caddyfile 은 이것을 설정하지 않는다.
+
+#### Cloudflare 대역 갱신과 롤백
+
+Cloudflare 는 대역을 바꿀 수 있다. 목록에 없는 새 엣지에서 온 요청은 엣지의 주소로
+세어져 그 엣지 뒤의 사용자들이 한 버킷을 공유하고, Cloudflare 가 내놓은 대역이 목록에
+남아 있으면 그 대역의 새 주인이 자기 주소를 꾸밀 수 있다.
+
+```bash
+python3 scripts/check_cloudflare_ranges.py           # 공개 목록과 비교. 다르면 exit 1
+python3 scripts/check_cloudflare_ranges.py --write   # 파일의 목록을 다시 쓴다
+```
+
+1. 위 명령으로 차이를 확인하고, `--write` 로 고친 `ops/caddy/trusted_proxies.caddy` 를
+   풀 리퀘스트로 올린다. `tests/unit/test_prod_proxy_chain.py` 가 공인 대역이 아니거나
+   Cloudflare 의 가장 넓은 블록(/13, /29)보다 넓은 항목을 거부한다.
+2. VM 에서 파일을 받은 뒤 Caddy 에 다시 읽힌다. 연결은 끊기지 않는다.
+   `docker compose -f docker-compose.prod.app.yml exec caddy caddy reload --config /etc/caddy/Caddyfile`
+3. 방화벽의 허용 대역도 같은 목록으로 맞춘다.
+4. **롤백:** 이전 커밋의 `ops/caddy/trusted_proxies.caddy` 로 되돌리고 2를 다시 한다.
+   Caddy 가 새 설정을 읽지 못하면 `caddy reload` 가 실패하고 이전 설정으로 계속 동작한다.
+
+이 비교를 정기적으로 돌리는 워크플로는 아직 없다. 지금은 사람이 돌린다.
+
+#### 배포 후 확인
+
+Cloudflare 를 거친 실제 요청으로 한 번 확인한다. 서로 다른 두 네트워크(예: 사무실과
+휴대폰 테더링)에서 한다.
+
+1. 한쪽에서 틀린 키로 한도(기본 60회)를 넘겨 `429 auth_throttled` 를 받는다.
+2. 다른 쪽에서 같은 시각에 요청해 `401`(또는 올바른 키로 `200`)을 받는다. 여기서도
+   `429` 가 나오면 두 클라이언트가 한 버킷에 있는 것이다 — Caddy 가 Cloudflare 엣지를
+   신뢰하지 못하고 있다(대역 목록, `caddy reload` 여부를 본다).
+
+#### 다른 프록시를 쓸 때
+
+`KPUBDATA_BUILDER_TRUSTED_PROXIES` 에 **Builder 가 보는 프록시의 주소**를 적는다. 대역보다
+주소를 적는다.
+
+- **프록시가 여러 겹이면 각 겹이 앞 겹을 신뢰해야 한다.** 앞 겹을 신뢰하지 않는
+  프록시는 `X-Forwarded-For` 를 자기가 본 peer(앞 겹의 주소)로 바꿔 쓰고, Builder 는
+  사용자 대신 앞 겹의 주소로 묶는다.
 - Builder 포트가 프록시를 거치지 않고도 닿는 배포에서는 이 변수에 그 경로의 주소가
   들어가지 않게 한다. 신뢰하는 주소에서 온 요청은 헤더로 자기 식별자를 정할 수 있다.
-- 설정하지 않으면 동작은 전과 같다. 프록시가 클라이언트 주소를 넘기지 않는 배포에서는
-  여전히 한도를 `0`으로 두고 프록시 계층에서 스로틀을 거는 편이 낫다.
+- 프록시가 클라이언트 주소를 넘기지 않는 배포에서는 한도를 `0`으로 두고 프록시
+  계층에서 스로틀을 거는 편이 낫다.
 >
 > 카운터는 프로세스 로컬이다. 인스턴스를 여러 개 띄우면 인스턴스별로 센다(정확한 전역
 > 한도가 아니라 남용 완화가 목적).

@@ -26,6 +26,9 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "src/**"
+      - "docker-compose.prod.app.yml"
+      - "ops/caddy/**"
+      - "scripts/proxy_chain_smoke.py"
       - ".github/workflows/docker.yml"
   push:
     branches: [main]
@@ -38,6 +41,9 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "src/**"
+      - "docker-compose.prod.app.yml"
+      - "ops/caddy/**"
+      - "scripts/proxy_chain_smoke.py"
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
@@ -136,6 +142,12 @@ jobs:
       # without an audience, and dev-mode with OIDC.
       - name: Authentication start-up smoke
         run: python3 scripts/image_auth_smoke.py --image kpubdata-builder:ci
+
+      # The production compose with its Caddy profile, the repository's Caddyfile and
+      # this image: a forged X-Forwarded-For is not believed at any hop, and one
+      # client's authentication failures do not lock out another (#1098).
+      - name: Proxy chain smoke
+        run: python3 scripts/proxy_chain_smoke.py --image kpubdata-builder:ci
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
