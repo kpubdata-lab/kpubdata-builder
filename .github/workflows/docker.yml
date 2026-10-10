@@ -29,6 +29,7 @@ on:
       - "docker-compose.prod.app.yml"
       - "ops/caddy/**"
       - "scripts/proxy_chain_smoke.py"
+      - "scripts/data_volume_smoke.py"
       - ".github/workflows/docker.yml"
   push:
     branches: [main]
@@ -44,6 +45,7 @@ on:
       - "docker-compose.prod.app.yml"
       - "ops/caddy/**"
       - "scripts/proxy_chain_smoke.py"
+      - "scripts/data_volume_smoke.py"
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
@@ -148,6 +150,12 @@ jobs:
       # client's authentication failures do not lock out another (#1098).
       - name: Proxy chain smoke
         run: python3 scripts/proxy_chain_smoke.py --image kpubdata-builder:ci
+
+      # The production compose keeps /data on a volume that outlives the container
+      # (#1097): what is written there is still there after the stack is taken down
+      # and brought up again.
+      - name: Data volume smoke
+        run: python3 scripts/data_volume_smoke.py --image kpubdata-builder:ci
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
