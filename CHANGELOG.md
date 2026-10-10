@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `docs/deploy.md` says why a successful authentication clears a client's failure record, and that it stays so (#1074). A holder of one valid account can keep resetting the count for their address; not clearing it would let users who share an address lock each other out, which is what the throttle was changed to stop (#1031), and what the reset allows is neither of the two things the throttle is there to slow down.
 - The production proxy chain says who it trusts, so the authentication-failure throttle counts real clients (#1098). Behind `--profile caddy` every request reached Builder from Caddy's address and `KPUBDATA_BUILDER_TRUSTED_PROXIES` defaulted to empty, so all users shared one bucket: 61 bad tokens from anyone answered every user with `429 auth_throttled` for a minute.
   - Caddy trusts Cloudflare's published edge ranges (`ops/caddy/trusted_proxies.caddy`) with `trusted_proxies_strict`, and rewrites `X-Forwarded-For` to the one client address it decided. A header from any other peer is not read.
   - Builder trusts Caddy's one fixed address, not a network: the compose network has a fixed subnet (`APP_NET_SUBNET`, default `172.28.250.0/24`), Caddy a fixed address outside the range other containers are given (`CADDY_IPV4`, default `172.28.250.2`), and `KPUBDATA_BUILDER_TRUSTED_PROXIES` defaults to it.
