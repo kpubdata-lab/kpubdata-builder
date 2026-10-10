@@ -58,26 +58,31 @@ _CLIENT = (
     "    print(error.code)\n"
 )
 
+# Compose fills the three SMOKE_* values in from the environment this script sets.
+# The two senders answer their health check at once: `up --wait` refuses a container
+# that has none, and the image's own check asks a Builder that is not running in them.
 _OVERRIDE = """\
 services:
   caddy:
     # No host ports: the requests come from containers on the network.
     ports: !reset []
     volumes:
-      - {trusted}:/etc/caddy/trusted_proxies.caddy:ro
+      - ${SMOKE_TRUSTED_FILE}:/etc/caddy/trusted_proxies.caddy:ro
   edge:
-    image: {image}
+    image: ${BUILDER_IMAGE}
     entrypoint: ["sleep", "infinity"]
     healthcheck:
-      disable: true
+      test: ["CMD", "true"]
+      interval: 2s
     networks:
       app-net:
-        ipv4_address: {edge}
+        ipv4_address: ${SMOKE_EDGE_IPV4}
   outsider:
-    image: {image}
+    image: ${BUILDER_IMAGE}
     entrypoint: ["sleep", "infinity"]
     healthcheck:
-      disable: true
+      test: ["CMD", "true"]
+      interval: 2s
     networks:
       - app-net
 """
@@ -210,9 +215,8 @@ def main() -> int:
         trusted.write_text(f"trusted_proxies static {edge}\n", encoding="utf-8")
         trusted.chmod(0o644)
         override = Path(directory) / "override.yml"
-        override.write_text(
-            _OVERRIDE.format(trusted=trusted, image=args.image, edge=edge), encoding="utf-8"
-        )
+        override.write_text(_OVERRIDE, encoding="utf-8")
+        os.environ.update(SMOKE_TRUSTED_FILE=str(trusted), SMOKE_EDGE_IPV4=edge)
         try:
             started = _compose(override, "up", "-d", "--wait", "--no-build", check=False)
             if started.returncode != 0:
