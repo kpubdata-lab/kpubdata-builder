@@ -49,16 +49,18 @@ class StabilizationGateTests(unittest.TestCase):
 
     def test_new_dataset_spec_cannot_hide_in_fix(self) -> None:
         self.assertTrue(
-            check_scope(SDK, "fix: adjust docs", "", set(),
-                        "A\tsrc/kpubdata/specs/datago/new.yaml", "")
+            check_scope(
+                SDK, "fix: adjust docs", "", set(), "A\tsrc/kpubdata/specs/datago/new.yaml", ""
+            )
         )
 
     def test_new_provider_source_is_flagged(self) -> None:
         self.assertIn(
             "new provider source:",
             " ".join(
-                scope_indicators(SDK, "fix: provider",
-                                 "A\tsrc/kpubdata/providers/new/adapter.py", "")
+                scope_indicators(
+                    SDK, "fix: provider", "A\tsrc/kpubdata/providers/new/adapter.py", ""
+                )
             ),
         )
 
@@ -95,8 +97,9 @@ class StabilizationGateTests(unittest.TestCase):
     def test_normal_workflow_fix_still_passes(self) -> None:
         patch = "+++ b/.github/workflows/ci.yml\n+      - name: Validate changed inputs\n"
         self.assertEqual(
-            check_scope(BUILDER, "fix(ci): pin a check", "", set(),
-                        "M\t.github/workflows/ci.yml", patch),
+            check_scope(
+                BUILDER, "fix(ci): pin a check", "", set(), "M\t.github/workflows/ci.yml", patch
+            ),
             (),
         )
 
