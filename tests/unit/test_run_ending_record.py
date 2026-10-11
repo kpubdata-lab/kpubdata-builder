@@ -552,6 +552,34 @@ def test_an_event_store_from_before_the_record_rebuilds_as_it_did(tmp_path: Path
     assert path.read_bytes() == before
 
 
+def test_a_pre_record_event_store_is_read_without_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A missing ``run_endings`` table is an older store, not damage: nothing is logged."""
+    with sqlite3.connect(events_store_path(tmp_path)) as conn:
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+
+    with caplog.at_level(logging.WARNING, logger="kpubdata_builder.events.store"):
+        assert read_run_endings(tmp_path) == ()
+
+    assert caplog.records == []
+
+
+def test_a_damaged_event_store_is_read_as_empty_and_said_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A file that is not a database leaves the rebuild without those runs; the log says so."""
+    path = events_store_path(tmp_path)
+    path.write_bytes(b"this is not a sqlite database" * 100)
+
+    with caplog.at_level(logging.WARNING, logger="kpubdata_builder.events.store"):
+        assert read_run_endings(tmp_path) == ()
+
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    assert str(path) in caplog.text
+    assert "damaged" in caplog.text
+
+
 def test_the_first_recorded_ending_of_a_run_stays(tmp_path: Path) -> None:
     store = BuildEventStore(tmp_path)
     now = datetime.now(tz=timezone.utc)
