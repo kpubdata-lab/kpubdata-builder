@@ -62,7 +62,7 @@ def scope_indicators(repository: str, title: str, name_status: str, patch: str) 
                 reasons.append("new Builder HTTP route")
             if path == "src/app/router.tsx" and _STUDIO_ROUTE.match(added):
                 reasons.append("new Studio route")
-            if path == "src/kpubdata/__init__.py" and re.match(r'^\s*"[^"]+",\s*
+            if path == "src/kpubdata/__init__.py" and re.match(r'^\s*"[^"]+",\s*$', added):
                 reasons.append("new SDK public export")
 
     return sorted(set(reasons))
@@ -145,100 +145,6 @@ def main() -> int:
                 "src/kpubdata/__init__.py",
             ]
         )
-        problems = check_scope(repository, title, body, labels, changed, patch)
-    except (KeyError, TypeError, ValueError, OSError, subprocess.CalledProcessError) as exc:
-        print(f"error: scope verification was not possible: {exc}", file=sys.stderr)
-        return 2
-
-    if problems:
-        for problem in problems:
-            print(f"::error::{problem}")
-        print("Stabilization policy: kpubdata/docs/governance/POLICY.md section 1.3.")
-        return 1
-    print("stabilization scope gate: passed (review still checks semantic scope)")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-, added):
-                reasons.append("new SDK public export")
-
-    return sorted(set(reasons))
-
-
-def check_scope(
-    repository: str,
-    title: str,
-    body: str,
-    labels: set[str],
-    name_status: str,
-    patch: str,
-) -> tuple[str, ...]:
-    """Pure PR-policy decision; empty tuple means permitted."""
-    indicators = scope_indicators(repository, title, name_status, patch)
-    if not indicators:
-        return ()
-
-    problems = [
-        "Potential new product/operational scope: " + "; ".join(indicators)
-    ]
-    exception = bool(_EXCEPTION.search(body))
-    if not exception:
-        problems.append("Set 'Scope exception: YES' only for a necessary existing-flow fix.")
-    if "review:R3" not in labels:
-        problems.append("Require review:R3 and independent human approval for an exception.")
-    risk = _RISK.search(body)
-    if not risk or len(risk.group(1).strip()) < 20:
-        problems.append(
-            "Explain the existing user flow or concrete risk in 'Existing flow or risk:'."
-        )
-    if not _ISSUE.search(body):
-        problems.append(
-            "Link the existing defect/stabilization issue with 'Refs #N' or 'Closes #N'."
-        )
-
-    return () if exception and len(problems) == 1 else tuple(problems)
-
-
-def _git(args: list[str]) -> str:
-    result = subprocess.run(
-        ["git", *args], check=True, text=True, capture_output=True
-    )
-    return result.stdout
-
-
-def main() -> int:
-    event_path = os.environ.get("GITHUB_EVENT_PATH")
-    if not event_path:
-        print(
-            "error: GITHUB_EVENT_PATH is required for the PR scope check",
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        payload = json.loads(Path(event_path).read_text(encoding="utf-8"))
-        pull = payload["pull_request"]
-        title = pull["title"]
-        body = pull.get("body") or ""
-        labels = {row["name"] for row in pull.get("labels", [])}
-        base = pull["base"]["sha"]
-        repository = os.environ.get("GITHUB_REPOSITORY", "")
-        if not re.fullmatch(r"[0-9a-fA-F]{40}", base):
-            raise ValueError("invalid PR base SHA")
-        if repository not in {
-            "kpubdata-lab/kpubdata",
-            "kpubdata-lab/kpubdata-builder",
-            "kpubdata-lab/kpubdata-studio",
-        }:
-            raise ValueError("unknown repository for stabilization guard")
-        _git(["fetch", "--no-tags", "--depth=1", "origin", base])
-        changed = _git(["diff", "--name-status", "--no-renames", base, "HEAD"])
-        patch = _git([
-            "diff", "--no-ext-diff", "--unified=0", base, "HEAD", "--",
-            ".github/workflows", "contract/builder-api.yaml",
-            "src/app/router.tsx", "src/kpubdata/__init__.py",
-        ])
         problems = check_scope(repository, title, body, labels, changed, patch)
     except (KeyError, TypeError, ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(f"error: scope verification was not possible: {exc}", file=sys.stderr)
