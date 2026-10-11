@@ -17,6 +17,30 @@ from pathlib import Path
 from kpubdata_builder.service.providers import ProviderTestResult
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.store.schema_version import StoreSchema
+
+
+def _create_v1(conn: sqlite3.Connection) -> None:
+    """Version 1: the table as every release so far has made it."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS provider_tests ("
+        " owner_id TEXT NOT NULL, provider TEXT NOT NULL, status TEXT NOT NULL,"
+        " checked_at TEXT NOT NULL, error_category TEXT, response_code INTEGER,"
+        " dataset TEXT, PRIMARY KEY (owner_id, provider))"
+    )
+
+
+#: The store's schema, one step per version (#1096). What it holds can be made again by
+#: testing the connections again, and it is versioned all the same: a newer release's
+#: rows read as this one's would be shown to a user as a result that was never measured.
+SCHEMA = StoreSchema(
+    store="provider connection test log",
+    migrations=(_create_v1,),
+    remedy=(
+        "Run the release that wrote it, or move the file away: it holds only the last "
+        "result of each connection test, and testing a connection again fills it."
+    ),
+)
 
 
 class ProviderTestLog:
@@ -26,13 +50,7 @@ class ProviderTestLog:
         self._path = path
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS provider_tests ("
-                " owner_id TEXT NOT NULL, provider TEXT NOT NULL, status TEXT NOT NULL,"
-                " checked_at TEXT NOT NULL, error_category TEXT, response_code INTEGER,"
-                " dataset TEXT, PRIMARY KEY (owner_id, provider))"
-            )
+        SCHEMA.bring_up_to_date(path, lambda: sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS))
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -74,4 +92,4 @@ class ProviderTestLog:
         }
 
 
-__all__ = ["ProviderTestLog"]
+__all__ = ["SCHEMA", "ProviderTestLog"]

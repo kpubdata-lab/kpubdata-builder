@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.store.schema_version import StoreSchema, add_missing_columns
 
 from ..spec.models import SOURCE_FILE_FORMATS
 from ..stages._path_safety import ensure_within
@@ -160,6 +161,44 @@ class UploadRepository(Protocol):
         ...
 
 
+def _create_v1(connection: sqlite3.Connection) -> None:
+    """Version 1: the table, its index, and the two columns of a spilled payload (#622).
+
+    A file from before the store recorded a version may predate those columns and gains
+    them here; its rows keep their payload in ``content``.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS uploads (
+            upload_id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            format TEXT NOT NULL,
+            encoding TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            original_filename TEXT,
+            content BLOB,
+            created_at TEXT NOT NULL,
+            blob_path TEXT,
+            content_sha256 TEXT
+        )
+        """
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_uploads_owner_id ON uploads(owner_id)")
+    add_missing_columns(connection, "uploads", (("blob_path", "TEXT"), ("content_sha256", "TEXT")))
+
+
+#: The store's schema, one step per version (#1096).
+SCHEMA = StoreSchema(
+    store="upload store",
+    migrations=(_create_v1,),
+    remedy=(
+        "Run the release that wrote it, or restore the output directory from a backup "
+        "taken before the upgrade; the uploaded files cannot be rebuilt from anything "
+        "else."
+    ),
+)
+
+
 class SQLiteUploadRepository:
     """SQLite upload repository.
 
@@ -190,35 +229,8 @@ class SQLiteUploadRepository:
         return connection
 
     def _initialize(self) -> None:
-        with self._lock, self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS uploads (
-                    upload_id TEXT PRIMARY KEY,
-                    owner_id TEXT NOT NULL,
-                    format TEXT NOT NULL,
-                    encoding TEXT NOT NULL,
-                    size_bytes INTEGER NOT NULL,
-                    original_filename TEXT,
-                    content BLOB,
-                    created_at TEXT NOT NULL,
-                    -- 큰 payload 는 BLOB 대신 파일로 나간다 (#622). 둘 중 정확히
-                    -- 하나만 채워진다.
-                    blob_path TEXT,
-                    content_sha256 TEXT
-                )
-                """
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_uploads_owner_id ON uploads(owner_id)"
-            )
-            # Existing DB migration. Column add isn't idempotent, so check existence.
-            existing = {
-                str(row[1]) for row in connection.execute("PRAGMA table_info(uploads)").fetchall()
-            }
-            for column in ("blob_path", "content_sha256"):
-                if column not in existing:
-                    connection.execute(f"ALTER TABLE uploads ADD COLUMN {column} TEXT")
+        with self._lock:
+            SCHEMA.bring_up_to_date(self._path, self._connect)
 
     @staticmethod
     def _validate_owner_id(owner_id: str) -> None:
@@ -486,6 +498,7 @@ class SQLiteUploadRepository:
 
 
 __all__ = [
+    "SCHEMA",
     "MAX_UPLOAD_BYTES_ENV",
     "SQLiteUploadRepository",
     "UploadRepository",

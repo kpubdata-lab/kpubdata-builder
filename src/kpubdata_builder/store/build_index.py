@@ -29,6 +29,8 @@ from .schema_version import (
 )
 
 if TYPE_CHECKING:
+    from ..events.store import RunEnding
+
     _BaseConn = sqlite3.Connection
 else:
     _BaseConn = object
@@ -235,7 +237,7 @@ class SqliteBuildIndex:
             return
         # Read before the write lock is taken: a scan of every run's manifest is slow,
         # and nothing else can write the index while it is held.
-        entries = list(_iter_manifest_entries(self._output_root)) if self._was_there else []
+        entries = list(_iter_index_entries(self._output_root)) if self._was_there else []
         # One transaction, begun by hand: ``sqlite3`` begins none of its own before a
         # ``DROP`` or a ``CREATE``, so each would otherwise be committed as it ran and a
         # failure half-way would leave an index with no table.
@@ -738,6 +740,44 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
         )
 
 
+def ending_entry(ending: RunEnding) -> BuildEntry:
+    """The index row of a run that ended without a manifest (#1120).
+
+    It never started as a build that could be timed, so ``started_at`` is empty; it
+    ended when its ending was recorded. Its line is the record's fixed sentence.
+    """
+    return BuildEntry(
+        run_id=ending.run_id,
+        status="cancelled" if ending.status == "cancelled" else "failed",
+        started_at=None,
+        finished_at=ending.recorded_at,
+        spec_digest=None,
+        error=ending.summary,
+        created_by=ending.created_by,
+        dataset_id=None,
+        owner_id=ending.owner_id,
+    )
+
+
+def _iter_index_entries(output_root: Path) -> Iterator[BuildEntry]:
+    """Every row the index is rebuilt from: the manifests, then the recorded endings.
+
+    A run that left no manifest — cancelled before it produced one, interrupted by a
+    restart — has its ending recorded with the run events (#1120). Without those rows a
+    rebuild dropped such a run, and with it the reason an administrator is shown. A
+    run that has a manifest is read from the manifest alone.
+    """
+    from ..events.store import read_run_endings
+
+    seen: set[str] = set()
+    for entry in _iter_manifest_entries(output_root):
+        seen.add(entry.run_id)
+        yield entry
+    for ending in read_run_endings(output_root):
+        if ending.run_id not in seen:
+            yield ending_entry(ending)
+
+
 #: The columns of ``builds`` as this release creates it.
 _BUILDS_COLUMNS = frozenset(
     {
@@ -802,7 +842,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
         # A failure here is raised, a lock that was not released in time included:
         # replacing the file because the server was busy writing to it is the split
         # this avoids.
-        entries = list(_iter_manifest_entries(output_root))
+        entries = list(_iter_index_entries(output_root))
         index = SqliteBuildIndex(output_root)
         try:
             index.replace_contents(entries)
@@ -825,7 +865,7 @@ def _rebuild_sqlite(output_root: Path) -> int:
     index = SqliteBuildIndex(output_root, index_path=tmp_path)
     try:
         count = 0
-        for entry in _iter_manifest_entries(output_root):
+        for entry in _iter_index_entries(output_root):
             index.insert_or_replace(
                 run_id=entry.run_id,
                 status=entry.status,
@@ -888,7 +928,7 @@ def _rebuild_cubrid(output_root: Path) -> int:
     # The one place a newer index is replaced: the operator asked for it (#1096).
     index = CubridBuildIndex(get_engine(), replace_newer=True)
     try:
-        return index.rebuild(_iter_manifest_entries(output_root))
+        return index.rebuild(_iter_index_entries(output_root))
     finally:
         index.close()
 
@@ -896,7 +936,8 @@ def _rebuild_cubrid(output_root: Path) -> int:
 def rebuild_index(output_root: Path) -> int:
     """Rebuild index from filesystem scan (backend-aware, ADR 0016).
 
-    Scan manifest.json canonical, refill derived index. Per backend:
+    Scan manifest.json canonical, refill derived index. A run that left no manifest
+    is refilled from its recorded ending, kept with the run events (#1120). Per backend:
     - sqlite, an index of this release's version: refilled where it is, in one
       transaction, so a running server's connections see it (#1157). One that cannot
       be written that way is replaced as below.
