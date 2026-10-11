@@ -25,7 +25,6 @@ import os
 import re
 import sqlite3
 import threading
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime as datetime_module
 from datetime import timezone
@@ -33,6 +32,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS, enable_wal
+from kpubdata_builder.store.schema_version import StoreSchema, add_missing_columns
 
 from ..errors import ValidationError
 from ..publishers import PUBLISHER_REGISTRY
@@ -145,6 +145,60 @@ class PublishReceipt:
     result: dict[str, object] | None
 
 
+def _create_receipts_v1(connection: sqlite3.Connection) -> None:
+    """Version 1: the receipts, and their audit log with its owner and run (#563).
+
+    The audit log is append-only and carries no credential, path or raw value (#551).
+    It keeps ``owner_key`` and ``run_id`` in the row so that the history can still be
+    read after a reset deleted the receipt (#563); a file whose audit table was made
+    before those two columns (#557) gains them here.
+    """
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS publish_receipts (
+            owner_key TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            target TEXT NOT NULL,
+            destination TEXT NOT NULL,
+            fingerprint TEXT NOT NULL UNIQUE,
+            options_json TEXT NOT NULL,
+            state TEXT NOT NULL
+                CHECK (state IN ('pending', 'succeeded', 'unknown')),
+            result_json TEXT,
+            PRIMARY KEY (owner_key, run_id, target, destination)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS publish_receipt_audit (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT NOT NULL,
+            owner_key TEXT,
+            run_id TEXT,
+            action TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        )
+        """
+    )
+    add_missing_columns(
+        connection, "publish_receipt_audit", (("owner_key", "TEXT"), ("run_id", "TEXT"))
+    )
+
+
+#: The receipt store's schema, one step per version (#1096).
+RECEIPTS_SCHEMA = StoreSchema(
+    store="publish receipt store",
+    migrations=(_create_receipts_v1,),
+    remedy=(
+        "Run the release that wrote it, or restore the output directory from a backup "
+        "taken before the upgrade; the receipts are what stops one publish from going "
+        "out twice and cannot be rebuilt from anything else."
+    ),
+)
+
+
 class PublishReceiptStore:
     """Receipt store that prevents duplicate remote side effects via SQLite UNIQUE claim.
 
@@ -173,47 +227,7 @@ class PublishReceiptStore:
         with self._init_lock:
             if self._initialized:
                 return
-            with self._connect() as connection:
-                connection.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS publish_receipts (
-                        owner_key TEXT NOT NULL,
-                        run_id TEXT NOT NULL,
-                        target TEXT NOT NULL,
-                        destination TEXT NOT NULL,
-                        fingerprint TEXT NOT NULL UNIQUE,
-                        options_json TEXT NOT NULL,
-                        state TEXT NOT NULL
-                            CHECK (state IN ('pending', 'succeeded', 'unknown')),
-                        result_json TEXT,
-                        PRIMARY KEY (owner_key, run_id, target, destination)
-                    )
-                    """
-                )
-                # reconcile/reset audit log (#551) - append only minimal fields without
-                # credential/path/raw value.
-                # Store owner_key/run_id directly in row so audit history is queryable
-                # even if receipt is deleted by reset (#563).
-                connection.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS publish_receipt_audit (
-                        seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                        fingerprint TEXT NOT NULL,
-                        owner_key TEXT,
-                        run_id TEXT,
-                        action TEXT NOT NULL,
-                        actor TEXT NOT NULL,
-                        recorded_at TEXT NOT NULL
-                    )
-                    """
-                )
-                # Database-compatible migration created from #557 schema (no owner/run columns).
-                for column in ("owner_key", "run_id"):
-                    # If column already exists, ALTER fails with OperationalError.
-                    with suppress(sqlite3.OperationalError):
-                        connection.execute(
-                            f"ALTER TABLE publish_receipt_audit ADD COLUMN {column} TEXT"
-                        )
+            RECEIPTS_SCHEMA.bring_up_to_date(self.path, self._connect)
             self._initialized = True
 
     @staticmethod

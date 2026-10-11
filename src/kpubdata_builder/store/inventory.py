@@ -1,11 +1,16 @@
 """Every SQLite state store Builder keeps, written once (#1096).
 
 Ten stores are opened from ten modules, each with the connection settings its author
-chose: four use WAL and six do not, three record a schema version and three more add
-columns in place. None of that was written down anywhere, so nobody could say what a new
-store should do or whether an existing one was an exception on purpose. How long a
-connection waits for a lock differed too — two waited five seconds and the rest thirty —
-and is now one value for all of them (``sqlite_settings``).
+chose: four use WAL and six do not. None of that was written down anywhere, so nobody
+could say what a new store should do or whether an existing one was an exception on
+purpose. How long a connection waits for a lock differed too — two waited five seconds
+and the rest thirty — and is now one value for all of them (``sqlite_settings``).
+
+Three recorded a schema version, three more added whatever column was missing when they
+were opened, and four recorded nothing. All ten record one now, in the same
+``schema_version`` table, and refuse a file a newer release wrote
+(``store/schema_version.py``). A store may still be left without a version, but only
+with the reason written in its entry (``unversioned_because``).
 
 This is the list. ``tests/unit/test_state_store_inventory.py`` holds it to the code —
 a module that opens SQLite and is not here fails, and so does a connection that waits
@@ -32,10 +37,11 @@ from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
 #: runs in SQLite's rollback-journal mode.
 JournalMode = Literal["wal", "default"]
 
-#: ``schema_version``: a version table, checked when the store is opened.
-#: ``columns``: no version; a missing column is added in place when the store is opened.
-#: ``none``: the tables are created if absent and have never changed.
-Versioning = Literal["schema_version", "columns", "none"]
+#: ``schema_version``: a version table, written and checked when the store is opened; a
+#: file with a newer version is refused.
+#: ``unversioned``: no version is recorded, so a newer file cannot be told from this
+#: release's. An exception, which the entry has to give the reason for.
+Versioning = Literal["schema_version", "unversioned"]
 
 #: Where the file is, relative to the directory named.
 Root = Literal["output", "warehouse"]
@@ -58,6 +64,9 @@ class StateStore:
     versioning: Versioning
     #: What losing the file costs, as the deployment guide says it.
     if_lost: str
+    #: Why the store records no version, as the deployment guide says it. Required of an
+    #: ``unversioned`` store and empty for every other.
+    unversioned_because: str = ""
 
 
 STORES: tuple[StateStore, ...] = (
@@ -88,7 +97,7 @@ STORES: tuple[StateStore, ...] = (
         path="_publish_receipts.sqlite",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
-        versioning="columns",
+        versioning="schema_version",
         if_lost="어떤 run 을 어디에 게시했는지와, 같은 게시가 두 번 나가는 것을 막는 근거를 잃는다. 다시 만들 수 없다",
     ),
     StateStore(
@@ -98,7 +107,7 @@ STORES: tuple[StateStore, ...] = (
         path=".service/provider-credentials.sqlite3",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
-        versioning="none",
+        versioning="schema_version",
         if_lost="사용자가 저장한 provider 키를 잃는다. 각자 다시 입력해야 한다",
     ),
     StateStore(
@@ -108,7 +117,7 @@ STORES: tuple[StateStore, ...] = (
         path=".service/uploads.sqlite3",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
-        versioning="columns",
+        versioning="schema_version",
         if_lost="올린 파일과 그 목록을 잃는다(큰 파일의 내용은 옆의 `uploads.sqlite3.blobs/` 에 있다)",
     ),
     StateStore(
@@ -118,7 +127,7 @@ STORES: tuple[StateStore, ...] = (
         path=".service/provider_tests.sqlite3",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
-        versioning="none",
+        versioning="schema_version",
         if_lost="잃어도 된다 — 연결 테스트를 다시 하면 채워진다",
     ),
     StateStore(
@@ -128,7 +137,7 @@ STORES: tuple[StateStore, ...] = (
         path=".service/revisions.sqlite3",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
-        versioning="none",
+        versioning="schema_version",
         if_lost="BuildSpec 과 표시 주석의 저장 이력을 잃는다. 다시 만들 수 없다",
     ),
     StateStore(
@@ -138,7 +147,7 @@ STORES: tuple[StateStore, ...] = (
         path=".service/users.sqlite3",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
-        versioning="none",
+        versioning="schema_version",
         if_lost="가입 승인·거절 기록을 잃는다. allowlist 에 없는 사용자는 다시 승인을 기다린다",
     ),
     StateStore(
@@ -148,7 +157,7 @@ STORES: tuple[StateStore, ...] = (
         path=".service/analyses.sqlite3",
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="default",
-        versioning="columns",
+        versioning="schema_version",
         if_lost="저장한 SQL 과 그것이 읽은 스냅샷의 기록을 잃는다. 다시 만들 수 없다",
     ),
     StateStore(
@@ -169,4 +178,23 @@ NOT_STORES: dict[str, str] = {
     "warehouse/backup.py": "copies the catalog and reads the copy",
 }
 
-__all__ = ["NOT_STORES", "STORES", "JournalMode", "Root", "StateStore", "Versioning"]
+
+def unversioned_without_reason(stores: tuple[StateStore, ...] = STORES) -> list[str]:
+    """The stores that record no version and do not say why, and those that say why
+    though they record one — by file."""
+    return [
+        store.path
+        for store in stores
+        if (store.versioning == "unversioned") != bool(store.unversioned_because.strip())
+    ]
+
+
+__all__ = [
+    "NOT_STORES",
+    "STORES",
+    "JournalMode",
+    "Root",
+    "StateStore",
+    "Versioning",
+    "unversioned_without_reason",
+]
