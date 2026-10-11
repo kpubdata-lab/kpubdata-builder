@@ -40,7 +40,7 @@ ADR 0012(2026-09-30 개정)와 ADR 0020, 키를 어디에 둘지의 결정은 kp
 | 브라우저 → Cloudflare | HTTPS | 전송 중에는 보이지 않는다 | |
 | Cloudflare | TLS 를 여기서 한 번 푼다 | **볼 수 있다** | `Caddyfile` 머리말 — proxied DNS, SSL Full(strict) |
 | Cloudflare → Caddy | HTTPS (origin 인증서를 검증) | 전송 중에는 보이지 않는다 | 같은 곳 |
-| Caddy | TLS 를 다시 푼다 | **볼 수 있다.** 접근 로그는 켜져 있지 않다 (`log` 지시어 없음) | `ops/caddy/Caddyfile` |
+| Caddy | TLS 를 다시 푼다 | **볼 수 있다.** 접근 로그는 켜져 있고, 요청 헤더 전체와 쿼리 문자열을 지우고 쓴다 (#1100) | `ops/caddy/Caddyfile` 의 `log default` |
 | Caddy → Builder | **평문 HTTP.** 같은 호스트의 Docker 네트워크 `app-net` 안 | 그 네트워크를 볼 수 있으면 보인다 | compose `BACKEND_UPSTREAM: builder:8000` |
 | Builder | — | **있다.** 프로세스 메모리에만 (3절) | `service/request_credentials.py` |
 | Builder → provider | provider 와 spec 에 달렸다 (아래) | provider 는 당연히 받는다 | kpubdata spec 의 `endpoint.base_url` |
@@ -58,8 +58,12 @@ ADR 0012(2026-09-30 개정)와 ADR 0020, 키를 어디에 둘지의 결정은 kp
   도는 동안 Builder 프로세스의 메모리에 있고, 그 프로세스의 메모리를 읽을 수 있는
   사람(호스트의 root)은 그 동안 키를 읽을 수 있다. Cloudflare 와 Caddy 를 운영하는
   쪽도 마찬가지로 지나가는 헤더를 볼 수 있는 자리에 있다.
-- Caddy 의 접근 로그나 Cloudflare 의 요청 로깅을 켠다면, 두 헤더가 기록에서 빠지는지
-  **켜기 전에** 확인해야 한다. 이 저장소의 설정은 켜지 않는다.
+- **Caddy 의 접근 로그는 켜져 있고, 두 헤더는 기록에서 빠진다** (#1100). 요청 헤더와
+  응답 헤더를 통째로 지우고 쿼리 문자열을 잘라 낸 뒤에 쓴다. `Docker` 워크플로의
+  `scripts/proxy_chain_smoke.py` 가 실제 Caddy 에 표식 값을 실은 요청을 보내고 로그를
+  읽어 확인한다 (`docs/deploy.md` "프록시(Caddy)의 접근 로그"). Cloudflare 의 요청
+  로깅은 이 저장소가 정하지 않는다 — 켠다면 두 헤더가 기록에서 빠지는지 **켜기 전에**
+  확인해야 한다.
 
 Builder 안에서 키가 가지 않는 곳 — 각각 테스트가 지킨다:
 
