@@ -239,7 +239,7 @@ kpubdata-builder restore --recover --output-dir /data
 **같은 시점이라는 것의 범위.** 저장소마다 SQLite 온라인 백업을 하는 것만으로는 전체가 같은
 시점이 되지 않는다 — 두 저장소를 복사하는 사이에 끝난 빌드는 한쪽에서만 끝나 있다. 그래서
 백업은 **아무것도 쓰지 않을 때만** 돈다. 상태를 쓰는 명령(`serve` 는 떠 있는 내내, `build`,
-`rebuild-index`, `prune-cancelled`, `prune-runs`, `warehouse-gc`, `warehouse-hold`)은 출력 디렉터리와 웨어하우스의
+`rebuild-index`, `prune-cancelled`, `prune-runs`, `delete-user`, `warehouse-gc`, `warehouse-hold`)은 출력 디렉터리와 웨어하우스의
 `.state.lock` 을 공유 잠금으로 쥐고, `backup`·`restore` 는 배타 잠금을 기다리지 않고 잡는다. 하나라도
 쥐고 있으면 백업은 거부하고("in use"), 백업·복구 중에는 쓰는 명령이 시작하지 않는다. 잠금은
 `flock` 이라 프로세스가 어떻게 끝나든 커널이 푼다. 그러므로 백업 파일은 **출력 디렉터리의 한
@@ -273,6 +273,7 @@ kpubdata-builder restore --recover --output-dir /data
 | `[!._]*` (디렉터리) | 담는다 | run 작업 공간 — run 마다 하나. manifest(정본), BuildSpec 사본, Bronze·Silver·Gold 산출물 |
 | `.service/uploads.sqlite3.blobs` | 담는다 | 큰 업로드의 내용. 업로드 저장소의 행이 `blob_path` 와 SHA-256 으로 가리킨다 |
 | `.service/exports` | 담는다 | 내보내기 기록과 묶음 |
+| `.service/deleted-users` (디렉터리) | 담는다 | 사용자 삭제 기록(tombstone)과 그 journal(§6.4). 복구는 지금의 것을 복원하는 상태로 옮긴다 |
 | `.state.lock` | 뺀다 | 백업·복구 중 쓰기를 막는 잠금 파일 |
 | `.readyz-*` | 뺀다 | `/readyz` 가 잠깐 만드는 파일 |
 | `_builds.sqlite.bak*` | 뺀다 | `rebuild-index` 가 바꾸기 전의 인덱스 |
@@ -304,8 +305,16 @@ kpubdata-builder restore --recover --output-dir /data
 
 **정하지 않은 것.** 백업 주기, 보존 기간, 외부의 암호화된 보관소(예: restic)로 올리기와 그 뒤의
 정리(prune), RPO·RTO 는 메인테이너가 정한다. 이 명령은 요청받을 때 받고, 받으라는 곳에 둘 뿐이다.
-깨끗한 환경에서의 복구 리허설 기록, 인증 서버 데이터베이스의 백업과 복구, 삭제 기록(tombstone)과의
-대조도 아직 없다(#1095).
+깨끗한 환경에서의 복구 리허설 기록, 인증 서버 데이터베이스의 백업과 복구도 아직 없다(#1095).
+
+**복구는 삭제된 사용자를 되살리지 않는다(#1102).** 백업을 받은 뒤에 `delete-user` 로 지운 사용자는
+그 백업 안에 아직 있다. 그래서 복구는 교체하기 전에 **지금의** 삭제 기록(`.service/deleted-users/`)을
+복원하는 상태에 덮어 옮기고, 교체한 뒤 같은 배타 잠금 안에서 그 기록과 복원된 저장소들을 대조한다 —
+기록의 subject 는 사용자 id 의 해시이므로, 저장소에 남은 owner id 를 같은 방식으로 해시해 맞춘다.
+맞는 사용자가 있으면 그 삭제를 다시 열고 그 자리에서 다시 실행한다. 서버가 뜨기 전에 끝나므로
+복원된 상태로 그 사용자가 다시 보이는 순간이 없다. 무엇이 막아 끝내지 못한 삭제는 출력에 적히고,
+서버는 여전히 그 사용자를 거부하며, `delete-user --resume` 이 끝낸다. 백업 파일 자체의 보존 기간 —
+삭제 전에 받은 백업을 언제 지우는가 — 은 정해지지 않았다(아래 §6.4).
 
 ### 6.3 run 보관기한과 저장량 (#1099)
 
@@ -365,7 +374,7 @@ snapshot 의 참조를 볼 수 없다. 참조는 run 마다 지우기 직전에 
 죽든 다음 `prune-runs --apply` 가 `.run-gc/` 에 남은 것의 인덱스 행과 파일을 먼저 마저 지운다(dry
 run 은 그것을 "would finish deleting" 으로 알린다). 인덱스 행이 지워지지 않았으면 manifest 에서
 인덱스를 다시 만든다(`rebuild-index` 와 같다). run 의 이벤트 타임라인(`_build_events.sqlite`)은
-지우지 않는다. 사용자와 그 데이터의 삭제는 #1102 가 다룬다.
+지우지 않는다. 사용자와 그 데이터의 삭제는 §6.4 의 `delete-user` 가 한다.
 
 **2) 사용자별 저장량 — 예약하고 받는다.** 다중 사용자 배포에서 `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`
 를 정하면 `POST /builds` 가 job 을 큐에 넣기 전에 그 사용자의 끝난 run 작업 공간 합계를 잰다. 빌드의
@@ -385,6 +394,88 @@ warehouse snapshot 도 세지 않는다. 실행 중인 build 가 예약보다 �
 
 **하지 않는 것.** `VACUUM`, export·spill·staging 디렉터리의 정리, 기한이 지난 업로드의 일괄 정리,
 디스크가 가득 찼을 때의 aggressive 모드는 이 명령에 없다 — 이슈의 `maintain` 명령 범위다(#1099).
+
+### 6.4 사용자와 그 데이터의 삭제 (#1102)
+
+삭제 요청을 받은 사용자 한 명과 그 데이터를 운영자가 지운다. 사용자가 직접 탈퇴하는 화면과 API 는
+아직 없고, 이 명령이 실제 요청을 처리하는 절차다.
+
+```bash
+# 무엇이 지워질지 본다 — 아무것도 쓰지 않는다(삭제 기록도)
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder delete-user oidc:... --output-dir /data --warehouse /data/warehouse
+# 지운다. 그 사용자의 빌드가 끝나기를 최대 60초 기다린다
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder delete-user oidc:... --output-dir /data --warehouse /data/warehouse --apply --wait 60
+# 중단되었거나 막혔던 삭제를 모두 이어서 끝낸다(사용자 id 없이)
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder delete-user --resume --output-dir /data --warehouse /data/warehouse
+```
+
+`USER_ID` 는 `GET /admin/users` 의 `user_id` 다. `oidc:` 로 시작하지 않는 id, 관리자
+(`KPUBDATA_BUILDER_ADMIN_SUBJECTS`), 이 출력 디렉터리에 아무것도 없는 id 는 거부한다 — 오타가 영구한
+차단이 되지 않게. 다른 쓰는 명령처럼 상태 잠금(§6.2)을 공유로 쥐므로 `serve` 가 떠 있어도 돌릴 수
+있고, 백업·복구 중에는 시작하지 않는다. 같은 출력 디렉터리에서 삭제는 한 번에 하나만 돈다.
+
+**먼저 막는다.** `--apply` 가 처음 쓰는 것은 삭제 기록(tombstone)이다:
+`.service/deleted-users/<subject>.json`. 그 순간부터 서버는 그 사용자의 모든 요청을 403
+`signup_rejected` 로 거부한다 — 가입 원장을 읽기 전에 거부하므로, 다시 로그인해도 원장에 새로 기록되지
+않는다(trust-issuer 재등록으로 되살아나지 않는다). 그 사용자의 빌드도 막는다:
+
+| 빌드의 상태 | 서버가 하는 일 |
+|---|---|
+| 새로 제출 | 아무것도 기록하지 않고 거부한다 |
+| 삭제가 시작되는 순간에 제출되던 중 | 제출을 기록한 뒤 다시 확인해 바로 취소한다 — 삭제가 그 run 을 보거나, 그 확인이 삭제를 본다 |
+| 대기 중 | worker 가 꺼낼 때 시작하지 않고 취소한다 |
+| 실행 중 | 다음 단계 경계에서 취소한다. 삭제된 사용자의 빌드는 정상 종료로 확정(commit)할 수 없다 |
+
+삭제는 그 사용자의 끝나지 않은 run 이, 그리고 끝나야 주인을 알 수 있는 run(동기 `POST /build`)이 모두
+끝나기를 `--wait` 초까지 기다리고, 그래도 남으면 run id 를 적고 거부한다. 서버를 내리는 것도 방법이다 —
+종료 drain 이 대기 중인 job 을 끝내고 실행 중인 것을 취소한다(§7).
+
+**그다음 단계별로 지운다.** 순서대로, 각 단계는 여러 번 실행해도 결과가 같다.
+
+| 단계 | 지우는 것 |
+|---|---|
+| `analyses` | 저장한 분석. 그 분석의 snapshot hold 를 먼저 푼다 |
+| `exports` | warehouse 내보내기 기록과 묶음 |
+| `warehouse` | 그 사용자 workspace 의 테이블과 모든 snapshot(파일, 카탈로그 행), 그리고 다른 workspace 에 그 사용자가 만든 snapshot |
+| `runs` | run 작업 공간(`.run-gc/` 로 옮긴 뒤 지운다, §6.3), 빌드 인덱스 행, run 이벤트·제출 기록·종료 기록 |
+| `uploads` | 업로드한 파일과 그 행 |
+| `provider_keys` | 저장한 provider 키(복호화하지 않으므로 master key 가 필요 없다) |
+| `provider_tests` | provider 연결 테스트의 마지막 결과 |
+| `ledger` | 가입 원장의 행(검증된 이메일) |
+| `verify` | 모든 저장소에서 그 사용자를 다시 찾는다. 없어야 삭제가 완료된다 |
+
+다음은 지우지 않고 멈추며, 무엇이 막는지 적는다: hold(`audit`, `retention` — `warehouse-hold release`
+로 풀거나 기한이 지나야 한다)나 lease(지금 읽는 질의)가 있는 snapshot, 다른 사용자와 함께 쓰는
+workspace 에서 현재 snapshot 인 것. 한 단계가 막히면 그 뒤 단계는 하지 않는다. 지워진 데이터는 그대로
+지워져 있고, 삭제 기록은 미완료로 남아 서버는 계속 그 사용자를 거부한다. 원인을 해결하고 같은 명령을
+다시 돌리면 모든 단계를 처음부터 다시 실행해 남은 것만 지운다. 마지막 확인 뒤에 들어온 것을 잡으려고
+데이터 단계는 한 번 더 돈다.
+
+**중단되면.** 각 단계는 끝날 때마다 journal 에 기록된다. 어느 단계에서 죽든 `delete-user --resume` 이
+미완료 삭제를 모두 다시 실행한다. journal 에는 사용자 id 가 없으므로, 저장소에 남은 owner id 를 해시해
+subject 와 맞춰 찾는다. 남은 것이 하나도 없으면 그대로 완료로 기록한다.
+
+**감사 기록에는 사람이 없다.** journal 과, 단계마다 관리자 감사 로거(`kpubdata_builder.admin_audit`)에
+남는 한 줄(`user deletion: subject=… step=… outcome=… removed=…`)은 사용자 id 가 아니라 **subject**
+— 사용자 id 를 고정 라벨과 함께 SHA-256 한 값 — 만 담는다. subject 로 id 나 이메일을 되찾을 수 없고,
+id 를 이미 가진 사람만 맞춰 볼 수 있다(복구가 그렇게 대조한다). 단계가 지운 개수와 막은 이유(run id,
+snapshot id, 테이블 id)는 담지만 키, 파일 내용, 이메일은 담지 않는다. 이 기록을 얼마나 보관할지는
+삭제 정책과 함께 메인테이너가 정한다.
+
+**지우지 않는 것, 정해지지 않은 것.**
+
+- **인증 서버(Keycloak)의 계정.** 이 명령은 Builder 의 데이터만 지운다. IdP 계정을 지우는 절차는
+  어떤 IdP 를 쓸지(#1124)와 함께 정한다. 그 전까지 운영자가 Keycloak 관리 화면에서 따로 지운다. 지우지
+  않아도 삭제 기록이 그 계정의 로그인을 거부한다.
+- **삭제 전에 받은 백업.** 복구는 삭제를 다시 적용하지만(§6.2), 백업 파일 안에는 그 사용자가 남아 있다.
+  백업 보존 기간은 메인테이너가 정한다(#1095).
+- **외부에 게시한 것.** Hugging Face·Kaggle 등에 게시한 데이터셋은 지우지 않는다. 게시 영수증
+  (`_publish_receipts.sqlite`)은 무엇이 어디로 나갔는지의 기록이라 남긴다.
+- **문서 revision 의 작성자 표시와 브라우저에 저장된 데이터.** revision 이력(`author`)은 지우지 않는다.
+  Studio 가 브라우저에 둔 것은 사용자가 브라우저에서 지운다.
 
 ## 7. 헬스체크·종료
 

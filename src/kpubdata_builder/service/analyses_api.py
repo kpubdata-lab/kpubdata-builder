@@ -219,6 +219,24 @@ class AnalysisStore:
             ).fetchall()
         return [_row(row) for row in rows]
 
+    def owned_by(self, owner_id: str, workspace_id: str | None) -> tuple[SavedAnalysis, ...]:
+        """Analyses ``owner_id`` saved, or saved in ``workspace_id`` (#1102)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_SELECT} FROM analyses WHERE owner_id = ? OR workspace_id = ?"
+                " ORDER BY analysis_id",
+                (owner_id, workspace_id),
+            ).fetchall()
+        return tuple(_row(row) for row in rows)
+
+    def owners(self) -> frozenset[str]:
+        """Every owner an analysis names (#1102)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT owner_id FROM analyses WHERE owner_id IS NOT NULL"
+            ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
     def delete(self, workspace_id: str, analysis_id: str) -> SavedAnalysis | None:
         with self._lock, self._connect() as conn:
             row = conn.execute(

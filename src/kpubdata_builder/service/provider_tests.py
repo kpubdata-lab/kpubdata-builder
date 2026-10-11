@@ -91,5 +91,17 @@ class ProviderTestLog:
             for provider, status, checked_at, error_category, response_code, dataset in rows
         }
 
+    def owners(self) -> frozenset[str]:
+        """Every owner with a recorded test (#1102)."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT DISTINCT owner_id FROM provider_tests").fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    def forget_owner(self, owner_id: str) -> int:
+        """Remove every result of ``owner_id`` (#1102); returns how many went."""
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute("DELETE FROM provider_tests WHERE owner_id = ?", (owner_id,))
+        return max(cursor.rowcount, 0)
+
 
 __all__ = ["SCHEMA", "ProviderTestLog"]

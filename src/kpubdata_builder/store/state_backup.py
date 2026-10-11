@@ -55,6 +55,13 @@ leaves the journal, and the server refuses to start on that directory until
 ``restore --recover`` (or another restore) puts the earlier state back. The build index
 is rebuilt from the restored manifests at the end, as ``rebuild-index`` does.
 
+**A restore does not bring a deleted user back (#1102).** The deletion journals of the
+state being replaced (``.service/deleted-users/``) are copied into the state swapped in,
+over the archive's own. Once the swap is done, every deleted user the archive still held
+data of has their deletion reopened and run again, under the same exclusive lock, so no
+server serves the restored state first. One that something blocks is left pending, the
+server still refuses the user, and ``delete-user --resume`` finishes it.
+
 **Not decided here.** How often to back up, how long to keep a backup, where to keep it
 off this machine and encrypted, and the recovery point and time objectives are the
 maintainers' to decide (#1095); this module takes a backup when it is asked to and
@@ -134,6 +141,10 @@ class RestoreResult:
     indexed: int
     #: What an earlier, interrupted restore needed first: "" when nothing.
     recovered: str
+    #: Deletions of users the archive still held, run again (#1102), by subject.
+    deletions_reapplied: tuple[str, ...] = ()
+    #: Of those, the ones something blocked: ``delete-user --resume`` finishes them.
+    deletions_pending: tuple[str, ...] = ()
 
 
 def refuse_cubrid() -> None:
@@ -830,6 +841,7 @@ def restore(archive: Path, output_root: Path) -> RestoreResult:
             verification; every reason is listed and ``output_root`` is as it was.
         StateInUse: Something is using the directory.
     """
+    from ..service import user_deletion
     from ..warehouse import backup as warehouse_backup
     from ..warehouse.errors import BackupInvalid
     from .build_index import rebuild_index
@@ -870,13 +882,29 @@ def restore(archive: Path, output_root: Path) -> RestoreResult:
                         [f"warehouse: {problem}" for problem in exc.problems]
                     ) from exc
             _discard(unpacked)
+            # The deletions made since the backup (#1102) go into the state swapped in:
+            # a user deleted after it was taken stays deleted.
+            user_deletion.carry_journals(output_root, new)
         except BaseException:
             _discard(staging)
             raise
         previous = _swap(output_root, staging, new)
         indexed = rebuild_index(output_root)
+        # The archive may hold a deleted user's data. Their deletion runs again on it,
+        # under this lock: nothing serves the restored state before it has.
+        warehouse_root = output_root / warehouse if isinstance(warehouse, str) else None
+        reapplied = user_deletion.reopen_found(output_root, warehouse_root)
+        pending: tuple[str, ...] = ()
+        if reapplied:
+            reports = user_deletion.resume_pending(output_root, warehouse_root=warehouse_root)
+            pending = tuple(report.subject for report in reports if not report.complete)
     return RestoreResult(
-        output_root=output_root, previous=previous, indexed=indexed, recovered=recovered
+        output_root=output_root,
+        previous=previous,
+        indexed=indexed,
+        recovered=recovered,
+        deletions_reapplied=reapplied,
+        deletions_pending=pending,
     )
 
 
