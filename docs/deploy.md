@@ -536,14 +536,27 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
   - 릴리스: `release.yml` 이 `publish: true` 로 부른다. 릴리스 풀 리퀘스트를 머지한 경우도 같다.
   - 릴리스 태그의 이미지 digest 가 없으면 `release.yml` 의 `Image published` 작업이 실패한다(#1142).
 
-VM 최초 준비:
+VM 최초 준비. compose 파일, `ops/caddy/`, `.env.app.example` 이 필요하므로 저장소를 받아 그 안에서
+실행한다. Builder 이미지 패키지는 비공개라서 먼저 GHCR 에 로그인한다 — 패키지 읽기(`read:packages`)
+권한만 가진 토큰이면 된다.
 
 ```bash
+git clone https://github.com/kpubdata-lab/kpubdata-builder.git && cd kpubdata-builder
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
 cp .env.app.example .env   # 값 채우고 chmod 600
 docker compose -f docker-compose.prod.app.yml up -d            # IP-only
 docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TLS 진입
 docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio up -d  # Studio 도 같은 VM 에
 ```
+
+- **로그인하지 않으면 게시된 이미지가 아니다.** pull 이 `unauthorized` 로 실패하면 compose 는 멈추지 않고
+  받아 둔 저장소에서 Builder 를 빌드해 `BUILDER_IMAGE` 의 이름(`ghcr.io/...:latest`)을 붙인다. 스택은
+  뜨지만 그 이미지는 게시된 것이 아니다. `up` 의 출력에 `Pulling` 다음 `unauthorized` 와 `Building` 이
+  보이면 로그인부터 다시 한다(kpubdata-studio#900 의 리허설에서 그렇게 됐다).
+- `caddy` 프로필은 호스트의 80·443 을 쓴다. 다른 프로세스가 잡고 있으면 Caddy 가 뜨지 않는다.
+- Studio 는 Bearer 토큰만 보낸다. `STUDIO_BUILDER_API_URL` 을 채우면서 `OIDC_ISSUER` 와
+  `STUDIO_OIDC_CLIENT_ID` 를 비우면 Studio 는 로그인 화면에서 "인증 초기화에 실패했습니다" 로 멈춘다.
+  인증 서버(#1124)가 아직 없으면 `STUDIO_BUILDER_API_URL` 도 비워 데모로 띄운다.
 
 ### 프로필과 기동 smoke (#692)
 
