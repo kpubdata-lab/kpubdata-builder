@@ -50,7 +50,7 @@
 | 11 | backup | **확인 못 했다** | 백업 절차가 정의되어 있지 않다. SQLite 파일을 복사하면 ciphertext 가 따라간다 |
 | 12 | SQLite WAL | 남지 않는다 | credential store 는 WAL 을 쓰지 않는다. WAL 은 `store/build_index.py:134` 뿐이고 거기엔 credential 이 없다 |
 | 13 | browser storage | **부분적으로 남는다** | 아래 참조 |
-| 14 | reverse proxy logs | **확인 못 했다** | 배포가 정하는 영역. 권고가 문서에 없다 |
+| 14 | reverse proxy logs | 저장소의 Caddy 구성에서는 남지 않는다 — `Docker` 워크플로가 확인한다 (#1100) | `ops/caddy/Caddyfile` 이 요청·응답 헤더 전체와 쿼리 문자열을 지우고 쓴다. `scripts/proxy_chain_smoke.py` 가 표식 값을 실은 요청을 보내고 Caddy 의 로그를 읽는다. Cloudflare 쪽 로깅과 다른 프록시는 **확인 못 했다** |
 | 15 | APM / traces | 해당 없음 | APM 연동이 없다 |
 | 16 | crash dump | **확인 못 했다** | Python 기본 traceback 에 지역변수는 실리지 않지만, `faulthandler`·코어덤프 설정은 배포가 정한다 |
 | 17 | GitHub Actions 로그·artifact | 사용자 키는 **해당 없음**, 운영자 키는 남지 않는다(마스킹) | 아래 참조 |

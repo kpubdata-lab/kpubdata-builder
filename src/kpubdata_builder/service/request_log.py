@@ -41,7 +41,9 @@ __all__ = [
     "UNMATCHED_ROUTE",
     "UNREAD_ROUTE",
     "begin",
+    "code_of",
     "note_principal",
+    "opaque_owner",
     "record",
     "route_of",
 ]
@@ -193,7 +195,12 @@ def route_of(method: str, path: str) -> str:
     return best[1] if best is not None else UNMATCHED_ROUTE
 
 
-def _opaque(owner_id: str) -> str:
+def opaque_owner(owner_id: str) -> str:
+    """The ``owner`` of a line: same for one owner while the process lives, not the id.
+
+    The build lines (``build_log.py``) use it too, so a user's requests and builds
+    carry the same value.
+    """
     return hmac.new(_OWNER_KEY, owner_id.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
@@ -205,7 +212,7 @@ def begin() -> None:
 def note_principal(principal: Principal) -> None:
     """Remember who the request being answered is from, for its line."""
     owner = principal.owner_id
-    _requester.set((principal.kind, _opaque(owner) if owner else None))
+    _requester.set((principal.kind, opaque_owner(owner) if owner else None))
 
 
 def _ensure_output() -> None:
@@ -236,7 +243,8 @@ def _ensure_output() -> None:
         _fallback_handler = handler
 
 
-def _code_of(code: object) -> str | None:
+def code_of(code: object) -> str | None:
+    """A ``code`` as a line may hold it: itself when known, else :data:`OTHER_CODE`."""
     if not isinstance(code, str) or not code:
         return None
     return code if code in KNOWN_CODES else OTHER_CODE
@@ -274,7 +282,7 @@ def record(
         "principal": requester[0] if requester else None,
         "owner": requester[1] if requester else None,
     }
-    kept = _code_of(code)
+    kept = code_of(code)
     if kept is not None:
         line["code"] = kept
     try:
