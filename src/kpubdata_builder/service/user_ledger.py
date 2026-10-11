@@ -51,6 +51,7 @@ from typing import Literal
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_MS, BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.store.schema_version import StoreSchema, says_unreachable
 
 SignupStatus = Literal["pending", "approved", "rejected"]
 
@@ -113,6 +114,29 @@ def _last_seen_is_stale(last_seen_at: str, now: str) -> bool:
     return elapsed.total_seconds() >= LAST_SEEN_REFRESH_SECONDS
 
 
+def _create_v1(conn: sqlite3.Connection) -> None:
+    """Version 1: the table as every release so far has made it."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users ("
+        " user_id TEXT PRIMARY KEY, display_name TEXT, status TEXT NOT NULL,"
+        " first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,"
+        " decided_at TEXT, decided_by TEXT)"
+    )
+
+
+#: The ledger's schema, one step per version (#1096). A file from before the ledger
+#: recorded a version has the one table, so the first step finds it and keeps it.
+SCHEMA = StoreSchema(
+    store="sign-up ledger",
+    migrations=(_create_v1,),
+    remedy=(
+        "Run the release that wrote it, or restore the output directory from a backup "
+        "taken before the upgrade; the approvals and rejections cannot be rebuilt from "
+        "anything else."
+    ),
+)
+
+
 class UserLedger:
     """SQLite ledger of OIDC users and their sign-up status."""
 
@@ -120,12 +144,23 @@ class UserLedger:
         self._path = path
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS users ("
-                " user_id TEXT PRIMARY KEY, display_name TEXT, status TEXT NOT NULL,"
-                " first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,"
-                " decided_at TEXT, decided_by TEXT)"
+        existed = path.is_file()
+        try:
+            SCHEMA.bring_up_to_date(
+                path, lambda: sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)
+            )
+        except sqlite3.OperationalError as exc:
+            # A ledger from before it recorded a version, on a disk that cannot be
+            # written: the version cannot be recorded now, and the file is the first
+            # version's in all but that. It is read as it is, so that the users it knows
+            # are still served (#1121); the next start records the version. A ledger a
+            # newer release wrote was refused above this, on a read-only connection. A
+            # ledger that was not there at all still fails, as it did.
+            if not (existed and says_unreachable(exc)):
+                raise
+            logger.warning(
+                "sign-up ledger schema version could not be recorded (%s); reading it as it is",
+                type(exc).__name__,
             )
 
     @contextmanager
@@ -282,6 +317,7 @@ def admission_refusal(entry: LedgerEntry, principal: Principal) -> dict[str, Jso
 
 __all__ = [
     "LAST_SEEN_REFRESH_SECONDS",
+    "SCHEMA",
     "LedgerEntry",
     "LedgerUnavailableError",
     "SignupStatus",

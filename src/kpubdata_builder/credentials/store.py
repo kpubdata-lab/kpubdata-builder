@@ -11,12 +11,41 @@ from pathlib import Path
 from typing import Protocol
 
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.store.schema_version import StoreSchema
 
 from .crypto import CredentialCipher
 from .models import CredentialMetadata
 
 _PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _MASK = "********"
+
+
+def _create_v1(connection: sqlite3.Connection) -> None:
+    """Version 1: the table as every release so far has made it."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_credentials (
+            owner_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            ciphertext BLOB NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (owner_id, provider)
+        )
+        """
+    )
+
+
+#: The store's schema, one step per version (#1096). A file from before the store
+#: recorded a version has the one table, so the first step finds it and keeps it.
+SCHEMA = StoreSchema(
+    store="provider credential store",
+    migrations=(_create_v1,),
+    remedy=(
+        "Run the release that wrote it, or restore the output directory from a backup "
+        "taken before the upgrade; the saved provider keys cannot be rebuilt from "
+        "anything else."
+    ),
+)
 
 
 def normalize_provider(provider: str) -> str:
@@ -72,18 +101,8 @@ class SQLiteCredentialRepository:
         return connection
 
     def _initialize(self) -> None:
-        with self._lock, self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS provider_credentials (
-                    owner_id TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    ciphertext BLOB NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (owner_id, provider)
-                )
-                """
-            )
+        with self._lock:
+            SCHEMA.bring_up_to_date(self._path, self._connect)
 
     def get_metadata(self, owner_id: str, provider: str) -> CredentialMetadata:
         validate_owner_id(owner_id)
@@ -154,6 +173,7 @@ class SQLiteCredentialRepository:
 
 
 __all__ = [
+    "SCHEMA",
     "CredentialRepository",
     "SQLiteCredentialRepository",
     "associated_data",

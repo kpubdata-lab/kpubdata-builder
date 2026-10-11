@@ -8,12 +8,18 @@ from __future__ import annotations
 
 import ast
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
-from kpubdata_builder.store.inventory import NOT_STORES, STORES, StateStore
+from kpubdata_builder.store.inventory import (
+    NOT_STORES,
+    STORES,
+    StateStore,
+    unversioned_without_reason,
+)
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src" / "kpubdata_builder"
@@ -160,25 +166,82 @@ def test_journal_mode_is_the_one_the_module_sets(store: StateStore) -> None:
 
 @pytest.mark.parametrize("store", STORES, ids=_IDS)
 def test_versioning_is_what_the_module_does(store: StateStore) -> None:
-    source = _source(store)
-    has_version_table = "CREATE TABLE IF NOT EXISTS schema_version" in source
-    adds_columns = re.search(r"ALTER TABLE \S+ ADD COLUMN", source) is not None
+    assert _records_a_version(_source(store)) == (store.versioning == "schema_version")
 
-    if store.versioning == "schema_version":
-        assert has_version_table
-    else:
-        assert not has_version_table
-        assert adds_columns == (store.versioning == "columns")
+
+def _records_a_version(source: str) -> bool:
+    """Whether a module keeps a version table: its own, or through ``StoreSchema``."""
+    own_table = "CREATE TABLE IF NOT EXISTS schema_version" in source
+    shared = (
+        re.search(r"\bStoreSchema\(", source) is not None
+        and re.search(r"\.bring_up_to_date\(", source) is not None
+    )
+    return own_table or shared
+
+
+def test_the_version_check_tells_a_store_that_records_none() -> None:
+    """A store that only adds the columns it finds missing records no version."""
+    assert not _records_a_version(
+        'conn.execute("CREATE TABLE IF NOT EXISTS t (a TEXT)")\n'
+        'conn.execute("ALTER TABLE t ADD COLUMN b TEXT")\n'
+    )
+    # Declaring a schema is not using it.
+    assert not _records_a_version("SCHEMA = StoreSchema(store='t', migrations=(), remedy='')\n")
+    assert _records_a_version(
+        "SCHEMA = StoreSchema(store='t', migrations=(), remedy='')\n"
+        "SCHEMA.bring_up_to_date(path, connect)\n"
+    )
+
+
+@pytest.mark.parametrize("store", STORES, ids=_IDS)
+def test_every_store_that_records_a_version_refuses_a_newer_one(store: StateStore) -> None:
+    """The version is there to be checked: a newer file ends in the one refusal."""
+    if store.versioning != "schema_version":
+        pytest.skip("records no version")
+    source = _source(store)
+
+    # Through ``StoreSchema``, which refuses; or by raising the refusal itself; or, for
+    # the catalog, by finding no migration path from the version (``SnapshotStateError``).
+    assert (
+        re.search(r"\.bring_up_to_date\(", source) is not None
+        or "UnsupportedSchemaVersionError(" in source
+        or "_migration_path(" in source
+    )
+
+
+def test_a_store_without_a_version_says_why() -> None:
+    """No store is left unversioned by default; an exception carries its reason."""
+    assert unversioned_without_reason() == []
+
+
+def test_the_reason_check_sees_a_store_that_gives_none() -> None:
+    silent = StateStore(
+        name="cache",
+        module="cache.py",
+        root="output",
+        path="cache.sqlite",
+        timeout_seconds=BUSY_TIMEOUT_SECONDS,
+        journal="default",
+        versioning="unversioned",
+        if_lost="nothing",
+    )
+    explained = replace(silent, path="explained.sqlite", unversioned_because="rebuilt at start")
+    versioned_with_a_reason = replace(
+        explained, path="confused.sqlite", versioning="schema_version"
+    )
+
+    assert unversioned_without_reason((silent, explained, versioned_with_a_reason)) == [
+        "cache.sqlite",
+        "confused.sqlite",
+    ]
 
 
 def _row(store: StateStore) -> str:
     where = "출력 디렉터리" if store.root == "output" else "웨어하우스"
     journal = "WAL" if store.journal == "wal" else "기본(rollback journal)"
-    versioning = {
-        "schema_version": "버전 표",
-        "columns": "없음 — 빠진 열을 열 때 더한다",
-        "none": "없음",
-    }[store.versioning]
+    versioning = (
+        "버전 표" if store.versioning == "schema_version" else f"없음 — {store.unversioned_because}"
+    )
     return (
         f"| {store.name} | {where}의 `{store.path}` | {store.timeout_seconds:g}초 | {journal} "
         f"| {versioning} | {store.if_lost} |"

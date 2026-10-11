@@ -39,6 +39,7 @@ from kpubdata_builder.service.responses import ServiceResponse
 from kpubdata_builder.service.warehouse_api import WarehouseApiService, parse_table_query
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.store.schema_version import StoreSchema, add_missing_columns
 from kpubdata_builder.warehouse import TableCatalog, WarehouseError
 
 _MAX_NAME_LENGTH = 200
@@ -128,6 +129,40 @@ class SavedAnalysis:
         }
 
 
+def _create_v1(conn: sqlite3.Connection) -> None:
+    """Version 1: the table, its index, and the dialect columns (#875).
+
+    A file from before the store recorded a version may predate those columns. It gains
+    them here, and its rows are the legacy analyses the defaults describe. This runs
+    under the write lock of the transaction that records the version, so two processes
+    opening one old store add each column once.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS analyses ("
+        " analysis_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_id TEXT,"
+        " name TEXT NOT NULL, sql TEXT NOT NULL, row_limit INTEGER NOT NULL,"
+        " table_name TEXT NOT NULL, snapshot_id TEXT NOT NULL, hold_id TEXT NOT NULL,"
+        " result_meta TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_analyses_workspace"
+        " ON analyses(workspace_id, created_at DESC)"
+    )
+    add_missing_columns(conn, "analyses", _ADDED_COLUMNS)
+
+
+#: The store's schema, one step per version (#1096).
+SCHEMA = StoreSchema(
+    store="saved analysis store",
+    migrations=(_create_v1,),
+    remedy=(
+        "Run the release that wrote it, or restore the output directory from a backup "
+        "taken before the upgrade; the saved analyses cannot be rebuilt from anything "
+        "else."
+    ),
+)
+
+
 class AnalysisStore:
     """SQLite store of saved analyses, every read and delete scoped by workspace."""
 
@@ -135,28 +170,7 @@ class AnalysisStore:
         self._path = path
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS analyses ("
-                " analysis_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_id TEXT,"
-                " name TEXT NOT NULL, sql TEXT NOT NULL, row_limit INTEGER NOT NULL,"
-                " table_name TEXT NOT NULL, snapshot_id TEXT NOT NULL, hold_id TEXT NOT NULL,"
-                " result_meta TEXT NOT NULL, created_at TEXT NOT NULL)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_analyses_workspace"
-                " ON analyses(workspace_id, created_at DESC)"
-            )
-        with self._connect() as conn:
-            # The dialect columns (#875): an existing store gains them, and its rows are
-            # the legacy analyses they describe. The write lock is taken before the
-            # columns are read, so two processes opening one old store add each column
-            # once — the second waits, then finds them present.
-            conn.execute("BEGIN IMMEDIATE")
-            present = {row[1] for row in conn.execute("PRAGMA table_info(analyses)")}
-            for name, definition in _ADDED_COLUMNS:
-                if name not in present:
-                    conn.execute(f"ALTER TABLE analyses ADD COLUMN {name} {definition}")
+        SCHEMA.bring_up_to_date(path, lambda: sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS))
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
