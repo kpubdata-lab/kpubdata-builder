@@ -757,6 +757,16 @@ docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio u
 - **Studio 는 Builder 를 부르지 않는다. 사용자의 브라우저가 부른다**(§1). `STUDIO_BUILDER_API_URL` 은
   브라우저가 닿는 Builder 주소이고, Studio 페이지의 오리진은 `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 에 있어야 한다.
   둘 다 비우면 Studio 는 내장 데모 데이터로 뜬다.
+- **Ask KPubData 는 기본이 꺼짐이다**(kpubdata-studio#933). `STUDIO_ASSISTANT_ENABLED` 가 `true` 가 아니면
+  Studio 는 외부 AI 로 질문도 근거도 보내지 않고, 페이지의 Content-Security-Policy `connect-src` 에도 `https:`
+  가 없다. 켜려면 `STUDIO_ASSISTANT_ENABLED=true` 와 함께 `STUDIO_ASSISTANT_ALLOWED_ORIGINS` 에 부를 수 있는
+  https origin 을 공백으로 구분해 적는다(예: `https://api.openai.com`). 켜면서 비우거나 https 가 아닌 값을
+  적으면 컨테이너가 이유를 밝히고 멈춘다. 사용자가 적은 주소는 이 목록 안에 있어야 한다.
+- **`STUDIO_ACCOUNT_URL`** 은 계정 화면(비밀번호 변경·탈퇴)이 여는 로그인 서비스의 주소다. 비우면 Studio 가
+  `<OIDC_ISSUER>/account` 를 쓴다.
+- **`STUDIO_REF` 는 위 기능이 들어간 Studio 커밋 이상이어야 한다.** 그보다 앞선 커밋(예: 이전 기본값
+  `023f0c3`)으로 빌드한 Studio 는 `ASSISTANT_*` 를 읽지 못해 사용자가 적은 아무 https 주소로 보낸다.
+  `tests/unit/test_compose_profiles_smoke.py` 가 기본값이 그 아래로 내려가면 실패시킨다.
 - **CUBRID 스택(`infra/cubrid/`)은 이 묶음에 들어오지 않는다.** CUBRID 백엔드는 퇴역이 제안돼 있다(ADR 0022,
   #1094). 그 compose 는 그대로 두고, 아래 게시 확인에서 그 이미지가 받아지는지만 본다.
 - **Keycloak 은 이 묶음에 없다.** 인증 서버를 직접 운영할지 관리형 서비스를 쓸지는 아직 정하지 않았다

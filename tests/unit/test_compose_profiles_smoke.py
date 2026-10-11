@@ -67,6 +67,55 @@ def test_studio_is_built_from_a_pinned_commit_not_pulled() -> None:
     assert re.fullmatch(r"[0-9a-f]{40}", context.group(1))
 
 
+#: Studio commits, oldest first. ``STUDIO_REF``'s default must be one of these at or
+#: after ``MINIMUM_STUDIO_REF``. Bumping the default means appending the new commit here.
+KNOWN_STUDIO_REFS = (
+    "023f0c3c84a2d794bf68aa027ef0e4b56bfd1ade",  # kpubdata-studio#926: before #933
+    "07c70390ac1ecb6548ba3f11958ec7f01746c959",  # kpubdata-studio#933: assistant off by default
+    "3d60c5927eaac4fcf2fb20829ce82fcd0f03083f",  # kpubdata-studio#936
+    "978216b44a7e9fd805490758f7d176c002d00582",  # kpubdata-studio#938
+)
+#: The merge commit of kpubdata-studio#933. An older Studio lets Ask KPubData send
+#: questions and data to any https address.
+MINIMUM_STUDIO_REF = "07c70390ac1ecb6548ba3f11958ec7f01746c959"
+
+
+def _studio_ref() -> str:
+    build = _services()["studio"]["build"]
+    assert isinstance(build, dict)
+    found = re.search(r"\$\{STUDIO_REF:-(\w+)\}", str(build["context"]))
+    assert found
+    return found.group(1)
+
+
+def test_studio_ref_is_not_older_than_the_assistant_off_by_default_commit() -> None:
+    ref = _studio_ref()
+
+    assert ref in KNOWN_STUDIO_REFS, "add the new Studio commit to KNOWN_STUDIO_REFS, oldest first"
+    assert KNOWN_STUDIO_REFS.index(ref) >= KNOWN_STUDIO_REFS.index(MINIMUM_STUDIO_REF)
+
+
+def test_studio_passes_the_assistant_and_account_settings_and_keeps_the_assistant_off() -> None:
+    environment = _services()["studio"]["environment"]
+    assert isinstance(environment, dict)
+
+    assert environment["ASSISTANT_ENABLED"] == "${STUDIO_ASSISTANT_ENABLED:-false}"
+    assert environment["ASSISTANT_ALLOWED_ORIGINS"] == "${STUDIO_ASSISTANT_ALLOWED_ORIGINS:-}"
+    assert environment["ACCOUNT_URL"] == "${STUDIO_ACCOUNT_URL:-}"
+
+
+def test_the_smoke_tells_an_assistant_that_is_off_from_one_that_is_on() -> None:
+    off_config = '"assistantEnabled": "false"'
+    off = {"Content-Security-Policy": "default-src 'self'; connect-src 'self' http://localhost:*"}
+    bare = {"Content-Security-Policy": "default-src 'self'; connect-src 'self' https: http://x"}
+
+    assert smoke.assistant_off(off_config, off)
+    assert not smoke.assistant_off(off_config, bare)
+    assert not smoke.assistant_off('"assistantEnabled": "true"', off)
+    assert not smoke.assistant_off("window.__KPUBDATA_CONFIG__ = {};", off)
+    assert not smoke.assistant_off(off_config, {})
+
+
 def test_studio_listens_on_the_loopback_by_default() -> None:
     assert _services()["studio"]["ports"] == ["${STUDIO_BIND:-127.0.0.1:8080}:8080"]
 
