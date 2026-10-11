@@ -26,9 +26,7 @@ _STUDIO_ROUTE = re.compile(r"^\s*path:\s*['\"]")
 _CRON = re.compile(r"^\s*(?:-\s*)?cron\s*:")
 
 
-def scope_indicators(
-    repository: str, title: str, name_status: str, patch: str
-) -> list[str]:
+def scope_indicators(repository: str, title: str, name_status: str, patch: str) -> list[str]:
     """Return objective signs of expansion, not a semantic approval decision."""
     reasons: list[str] = []
     if _FEATURE_TITLE.match(title):
@@ -99,9 +97,13 @@ def check_scope(
         problems.append("Require review:R3 and independent human approval for an exception.")
     risk = _RISK.search(body)
     if not risk or len(risk.group(1).strip()) < 20:
-        problems.append("Explain the existing user flow or concrete risk in 'Existing flow or risk:'.")
+        problems.append(
+            "Explain the existing user flow or concrete risk in 'Existing flow or risk:'."
+        )
     if not _ISSUE.search(body):
-        problems.append("Link the existing defect/stabilization issue with 'Refs #N' or 'Closes #N'.")
+        problems.append(
+            "Link the existing defect/stabilization issue with 'Refs #N' or 'Closes #N'."
+        )
 
     return () if exception and len(problems) == 1 else tuple(problems)
 
@@ -116,7 +118,10 @@ def _git(args: list[str]) -> str:
 def main() -> int:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if not event_path:
-        print("error: GITHUB_EVENT_PATH is required for the PR scope check", file=sys.stderr)
+        print(
+            "error: GITHUB_EVENT_PATH is required for the PR scope check",
+            file=sys.stderr,
+        )
         return 2
     try:
         payload = json.loads(Path(event_path).read_text(encoding="utf-8"))
