@@ -30,6 +30,7 @@ on:
       - "ops/caddy/**"
       - "scripts/proxy_chain_smoke.py"
       - "scripts/data_volume_smoke.py"
+      - "scripts/shutdown_drain_smoke.py"
       - ".github/workflows/docker.yml"
   push:
     branches: [main]
@@ -46,6 +47,7 @@ on:
       - "ops/caddy/**"
       - "scripts/proxy_chain_smoke.py"
       - "scripts/data_volume_smoke.py"
+      - "scripts/shutdown_drain_smoke.py"
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
@@ -156,6 +158,15 @@ jobs:
       # and brought up again.
       - name: Data volume smoke
         run: python3 scripts/data_volume_smoke.py --image kpubdata-builder:ci
+
+      # The production compose stops the way the deployment guide says (#1118). With a
+      # build running and two queued, `docker compose stop` ends the queued ones
+      # unstarted, lets the running one finish or asks it to stop when the grace period
+      # is over, and the container exits by itself before Docker's stop timeout; after a
+      # start on the same volume none of them runs again. A SIGKILL leaves the run for
+      # the next start to mark `credentials_required`.
+      - name: Shutdown drain smoke
+        run: python3 scripts/shutdown_drain_smoke.py --image kpubdata-builder:ci
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0

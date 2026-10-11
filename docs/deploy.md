@@ -200,6 +200,11 @@ docker run --rm -p 8000:8000 \
   둔다 — compose 의 `stop_grace_period: 120s`. Docker 의 기본값 10초로는 실행 중인 빌드가
   SIGKILL 로 끊긴다. 그렇게 끊긴 run 은 manifest 없이 남고, 다중 사용자 배포는 다음 기동 때
   `credentials_required` 로 표시한다(#683).
+  이 동작은 `scripts/shutdown_drain_smoke.py` 가 `Docker` 워크플로에서 실제 compose 와
+  이미지로 확인한다: 빌드 하나가 실행 중이고 둘이 대기 중일 때 `docker compose stop` 으로
+  내리고(유예 시간이 기본값일 때와 1초일 때), SIGKILL 로도 끊은 뒤, 같은 `/data` 로 다시 올려
+  각 run 의 상태를 읽는다. 확인하지 않는 것: provider 에서 가져오는 빌드, 빌드 둘이 동시에
+  실행 중인 경우, 작업의 키가 메모리에서 지워졌는지.
 
 ## 8. 동시성·풀·백프레셔
 
