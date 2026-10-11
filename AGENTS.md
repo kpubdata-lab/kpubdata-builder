@@ -11,6 +11,24 @@
 Implement KPubData Builder: the orchestration and artifact-pipeline layer that
 runs on top of `kpubdata`.
 
+
+## Stabilization-only scope
+
+Follow [product-family POLICY section 1.3](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md#13-안정화-전용-개발-모드--2026-10-12).
+The existing Builder contract and user flows are the frozen product boundary.
+Prioritize replay and HTTP regression fixes, ownership and credential safety,
+storage backup/restore integrity, resource limits, observability, stable
+Studio compatibility and reproducible releases. Do not introduce new source
+kinds, exporters, data stores, API operations, scheduled agents, deployment
+modes or unrelated transformations as routine work.
+
+The local `scripts/check_stabilization_scope.py` blocks a `feat` PR or a
+machine-detectable new surface unless a necessary existing-flow repair is
+documented for non-author human approval. The canonical exception process is
+only in POLICY section 1.3. Refactoring must preserve run state, cancellation,
+manifest, quality, PII and warehouse semantics; do not duplicate existing
+pipeline logic.
+
 ## Ground rules
 
 - Do not reimplement `kpubdata`'s provider logic here.
