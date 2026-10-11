@@ -57,11 +57,13 @@ class _Runner:
         self,
         *,
         approved: Sequence[str] = (),
+        no_verdict: Sequence[str] = (),
         discover: tuple[int, str, str] = (0, "  Endpoint: https://apis.data.go.kr/x/op\n", ""),
         monitor_exit: int = 0,
         issues: list[dict[str, Any]] | None = None,
     ) -> None:
         self.approved = set(approved)
+        self.no_verdict = set(no_verdict)
         self.discover = discover
         self.monitor_exit = monitor_exit
         self.issues = issues or []
@@ -76,9 +78,13 @@ class _Runner:
                 return subprocess.CompletedProcess(command, self.monitor_exit, "", "boom\n")
             state = Path(command[command.index("--state-file") + 1])
             data = yaml.safe_load(state.read_text(encoding="utf-8"))
+            # Like the real command: every dataset gets a verdict except those whose
+            # check gave none, which keep the status they were seeded with.
             for item in data["pending"]:
                 if item["dataset_id"] in self.approved:
                     item["status"] = "HEALTHY"
+                elif item["dataset_id"] not in self.no_verdict:
+                    item["status"] = "NEEDS_APPLICATION"
             state.write_text(yaml.safe_dump(data), encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, "", "")
         if command[:2] == ["kpubdata-builder", "discover"]:
@@ -289,6 +295,96 @@ def test_a_dry_run_runs_and_writes_no_issue(
     assert _main(runner, tmp_path, "--dry-run") == 0
     assert runner.commands("gh") == []
     assert "<!-- dataset-automation:end -->" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ carried approvals
+
+
+def test_the_approvals_an_issue_lists_are_read_back() -> None:
+    discovered = [report.Discovery(_PAGE, ("a",), "no endpoint", "x")]
+    block = report.render_block(
+        {"datago.mid_ta": "HEALTHY", "semas.zone_one": "HEALTHY", "datago.mid_fcst": "X"},
+        discovered,
+        today="2026-10-12",
+        run_url="",
+    )
+
+    assert report.approved_in(f"intro\n\n{block}\n\n## Notes\n- `not.this`\n") == {
+        "datago.mid_ta",
+        "semas.zone_one",
+    }
+    assert report.approved_in(report.render_block({}, [], today="d", run_url="")) == set()
+    assert report.approved_in("no report here\n- `datago.mid_ta`") == set()
+
+
+def test_an_approval_seeds_the_state_file_as_healthy(tmp_path: Path) -> None:
+    seen: dict[str, str] = {}
+
+    def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        state = Path(list(command)[list(command).index("--state-file") + 1])
+        data = yaml.safe_load(state.read_text(encoding="utf-8"))
+        seen.update({item["dataset_id"]: item["status"] for item in data["pending"]})
+        return subprocess.CompletedProcess(list(command), 0, "", "")
+
+    report.run_monitor(_PENDING, run, tmp_path, approved_before={"datago.mid_ta"})
+
+    assert seen == {
+        "datago.mid_fcst": "NEEDS_APPLICATION",
+        "datago.mid_ta": "HEALTHY",
+        "semas.zone_one": "NEEDS_APPLICATION",
+    }
+
+
+def test_an_approval_whose_check_gives_no_verdict_does_not_change_the_report(
+    tmp_path: Path,
+) -> None:
+    first = _Runner(approved=["datago.mid_ta"])
+    _main(first, tmp_path)
+    # Tonight the approved dataset's check is rate limited: monitor keeps its status.
+    again = _Runner(no_verdict=["datago.mid_ta"], issues=[_open_issue(first.bodies[0])])
+
+    assert _main(again, tmp_path) == 0
+
+    assert again.writes() == []
+
+
+def test_an_approval_that_is_refused_again_rewrites_the_report(tmp_path: Path) -> None:
+    first = _Runner(approved=["datago.mid_ta"])
+    _main(first, tmp_path)
+    again = _Runner(issues=[_open_issue(first.bodies[0])])
+
+    assert _main(again, tmp_path) == 0
+
+    edit, _comment = again.writes()
+    assert edit[1:4] == ["issue", "edit", "9"]
+    assert "- `datago.mid_ta`" not in again.bodies[0]
+
+
+def test_a_newly_approved_dataset_rewrites_the_report(tmp_path: Path) -> None:
+    first = _Runner(approved=["datago.mid_ta"])
+    _main(first, tmp_path)
+    again = _Runner(
+        approved=["datago.mid_ta", "semas.zone_one"], issues=[_open_issue(first.bodies[0])]
+    )
+
+    assert _main(again, tmp_path) == 0
+
+    assert "- `semas.zone_one`" in again.bodies[0]
+    assert "- `datago.mid_ta`" in again.bodies[0]
+
+
+def test_an_unreadable_issue_list_exits_one_before_monitor_runs(tmp_path: Path) -> None:
+    class _Failing(_Runner):
+        def __call__(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+            if list(command)[:3] == ["gh", "issue", "list"]:
+                self.calls.append(list(command))
+                return subprocess.CompletedProcess(list(command), 1, "", "no token")
+            return super().__call__(command)
+
+    runner = _Failing()
+
+    assert _main(runner, tmp_path) == 1
+    assert runner.commands("kpubdata-builder") == []
 
 
 def test_an_unreadable_catalogue_exits_two(tmp_path: Path) -> None:
