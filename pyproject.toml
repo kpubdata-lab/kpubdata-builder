@@ -82,12 +82,12 @@ publish = ["huggingface-hub>=0.23,<3", "xmltodict>=0.13,<2", "kaggle>=1.6,<2"]
 # The legacy dataset publish scripts (scripts/pipeline, scripts/publish_to_hf.py, ADR 0018;
 # run by publish-dataset.yml) still read and write frames with Polars. Builder itself has
 # not imported it since #876, so the deployed image (EXTRAS=publish) does not carry it.
-legacy-publish = ["polars>=1.0,<2"]
+legacy-publish = ["polars>=1.0,<3"]
 dev = [
   "build>=1.2,<2",
   # The tests compare the DuckDB engine against the Polars one it replaced
   # (tests/support, #876) and build test tables from frames.
-  "polars>=1.0,<2",
+  "polars>=1.0,<3",
   "mypy>=1.10,<3",
   "pytest>=8.2,<10",
   "pytest-cov>=5,<8",
