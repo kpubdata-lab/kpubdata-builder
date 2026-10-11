@@ -19,3 +19,23 @@ updates:
     # `scripts/check_action_pins.py --bump-kpubdata SHA` (#1003).
     ignore:
       - dependency-name: "kpubdata-lab/kpubdata*"
+  # Base images (#1107): the `FROM` lines of the Dockerfile, and the images the compose
+  # files pin by tag (Caddy, CUBRID). A bump is a pull request like any other: it runs
+  # the Docker workflow's build, smokes and scan, and is merged by a person. Nothing
+  # here merges on its own.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/"
+      - "/infra/cubrid"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"

@@ -394,6 +394,38 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 포함되는 파일이 바뀌어야 재스캔이 의미 있음). 문서·테스트 전용 변경은 스캔을
 트리거하지 않으므로 기능 PR과 독립적인 신호를 유지한다.
 
+### 배포 중인 이미지의 정기 재스캔 (#1107)
+
+위 게이트는 이미지를 **빌드할 때** 한 번 본다. 이미지는 아무도 다시 빌드하지 않아도 새
+권고가 붙고, compose 가 다른 곳에서 받아 오는 이미지(Caddy, CUBRID)는 그 게이트가 본 적이
+없다. `image-rescan.yml` 워크플로가 매일(04:41 UTC) `scripts/image_rescan.py` 를 돌린다.
+
+| 항목 | 값 |
+| :--- | :--- |
+| 대상 | `docker-compose.prod.app.yml` 과 `infra/cubrid/docker-compose.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:latest`, `caddy:2.8-alpine`, `cubrid/cubrid:11.3`, `ghcr.io/kpubdata-lab/kpubdata-builder:cubrid` |
+| severity | `CRITICAL,HIGH`. **수정본이 없는 것도 포함한다** — 빌드 게이트(`ignore-unfixed: true`)와 다르다 |
+| 결과 | 이미지마다 열린 이슈 하나(`fix(security): <이미지> has HIGH or CRITICAL vulnerabilities`, 라벨 `epic:distribution`·`security`). 스캔한 digest 와, 취약점마다 수정본이 나온 버전 또는 `no fix published` 를 적는다 |
+| 중복 | 목록이 지난번과 같으면 아무것도 쓰지 않는다. 달라지면 같은 이슈의 목록을 고쳐 쓰고 무엇이 달라졌는지 댓글을 단다. 새 이슈를 또 열지 않는다 |
+| 실패 | 이미지 하나라도 스캔하지 못했거나 이슈를 쓰지 못하면 워크플로가 실패한다. 스캔 실패를 "취약점 없음" 으로 적지 않는다 |
+
+- **사람이 적는 부분.** 수정본이 있는지는 스캔이 안다. 그 코드에 실제로 닿을 수 있는지,
+  영향이 무엇인지, 긴급 조치가 필요한지는 스캔이 알 수 없으므로 이슈의 `Triage` 에
+  `not assessed` 로 두고 사람이 채운다. 재스캔은 목록 부분만 고쳐 쓰고 `Triage` 는 그대로
+  둔다.
+- **이슈를 닫지 않는다.** 취약점이 더 보고되지 않으면 이슈에 그렇게 적을 뿐이다. 배포가
+  스캔한 digest 를 실제로 쓰고 있는지는 사람이 확인하고 닫는다.
+- **실제로 돌고 있는 digest 를 스캔하려면** 워크플로를 수동 실행하면서 `images` 에
+  `ghcr.io/kpubdata-lab/kpubdata-builder@sha256:...` 를 넣는다. 정기 실행은 compose 의
+  기본 tag 가 지금 가리키는 것을 본다 — VM 이 예전 digest 를 계속 쓰고 있어도 워크플로는
+  알 수 없다.
+- **base 이미지 갱신**은 Dependabot 이 연다(`docker`: Dockerfile 의 `FROM`,
+  `docker-compose`: compose 의 tag). 다른 변경과 같은 pull request 이고, `Docker`
+  워크플로의 빌드·스모크·스캔을 거쳐 사람이 병합한다. 자동 병합은 켜지 않는다.
+- base 를 고쳐 다시 빌드한 이미지는 **새 버전으로** 낸다. `docker.yml` 은 게시한 digest 를
+  출력하고 SBOM 과 provenance 를 붙인다. 그 워크플로를 이미 나간 release tag 에서 수동
+  실행하면 같은 tag 가 새 digest 로 다시 게시되므로 그렇게 하지 않는다 — 이것을 막는
+  장치는 아직 없고, 승인 절차도 이 문서에 정해져 있지 않다.
+
 ## 12. 단일 VM 프로덕션 배포 (ADR 0017)
 
 풀스택(Studio 프론트엔드 + Builder 백엔드)을 VM 한 대에 배포하는 참조 토폴로지는
@@ -653,6 +685,43 @@ Cloudflare 를 거친 실제 요청으로 한 번 확인한다. 서로 다른 �
 2. 다른 쪽에서 같은 시각에 요청해 `401`(또는 올바른 키로 `200`)을 받는다. 여기서도
    `429` 가 나오면 두 클라이언트가 한 버킷에 있는 것이다 — Caddy 가 Cloudflare 엣지를
    신뢰하지 못하고 있다(대역 목록, `caddy reload` 여부를 본다).
+
+#### 응답 보안 헤더 (#1107)
+
+Caddy 는 거쳐 가는 모든 응답에 아래 헤더를 붙인다(`ops/caddy/Caddyfile` 의
+`security_headers`). Builder 자신은 이 헤더들을 보내지 않으므로, Caddy 를 거치지 않는
+경로(§"origin 에 직접 닿는 경로를 막는다")의 응답에는 없다.
+
+| 헤더 | 값 | 이유 |
+| :--- | :--- | :--- |
+| `Strict-Transport-Security` | `max-age=31536000` | TLS 로 나간 응답에만. 1년 동안 HTTPS 로만 오게 한다 |
+| `X-Frame-Options` | `DENY` | 다른 페이지의 iframe 삽입 거부 (`frame-ancestors` 를 모르는 브라우저용) |
+| `Content-Security-Policy` | `frame-ancestors 'none'` | 같은 거부. Builder 는 JSON API 라 어떤 화면에도 frame 으로 들어갈 이유가 없다 |
+| `X-Content-Type-Options` | `nosniff` | 본문을 `Content-Type` 과 다른 형식으로 추측하지 않게 한다 |
+| `Referrer-Policy` | `no-referrer` | API 주소의 경로(run id, 테이블 이름)를 다른 사이트에 넘기지 않는다 |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), usb=()` | API 응답이 쓸 일이 없는 브라우저 기능 |
+
+- **HSTS 에 `includeSubDomains` 와 `preload` 는 없다.** 이 이름 옆의 다른 이름들이 모두
+  HTTPS 인지는 도메인 전체를 본 뒤에 정할 일이고, `preload` 는 브라우저에 실려 나간 뒤
+  되돌리기 어렵다. 넣기로 하면 Caddyfile 의 한 줄을 고치고, 그것을 금지하는 테스트
+  (`tests/unit/test_prod_proxy_chain.py`)를 함께 고친다.
+- **HSTS 는 평문 HTTP 응답에는 붙지 않는다.** 브라우저는 평문 응답의 이 헤더를 무시하고
+  RFC 6797 §7.2 도 보내지 말라고 한다.
+- **Cloudflare 에서 HSTS 를 따로 켜면** 엣지가 이 헤더를 자기 값으로 바꿔 쓴다. 거기서
+  `includeSubDomains`·`preload` 를 켜면 위 결정과 달라지므로 켜지 않는다.
+- `scripts/proxy_chain_smoke.py` 가 실제 Caddy 를 거친 응답(Builder 가 200 으로 답한 것과
+  401 로 답한 것)에서 각 헤더가 **한 번씩** 그 값으로 오는지 본다. HSTS 는 Caddy 가 자기
+  로컬 인증기관의 인증서로 TLS 를 여는 이름(`caddy.localhost`)으로 요청해 있는지 보고,
+  평문 요청에는 없는지 본다. 같은 스모크가 러너의 Chrome 으로 다른 origin 의 페이지를
+  열어, Caddy 를 거친 응답을 iframe 에 띄우기를 **브라우저가 거부하는지** 본다 — 헤더가
+  없는 응답(Builder 포트 직접)은 같은 페이지에서 거부되지 않는 것까지 함께 본다.
+- **확인하지 않은 것:** 공인 인증서와 Cloudflare 를 거친 실제 배포의 응답. 첫 배포 때
+  한 번 본다.
+
+  ```bash
+  curl -sI https://<APP_DOMAIN>/healthz | grep -i -E \
+    'strict-transport|x-frame|content-security|x-content-type|referrer|permissions'
+  ```
 
 #### 다른 프록시를 쓸 때
 

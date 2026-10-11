@@ -5,6 +5,10 @@ address, and behind a proxy that address comes from ``X-Forwarded-For``. These h
 configuration: Caddy trusts Cloudflare's published ranges and nothing wider, Builder
 trusts Caddy's one fixed address, and no other container can be given that address.
 They do not start a container; ``scripts/proxy_chain_smoke.py`` runs the chain.
+
+The same Caddyfile sets the security headers of every response (#1107). What it is
+configured to send is read here; that a response through Caddy carries it, and that a
+browser refuses to frame one, is the smoke's to show.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ def _load_script(name: str) -> ModuleType:
 
 
 ranges = _load_script("check_cloudflare_ranges")
+smoke = _load_script("proxy_chain_smoke")
 
 
 def _default(value: str, name: str) -> str:
@@ -117,6 +122,106 @@ class TestCaddy:
             if network.prefixlen < (13 if network.version == 4 else 29)
         ]
         assert too_wide == []
+
+
+def _caddy_directives() -> list[str]:
+    text = _CADDYFILE.read_text(encoding="utf-8")
+    return [line.strip() for line in text.splitlines() if not line.strip().startswith("#")]
+
+
+class TestSecurityHeaders:
+    def test_the_caddyfile_sets_each_header_the_smoke_expects(self) -> None:
+        directives = _caddy_directives()
+
+        assert sorted(smoke.SECURITY_HEADERS) == [
+            "Content-Security-Policy",
+            "Permissions-Policy",
+            "Referrer-Policy",
+            "X-Content-Type-Options",
+            "X-Frame-Options",
+        ]
+        for name, value in smoke.SECURITY_HEADERS.items():
+            assert f'{name} "{value}"' in directives
+
+    def test_every_site_sends_them(self) -> None:
+        text = _CADDYFILE.read_text(encoding="utf-8")
+        sites = re.findall(r"^(\S[^\n{]*) \{\n((?:\t.*\n|\n)*?)\}", text, flags=re.MULTILINE)
+        served = {name: body for name, body in sites if not name.startswith("(")}
+
+        assert sorted(served) == [":80", "{$APP_DOMAIN}"]
+        for body in served.values():
+            assert "\timport security_headers\n" in body
+
+    def test_hsts_is_a_year_over_tls_only_and_binds_no_other_name(self) -> None:
+        directives = _caddy_directives()
+        hsts = [line for line in directives if "Strict-Transport-Security" in line]
+
+        # One line, behind the matcher for requests that arrived over TLS.
+        assert hsts == ['header @over_tls Strict-Transport-Security "max-age=31536000"']
+        assert "@over_tls protocol https" in directives
+        assert smoke.HSTS_VALUE == "max-age=31536000"
+        # Not decided for the whole domain (#1107): neither is forced.
+        assert not [line for line in directives if "includeSubDomains" in line]
+        assert not [line for line in directives if "preload" in line]
+
+    def test_framing_is_refused_for_every_origin(self) -> None:
+        assert smoke.SECURITY_HEADERS["Content-Security-Policy"] == "frame-ancestors 'none'"
+        assert smoke.SECURITY_HEADERS["X-Frame-Options"] == "DENY"
+
+
+class TestSmokeHeaderCheck:
+    _GOOD = [(name.lower(), value) for name, value in smoke.SECURITY_HEADERS.items()]
+
+    def test_a_response_with_each_header_once_has_no_problem(self) -> None:
+        over_tls = [*self._GOOD, ("Strict-Transport-Security", "max-age=31536000")]
+
+        assert smoke.header_problems("r", self._GOOD, over_tls=False) == []
+        assert smoke.header_problems("r", over_tls, over_tls=True) == []
+
+    def test_a_missing_a_different_and_a_repeated_header_are_problems(self) -> None:
+        missing = [pair for pair in self._GOOD if pair[0] != "x-frame-options"]
+        different = [*missing, ("X-Frame-Options", "SAMEORIGIN")]
+        repeated = [*self._GOOD, ("X-Frame-Options", "DENY")]
+
+        assert smoke.header_problems("r", missing, over_tls=False) == [
+            "r: X-Frame-Options is [], expected ['DENY']"
+        ]
+        assert smoke.header_problems("r", different, over_tls=False) == [
+            "r: X-Frame-Options is ['SAMEORIGIN'], expected ['DENY']"
+        ]
+        assert smoke.header_problems("r", repeated, over_tls=False) == [
+            "r: X-Frame-Options is ['DENY', 'DENY'], expected ['DENY']"
+        ]
+
+    def test_hsts_is_required_over_tls_and_refused_over_plain_http(self) -> None:
+        hsts = ("Strict-Transport-Security", "max-age=31536000")
+
+        assert smoke.header_problems("r", self._GOOD, over_tls=True) == [
+            "r: Strict-Transport-Security is [], expected ['max-age=31536000']"
+        ]
+        assert smoke.header_problems("r", [*self._GOOD, hsts], over_tls=False) == [
+            "r: Strict-Transport-Security ['max-age=31536000'] was sent over plain HTTP"
+        ]
+
+    def test_hsts_with_subdomains_or_preload_is_a_problem(self) -> None:
+        wide = ("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+
+        (problem,) = smoke.header_problems("r", [*self._GOOD, wide], over_tls=True)
+
+        assert "includeSubDomains; preload" in problem
+
+    def test_a_refused_frame_is_read_from_the_browsers_log(self) -> None:
+        # A console line of Chrome 155, as written with --enable-logging=stderr.
+        log = (
+            "[84064:2806576:1011/093109.577628:INFO:CONSOLE:0] \"Framing 'http://caddy/' "
+            'violates the following Content Security Policy directive: "frame-ancestors '
+            "'none'\". The request has been blocked.\n\", source:  (0)\n"
+            '[84064:2806576:1011/093109.6:INFO:CONSOLE:0] "something about http://10.0.0.9:8000"\n'
+        )
+        urls = ["http://caddy/healthz", "http://10.0.0.9:8000/healthz"]
+
+        assert smoke.refused_frames(log, urls) == ["http://caddy/healthz"]
+        assert smoke.refused_frames("", urls) == []
 
 
 class TestCloudflareRangeCheck:
