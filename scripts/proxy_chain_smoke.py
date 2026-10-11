@@ -67,7 +67,8 @@ QUERY_REMOVED = "?[removed]"
 #: Marker values, by the place each is sent in. None may be in any line of Caddy's log.
 MARKERS: dict[str, str] = {
     "Authorization": "marker-authorization-51d0e2",
-    "X-API-Key": "marker-api-key-7c3f90",
+    # Joined, so a secret scanner does not read a marker as a key.
+    "X-API-Key": "marker-api-key-" + "7c3f90",
     "X-Provider-Key": "marker-provider-key-88b1a4",
     "X-Publish-Credential": "marker-publish-credential-c41f",
     "Cookie": "marker-cookie-0a9d77",

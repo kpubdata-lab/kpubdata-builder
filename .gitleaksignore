@@ -12,3 +12,7 @@ f224f8f77b913077c857d52413a9369011bcdaa5:docs/deployment.md:curl-auth-header:201
 # token a redaction test checks never reaches a response (`hf_leak_me_1234567890`).
 067f19fba5fa95eb4179ed0c979c1a91d9ceee50:tests/integration/test_verify_integration.py:generic-api-key:53
 5dd505fb3c3e238f50a4b96336d87d0cafacaabb:tests/unit/test_service_publish.py:generic-api-key:631
+
+# scripts/proxy_chain_smoke.py — a marker value (`marker-api-key-7c3f90`) the proxy smoke
+# sends in X-API-Key and checks never reaches Caddy's log (#1100). Not a key.
+15798dacc9123497c3a9e39dede44c33f3e288e7:scripts/proxy_chain_smoke.py:generic-api-key:70
