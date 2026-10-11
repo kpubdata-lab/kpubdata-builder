@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.118.0",
+  "contract_version": "1.119.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -6276,6 +6276,33 @@
       "required_type_broken": {
         "error": 12345,
         "code": "query_busy"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 429,
+      "example": "QueryRateLimited",
+      "current": {
+        "error": "you have run as many queries as the server allows for now; try again shortly",
+        "code": "query_rate_limited",
+        "retry_after_seconds": 12
+      },
+      "with_additive_fields": {
+        "error": "you have run as many queries as the server allows for now; try again shortly",
+        "code": "query_rate_limited",
+        "retry_after_seconds": 12,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "query_rate_limited",
+        "retry_after_seconds": 12
       },
       "broken_path": "$.error"
     },

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.118.0"
+  version: "1.119.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.119.0 adds a per-user query rate and a per-provider egress limit, and every 429 that says how long to wait sends `Retry-After` (#1245, additive). In a multi-user deployment each user may start `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in any 60 seconds; one more of `POST /query`, `POST /warehouse/query`, `POST /warehouse/rows`, `POST /warehouse/aggregate` or `POST /warehouse/exports` is answered 429 `query_rate_limited` with `retry_after_seconds`, before anything is resolved or run. `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` bounds the calls Builder makes to one provider in any 60 seconds, for all users together: a build waits for its turn, `POST /preview` answers 429 `provider_egress_limited` with `retry_after_seconds`, and `POST /providers/{provider}/probe` lists the datasets it did not reach in `not_probed`. Both are off (`0`) by default. A 429 whose body carries `retry_after_seconds` — `auth_throttled` and `probe_rate_limited` included — now also carries the `Retry-After` header with the same number (`components.headers.RetryAfter`). A query whose client closes the connection while it runs is stopped and gets no response.
     v1.118.0 lets a deployment refuse a build there is no room for (#1099, additive). Before `POST /builds` queues a job it may now answer 503 `disk_space_low`, when the filesystem under the output directory has less free space than `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB`, or — in a multi-user deployment — 409 `run_storage_quota_exceeded`, when the requester's finished runs and one reservation of `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` per queued or running build of theirs, this one included, would pass `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`; the body gives `limit_bytes` and `used_bytes`. Nothing is recorded for a refused run. Every one of these settings is off until the maintainer sets it, so a deployment that sets none answers as before. The synchronous `POST /build` is unchanged.
     v1.117.0 tells readiness apart from liveness and adds metrics (#1101, additive). `GET /readyz` answers without authentication, as `GET /healthz` does: 200 `ready` when the build index can be read, the output directory can be written, its filesystem has the free space the deployment asks for, and the build workers run; 503 `not_ready` otherwise, with the same body naming the check that failed. A full build queue is not a failure: it is `accepting_builds: false` and the status stays `ready`. The body names checks and states only, never a path, a size or an error text, and the answer is reused for a few seconds whoever asks. `GET /metrics` gives an administrator the Prometheus text page: queue depth, running builds, workers, build durations and queue waits, responses by status and stable code (429 and 5xx among them), free disk and the readiness checks. Anyone else gets 403. `GET /healthz` is unchanged and stays the liveness probe.
     v1.116.0 gives each run of `GET /admin/runs` the stable code and the stage of the failure its `error` states (#1120, additive): `error_code` and `error_stage`, null when the run did not fail or the cause is not one of Builder's codes and stages. Both are Builder's vocabulary only — a provider refusal reason, `pipeline_failed`, a composition rule, a refused commit's reason, or why a run was cancelled or ended without a manifest — so a client chooses what to tell an administrator without parsing the sentence. The build index keeps them beside `error` and a rebuild of the index restores them. A single-user deployment now also fails, at its next start, the runs a restart interrupted: before, they were left unfinished for good.
@@ -584,7 +585,12 @@ paths:
           description: >-
             `probe_rate_limited` (#1059) — 같은 사용자의 probe 가 아직 실행 중이거나, 같은
             provider 를 방금 probe 했다. provider 는 호출되지 않았다. `retry_after_seconds`
-            뒤에 다시 시도한다(실행 중인 probe 가 있으면 그보다 길어질 수 있다).
+            뒤에 다시 시도한다(실행 중인 probe 가 있으면 그보다 길어질 수 있다). 같은 수가
+            `Retry-After` 헤더로도 온다(#1245). provider 의 egress 한도(#1245)에 닿으면 429 가
+            아니라 200 이고, 닿지 못한 dataset 이 `not_probed` 에 온다.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -1056,6 +1062,13 @@ paths:
             `KPUBDATA_BUILDER_MAX_PREVIEWS` set, a preview waits for a slot up to
             `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` — the bound a synchronous build waits
             for its slot — and is then turned away having fetched nothing.
+            `provider_egress_limited` (#1245): Builder has called one of the spec's
+            providers `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` times in the last 60
+            seconds, for all users together; `retry_after_seconds` and `Retry-After` say
+            when the next call is allowed. Pages the preview fetched before stay counted.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3277,7 +3290,12 @@ paths:
                     error: query artifact unavailable
                     code: artifact_unavailable
         "429":
-          description: query 전용 capacity 포화. child process는 생성되지 않는다.
+          description: >-
+            query 전용 capacity 포화(`query_busy`). child process는 생성되지 않는다.
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3288,6 +3306,12 @@ paths:
                   value:
                     error: query is busy
                     code: query_busy
+                QueryRateLimited:
+                  summary: 이 사용자가 60초 안에 시작할 수 있는 질의를 다 썼다
+                  value:
+                    error: you have run as many queries as the server allows for now; try again shortly
+                    code: query_rate_limited
+                    retry_after_seconds: 12
         "504":
           description: query process timeout 및 강제 종료
           content:
@@ -3517,7 +3541,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Query capacity is exhausted (`query_busy`).
+          description: >-
+            Query capacity is exhausted (`query_busy`).
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3624,7 +3653,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Query capacity is exhausted (`query_busy`); a page takes a query slot.
+          description: >-
+            Query capacity is exhausted (`query_busy`); a page takes a query slot.
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3756,7 +3790,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/WarehouseAggregateRefusal"
         "429":
-          description: Query capacity is exhausted (`query_busy`); an aggregate takes a query slot.
+          description: >-
+            Query capacity is exhausted (`query_busy`); an aggregate takes a query slot.
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3940,6 +3979,10 @@ paths:
           description: >-
             Query capacity is exhausted (`query_busy`), or the workspace already keeps
             the most exports it may (`export_quota_exceeded`).
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -4848,6 +4891,13 @@ components:
         trying again shortly is right. Administrators and API-key callers never get it.
 
   headers:
+    RetryAfter:
+      description: >-
+        Seconds to wait before sending the request again (#1245). Sent on a 429 whose
+        body carries `retry_after_seconds`, with the same number. Readable from a
+        cross-origin page (`Access-Control-Expose-Headers`, #995).
+      schema:
+        type: string
     RequestId:
       description: >-
         The id this request is logged under (#994). Sent on every response a handler
@@ -4863,8 +4913,12 @@ components:
       description: >-
         Too many failed authentication attempts from this client address (#994) — any
         operation can answer this before it runs. `retry_after_seconds` says how long
-        the window has left. `x-status` names the status code, since no single
-        operation references this response.
+        the window has left; the `Retry-After` header says the same (#1245).
+        `x-status` names the status code, since no single operation references this
+        response.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
           schema:
@@ -5246,6 +5300,12 @@ components:
             `retry_of_in_progress`(#1103, 409 on `POST /builds`, 400 on `POST /build`) —
             the run named in `retry_of` has not ended; the body carries `retry_of` and
             that run's `status`.
+            `query_rate_limited`(#1245, 429) — a query operation in a multi-user
+            deployment when the requester has started as many queries in the last 60
+            seconds as the deployment allows. `provider_egress_limited`(#1245, 429) —
+            `POST /preview` when Builder has called one of the spec's providers as often
+            in the last 60 seconds as the deployment allows, for all users together.
+            Both carry `retry_after_seconds` and the `Retry-After` header.
         redistribution:
           description: >-
             `code: redistribution_forbidden`일 때만 온다(#688): 판정과 source별 이유.

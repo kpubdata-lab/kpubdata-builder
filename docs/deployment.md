@@ -52,9 +52,10 @@
 | `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` | `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES` 를 판단할 때 대기·실행 중인 build 하나가 미리 차지하는 크기(바이트, #1099). build 의 크기는 끝나야 알 수 있으므로 이 예약으로 동시에 들어온 제출이 함께 상한을 넘지 못하게 한다. `0` 이면 예약 없이, 끝난 run 의 합계가 상한에 닿았을 때에만 거절한다. 값은 메인테이너가 정한다(kpubdata#812) | `0` | 선택 |
 | `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` | 출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `POST /builds` 가 build 를 받지 않고 503 `disk_space_low` 로 답한다(#1099). 여유 공간은 `/readyz` 와 같은 방식으로 잰다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다 | 미설정 (끔) | 선택 |
 | `KPUBDATA_BUILDER_MAX_WORKERS` | 동시 요청 스레드 상한 | `10` | 선택 |
-| `KPUBDATA_BUILDER_MAX_BUILDS` | 동시에 도는 build 수의 상한 — 동기 `POST /build` 와 비동기 job 을 합쳐서(`serve --max-builds`, #1028). 한도에 닿으면 동기 build 는 기다리고 비동기 job 은 큐에 남는다 | `KPUBDATA_BUILDER_MAX_WORKERS` 값 | 선택 |
+| `KPUBDATA_BUILDER_MAX_BUILDS` | 동시에 도는 build 수의 상한 — 동기 `POST /build` 와 비동기 job 을 합쳐서(`serve --max-builds`, #1028). 한도에 닿으면 동기 build 는 기다리고 비동기 job 은 큐에 남는다. 설정하지 않으면 2 이고, `KPUBDATA_BUILDER_MAX_WORKERS` 가 그보다 작으면 그 값이다(#1245). 예전 기본값은 `MAX_WORKERS` 값(10)이었다 — 아래 메모리 예산이 build 2 개로 계산돼 있고, 동기 build 10 개가 요청 스레드를 모두 잡을 수 있었다. production compose 는 전부터 2 를 넘긴다 | `2` (`MAX_WORKERS` 가 더 작으면 그 값) | 선택 |
 | `KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS` | 비동기 build 한 건이 실행을 시작한 뒤 돌 수 있는 시간(초, #1119). 큐에서 기다린 시간은 세지 않는다. 넘으면 취소를 요청하고, build 는 다음 안전한 단계 경계에서 멈춰 `cancelled` 로 끝나며 그 `run_cancelled` 이벤트가 이유를 말한다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다 | `21600` (6시간) | 선택 |
 | `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` | 다중 사용자 배포에서 사용자 한 명이 동시에 대기·실행 중으로 둘 수 있는 비동기 build 수(#1189). 넘으면 `POST /builds` 가 429 `build_owner_limit` 로 답하고, 큐는 다른 사용자에게 열려 있다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `2` | 선택 |
+| `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` | Builder 가 provider 하나를 60초 동안 부를 수 있는 횟수 — 모든 사용자와 모든 build·preview·probe 를 합쳐서, provider 마다(#1245). provider 는 서버 주소 하나만 보므로, 한 사용자가 그 주소를 막히게 하면 모두가 막힌다. 한 번은 kpubdata 에서 받는 page 하나(`list` 호출 하나, 또는 `list_all` 의 page 하나)와 probe 의 dataset 하나다. build 는 차례를 기다리고, preview 는 429 `provider_egress_limited`(`Retry-After`)로, probe 는 닿지 못한 dataset 을 `not_probed` 로 답한다. 연결 테스트는 세지 않는다. 첫 page 를 넘기기 전에 모든 page 를 요청하는 kpubdata dataset(#481)은 한 호출 안에서는 한꺼번에 나가고, 그 몫은 뒤의 호출이 기다린다. 프로세스 메모리에만 있어 재시작하면 잊는다. `0` 이면 끔. 측정 없이 둔 기본값이다 — 값은 실제 배포에서 provider 의 허용량을 보고 정한다 | `0` (끔) | 선택 |
 | `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS` | 실행을 기다리는 비동기 build 수의 상한 — 서비스 전체에서, 누가 제출했든(#1108). 실행 중인 build 는 세지 않는다. 넘으면 `POST /builds` 가 429 `build_queue_full` 로 답한다. 기다리는 job 은 제출된 spec 과, 다중 사용자 배포에서는 요청의 provider 키를 메모리에 두므로 이 값이 그 양의 상한이다. `1` 이상 `1000` 이하의 정수여야 하고, 아니면 `serve` 가 기동을 거부한다. 코드에 고정돼 있던 값(10)을 기본값으로 두었고, 상한 1000 과 함께 측정 없이 정한 값이다(kpubdata#812) | `10` | 선택 |
 | `KPUBDATA_BUILDER_MAX_PREVIEWS` | 동시에 도는 preview 수의 상한(`serve --max-previews`, #1028). 넘는 preview 는 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` 까지 기다리고, 그래도 자리가 없으면 429 `preview_queue_full` 로 답한다(#1068) | 미설정 (무제한) | 선택 |
 | `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS` | SIGTERM 뒤 실행 중인 비동기 빌드가 끝나기를 기다리는 시간(초, #1118). 지나면 남은 빌드에 멈추라고 하고 10초를 더 기다린다. `0` 이면 바로 멈추라고 한다. 유한한 0 이상의 수가 아니면(`inf`, `nan`, 음수, 숫자가 아닌 값) `serve` 가 기동을 거부한다. 대기 중이던 작업은 이 값과 무관하게 시작하지 않고 끝난다. 컨테이너의 종료 대기 시간(compose `stop_grace_period`, 기본 설정 120초)을 이 값 + 10초보다 길게 둔다 | `90` | 선택 |
@@ -83,6 +84,7 @@
 | `KPUBDATA_QUERY_MAX_CONCURRENCY` | 동시 query child process 상한 | `2` | 선택 |
 | `KPUBDATA_QUERY_MAX_MEMORY_MB` | query child 하나의 address space 상한(MB). 넘은 질의만 실패한다 | 무제한 | 선택 |
 | `KPUBDATA_QUERY_MEMORY_BUDGET_MB` | 동시에 도는 query child 들의 메모리 합(MB). 질의마다 `MAX_MEMORY_MB` 만큼 예약하고 모자라면 `429 query_busy` | 없음 | 선택 |
+| `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` | 다중 사용자 배포에서 사용자 한 명이 60초 동안 시작할 수 있는 질의 수(#1245). 질의는 `POST /query`, `POST /warehouse/query`, `POST /warehouse/rows`, `POST /warehouse/aggregate`, `POST /warehouse/exports` 다(profile 은 snapshot 마다 한 번 계산해 파일로 답하므로 세지 않는다). 넘으면 질의를 해석하거나 실행하기 전에 429 `query_rate_limited` 와 `Retry-After` 로 답한다. 동시 실행 상한(`KPUBDATA_QUERY_MAX_CONCURRENCY`)은 서비스 전체의 것이어서, 한 사용자가 연달아 보내면 다른 사용자가 `query_busy` 를 받았다. 프로세스 메모리에만 있어 재시작하면 잊는다. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다. 측정 없이 둔 기본값이다 | `0` (끔) | 선택 |
 | `KPUBDATA_DUCKDB_THREADS` | DuckDB 연결 하나의 thread 수(build 는 실행 중인 source 마다, query child 는 하나) | `2` | 선택 |
 | `KPUBDATA_DUCKDB_MEMORY_LIMIT` | DuckDB 연결 하나의 buffer 메모리(`1GB`, `512MB` …). 넘으면 임시 디스크로 spill 한다 | `1GB` | 선택 |
 | `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` | DuckDB 연결 하나의 spill(임시 디스크) 상한. 넘은 source·질의만 실패한다. build 의 spill 은 run 디렉터리의 `_duckdb_tmp`, query 의 spill 은 질의마다 새로 만들고 지우는 임시 디렉터리에 쓴다 | `10GB` | 선택 |
@@ -123,7 +125,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 41 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 43 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |

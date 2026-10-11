@@ -25,6 +25,7 @@ from ..errors import SpecLoadError, ValidationError
 from ..pipeline import DEFAULT_PREVIEW_SEED, SampleMode, preview_build
 from ..pipeline.preview import SourcePreview
 from ..quality import QualityCheckResult
+from ..rate_limit import RateLimited
 from ..spec import BuildSpec, JsonValue, parse_spec
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
@@ -385,6 +386,17 @@ class SpecApiService:
         except PiiDeclarationUnavailable as exc:
             # Fail closed (#900): which columns are personal is not known.
             return unavailable_response(exc, what="a preview")
+        except RateLimited as limited:
+            # A provider's egress limit (#1245): the calls already made stay counted.
+            return ServiceResponse(
+                429,
+                {
+                    "error": "this provider has been called as often as the server allows "
+                    "for now; try again shortly",
+                    "code": "provider_egress_limited",
+                    "retry_after_seconds": limited.retry_after_seconds,
+                },
+            )
         finally:
             self._close_client(client)
         previews: list[JsonValue] = [

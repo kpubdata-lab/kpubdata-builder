@@ -42,6 +42,13 @@ def resolve_owner_build_limit() -> int | None:
     return value or None
 
 
+#: Builds running at once when neither ``--max-builds`` nor
+#: ``KPUBDATA_BUILDER_MAX_BUILDS`` says, or the request thread count when that is
+#: smaller (#1245). It was the request thread count, 10 by default; two is what the
+#: production compose sets and what the deployment guide's memory budget is computed
+#: for. Chosen without measurement, like the other limits (kpubdata#812).
+DEFAULT_MAX_BUILDS = 2
+
 MAX_QUEUED_BUILDS_ENV = "KPUBDATA_BUILDER_MAX_QUEUED_BUILDS"
 #: What the queue held when its size was written into ``BuilderService`` (#1108).
 DEFAULT_MAX_QUEUED_BUILDS = 10
@@ -110,6 +117,7 @@ __all__ = [
     "BUILD_TIME_LIMIT_ENV",
     "DEFAULT_BUILD_TIME_LIMIT_SECONDS",
     "DEFAULT_MAX_ACTIVE_BUILDS_PER_OWNER",
+    "DEFAULT_MAX_BUILDS",
     "DEFAULT_MAX_QUEUED_BUILDS",
     "MAX_ACTIVE_BUILDS_PER_OWNER_ENV",
     "MAX_QUEUED_BUILDS_CEILING",

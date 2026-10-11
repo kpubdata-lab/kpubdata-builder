@@ -90,6 +90,7 @@ from .providers import (
 from .providers_service import ProvidersService
 from .publish_api import PublishApiService, VisibilityProbe
 from .quality_api import ISSUE_STATUSES, QualityApiService
+from .query_rate import QueryRateLimiter
 from .query_service_api import QueryApiService
 from .readiness import ReadinessProbe
 from .redistribution import (
@@ -525,7 +526,11 @@ _BuildListEntry = dict[str, str | None]
 # 1.117.0 -> 1.118.0: POST /builds may answer 503 disk_space_low and, in a multi-user
 #   deployment, 409 run_storage_quota_exceeded; both are off until configured (#1099,
 #   additive).
-API_CONTRACT_VERSION = "1.118.0"
+# 1.118.0 -> 1.119.0: in a multi-user deployment the query operations answer 429
+#   query_rate_limited past KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE; POST /preview answers
+#   429 provider_egress_limited past KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE; a 429
+#   with retry_after_seconds carries Retry-After (#1245, additive).
+API_CONTRACT_VERSION = "1.119.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -617,6 +622,8 @@ class BuilderService:
         self._latency_recorder = monitoring_service.LatencyRecorder()
         # Auth failure throttle. Same isolation reason as latency recorder.
         self._auth_throttle = AuthFailureThrottle()
+        # Per-user query rate (#1245), per instance for the same reason.
+        self._query_rate = QueryRateLimiter()
         # Durable idempotency receipt for external publish side effects. Object
         # creation does not create files; SQLite lazily initialized on first POST claim.
         self._publish_receipts = publish_service.PublishReceiptStore(output_root)
@@ -2021,6 +2028,12 @@ def _dispatch_impl(
     # who may not call the service has already been answered above.
     if header_refusal is not None:
         return header_refusal
+
+    # A user's query past their rate (#1245): refused before the body is looked at, so
+    # a refused query costs no resolution, no validation and no query slot.
+    rate_refusal = service._query_rate.refusal(method, path, principal.owner_id)
+    if rate_refusal is not None:
+        return rate_refusal
 
     # /uploads (#498) is the only endpoint needing binary body (raw_body), so it's
     # called directly here rather than added to standard RouteAdapter list (JSON

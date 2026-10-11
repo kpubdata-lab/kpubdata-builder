@@ -449,6 +449,7 @@ def test_serve_invokes_http_server(
     """
     # Block leak of external KPUBDATA_BUILDER_MAX_WORKERS env (#374 review).
     monkeypatch.delenv("KPUBDATA_BUILDER_MAX_WORKERS", raising=False)
+    monkeypatch.delenv("KPUBDATA_BUILDER_MAX_BUILDS", raising=False)
 
     import kpubdata_builder.service.http as http_module
     from kpubdata_builder.service import BuilderService
@@ -480,12 +481,13 @@ def test_serve_invokes_http_server(
     out = capsys.readouterr().out
 
     assert exit_code == 0
-    # --max-workers unspecified → default (10) is passed (#374).
+    # --max-workers unspecified → default (10) is passed (#374); builds default to 2
+    # (#1245), no longer to the request thread count.
     assert captured_kwargs == {
         "host": "0.0.0.0",
         "port": 9123,
         "max_workers": 10,
-        "async_max_workers": 10,
+        "async_max_workers": 2,
         "output_root": tmp_path,
     }
     assert "serving kpubdata-builder" in out
