@@ -1,0 +1,402 @@
+{
+  "endings": [],
+  "events": {
+    "<run>": [
+      [
+        "run_started",
+        "ok",
+        null,
+        "pipeline execution started",
+        null
+      ],
+      [
+        "run_failed",
+        "fail",
+        null,
+        "1 source(s) failed",
+        null
+      ]
+    ],
+    "m": [
+      [
+        "stage_started",
+        "ok",
+        "bronze",
+        null,
+        null
+      ],
+      [
+        "source_fetch_started",
+        "ok",
+        null,
+        null,
+        null
+      ],
+      [
+        "source_fetch_completed",
+        "ok",
+        null,
+        "source fetched",
+        {
+          "records": 3
+        }
+      ],
+      [
+        "stage_completed",
+        "ok",
+        "bronze",
+        "Bronze written",
+        {
+          "records": 3
+        }
+      ],
+      [
+        "stage_started",
+        "ok",
+        "silver",
+        null,
+        null
+      ],
+      [
+        "quality_evaluated",
+        "ok",
+        null,
+        null,
+        {
+          "check_count": 1,
+          "fail_count": 0,
+          "pass_count": 1,
+          "warn_count": 0
+        }
+      ],
+      [
+        "stage_completed",
+        "ok",
+        "silver",
+        "Silver written",
+        {
+          "row_count": 3
+        }
+      ],
+      [
+        "stage_started",
+        "ok",
+        "gold",
+        null,
+        null
+      ],
+      [
+        "stage_completed",
+        "ok",
+        "gold",
+        "Gold written",
+        {
+          "row_count": 3
+        }
+      ],
+      [
+        "stage_started",
+        "ok",
+        "export",
+        null,
+        null
+      ],
+      [
+        "stage_failed",
+        "fail",
+        "export",
+        "pipeline failed for source 'm'",
+        null
+      ]
+    ]
+  },
+  "files": {
+    "bronze/m/7e2bc4d4b52e/metadata.json": {
+      "artifact_paths": {
+        "metadata": "metadata.json",
+        "records": "raw_records.jsonl"
+      },
+      "fetch_params": {},
+      "provenance": {
+        "fetch_params": {},
+        "operation": "fetch",
+        "source_key": "datago.air_station"
+      },
+      "record_count": 3,
+      "source_key": "m"
+    },
+    "bronze/m/7e2bc4d4b52e/raw_records.jsonl": [
+      {
+        "id": "1",
+        "name": "shop 1",
+        "tel": "010-0000-0000",
+        "v": 10
+      },
+      {
+        "id": "2",
+        "name": "shop 2",
+        "tel": "02-000-0000",
+        "v": 20
+      },
+      {
+        "id": "3",
+        "name": "shop 3",
+        "tel": null,
+        "v": 30
+      }
+    ],
+    "buildspec.yaml": [
+      "dataset_id: permits.table",
+      "title: Permits",
+      "description: d",
+      "sources:",
+      "- kind: public_api",
+      "  alias: m",
+      "  schema:",
+      "    required:",
+      "    - id",
+      "    dtypes: {}",
+      "    casts: {}",
+      "  provider: datago",
+      "  dataset: air_station",
+      "  params: {}",
+      "exports:",
+      "- kind: jsonl",
+      "  output_path: data.jsonl",
+      "  options: {}",
+      "- kind: csv",
+      "  output_path: data.csv",
+      "  options: {}",
+      "metadata: {}",
+      "publish: false",
+      "splits: null",
+      "pii: null",
+      "license: null",
+      "quality: null",
+      "composition: null"
+    ],
+    "gold/m/package.json": {
+      "columns": [
+        "id",
+        "name",
+        "tel",
+        "v"
+      ],
+      "dataset_name": "m",
+      "export_plan": {
+        "targets": [
+          {
+            "kind": "jsonl",
+            "options": {},
+            "output_path": "data.jsonl"
+          },
+          {
+            "kind": "csv",
+            "options": {},
+            "output_path": "data.csv"
+          }
+        ]
+      },
+      "metadata": {
+        "dataset_id": "permits.table",
+        "description": "d",
+        "title": "Permits"
+      },
+      "row_count": 3,
+      "source_refs": null,
+      "source_silver": "m",
+      "splits": null
+    },
+    "gold/m/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "silver/m/preview.json": {
+      "rows": [
+        {
+          "id": "1",
+          "name": "shop 1",
+          "tel": "010-0000-0000",
+          "v": 10
+        },
+        {
+          "id": "2",
+          "name": "shop 2",
+          "tel": "02-000-0000",
+          "v": 20
+        },
+        {
+          "id": "3",
+          "name": "shop 3",
+          "tel": null,
+          "v": 30
+        }
+      ],
+      "total_rows": 3
+    },
+    "silver/m/schema.json": {
+      "columns": [
+        {
+          "dtype": "String",
+          "logical_type": "string",
+          "name": "id",
+          "nullable": false,
+          "unique_count": 3,
+          "wire_encoding": "string"
+        },
+        {
+          "dtype": "String",
+          "logical_type": "string",
+          "name": "name",
+          "nullable": false,
+          "unique_count": 3,
+          "wire_encoding": "string"
+        },
+        {
+          "dtype": "String",
+          "logical_type": "string",
+          "name": "tel",
+          "nullable": true,
+          "unique_count": 3,
+          "wire_encoding": "string"
+        },
+        {
+          "dtype": "Int64",
+          "logical_type": "int64",
+          "name": "v",
+          "nullable": false,
+          "unique_count": 3,
+          "wire_encoding": "number"
+        }
+      ]
+    },
+    "silver/m/stats.json": {
+      "duplicate_rate": 0.0,
+      "null_counts": {
+        "id": 0,
+        "name": 0,
+        "tel": 1,
+        "v": 0
+      },
+      "row_count": 3
+    },
+    "silver/m/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "silver/m/validation.json": {
+      "ok": true,
+      "problems": []
+    }
+  },
+  "index": {
+    "dataset_id": "permits.table",
+    "error": "m: the source failed at the export stage",
+    "error_code": "pipeline_failed",
+    "error_stage": "export",
+    "status": "failed"
+  },
+  "manifest": {
+    "build_id": "r1",
+    "composition": null,
+    "created_by": null,
+    "drift_evaluation": {
+      "m": [
+        {
+          "axis": "schema",
+          "baseline_snapshot_id": null,
+          "detail": "no successful earlier run of permits.table/m to compare against",
+          "evaluated": false,
+          "reason": "no_committed_snapshot"
+        },
+        {
+          "axis": "volume",
+          "baseline_snapshot_id": null,
+          "detail": "no successful earlier run of permits.table/m to compare against",
+          "evaluated": false,
+          "reason": "no_committed_snapshot"
+        }
+      ]
+    },
+    "errors": [
+      "m: pipeline failed for source 'm'"
+    ],
+    "failures": [
+      {
+        "code": "pipeline_failed",
+        "source_key": "m",
+        "stage": "export",
+        "summary": "the source failed at the export stage"
+      }
+    ],
+    "inputs": [
+      "m"
+    ],
+    "inputs_fingerprint": "sha256:bac53c219873f04093758f1db42e453decbdf0b84a087f6a06de677da4f5c64c",
+    "inputs_fingerprint_algorithm": "sources-sha256-v2",
+    "outputs": [
+      "<root>/r1/bronze/m/7e2bc4d4b52e/raw_records.jsonl",
+      "<root>/r1/bronze/m/7e2bc4d4b52e/metadata.json",
+      "<root>/r1/silver/m/table.parquet",
+      "<root>/r1/silver/m/schema.json",
+      "<root>/r1/silver/m/stats.json",
+      "<root>/r1/silver/m/preview.json",
+      "<root>/r1/silver/m/validation.json",
+      "<root>/r1/gold/m/table.parquet",
+      "<root>/r1/gold/m/package.json"
+    ],
+    "owner_id": null,
+    "partial": false,
+    "provenance": [
+      {
+        "api_version": "unknown",
+        "coverage": {
+          "reasons": [
+            "call 0: the provider reported no total"
+          ],
+          "status": "unknown"
+        },
+        "data_checksum": "sha256:f36732d2e9e09b4f5c49d0a4497df234e3928cddf58a5b37206bbc9d70607a30",
+        "data_checksum_algorithm": "canonical-multiset-v2",
+        "dataset": "air_station",
+        "fetched_row_count": 3,
+        "params": {},
+        "provider": "datago",
+        "record_count": 3,
+        "source_reported_total": {
+          "calls": [
+            {
+              "fetched_row_count": 3,
+              "index": 0,
+              "pages": 1,
+              "status": "unknown",
+              "value": null
+            }
+          ],
+          "observed_at": "<time>",
+          "status": "unknown",
+          "value": null
+        }
+      }
+    ],
+    "quality_results": {
+      "m": [
+        {
+          "actual": true,
+          "affected_rows": null,
+          "category": "schema",
+          "column": "id",
+          "detail": null,
+          "evaluated_rows": null,
+          "rule": "required_column",
+          "source_key": "m",
+          "status": "pass",
+          "threshold": true
+        }
+      ]
+    },
+    "row_counts": {
+      "m": 3
+    },
+    "schema_drift": {},
+    "schema_summaries": {},
+    "schema_version": "1.0.0",
+    "status": "failed",
+    "warnings": []
+  },
+  "response_status": 502
+}

@@ -1,0 +1,820 @@
+{
+  "failed": {
+    "endings": [],
+    "events": {
+      "<run>": [
+        [
+          "run_started",
+          "ok",
+          null,
+          "pipeline execution started",
+          null
+        ],
+        [
+          "run_failed",
+          "fail",
+          null,
+          "1 source(s) failed",
+          null
+        ]
+      ],
+      "datago.air_quality": [
+        [
+          "stage_started",
+          "ok",
+          "bronze",
+          null,
+          null
+        ],
+        [
+          "source_fetch_started",
+          "ok",
+          null,
+          null,
+          null
+        ],
+        [
+          "source_fetch_progress",
+          "ok",
+          null,
+          "combination fetched",
+          {
+            "done": 1,
+            "total": 4
+          }
+        ],
+        [
+          "source_fetch_progress",
+          "ok",
+          null,
+          "combination fetched",
+          {
+            "done": 2,
+            "total": 4
+          }
+        ],
+        [
+          "source_fetch_failed",
+          "fail",
+          null,
+          "pipeline failed for source 'datago.air_quality'",
+          null
+        ],
+        [
+          "stage_failed",
+          "fail",
+          "bronze",
+          "pipeline failed for source 'datago.air_quality'",
+          null
+        ]
+      ]
+    },
+    "files": {
+      "_checkpoints/datago.air_quality/000000.jsonl": [
+        {
+          "n": 1,
+          "sido": "a"
+        },
+        {
+          "n": 2,
+          "sido": "a"
+        }
+      ],
+      "_checkpoints/datago.air_quality/000001.jsonl": [
+        {
+          "n": 1,
+          "sido": "b"
+        },
+        {
+          "n": 2,
+          "sido": "b"
+        }
+      ],
+      "_checkpoints/datago.air_quality/index.jsonl": [
+        {
+          "call_total": {
+            "fetched_row_count": 2,
+            "index": 0,
+            "pages": 1,
+            "status": "unknown",
+            "value": null
+          },
+          "fragment": "000000.jsonl",
+          "index": 0,
+          "params": {
+            "sido": "a"
+          },
+          "record_count": 2
+        },
+        {
+          "call_total": {
+            "fetched_row_count": 2,
+            "index": 1,
+            "pages": 1,
+            "status": "unknown",
+            "value": null
+          },
+          "fragment": "000001.jsonl",
+          "index": 1,
+          "params": {
+            "sido": "b"
+          },
+          "record_count": 2
+        }
+      ],
+      "buildspec.yaml": [
+        "dataset_id: grid.table",
+        "title: Grid",
+        "description: d",
+        "sources:",
+        "- kind: public_api",
+        "  alias: ''",
+        "  schema: null",
+        "  provider: datago",
+        "  dataset: air_quality",
+        "  params: {}",
+        "  param_grid:",
+        "    sido:",
+        "    - a",
+        "    - b",
+        "    - c",
+        "    - d",
+        "exports:",
+        "- kind: jsonl",
+        "  output_path: data.jsonl",
+        "  options: {}",
+        "metadata: {}",
+        "publish: false",
+        "splits: null",
+        "pii: null",
+        "license: null",
+        "quality: null",
+        "composition: null"
+      ]
+    },
+    "index": {
+      "dataset_id": "grid.table",
+      "error": "datago.air_quality: the source failed at the bronze stage",
+      "error_code": "pipeline_failed",
+      "error_stage": "bronze",
+      "status": "failed"
+    },
+    "manifest": {
+      "build_id": "r1",
+      "composition": null,
+      "created_by": null,
+      "drift_evaluation": {},
+      "errors": [
+        "datago.air_quality: pipeline failed for source 'datago.air_quality'"
+      ],
+      "failures": [
+        {
+          "code": "pipeline_failed",
+          "source_key": "datago.air_quality",
+          "stage": "bronze",
+          "summary": "the source failed at the bronze stage"
+        }
+      ],
+      "inputs": [
+        "datago.air_quality"
+      ],
+      "inputs_fingerprint": null,
+      "outputs": [],
+      "owner_id": null,
+      "partial": false,
+      "provenance": [],
+      "quality_results": {},
+      "row_counts": {},
+      "schema_drift": {},
+      "schema_summaries": {},
+      "schema_version": "1.0.0",
+      "status": "failed",
+      "warnings": []
+    }
+  },
+  "retried": {
+    "endings": [],
+    "events": {
+      "<run>": [
+        [
+          "run_started",
+          "ok",
+          null,
+          "pipeline execution started",
+          null
+        ],
+        [
+          "run_finished",
+          "ok",
+          null,
+          "build completed",
+          null
+        ]
+      ],
+      "datago.air_quality": [
+        [
+          "stage_started",
+          "ok",
+          "bronze",
+          null,
+          null
+        ],
+        [
+          "source_fetch_started",
+          "ok",
+          null,
+          "continuing from the checkpoint of run r1",
+          null
+        ],
+        [
+          "source_fetch_progress",
+          "ok",
+          null,
+          "combination fetched",
+          {
+            "done": 1,
+            "total": 4
+          }
+        ],
+        [
+          "source_fetch_progress",
+          "ok",
+          null,
+          "combination fetched",
+          {
+            "done": 2,
+            "total": 4
+          }
+        ],
+        [
+          "source_fetch_progress",
+          "ok",
+          null,
+          "combination fetched",
+          {
+            "done": 3,
+            "total": 4
+          }
+        ],
+        [
+          "source_fetch_progress",
+          "ok",
+          null,
+          "combination fetched",
+          {
+            "done": 4,
+            "total": 4
+          }
+        ],
+        [
+          "source_fetch_completed",
+          "ok",
+          null,
+          "source fetched",
+          {
+            "records": 8
+          }
+        ],
+        [
+          "stage_completed",
+          "ok",
+          "bronze",
+          "Bronze written",
+          {
+            "records": 8
+          }
+        ],
+        [
+          "stage_started",
+          "ok",
+          "silver",
+          null,
+          null
+        ],
+        [
+          "quality_evaluated",
+          "ok",
+          null,
+          null,
+          {
+            "check_count": 0,
+            "fail_count": 0,
+            "pass_count": 0,
+            "warn_count": 0
+          }
+        ],
+        [
+          "stage_completed",
+          "ok",
+          "silver",
+          "Silver written",
+          {
+            "row_count": 8
+          }
+        ],
+        [
+          "stage_started",
+          "ok",
+          "gold",
+          null,
+          null
+        ],
+        [
+          "stage_completed",
+          "ok",
+          "gold",
+          "Gold written",
+          {
+            "row_count": 8
+          }
+        ],
+        [
+          "stage_started",
+          "ok",
+          "export",
+          null,
+          null
+        ],
+        [
+          "stage_completed",
+          "ok",
+          "export",
+          "Export written",
+          {
+            "file_count": 1
+          }
+        ]
+      ]
+    },
+    "files": {
+      "bronze/datago.air_quality/5d61b6e6f162/metadata.json": {
+        "artifact_paths": {
+          "metadata": "metadata.json",
+          "records": "raw_records.jsonl"
+        },
+        "fetch_params": {
+          "param_combinations": [
+            {
+              "sido": "a"
+            },
+            {
+              "sido": "b"
+            },
+            {
+              "sido": "c"
+            },
+            {
+              "sido": "d"
+            }
+          ]
+        },
+        "provenance": {
+          "fetch_params": {
+            "param_combinations": [
+              {
+                "sido": "a"
+              },
+              {
+                "sido": "b"
+              },
+              {
+                "sido": "c"
+              },
+              {
+                "sido": "d"
+              }
+            ]
+          },
+          "operation": "fetch",
+          "source_key": "datago.air_quality"
+        },
+        "record_count": 8,
+        "source_key": "datago.air_quality"
+      },
+      "bronze/datago.air_quality/5d61b6e6f162/raw_records.jsonl": [
+        {
+          "n": 1,
+          "sido": "a"
+        },
+        {
+          "n": 2,
+          "sido": "a"
+        },
+        {
+          "n": 1,
+          "sido": "b"
+        },
+        {
+          "n": 2,
+          "sido": "b"
+        },
+        {
+          "n": 1,
+          "sido": "c"
+        },
+        {
+          "n": 2,
+          "sido": "c"
+        },
+        {
+          "n": 1,
+          "sido": "d"
+        },
+        {
+          "n": 2,
+          "sido": "d"
+        }
+      ],
+      "buildspec.yaml": [
+        "dataset_id: grid.table",
+        "title: Grid",
+        "description: d",
+        "sources:",
+        "- kind: public_api",
+        "  alias: ''",
+        "  schema: null",
+        "  provider: datago",
+        "  dataset: air_quality",
+        "  params: {}",
+        "  param_grid:",
+        "    sido:",
+        "    - a",
+        "    - b",
+        "    - c",
+        "    - d",
+        "exports:",
+        "- kind: jsonl",
+        "  output_path: data.jsonl",
+        "  options: {}",
+        "metadata: {}",
+        "publish: false",
+        "splits: null",
+        "pii: null",
+        "license: null",
+        "quality: null",
+        "composition: null"
+      ],
+      "gold/datago.air_quality/README.md": [
+        "# Grid",
+        "",
+        "d",
+        "",
+        "## Sources",
+        "",
+        "- datago.air_quality",
+        "",
+        "## Schema",
+        "",
+        "| Column | Type | Nullable |",
+        "| --- | --- | --- |",
+        "| sido | String | no |",
+        "| n | Int64 | no |",
+        "",
+        "## Sample",
+        "",
+        "| sido | n |",
+        "| --- | --- |",
+        "| a | 1 |",
+        "| a | 2 |",
+        "| b | 1 |",
+        "| b | 2 |",
+        "| c | 1 |",
+        "",
+        "## Provenance",
+        "",
+        "### datago.air_quality",
+        "",
+        "- Attribution: 공공누리 제3유형(변경금지) — 한국환경공단 대기오염정보",
+        "- Source: https://www.data.go.kr",
+        "- Licence: 공공누리_3유형",
+        "- Collected: <time>",
+        "",
+        "## Processing",
+        "",
+        "- No transformation declared: values are as the source gave them.",
+        "",
+        "## Personal information",
+        "",
+        "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+        "",
+        "## License",
+        "",
+        "N/A",
+        "",
+        "## Version",
+        "",
+        "unversioned"
+      ],
+      "gold/datago.air_quality/card.json": {
+        "card_version": 1,
+        "personal_information": "No column was declared personal information. Values were not scanned for personal information (no pii policy).",
+        "processing": [
+          "No transformation declared: values are as the source gave them."
+        ],
+        "processing_declared": false,
+        "provenance": [
+          {
+            "institution": "공공누리 제3유형(변경금지) — 한국환경공단 대기오염정보",
+            "license": "공공누리_3유형",
+            "license_declared": null,
+            "license_mismatch": false,
+            "license_provider": "공공누리_3유형",
+            "source": "datago.air_quality",
+            "url": "https://www.data.go.kr"
+          }
+        ],
+        "title": "Grid"
+      },
+      "gold/datago.air_quality/data.jsonl": [
+        {
+          "n": 1,
+          "sido": "a"
+        },
+        {
+          "n": 2,
+          "sido": "a"
+        },
+        {
+          "n": 1,
+          "sido": "b"
+        },
+        {
+          "n": 2,
+          "sido": "b"
+        },
+        {
+          "n": 1,
+          "sido": "c"
+        },
+        {
+          "n": 2,
+          "sido": "c"
+        },
+        {
+          "n": 1,
+          "sido": "d"
+        },
+        {
+          "n": 2,
+          "sido": "d"
+        }
+      ],
+      "gold/datago.air_quality/package.json": {
+        "columns": [
+          "sido",
+          "n"
+        ],
+        "dataset_name": "datago.air_quality",
+        "export_plan": {
+          "targets": [
+            {
+              "kind": "jsonl",
+              "options": {},
+              "output_path": "data.jsonl"
+            }
+          ]
+        },
+        "metadata": {
+          "dataset_id": "grid.table",
+          "description": "d",
+          "title": "Grid"
+        },
+        "row_count": 8,
+        "source_refs": null,
+        "source_silver": "datago.air_quality",
+        "splits": null
+      },
+      "gold/datago.air_quality/table.parquet": "02cd3957dab93d1efd783e94a27f770af8368b16c1dbb051667c53a05793ccc4",
+      "silver/datago.air_quality/preview.json": {
+        "rows": [
+          {
+            "n": 1,
+            "sido": "a"
+          },
+          {
+            "n": 2,
+            "sido": "a"
+          },
+          {
+            "n": 1,
+            "sido": "b"
+          },
+          {
+            "n": 2,
+            "sido": "b"
+          },
+          {
+            "n": 1,
+            "sido": "c"
+          }
+        ],
+        "total_rows": 8
+      },
+      "silver/datago.air_quality/schema.json": {
+        "columns": [
+          {
+            "dtype": "String",
+            "logical_type": "string",
+            "name": "sido",
+            "nullable": false,
+            "unique_count": 4,
+            "wire_encoding": "string"
+          },
+          {
+            "dtype": "Int64",
+            "logical_type": "int64",
+            "name": "n",
+            "nullable": false,
+            "unique_count": 2,
+            "wire_encoding": "number"
+          }
+        ]
+      },
+      "silver/datago.air_quality/stats.json": {
+        "duplicate_rate": 0.0,
+        "null_counts": {
+          "n": 0,
+          "sido": 0
+        },
+        "row_count": 8
+      },
+      "silver/datago.air_quality/table.parquet": "02cd3957dab93d1efd783e94a27f770af8368b16c1dbb051667c53a05793ccc4",
+      "silver/datago.air_quality/validation.json": {
+        "ok": true,
+        "problems": []
+      }
+    },
+    "index": {
+      "dataset_id": "grid.table",
+      "error": null,
+      "error_code": null,
+      "error_stage": null,
+      "status": "ok"
+    },
+    "manifest": {
+      "artifacts": {
+        "datago.air_quality": {
+          "artifact_digest": "<digest>",
+          "artifact_writer": {
+            "name": "duckdb",
+            "version": "1.5.6"
+          }
+        }
+      },
+      "build_id": "r2",
+      "composition": null,
+      "created_by": null,
+      "drift_evaluation": {
+        "datago.air_quality": [
+          {
+            "axis": "schema",
+            "baseline_snapshot_id": null,
+            "detail": "no successful earlier run of grid.table/datago.air_quality to compare against",
+            "evaluated": false,
+            "reason": "no_committed_snapshot"
+          },
+          {
+            "axis": "volume",
+            "baseline_snapshot_id": null,
+            "detail": "no successful earlier run of grid.table/datago.air_quality to compare against",
+            "evaluated": false,
+            "reason": "no_committed_snapshot"
+          }
+        ]
+      },
+      "errors": [],
+      "inputs": [
+        "datago.air_quality"
+      ],
+      "inputs_fingerprint": "sha256:ae6bdcc7c4be94a9c08f61b854c6d9a0b0acc52cd56df64e4be7713428b25fcb",
+      "inputs_fingerprint_algorithm": "sources-sha256-v2",
+      "outputs": [
+        "<root>/r2/bronze/datago.air_quality/5d61b6e6f162/raw_records.jsonl",
+        "<root>/r2/bronze/datago.air_quality/5d61b6e6f162/metadata.json",
+        "<root>/r2/silver/datago.air_quality/table.parquet",
+        "<root>/r2/silver/datago.air_quality/schema.json",
+        "<root>/r2/silver/datago.air_quality/stats.json",
+        "<root>/r2/silver/datago.air_quality/preview.json",
+        "<root>/r2/silver/datago.air_quality/validation.json",
+        "<root>/r2/gold/datago.air_quality/table.parquet",
+        "<root>/r2/gold/datago.air_quality/package.json",
+        "<root>/r2/gold/datago.air_quality/data.jsonl",
+        "<root>/r2/gold/datago.air_quality/README.md",
+        "<root>/r2/gold/datago.air_quality/card.json"
+      ],
+      "owner_id": null,
+      "partial": false,
+      "provenance": [
+        {
+          "api_version": "unknown",
+          "coverage": {
+            "reasons": [
+              "call 0: the provider reported no total",
+              "call 1: the provider reported no total",
+              "call 2: the provider reported no total",
+              "call 3: the provider reported no total"
+            ],
+            "status": "unknown"
+          },
+          "data_checksum": "sha256:6f9570a79803d47531dc8e7c61db77592cf19f07ca26f7a1b973f5867d7ffd07",
+          "data_checksum_algorithm": "canonical-multiset-v2",
+          "dataset": "air_quality",
+          "fetched_row_count": 8,
+          "params": {
+            "param_combinations": [
+              {
+                "sido": "a"
+              },
+              {
+                "sido": "b"
+              },
+              {
+                "sido": "c"
+              },
+              {
+                "sido": "d"
+              }
+            ]
+          },
+          "provider": "datago",
+          "record_count": 8,
+          "source_reported_total": {
+            "calls": [
+              {
+                "fetched_row_count": 2,
+                "index": 0,
+                "pages": 1,
+                "status": "unknown",
+                "value": null
+              },
+              {
+                "fetched_row_count": 2,
+                "index": 1,
+                "pages": 1,
+                "status": "unknown",
+                "value": null
+              },
+              {
+                "fetched_row_count": 2,
+                "index": 2,
+                "pages": 1,
+                "status": "unknown",
+                "value": null
+              },
+              {
+                "fetched_row_count": 2,
+                "index": 3,
+                "pages": 1,
+                "status": "unknown",
+                "value": null
+              }
+            ],
+            "observed_at": "<time>",
+            "status": "not_summed",
+            "value": null
+          }
+        }
+      ],
+      "quality_results": {
+        "datago.air_quality": []
+      },
+      "reproducibility": {
+        "reason": "resumed_from_checkpoint",
+        "reproducible": false,
+        "resumed_sources": {
+          "datago.air_quality": {
+            "checkpoint_from": "r1",
+            "resumed_combinations": 2,
+            "total_combinations": 4
+          }
+        }
+      },
+      "retry_of": "r1",
+      "row_counts": {
+        "datago.air_quality": 8
+      },
+      "schema_drift": {},
+      "schema_summaries": {
+        "datago.air_quality": {
+          "fields": [
+            {
+              "name": "sido",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "name": "n",
+              "nullable": false,
+              "type": "Int64"
+            }
+          ],
+          "total_fields": 2
+        }
+      },
+      "schema_version": "1.0.0",
+      "status": "ok",
+      "warnings": []
+    },
+    "response_status": 200
+  }
+}

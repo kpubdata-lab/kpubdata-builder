@@ -1,0 +1,92 @@
+{
+  "endings": [
+    [
+      "failed",
+      "bronze",
+      "interrupted",
+      "the server restarted, and the run was interrupted at the bronze stage"
+    ]
+  ],
+  "events": {
+    "<run>": [
+      [
+        "run_submitted",
+        "ok",
+        null,
+        "build accepted for async execution",
+        null
+      ],
+      [
+        "run_started",
+        "ok",
+        null,
+        "pipeline execution started",
+        null
+      ],
+      [
+        "run_failed",
+        "fail",
+        null,
+        "interrupted: the server restarted before this job finished, and an interrupted job is not resumed; submit it again under a new run_id",
+        null
+      ]
+    ],
+    "m": [
+      [
+        "stage_started",
+        "ok",
+        "bronze",
+        null,
+        null
+      ],
+      [
+        "source_fetch_started",
+        "ok",
+        null,
+        null,
+        null
+      ]
+    ]
+  },
+  "files": {
+    "_bronze_staging/m/records.jsonl": [],
+    "buildspec.yaml": [
+      "dataset_id: permits.table",
+      "title: Permits",
+      "description: d",
+      "sources:",
+      "- kind: public_api",
+      "  alias: m",
+      "  schema:",
+      "    required:",
+      "    - id",
+      "    dtypes: {}",
+      "    casts: {}",
+      "  provider: datago",
+      "  dataset: air_station",
+      "  params: {}",
+      "exports:",
+      "- kind: jsonl",
+      "  output_path: data.jsonl",
+      "  options: {}",
+      "- kind: csv",
+      "  output_path: data.csv",
+      "  options: {}",
+      "metadata: {}",
+      "publish: false",
+      "splits: null",
+      "pii: null",
+      "license: null",
+      "quality: null",
+      "composition: null"
+    ]
+  },
+  "index": {
+    "dataset_id": null,
+    "error": "the server restarted, and the run was interrupted at the bronze stage",
+    "error_code": "interrupted",
+    "error_stage": "bronze",
+    "status": "failed"
+  },
+  "manifest": null
+}
