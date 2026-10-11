@@ -24,6 +24,7 @@ ordering policy).
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -43,6 +44,8 @@ from ..store.schema_version import (
     stored_version,
 )
 from .models import BuildEvent, EventName, EventStatus, StageName
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 
@@ -413,7 +416,8 @@ def read_run_endings(output_root: Path) -> tuple[RunEnding, ...]:
     For a rebuild of the build index (#1120), which may run while a server has the
     store open and must not create or alter it: the connection is read-only. Empty
     when there is no store, or it has no such table yet — one written before this
-    record existed.
+    record existed. Empty too, with a warning logged, when the file is damaged: the
+    rebuild goes on without the runs recorded only there, and the log says so.
 
     Raises:
         sqlite3.Error: The store could not be read for another reason. A rebuild that
@@ -426,7 +430,15 @@ def read_run_endings(output_root: Path) -> tuple[RunEnding, ...]:
         with closing(open_read_only(path)) as conn:
             rows = conn.execute(f"{_SELECT_ENDINGS} ORDER BY e.run_id").fetchall()
     except sqlite3.Error as exc:
+        if "no such table" in str(exc).lower():
+            return ()
         if says_damaged(exc):
+            logger.warning(
+                "the event store %s is damaged (%s); the runs whose ending is recorded "
+                "only there are left out of the index rebuild",
+                path,
+                exc,
+            )
             return ()
         raise
     return tuple(_row_to_ending(row) for row in rows)

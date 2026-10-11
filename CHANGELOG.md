@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- An index rebuild says so when the event store is damaged (#1254). `read_run_endings` still reads a store from before the run-ending record (no `run_endings` table) as empty without a word, but a file that is not a database, or is malformed, now logs a warning naming the file before it is read as empty; the runs recorded only there are still left out of the rebuild.
 - Responses through the production proxy carry security headers, and the images a deployment runs are scanned again every day (#1107).
   - `ops/caddy/Caddyfile` had no header block. Every response through Caddy now has `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'` (Builder is a JSON API; nothing has a reason to frame it), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a `Permissions-Policy` that turns off camera, microphone, geolocation, payment and USB. `Strict-Transport-Security: max-age=31536000` is sent on responses that went out over TLS only, without `includeSubDomains` and without `preload`: neither is decided for the whole domain.
   - `scripts/proxy_chain_smoke.py` reads those headers off the real chain in the `Docker` workflow: each once, on a 200 and on a 401, over plain HTTP and over TLS (Caddy serves a `.localhost` name with its local authority's certificate there), with `Strict-Transport-Security` present only over TLS. It then opens a page of another origin in the runner's Chrome and checks that the browser refuses to frame a response that came through Caddy, and does frame one that did not.
