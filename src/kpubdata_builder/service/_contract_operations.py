@@ -12,11 +12,13 @@ through `kpubdata_builder.service.operations`.
 from __future__ import annotations
 
 #: The contract version this table was generated from.
-CONTRACT_VERSION = "1.116.0"
+CONTRACT_VERSION = "1.117.0"
 
 #: (method, path, operation_id, provider_key, publish_credential, authenticated)
 OPERATIONS: tuple[tuple[str, str, str, bool, bool, bool], ...] = (
     ("GET", "/healthz", "healthz", False, False, False),
+    ("GET", "/readyz", "readyz", False, False, False),
+    ("GET", "/metrics", "getMetrics", False, False, True),
     ("GET", "/version", "getVersion", False, False, True),
     ("GET", "/catalog", "getCatalog", False, False, True),
     ("GET", "/providers", "listProviders", True, False, True),

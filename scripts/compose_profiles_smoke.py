@@ -13,9 +13,10 @@ Two checks, run separately:
 for every service's health check, and then asks, from inside the network:
 
 - ``default``: Builder's ``/healthz`` answers 200, ``/version`` answers 200 with the
-  service key and 401 without it.
-- ``caddy``: Caddy's own ``/healthz`` answers 200, and ``/version`` through Caddy
-  reaches Builder. The forged-header, security-header and log checks of the same chain
+  service key and 401 without it, and ``/readyz`` answers without the key (#1101): ready,
+  or not ready only because the runner's disk is below the default threshold.
+- ``caddy``: Caddy's own ``/healthz`` answers 200, and ``/version`` and ``/readyz``
+  through Caddy reach Builder. The forged-header, security-header and log checks of the same chain
   are ``proxy_chain_smoke.py``'s and are not repeated here.
 - ``studio``: the page and ``/config.js`` are served, ``/config.js`` names the Builder
   address the stack was given, and the call the browser makes to that address — with
@@ -130,6 +131,24 @@ def _expect(problems: list[str], profile: str, what: str, ok: bool) -> None:
         problems.append(f"[{profile}] {what}")
 
 
+def readiness_ok(answer: Answer) -> bool:
+    """``/readyz`` answered, unauthenticated, as a ready service does (#1101).
+
+    A 503 whose only failed check is ``disk: low`` passes: the threshold is a share of
+    the disk the stack runs on, which is the CI runner's, not the deployment's.
+    """
+    try:
+        body = json.loads(answer.body)
+    except ValueError:
+        return False
+    if not isinstance(body, dict) or not isinstance(body.get("checks"), dict):
+        return False
+    failed = {name: state for name, state in body["checks"].items() if state != "ok"}
+    if answer.status == 200:
+        return body.get("status") == "ready" and not failed
+    return answer.status == 503 and body.get("status") == "not_ready" and failed == {"disk": "low"}
+
+
 def check_profile(override: Path, profile: str) -> list[str]:
     problems: list[str] = []
     key = {"X-API-Key": SERVICE_KEY}
@@ -140,6 +159,8 @@ def check_profile(override: Path, profile: str) -> list[str]:
     _expect(problems, profile, "Builder /version answers 200 with the key", version.status == 200)
     refused = _get(override, profile, f"{BUILDER_URL}/version")
     _expect(problems, profile, "Builder /version answers 401 without it", refused.status == 401)
+    ready = _get(override, profile, f"{BUILDER_URL}/readyz")
+    _expect(problems, profile, "Builder /readyz answers without the key", readiness_ok(ready))
 
     if profile == "caddy":
         own = _get(override, profile, "http://caddy/healthz")
@@ -150,6 +171,10 @@ def check_profile(override: Path, profile: str) -> list[str]:
             profile,
             "/version through Caddy reaches Builder",
             through.status == 200 and through.body == version.body,
+        )
+        ready_through = _get(override, profile, "http://caddy/readyz")
+        _expect(
+            problems, profile, "/readyz through Caddy reaches Builder", readiness_ok(ready_through)
         )
 
     if profile == "studio":

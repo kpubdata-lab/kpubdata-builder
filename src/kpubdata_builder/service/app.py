@@ -52,6 +52,7 @@ from ..uploads import (
 from ..uploads.store import SCHEMA as uploads_schema
 from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
+from . import metrics as metrics_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
 from . import (
@@ -90,6 +91,7 @@ from .providers_service import ProvidersService
 from .publish_api import PublishApiService, VisibilityProbe
 from .quality_api import ISSUE_STATUSES, QualityApiService
 from .query_service_api import QueryApiService
+from .readiness import ReadinessProbe
 from .redistribution import (
     BuildVerdict,
     TermsLookup,
@@ -97,7 +99,7 @@ from .redistribution import (
     forbidden_response,
     kpubdata_terms,
 )
-from .responses import FileResponse, ServiceResponse
+from .responses import FileResponse, ServiceResponse, TextResponse
 from .revisions import SCHEMA as revisions_schema
 from .revisions import RevisionStore
 from .revisions_api import RevisionsApiService
@@ -511,7 +513,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.115.0 -> 1.116.0: GET /admin/runs gives each run's error_code and error_stage, from
 #   Builder's vocabulary only; a single-user deployment marks the runs a restart
 #   interrupted as failed too (#1120, additive).
-API_CONTRACT_VERSION = "1.116.0"
+# 1.116.0 -> 1.117.0: GET /readyz, readiness apart from liveness, without
+#   authentication; GET /metrics, the Prometheus text page, for administrators (#1101,
+#   additive).
+API_CONTRACT_VERSION = "1.117.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -742,6 +747,13 @@ class BuilderService:
             build_index=self._build_index,
             async_builds=self._async_builds,
             latency_recorder=self._latency_recorder,
+        )
+        # GET /readyz and the gauges of GET /metrics (#1101): reads only, at most once
+        # per few seconds whoever asks.
+        self._readiness = ReadinessProbe(
+            output_root=self._output_root,
+            build_index=self._build_index,
+            async_builds=self._async_builds,
         )
         # Spec authoring (#596). Same credential path as the build: `open_client`.
         self._spec_api = SpecApiService(
@@ -1616,6 +1628,30 @@ class BuilderService:
             )
         return response
 
+    def readyz(self) -> ServiceResponse:
+        """GET /readyz (#1101): 200 when every check is ok, else 503, same body shape."""
+        readiness = self._readiness.check()
+        return ServiceResponse(200 if readiness.ready else 503, readiness.body())
+
+    def metrics_page(self) -> TextResponse:
+        """GET /metrics (#1101): the Prometheus text page. The caller checks the role."""
+        readiness = self._readiness.check()
+        stats = self._async_builds.stats()
+        page = metrics_service.render(
+            metrics_service.Gauges(
+                queued=stats.queued,
+                running=stats.running,
+                capacity=stats.capacity,
+                max_queued=self._async_builds.max_queue_size,
+                ready=readiness.ready,
+                checks=readiness.checks,
+                accepting_builds=readiness.accepting_builds,
+                disk_free_bytes=None if readiness.disk is None else readiness.disk.free_bytes,
+                disk_total_bytes=None if readiness.disk is None else readiness.disk.total_bytes,
+            )
+        )
+        return TextResponse(200, page, metrics_service.CONTENT_TYPE)
+
     def monitoring_summary(self) -> ServiceResponse:
         """Query queue/build/latency summary (#516)."""
         return self._monitoring_api.monitoring_summary()
@@ -1708,7 +1744,7 @@ def dispatch(
     client_id: str | None = None,
     provider_key_headers: Sequence[str] = (),
     publish_credential_headers: Sequence[str] = (),
-) -> ServiceResponse | FileResponse:
+) -> ServiceResponse | FileResponse | TextResponse:
     """Call ``_dispatch_impl`` and record processing time as Monitoring latency
     sample (#516).
 
@@ -1851,7 +1887,7 @@ def _dispatch_impl(
     raw_body: bytes | None = None,
     client_id: str | None = None,
     header_refusal: ServiceResponse | None = None,
-) -> ServiceResponse | FileResponse:
+) -> ServiceResponse | FileResponse | TextResponse:
     """Route (method, path) to BuilderService operation.
 
     GET /healthz returns without authentication (#372); all other endpoints must
@@ -1874,6 +1910,10 @@ def _dispatch_impl(
     # /healthz exposed without authentication outside auth gate (#372).
     if method == "GET" and path == "/healthz":
         return ServiceResponse(200, {"status": "ok"})
+    # Readiness is a probe too (#1101): an external check carries no credential. Its
+    # body names checks and states only — no path, size or error text.
+    if method == "GET" and path == "/readyz":
+        return service.readyz()
 
     principal = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
     if isinstance(principal, ServiceResponse):
@@ -1929,6 +1969,7 @@ __all__ = [
     "BuilderService",
     "FileResponse",
     "ServiceResponse",
+    "TextResponse",
     "dispatch",
     "refuse_before_body",
 ]

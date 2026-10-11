@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 from ..spec import JsonValue
-from . import build_log
+from . import build_log, metrics
 from .build_limits import resolve_build_time_limit
 from .build_slots import BuildSlots
 
@@ -250,6 +250,12 @@ class AsyncBuildJobRegistry:
         # just-finished ones.
         self._terminal_order: deque[str] = deque()
         self._max_terminal_jobs = max(0, max_terminal_jobs)
+
+    @property
+    def closed(self) -> bool:
+        """Whether ``close_and_fail_queued`` has run: the process is shutting down."""
+        with self._lock:
+            return self._closed
 
     def create(
         self,
@@ -621,6 +627,8 @@ class AsyncBuildExecutor:
         # doesn't read private ``ThreadPoolExecutor._max_workers`` (#516).
         self._max_workers = max_workers
         self._max_queue_size = max_queue_size
+        # Set by ``shutdown``/``begin_shutdown``: the pool takes no more work (#1101).
+        self._stopped = False
         # Jobs cancelled for running past the time limit (#1119), so their cancellation
         # event can say why.
         self._expired: set[str] = set()
@@ -740,7 +748,23 @@ class AsyncBuildExecutor:
         """Request cancellation for this run (#481). Delegate to registry's atomic transition."""
         return self.registry.request_cancel(run_id)
 
+    @property
+    def max_queue_size(self) -> int:
+        """How many jobs may wait; a queue holding this many refuses the next (#1101)."""
+        return self._max_queue_size
+
+    @property
+    def draining(self) -> bool:
+        """The process is shutting down: no job is accepted, running ones finish (#1101)."""
+        return self.registry.closed
+
+    @property
+    def stopped(self) -> bool:
+        """The worker pool was shut down and runs nothing new (#1101)."""
+        return self._stopped
+
     def shutdown(self) -> None:
+        self._stopped = True
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def begin_shutdown(self, error: str) -> tuple[BuildJobSnapshot, ...]:
@@ -752,6 +776,7 @@ class AsyncBuildExecutor:
         ``begin_run`` and returns the slot at once.
         """
         ended = self.registry.close_and_fail_queued(error)
+        self._stopped = True
         self._executor.shutdown(wait=False, cancel_futures=True)
         return ended
 
@@ -811,6 +836,8 @@ class AsyncBuildExecutor:
         # ended in the queue never comes here and leaves neither.
         snapshot = self.registry.get(run_id)
         owner_id = snapshot.owner_id if snapshot is not None else None
+        if snapshot is not None:
+            metrics.observe_queue_wait(snapshot.created_at)
         started_at = build_log.started(run_id, mode="async", owner_id=owner_id)
         cancellation = self.registry.cancellation(run_id)
         if cancellation is None:  # pragma: no cover - create() always makes one together

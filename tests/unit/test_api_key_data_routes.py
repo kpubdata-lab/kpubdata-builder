@@ -53,6 +53,9 @@ _OWNER = "owner"
 #: What each contract operation answers with. Keep in the contract's order.
 CLASSIFICATION: dict[str, str] = {
     "GET /healthz": _PUBLIC,
+    "GET /readyz": _PUBLIC,
+    # Deployment aggregates in the Prometheus format; 403 for anyone else (#1101).
+    "GET /metrics": _ADMIN,
     "GET /version": _PUBLIC,
     "GET /catalog": _PUBLIC,
     "GET /providers": _PUBLIC,

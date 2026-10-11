@@ -9,11 +9,13 @@ and the published-image check reports an image the registry does not have.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -80,3 +82,23 @@ def test_the_published_check_reads_both_deployment_compose_files() -> None:
 def test_an_image_the_registry_does_not_have_is_reported() -> None:
     assert smoke.missing_images(["a:1", "b:2"], inspect=["false"]) == ["a:1", "b:2"]
     assert smoke.missing_images(["a:1"], inspect=["true"]) == []
+
+
+def _answer(status: int, body: object) -> object:
+    return smoke.Answer(status, {}, json.dumps(body))
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "ok"),
+    [
+        (200, {"status": "ready", "checks": {"disk": "ok", "workers": "ok"}}, True),
+        (503, {"status": "not_ready", "checks": {"disk": "low", "workers": "ok"}}, True),
+        (503, {"status": "not_ready", "checks": {"disk": "ok", "state_store": "failed"}}, False),
+        (503, {"status": "not_ready", "checks": {"disk": "low", "workers": "draining"}}, False),
+        (401, {"error": "unauthorized"}, False),
+    ],
+)
+def test_readiness_passes_a_ready_service_and_only_the_runners_disk(
+    status: int, body: object, ok: bool
+) -> None:
+    assert smoke.readiness_ok(_answer(status, body)) is ok

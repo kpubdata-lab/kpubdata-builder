@@ -225,6 +225,61 @@ docker run --rm -p 8000:8000 \
   각 run 의 상태를 읽는다. 확인하지 않는 것: provider 에서 가져오는 빌드, 빌드 둘이 동시에
   실행 중인 경우, 작업의 키가 메모리에서 지워졌는지.
 
+### 7.1 liveness 와 readiness 의 분리, 메트릭 (#1101)
+
+세 가지를 따로 본다.
+
+| 질문 | 어디서 | 인증 | 실패의 뜻 |
+| :--- | :--- | :--- | :--- |
+| 프로세스가 살아 있나 (liveness) | `GET /healthz` | 없음 | 응답이 없다. 파일을 건드리지 않는다 |
+| 지금 일을 할 수 있나 (readiness) | `GET /readyz` | 없음 | 503 `not_ready`, 본문의 `checks` 가 어느 검사인지 말한다 |
+| build 를 더 받을 수 있나 | `GET /readyz` 의 `accepting_builds` | 없음 | `false` 여도 `status` 는 `ready` 로 남는다 |
+
+`/readyz` 가 보는 것: `state_store`(build index 를 읽을 수 있나, 쓰지는 않는다), `output_dir`(출력
+디렉터리에 파일을 만들고 지울 수 있나 — SQLite 저장소와 그 저널이 쓰이는 곳),
+`disk`(그 파일시스템의 여유 공간이 `KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT`(기본 15%)와
+`KPUBDATA_BUILDER_READY_MIN_FREE_MB`(기본 1024MB) 이상인가, 하나라도 못 미치면 `low`),
+`workers`(build worker 가 멈추지 않았나, 종료 중이면 `draining`). 값은 `ok` 이외에
+`failed`·`timeout`·`low`·`draining`·`stopped` 다. 두 임계값은 이슈가 제안한 출발값이며 측정해서
+정한 값이 아니다.
+
+정책:
+
+- **큐가 가득 찬 것은 장애가 아니다.** 로그인·취소·조회는 그대로 되므로 `status` 는 `ready` 이고
+  `accepting_builds` 만 `false` 다.
+- **JWKS(토큰 서명 검증용 공개키)는 readiness 에서 보지 않는다.** 검사마다 IdP 를 부르게 되기
+  때문이다. 키를 얻지 못해 판정할 수 없는 요청은 그 요청이 503 `auth_unavailable` 로 답한다.
+  캐시가 유효한 동안의 IdP 장애, 처음 기동, 모르는 `kid`, 캐시 만료를 구분해 알리는 일은 아직
+  남아 있다.
+- **schema migration** 은 기동 시점의 일이다. 이 릴리스가 읽지 못하는 저장소는 기동을 막는다(§6.0).
+  떠 있는 프로세스는 그것을 이미 통과했다.
+- **부하 제한.** 검사 결과는 5초 동안 재사용되고, 그 사이에 온 요청은 하나의 계산을 함께 기다린다.
+  파일시스템 검사는 2초 안에 끝나지 않으면 `timeout` 이고, 그 검사가 아직 멈춰 있으면 새로 시작하지
+  않는다. 응답에는 경로·크기·오류 문구를 넣지 않는다.
+
+compose 의 healthcheck 와 Caddy 의 `health_uri` 는 **계속 `/healthz`** 를 본다. 디스크가 찼다고
+Caddy 가 upstream 을 빼면 취소와 조회까지 모든 요청이 실패한다. 또 Docker 는 컨테이너가 `unhealthy` 가
+되어도 `restart: unless-stopped` 만으로는 재시작하지 않고, `depends_on: service_healthy` 는 시작
+순서만 정할 뿐 실행 중 장애를 복구하지 않는다. `/readyz` 는 외부 감시가 부르는 주소다:
+`https://<APP_DOMAIN>/readyz`.
+
+`GET /metrics` 는 Prometheus 텍스트 형식(0.0.4)이고 **관리자만** 읽는다 — 서비스 API 키 또는
+관리자의 Bearer 토큰. 다른 사용자는 403 이다. 내용: `kpubdata_builder_builds_queued`,
+`_builds_running`, `_build_workers`, `_build_queue_limit`, `_accepting_builds`, `_ready`,
+`_readiness_check{check}`, `_disk_free_bytes`, `_disk_total_bytes`(게이지),
+`_http_responses_total{status,code}`(429 와 5xx 포함, `code` 는 Builder 의 고정 어휘 또는 `other`),
+`_build_duration_seconds{mode,status}`, `_build_queue_wait_seconds`(히스토그램). 라벨에 경로·run id·
+소유자·오류 문구는 들어가지 않는다. 카운터는 프로세스가 다시 뜨면 0 부터 센다.
+
+```bash
+curl -s https://<APP_DOMAIN>/readyz
+curl -s -H "X-API-Key: $KPUBDATA_BUILDER_API_KEY" https://<APP_DOMAIN>/metrics
+```
+
+**아직 하지 않은 것(#1101):** 외부 감시 서비스의 계정, 알림 수신자와 당직 절차, 알림 임계값,
+장애 주입 리허설, Studio·Keycloak 의 합성 검사와 로그인 여정 검사, nightly·restore-test 의
+deadman 은 메인테이너의 결정과 운영 계정이 필요해 이 저장소의 변경만으로는 끝나지 않는다.
+
 ## 8. 동시성·풀·백프레셔
 
 단일 Builder process 안에는 역할이 다른 실행 제한이 세 개 있다. 숫자가 같더라도 하나의

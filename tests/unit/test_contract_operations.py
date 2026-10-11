@@ -195,4 +195,7 @@ def test_the_header_flags_are_what_the_contract_declares() -> None:
         assert operation.authenticated is (security != [])
     assert sum(op.provider_key for op in all_operations()) >= 7
     assert sum(op.publish_credential for op in all_operations()) >= 5
-    assert [op.operation_id for op in all_operations() if not op.authenticated] == ["healthz"]
+    assert [op.operation_id for op in all_operations() if not op.authenticated] == [
+        "healthz",
+        "readyz",
+    ]

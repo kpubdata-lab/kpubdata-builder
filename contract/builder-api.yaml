@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.116.0"
+  version: "1.117.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.117.0 tells readiness apart from liveness and adds metrics (#1101, additive). `GET /readyz` answers without authentication, as `GET /healthz` does: 200 `ready` when the build index can be read, the output directory can be written, its filesystem has the free space the deployment asks for, and the build workers run; 503 `not_ready` otherwise, with the same body naming the check that failed. A full build queue is not a failure: it is `accepting_builds: false` and the status stays `ready`. The body names checks and states only, never a path, a size or an error text, and the answer is reused for a few seconds whoever asks. `GET /metrics` gives an administrator the Prometheus text page: queue depth, running builds, workers, build durations and queue waits, responses by status and stable code (429 and 5xx among them), free disk and the readiness checks. Anyone else gets 403. `GET /healthz` is unchanged and stays the liveness probe.
     v1.116.0 gives each run of `GET /admin/runs` the stable code and the stage of the failure its `error` states (#1120, additive): `error_code` and `error_stage`, null when the run did not fail or the cause is not one of Builder's codes and stages. Both are Builder's vocabulary only — a provider refusal reason, `pipeline_failed`, a composition rule, a refused commit's reason, or why a run was cancelled or ended without a manifest — so a client chooses what to tell an administrator without parsing the sentence. The build index keeps them beside `error` and a rebuild of the index restores them. A single-user deployment now also fails, at its next start, the runs a restart interrupted: before, they were left unfinished for good.
     v1.115.0 records why a cancelled run was cancelled and how a run that left no manifest ended (#1120, additive; no schema changes). A cancelled run's manifest gains `failures` entries: each source the cancellation stopped, with the first stage it had not completed, or — when every source had finished — the composition or the commit of each source's results that did not run (`stage` `composition` or `warehouse`). Their `code` is why the run was cancelled: `cancelled` (on request), `time_limit_exceeded` or `server_shutdown`. A run that ended without a manifest — cancelled while queued, interrupted by a restart, still queued when the server shut down, without its provider keys when it could start — is now in the build index, so `GET /builds` lists it to its owner as `failed` or `cancelled` with a null `started_at`, and `GET /admin/runs` shows it with a one-line reason after the job registry has let it go and after `rebuild-index`. That line and every `summary` are made of fixed phrases only. `GET /builds/{run_id}`, the events and the id's `run_id_ended` refusal answer as before.
     v1.114.0 lets a build ask for new tables only (#1223, additive). `POST /build` and `POST /builds` take `if_absent`; with it, a table that already has a snapshot is not committed over, and its source is a `warehouse_failures` entry with the new reason `table_exists` (409). The check is the commit's compare-and-swap against revision 0, so a table made by another build while this one ran is refused too. Studio sends it for a "new table" choice; a refresh leaves it out.
@@ -232,6 +233,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Unauthenticated readiness probe, apart from liveness (#1101)
+      description: >-
+        Whether this process can do its work now. Checks the build index can be read
+        (`state_store`), the output directory can be written (`output_dir`), the free
+        space of its filesystem is above `KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT` and
+        `KPUBDATA_BUILDER_READY_MIN_FREE_MB` (`disk`), and the build workers run and are
+        not draining for a shutdown (`workers`). A full build queue is
+        `accepting_builds: false` and does not make the status `not_ready`. The identity
+        provider's signing keys are not fetched here. The answer is computed at most once
+        every few seconds and a filesystem check that does not return in time is
+        `timeout`. Nothing in the body names a path, a size or an error text.
+      security: []
+      responses:
+        "200":
+          description: Every check is ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              examples:
+                Ready:
+                  summary: Ready, queue open
+                  value:
+                    status: ready
+                    checks:
+                      state_store: ok
+                      output_dir: ok
+                      disk: ok
+                      workers: ok
+                    accepting_builds: true
+        "503":
+          description: At least one check is not ok; the body says which
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              examples:
+                DiskLow:
+                  summary: The disk is below the threshold
+                  value:
+                    status: not_ready
+                    checks:
+                      state_store: ok
+                      output_dir: ok
+                      disk: low
+                      workers: ok
+                    accepting_builds: true
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus text metrics, for administrators (#1101)
+      description: >-
+        The Prometheus text exposition format (version 0.0.4). Gauges are read when the
+        page is served: `kpubdata_builder_builds_queued`, `_builds_running`,
+        `_build_workers`, `_build_queue_limit`, `_accepting_builds`, `_ready`,
+        `_readiness_check{check}`, `_disk_free_bytes`, `_disk_total_bytes`. Counters and
+        histograms count since the process started:
+        `kpubdata_builder_http_responses_total{status,code}`,
+        `_build_duration_seconds{mode,status}` and `_build_queue_wait_seconds`. Every label
+        value comes from a closed set; no path, run id, owner or error text is a label.
+        An API key and an administrator's bearer token are accepted; any other principal
+        gets 403.
+      responses:
+        "200":
+          description: The metrics page
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not an administrator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /version:
     get:
@@ -7032,6 +7115,38 @@ components:
         status:
           type: string
           const: "ok"
+
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks, accepting_builds]
+      description: >-
+        Readiness probe answer (#1101). `status` is `ready` only when every check is
+        `ok`. `accepting_builds` is whether `POST /builds` would queue a build now; it
+        does not affect `status`.
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties: false
+          required: [state_store, output_dir, disk, workers]
+          properties:
+            state_store:
+              type: string
+              enum: [ok, failed, timeout]
+            output_dir:
+              type: string
+              enum: [ok, failed, timeout]
+            disk:
+              type: string
+              enum: [ok, low, failed, timeout]
+            workers:
+              type: string
+              enum: [ok, draining, stopped]
+        accepting_builds:
+          type: boolean
 
     CatalogResponse:
       type: object
