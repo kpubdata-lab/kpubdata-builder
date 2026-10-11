@@ -9,6 +9,7 @@ this command exists to prevent. These tests drive the runner with fakes.
 
 from __future__ import annotations
 
+import dataclasses
 import urllib.error
 from typing import Any
 
@@ -17,6 +18,7 @@ from kpubdata.core.spec import (
     AuthSpec,
     EndpointSpec,
     ErrorSpec,
+    ExampleSpec,
     PaginationSpec,
     ResponseSpec,
     SpecDefinition,
@@ -294,3 +296,71 @@ class TestOrchestration:
 
         assert not _check(result, CheckName.PARSER).passed
         assert result.status == DatasetStatus.BROKEN_ENDPOINT
+
+
+class TestTheRequestVerifySends:
+    """Query and format hint the runner hands the executor (#1111).
+
+    The default for a spec with no examples used to be built from kpubdata's private
+    ``ExampleSpec``. These pin that dropping the import kept the request unchanged.
+    """
+
+    def _capture(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, Any]]:
+        import kpubdata.core.executor as executor_module
+
+        _install_fakes(monkeypatch, fetch=lambda: ({}, {}))
+        sent: list[tuple[Any, Any]] = []
+
+        class _RecordingExecutor:
+            def __init__(self, transport: object, config: object) -> None:
+                pass
+
+            def fetch(self, spec: object, query: object, format_hint: object = None) -> Any:
+                sent.append((query, format_hint))
+                return {}, {}
+
+        monkeypatch.setattr(executor_module, "SpecExecutor", _RecordingExecutor)
+        return sent
+
+    def test_a_spec_without_examples_sends_no_filters_on_page_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent = self._capture(monkeypatch)
+
+        runner_module.verify_dataset(_spec(), page_size=7)
+
+        assert len(sent) == 1
+        query, format_hint = sent[0]
+        assert (query.filters, query.page, query.page_size) == ({}, 1, 7)
+        assert format_hint is None
+
+    def test_the_first_example_supplies_params_page_and_format(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent = self._capture(monkeypatch)
+        spec = dataclasses.replace(
+            _spec(),
+            examples=(
+                ExampleSpec(name="first", params={"LAWD_CD": "11680"}, page=3, format="xml"),
+                ExampleSpec(name="second", params={"LAWD_CD": "00000"}, page=9),
+            ),
+        )
+
+        runner_module.verify_dataset(spec)
+
+        assert len(sent) == 1
+        query, format_hint = sent[0]
+        assert (query.filters, query.page, query.page_size) == ({"LAWD_CD": "11680"}, 3, 10)
+        assert format_hint == "xml"
+
+    def test_an_example_without_a_page_starts_on_page_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent = self._capture(monkeypatch)
+        spec = dataclasses.replace(_spec(), examples=(ExampleSpec(name="bare"),))
+
+        runner_module.verify_dataset(spec)
+
+        query, format_hint = sent[0]
+        assert (query.filters, query.page) == ({}, 1)
+        assert format_hint is None

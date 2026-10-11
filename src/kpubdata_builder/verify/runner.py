@@ -113,12 +113,11 @@ def verify_dataset(
     Returns:
         VerifyResult with all check outcomes and final status.
     """
-    # Below eight are NOT kpubdata public API (not in ``kpubdata.__all__``).
-    # coupling from verify re-implementing kpubdata's ``make verify``, and
-    # kpubdata can move these in minor release without breaking change.
-    # ``tests/unit/test_kpubdata_internal_surface.py`` pins this list,
-    # so upgrade breaks in CI, not at runtime. When starting to use new internal symbols,
-    # add them to that list too.
+    # SpecExecutor, the three executor functions and HttpTransport are NOT kpubdata
+    # public API (not in ``kpubdata.__all__``): kpubdata can move them in a minor
+    # release. kpubdata#914 proposes the public replacement. Until then
+    # ``tests/unit/test_kpubdata_internal_surface.py`` pins them, so an upgrade
+    # breaks in CI, not at runtime. A new internal symbol goes on that list too.
     from kpubdata import KPubDataConfig
     from kpubdata.core.executor import (
         SpecExecutor,
@@ -127,7 +126,6 @@ def verify_dataset(
         extract_total_count,
     )
     from kpubdata.core.models import Query
-    from kpubdata.core.spec import ExampleSpec
     from kpubdata.exceptions import (
         AuthError,
         PublicDataError,
@@ -158,13 +156,14 @@ def verify_dataset(
             max_retries=1,
         )
 
-    # Pick example params or use defaults
-    example = spec.examples[0] if spec.examples else ExampleSpec(name="default")
+    # Pick the first example's params, or none: no filters, page 1, no format hint.
+    example = spec.examples[0] if spec.examples else None
     query = Query(
-        filters=dict(example.params) if hasattr(example, "params") and example.params else {},
-        page=example.page or 1,
+        filters=dict(example.params) if example is not None and example.params else {},
+        page=(example.page if example is not None else None) or 1,
         page_size=page_size,
     )
+    format_hint = example.format if example is not None else None
 
     # HttpTransport owns a persistent HTTP client. Left to the garbage
     # collector, `--all` and repeated library calls pile up sockets and
@@ -173,7 +172,7 @@ def verify_dataset(
     try:
         t0 = time.monotonic()
         executor = SpecExecutor(transport, config)
-        _params, payload = executor.fetch(spec, query, format_hint=getattr(example, "format", None))
+        _params, payload = executor.fetch(spec, query, format_hint=format_hint)
         fetch_latency = (time.monotonic() - t0) * 1000
     except (AuthError, RateLimitError) as exc:
         result.checks.append(
