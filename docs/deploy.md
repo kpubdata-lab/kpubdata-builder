@@ -121,8 +121,8 @@ Builder 가 두는 SQLite 파일은 열 개다. 목록의 정본은 `src/kpubdat
 
 | 저장소 | 위치 | 잠금 대기 | 저널 모드 | 스키마 버전 | 잃으면 |
 |---|---|---|---|---|---|
-| 빌드 인덱스 | 출력 디렉터리의 `_builds.sqlite` | 30초 | WAL | 버전 표 | 잃어도 된다 — manifest 에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`) |
-| run 이벤트와 제출 기록 | 출력 디렉터리의 `_build_events.sqlite` | 30초 | WAL | 버전 표 | run 의 타임라인과 제출자 기록을 잃는다. 다시 만들 수 없다 |
+| 빌드 인덱스 | 출력 디렉터리의 `_builds.sqlite` | 30초 | WAL | 버전 표 | 잃어도 된다 — manifest 와, manifest 없이 끝난 run 은 run 이벤트 저장소의 종료 기록에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`) |
+| run 이벤트와 제출 기록 | 출력 디렉터리의 `_build_events.sqlite` | 30초 | WAL | 버전 표 | run 의 타임라인과 제출자 기록, manifest 없이 끝난 run 의 종료 기록(#1120)을 잃는다. 다시 만들 수 없다 |
 | 게시 영수증 | 출력 디렉터리의 `_publish_receipts.sqlite` | 30초 | WAL | 없음 — 빠진 열을 열 때 더한다 | 어떤 run 을 어디에 게시했는지와, 같은 게시가 두 번 나가는 것을 막는 근거를 잃는다. 다시 만들 수 없다 |
 | provider 자격 증명 (암호화) | 출력 디렉터리의 `.service/provider-credentials.sqlite3` | 30초 | 기본(rollback journal) | 없음 | 사용자가 저장한 provider 키를 잃는다. 각자 다시 입력해야 한다 |
 | 업로드 | 출력 디렉터리의 `.service/uploads.sqlite3` | 30초 | 기본(rollback journal) | 없음 — 빠진 열을 열 때 더한다 | 올린 파일과 그 목록을 잃는다(큰 파일의 내용은 옆의 `uploads.sqlite3.blobs/` 에 있다) |

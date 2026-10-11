@@ -57,6 +57,7 @@ from ..manifest import (
     snapshot_coverage,
 )
 from ..manifest.checksums import FINGERPRINT_ALGORITHM
+from ..manifest.endings import CANCELLATION_CODES, run_ending_summary
 from ..manifest.reproducibility import not_reproducible
 from ..quality import (
     DriftEvaluation,
@@ -1522,11 +1523,21 @@ def _run_failures(
     outcomes: Sequence[SourceBuildOutcome],
     composition_outcome: CompositionOutcome | None,
     warehouse_failures: Mapping[str, Mapping[str, str]],
+    *,
+    cancellation_code: str | None = None,
+    composition_name: str | None = None,
 ) -> tuple[RunFailure, ...]:
     """Each failure of the run with where it stopped and a stable code (#1120).
 
     A source stopped at the first stage it did not complete; one that completed Gold
     failed in its export.
+
+    A cancelled run (``cancellation_code`` is set) records where the cancellation
+    stopped it: each source that observed it, at the first stage it did not complete.
+    When every source had finished and the cancellation arrived before the run was
+    made final, the step that did not run is named instead — the composition
+    (``composition_name``), or the commit of each finished source's results. The code
+    is the cancellation's cause and the summary a fixed sentence (``manifest.endings``).
 
     Every summary is a sentence Builder wrote, because the build index copies it into
     the line ``/admin/runs`` serves for all owners' runs. A provider's refusal has its
@@ -1537,6 +1548,17 @@ def _run_failures(
     """
     failures: list[RunFailure] = []
     for outcome in outcomes:
+        if outcome.status == "cancelled" and cancellation_code is not None:
+            stopped_at = _failed_stage(outcome.stages_completed)
+            failures.append(
+                RunFailure(
+                    source_key=outcome.source_key,
+                    stage=stopped_at,
+                    code=cancellation_code,
+                    summary=run_ending_summary(cancellation_code, stopped_at),
+                )
+            )
+            continue
         if outcome.status != "failed":
             continue
         stage = _failed_stage(outcome.stages_completed)
@@ -1573,7 +1595,32 @@ def _run_failures(
                 summary=failure.get("detail", "the table was not committed"),
             )
         )
+    if cancellation_code is not None and not any(o.status == "cancelled" for o in outcomes):
+        # No source observed the cancellation: it arrived after the last of them, and
+        # the run was refused its normal ending (``CancellationProbe.commit``).
+        not_run: list[tuple[str, RunFailureStage]] = (
+            [(composition_name, "composition")]
+            if composition_name is not None
+            else [(o.source_key, "warehouse") for o in outcomes if o.status == "ok"]
+        )
+        failures.extend(
+            RunFailure(
+                source_key=key,
+                stage=stage,
+                code=cancellation_code,
+                summary=run_ending_summary(cancellation_code, stage),
+            )
+            for key, stage in not_run
+        )
     return tuple(failures)
+
+
+def _cancellation_code(ask: Callable[[], str] | None) -> str:
+    """Why the run was cancelled, as one of ``CANCELLATION_CODES``; ``cancelled`` otherwise."""
+    if ask is None:
+        return "cancelled"
+    code = ask()
+    return code if code in CANCELLATION_CODES else "cancelled"
 
 
 #: The refusal of a build that asked for new tables (#1223) where one exists.
@@ -1684,6 +1731,7 @@ def run_build(
     upload_repository: UploadRepository | None = None,
     event_store: BuildEventStore | None = None,
     cancellation: CancellationProbe | None = None,
+    cancellation_code: Callable[[], str] | None = None,
     catalog: TableCatalog | None = None,
     workspace_id: str = "ws_personal",
     warehouse_keep: int | None = 3,
@@ -1722,6 +1770,11 @@ def run_build(
             ``commit()`` locks run as successful — later cancellation rejected,
             structurally preventing success manifest from later inverting to
             cancelled.
+        cancellation_code: asked once, when the run ends cancelled, for why it was
+            (#1120): ``cancelled`` (on request, and the answer when this is None),
+            ``time_limit_exceeded`` or ``server_shutdown``. The pipeline does not know
+            who asked; the caller that holds the probe does. Any other answer is
+            recorded as ``cancelled``.
 
     Returns:
         BuildResult: overall status (ok/failed/cancelled), per-source results,
@@ -2084,7 +2137,13 @@ def run_build(
         drift_evaluation=drift_evaluation,
         composition=composition_provenance,
         warehouse_failures=warehouse_failures,
-        failures=_run_failures(outcomes, composition_outcome, warehouse_failures),
+        failures=_run_failures(
+            outcomes,
+            composition_outcome,
+            warehouse_failures,
+            cancellation_code=_cancellation_code(cancellation_code) if cancelled else None,
+            composition_name=spec.composition.name if spec.composition is not None else None,
+        ),
         gold_selection={key: value.body() for key, value in gold_selection.items()},
         pii_masking={key: value.body() for key, value in pii_masking.items()},
         reproducibility=not_reproducible(resumed_sources) if resumed_sources else None,

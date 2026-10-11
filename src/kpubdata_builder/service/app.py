@@ -499,7 +499,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.113.0 -> 1.114.0: POST /build and POST /builds take if_absent; a table that already
 #   has a snapshot is then a warehouse_failures entry with reason table_exists (#1223,
 #   additive).
-API_CONTRACT_VERSION = "1.114.0"
+# 1.114.0 -> 1.115.0: a cancelled run's manifest records where and why it was cancelled,
+#   and a run that ended without a manifest is in the build index — listed by GET /builds
+#   and GET /admin/runs with a fixed one-line reason (#1120, additive; no schema changes).
+API_CONTRACT_VERSION = "1.115.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
