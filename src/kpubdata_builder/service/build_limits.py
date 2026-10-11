@@ -42,6 +42,41 @@ def resolve_owner_build_limit() -> int | None:
     return value or None
 
 
+MAX_QUEUED_BUILDS_ENV = "KPUBDATA_BUILDER_MAX_QUEUED_BUILDS"
+#: What the queue held when its size was written into ``BuilderService`` (#1108).
+DEFAULT_MAX_QUEUED_BUILDS = 10
+#: A waiting job keeps its spec, and in a multi-user deployment the request's provider
+#: keys, in memory; the queue's size bounds how much of that there is. Chosen without
+#: measurement, like the other limits (kpubdata#812).
+MAX_QUEUED_BUILDS_CEILING = 1000
+
+
+def resolve_max_queued_builds() -> int:
+    """How many async builds may wait for a worker, for the whole service.
+
+    Unset or empty is the default.
+
+    Raises:
+        ValueError: The value is not an integer from 1 to the ceiling. Unlike the
+            limits above, this one does not fall back: a queue of another size than
+            the operator wrote is not a setting to find out about under load, and
+            ``serve`` refuses to start (``startup_settings``).
+    """
+    raw = os.environ.get(MAX_QUEUED_BUILDS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_QUEUED_BUILDS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if not 1 <= value <= MAX_QUEUED_BUILDS_CEILING:
+        raise ValueError(
+            f"{MAX_QUEUED_BUILDS_ENV} must be an integer from 1 to "
+            f"{MAX_QUEUED_BUILDS_CEILING}, got {raw!r}"
+        )
+    return value
+
+
 BUILD_TIME_LIMIT_ENV = "KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS"
 #: Six hours: generous for a large ``param_grid`` build, and short enough that a stuck
 #: job gives its build slot back the same day. Chosen without measurement, like the
@@ -75,7 +110,11 @@ __all__ = [
     "BUILD_TIME_LIMIT_ENV",
     "DEFAULT_BUILD_TIME_LIMIT_SECONDS",
     "DEFAULT_MAX_ACTIVE_BUILDS_PER_OWNER",
+    "DEFAULT_MAX_QUEUED_BUILDS",
     "MAX_ACTIVE_BUILDS_PER_OWNER_ENV",
+    "MAX_QUEUED_BUILDS_CEILING",
+    "MAX_QUEUED_BUILDS_ENV",
     "resolve_build_time_limit",
+    "resolve_max_queued_builds",
     "resolve_owner_build_limit",
 ]

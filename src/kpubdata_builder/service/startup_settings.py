@@ -36,6 +36,7 @@ from ..query.service import (
 from ..store.backend import cubrid_url, storage_backend
 from ..tabular.duckdb_runtime import BuildProfile
 from .auth import oidc_enabled
+from .build_limits import resolve_max_queued_builds
 from .http import shutdown_grace_seconds
 from .ownership import multi_user_mode
 
@@ -160,6 +161,7 @@ REFUSED: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_STORAGE_BACKEND",
         "KPUBDATA_BUILDER_CUBRID_URL",
         "KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS",
+        "KPUBDATA_BUILDER_MAX_QUEUED_BUILDS",
         "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY",
         "KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT",
         "OIDC_JWKS_TTL",
@@ -207,6 +209,7 @@ _READERS: tuple[Callable[[], object], ...] = (
     query_memory_budget_from_env,
     _storage,
     shutdown_grace_seconds,
+    resolve_max_queued_builds,
     _master_key,
     _provider_test_timeout,
     _jwks_ttl,
@@ -244,7 +247,7 @@ def _is_port(raw: str) -> bool:
     return value is not None and 0 <= value <= 65535
 
 
-def _forced_on(name: str) -> bool:
+def forced_on(name: str) -> bool:
     """Whether the deployment turns ``name`` on whatever the variable says.
 
     Sign-in through OIDC makes a deployment multi-user, and so does
@@ -290,7 +293,7 @@ def check_settings(*, overridden: Collection[str] = ()) -> SettingsReport:
         written = (raw.strip() if strips else raw).lower()
         if not written or written in on_words:
             continue
-        if _forced_on(name):
+        if forced_on(name):
             # Whatever it says: a warning that it "is read as off" would tell an
             # operator that a switch which is on is off.
             report.warnings.append(

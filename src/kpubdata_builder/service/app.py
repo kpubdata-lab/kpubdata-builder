@@ -49,6 +49,7 @@ from ..uploads import (
     UploadRepository,
     resolve_max_upload_bytes,
 )
+from ..uploads.store import SCHEMA as uploads_schema
 from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
@@ -61,9 +62,11 @@ from . import (
     request_log,
 )
 from . import publish as publish_service
+from .analyses_api import SCHEMA as analyses_schema
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
+from .build_limits import resolve_max_queued_builds
 from .build_runs_api import BuildRunsApiService
 from .build_slots import BuildSlots
 from .builds_api import BuildArtifactsApiService
@@ -74,6 +77,7 @@ from .monitoring_api import MonitoringApiService
 from .pii_reads import PiiLookup, client_pii_lookup
 from .probe_limit import ProbeLimiter
 from .profiles_api import ProfilesApiService
+from .provider_tests import SCHEMA as provider_tests_schema
 from .provider_tests import ProviderTestLog
 from .providers import (
     CredentialResolver,
@@ -94,6 +98,7 @@ from .redistribution import (
     kpubdata_terms,
 )
 from .responses import FileResponse, ServiceResponse
+from .revisions import SCHEMA as revisions_schema
 from .revisions import RevisionStore
 from .revisions_api import RevisionsApiService
 from .routes import ROUTE_ADAPTERS
@@ -104,6 +109,7 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import ExpiringUploads, UploadsService
+from .user_ledger import SCHEMA as user_ledger_schema
 from .user_ledger import LedgerUnavailableError, UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
@@ -499,7 +505,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.113.0 -> 1.114.0: POST /build and POST /builds take if_absent; a table that already
 #   has a snapshot is then a warehouse_failures entry with reason table_exists (#1223,
 #   additive).
-API_CONTRACT_VERSION = "1.114.0"
+# 1.114.0 -> 1.115.0: a cancelled run's manifest records where and why it was cancelled,
+#   and a run that ended without a manifest is in the build index — listed by GET /builds
+#   and GET /admin/runs with a fixed one-line reason (#1120, additive; no schema changes).
+API_CONTRACT_VERSION = "1.115.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -534,7 +543,7 @@ class BuilderService:
         probe_datasets: provider_probe.ListDatasets = provider_probe.spec_dataset_ids,
         probe_limiter: ProbeLimiter | None = None,
         async_max_workers: int = 10,
-        async_max_queue_size: int = 10,
+        async_max_queue_size: int | None = None,
         max_concurrent_builds: int | None = None,
         max_concurrent_previews: int | None = None,
         build_wait_seconds: float | None = DEFAULT_BUILD_WAIT_SECONDS,
@@ -594,6 +603,7 @@ class BuilderService:
         # Durable idempotency receipt for external publish side effects. Object
         # creation does not create files; SQLite lazily initialized on first POST claim.
         self._publish_receipts = publish_service.PublishReceiptStore(output_root)
+        self._refuse_newer_stores()
         self._query_service = query_service or QueryService()
         repository = credential_repository or _credential_repository_from_env(output_root)
         self._credential_resolver = CredentialResolver(repository)
@@ -708,7 +718,13 @@ class BuilderService:
         self._async_builds = AsyncBuildExecutor(
             build_slots=self._build_slots,
             max_workers=async_max_workers,
-            max_queue_size=async_max_queue_size,
+            # The queue's size is the deployment's (#1108): what the caller gives, else
+            # KPUBDATA_BUILDER_MAX_QUEUED_BUILDS, else the 10 that used to be written here.
+            max_queue_size=(
+                async_max_queue_size
+                if async_max_queue_size is not None
+                else resolve_max_queued_builds()
+            ),
             # running job safely terminates at boundary exactly once (#481). Terminal
             # event only recorded at terminal transition by the terminating side, so
             # queued/running cancellation both end with single run_cancelled, avoiding
@@ -778,6 +794,32 @@ class BuilderService:
                 if self._event_store_lazy is None:
                     self._event_store_lazy = BuildEventStore(self._output_root)
         return self._event_store_lazy
+
+    def _refuse_newer_stores(self) -> None:
+        """Refuse, at the start, a store a newer release wrote (#1096).
+
+        These stores are opened on first use so that a deployment that never uses one
+        has no file for it. One that is already there is looked at now, on a read-only
+        connection that creates and changes nothing: a rolled-back deployment then does
+        not start, rather than starting and failing the first request that needs the
+        store. The credential store is not here because it is opened at the start when
+        it is used at all, and refuses there.
+
+        Raises:
+            UnsupportedSchemaVersionError: One of the stores is newer than this release.
+        """
+        directory = self._output_root / ".service"
+        stores = [
+            (publish_service.RECEIPTS_SCHEMA, self._publish_receipts.path),
+            (provider_tests_schema, directory / "provider_tests.sqlite3"),
+            (revisions_schema, directory / "revisions.sqlite3"),
+            (user_ledger_schema, directory / "users.sqlite3"),
+            (analyses_schema, directory / "analyses.sqlite3"),
+        ]
+        if self._upload_repository_override is None:
+            stores.append((uploads_schema, directory / "uploads.sqlite3"))
+        for schema, path in stores:
+            schema.refuse_newer(path)
 
     @property
     def _upload_repository(self) -> UploadRepository:
