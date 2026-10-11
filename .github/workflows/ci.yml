@@ -78,6 +78,15 @@ jobs:
       - name: Plain review and verification codes
         run: python3 scripts/check_plain_codes.py
 
+      # The product-family stabilization freeze blocks newly expanded scope unless
+      # the repair is justified and independently reviewed (kpubdata POLICY 1.3).
+      - name: Stabilization scope tests
+        run: python3 -m unittest discover -s scripts -p test_stabilization_scope.py -v
+
+      - name: Stabilization scope gate
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/check_stabilization_scope.py
+
       # The service contract tests pass a deliberate break as long as the document and
       # the code change together. This compares the contract with the base branch's:
       # any normative change must raise info.version, and a break must raise its major
