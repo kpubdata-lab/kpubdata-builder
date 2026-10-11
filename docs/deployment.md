@@ -74,6 +74,8 @@
 | `KPUBDATA_BUILDER_STORAGE_BACKEND` | 상태 백엔드 (`sqlite`=로컬 기본, `cubrid`=CUBRID, ADR 0016) | `sqlite` | 선택 |
 | `KPUBDATA_BUILDER_CUBRID_URL` | CUBRID SQLAlchemy URL (예: `cubrid+pycubrid://user:pass@host:33000/db?charset=utf8`) | 미설정 | `STORAGE_BACKEND=cubrid` 시 필수 |
 | `KPUBDATA_BUILDER_WAREHOUSE` | 테이블 카탈로그 루트(`serve --warehouse` 와 같다). 설정하면 `POST /build` 가 source 별 Gold 를 커밋된 table snapshot 으로 남기고 응답 `materialized` 에 보고한다 — publish 자격증명이 필요 없다(#703). 미설정이면 카탈로그를 쓰지 않고 응답에 `materialized` 키가 없다 | 미설정 | 선택 |
+| `KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT` | 출력 디렉터리가 있는 파일시스템의 여유 공간이 이 비율(%) 아래면 `GET /readyz` 의 `disk` 가 `low` 이고 503 으로 답한다(#1101). `/healthz` 와 build 접수에는 영향이 없다. 이슈가 제안한 값을 기본값으로 두었고 측정 없이 정한 값이다(kpubdata#812). `0` 이면 끔. 0 이상 100 이하의 수가 아니면 `serve` 가 기동을 거부한다 | `15` | 선택 |
+| `KPUBDATA_BUILDER_READY_MIN_FREE_MB` | 출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `GET /readyz` 의 `disk` 가 `low` 다(#1101). 비율과 함께 둘 중 하나라도 못 미치면 `low`. 측정 없이 정한 값이다(kpubdata#812). `0` 이면 끔. 0 이상의 정수가 아니면 `serve` 가 기동을 거부한다 | `1024` (1 GiB) | 선택 |
 | `KPUBDATA_QUERY_MAX_CONCURRENCY` | 동시 query child process 상한 | `2` | 선택 |
 | `KPUBDATA_QUERY_MAX_MEMORY_MB` | query child 하나의 address space 상한(MB). 넘은 질의만 실패한다 | 무제한 | 선택 |
 | `KPUBDATA_QUERY_MEMORY_BUDGET_MB` | 동시에 도는 query child 들의 메모리 합(MB). 질의마다 `MAX_MEMORY_MB` 만큼 예약하고 모자라면 `429 query_busy` | 없음 | 선택 |
@@ -117,7 +119,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 35 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 37 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |

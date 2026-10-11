@@ -32,8 +32,8 @@ from urllib.parse import urlsplit
 from ..spec import JsonValue
 from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
-from . import request_log
-from .app import BuilderService, FileResponse, dispatch, refuse_before_body
+from . import metrics, request_log
+from .app import BuilderService, FileResponse, TextResponse, dispatch, refuse_before_body
 from .auth import validate_dev_mode, validate_oidc_config
 from .publish_credentials import PUBLISH_CREDENTIAL_HEADER
 from .request_credentials import PROVIDER_KEY_HEADER
@@ -248,6 +248,9 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             finally:
                 if self._answered is not None:
                     status, code = self._answered
+                    # GET /metrics counts every answer here, the ones made before
+                    # dispatch (400, 413, a refusal before the body) included (#1101).
+                    metrics.observe_response(status, code)
                     request_log.record(
                         request_id=self._request_id,
                         method=method,
@@ -371,6 +374,8 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             # Branch on FileResponse vs ServiceResponse (#323)
             if isinstance(response, FileResponse):
                 self._write_file(response)
+            elif isinstance(response, TextResponse):
+                self._write_text(response)
             else:
                 self._write(response.status_code, response.body)
 
@@ -404,6 +409,19 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             self._answered = (status_code, body.get("code"))
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            if hasattr(self, "_request_id"):
+                self.send_header("X-Request-ID", self._request_id)
+            self._send_cors_headers(origin=self.headers.get("Origin"))
+            self.end_headers()
+            _ = self.wfile.write(payload)
+
+        def _write_text(self, response: TextResponse) -> None:
+            """Write a text body that is not JSON (#1101)."""
+            payload = response.text.encode("utf-8")
+            self._answered = (response.status_code, None)
+            self.send_response(response.status_code)
+            self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(payload)))
             if hasattr(self, "_request_id"):
                 self.send_header("X-Request-ID", self._request_id)

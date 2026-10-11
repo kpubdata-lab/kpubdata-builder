@@ -100,6 +100,9 @@ services:
       KPUBDATA_BUILDER_MAX_QUEUED_BUILDS: ${KPUBDATA_BUILDER_MAX_QUEUED_BUILDS:-}
       # 비동기 build 한 건의 실행 시간 상한(초, #1119). 비워 두면 코드 기본값(6시간)이다.
       KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS: ${KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS:-}
+      # GET /readyz 가 디스크를 `low` 로 보는 여유 공간(%, MB, #1101). 비워 두면 기본값(15%, 1024MB).
+      KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT: ${KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT:-}
+      KPUBDATA_BUILDER_READY_MIN_FREE_MB: ${KPUBDATA_BUILDER_READY_MIN_FREE_MB:-}
     ports:
       # 기본은 루프백이다. 예전 기본값("8000")은 모든 인터페이스에 공개돼서,
       # Caddy 없이 올리면 TLS 없는 8000 으로 API 키가 평문으로 오갔다. 헬스체크는

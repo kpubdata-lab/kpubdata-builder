@@ -8,6 +8,7 @@ from urllib.parse import parse_qs
 
 from ...spec import JsonValue
 from ..auth import Principal
+from ..responses import ServiceResponse
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -23,6 +24,12 @@ def route(
     principal: Principal,
 ) -> RouteResponse | None:
     del body
+    if method == "GET" and path == "/metrics":
+        # Administrators only (#1101): the page holds no user's data, but queue depth
+        # and error rates are the deployment's, not every signed-in user's.
+        if not principal.is_admin:
+            return ServiceResponse(403, {"error": "forbidden: administrator role required"})
+        return service.metrics_page()
     if method == "GET" and path == "/monitoring/summary":
         return service.monitoring_summary()
     if method == "GET" and path == "/monitoring/builds":

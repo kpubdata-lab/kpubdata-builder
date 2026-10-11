@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING
 
 from ...spec import JsonValue
 from ..auth import Principal
-from ..responses import FileResponse, ServiceResponse
+from ..responses import FileResponse, ServiceResponse, TextResponse
 
 if TYPE_CHECKING:
     from ..app import BuilderService
 
-RouteResponse = ServiceResponse | FileResponse
+RouteResponse = ServiceResponse | FileResponse | TextResponse
 RouteAdapter = Callable[
     ["BuilderService", str, str, Mapping[str, JsonValue] | None, str, Principal],
     RouteResponse | None,

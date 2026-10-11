@@ -1,9 +1,53 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.116.0",
+  "contract_version": "1.117.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
+    {
+      "operation_id": "readyz",
+      "method": "GET",
+      "path": "/readyz",
+      "status": 200,
+      "example": "Ready",
+      "current": {
+        "status": "ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "ok",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "with_additive_fields": {
+        "status": "ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "ok",
+          "workers": "ok",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "accepting_builds": true,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.checks",
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "ok",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "broken_path": "$.status"
+    },
     {
       "operation_id": "getVersion",
       "method": "GET",
@@ -5116,6 +5160,50 @@
     }
   ],
   "error_fixtures": [
+    {
+      "operation_id": "readyz",
+      "method": "GET",
+      "path": "/readyz",
+      "status": 503,
+      "example": "DiskLow",
+      "current": {
+        "status": "not_ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "low",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "with_additive_fields": {
+        "status": "not_ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "low",
+          "workers": "ok",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "accepting_builds": true,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.checks",
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "low",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "broken_path": "$.status"
+    },
     {
       "operation_id": "probeProviderKey",
       "method": "POST",

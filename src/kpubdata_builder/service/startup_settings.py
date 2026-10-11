@@ -39,6 +39,7 @@ from .auth import oidc_enabled
 from .build_limits import resolve_max_queued_builds
 from .http import shutdown_grace_seconds
 from .ownership import multi_user_mode
+from .readiness import disk_thresholds
 
 #: Settings ``serve`` reads itself, each with a flag that takes precedence. A value the
 #: flag overrides is never read, so the caller says which those are.
@@ -165,6 +166,8 @@ REFUSED: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY",
         "KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT",
         "OIDC_JWKS_TTL",
+        "KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT",
+        "KPUBDATA_BUILDER_READY_MIN_FREE_MB",
     }
 )
 
@@ -213,6 +216,7 @@ _READERS: tuple[Callable[[], object], ...] = (
     _master_key,
     _provider_test_timeout,
     _jwks_ttl,
+    disk_thresholds,
 )
 
 

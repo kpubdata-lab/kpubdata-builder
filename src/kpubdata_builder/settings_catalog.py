@@ -393,6 +393,22 @@ SETTINGS: tuple[Setting, ...] = (
         required="선택",
     ),
     Setting(
+        name="KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT",
+        group="storage",
+        description="출력 디렉터리가 있는 파일시스템의 여유 공간이 이 비율(%) 아래면 `GET /readyz` 의 `disk` 가 `low` 이고 503 으로 답한다(#1101). `/healthz` 와 build 접수에는 영향이 없다. 이슈가 제안한 값을 기본값으로 두었고 측정 없이 정한 값이다(kpubdata#812). `0` 이면 끔. 0 이상 100 이하의 수가 아니면 `serve` 가 기동을 거부한다",
+        default="`15`",
+        required="선택",
+        kind="number",
+    ),
+    Setting(
+        name="KPUBDATA_BUILDER_READY_MIN_FREE_MB",
+        group="storage",
+        description="출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `GET /readyz` 의 `disk` 가 `low` 다(#1101). 비율과 함께 둘 중 하나라도 못 미치면 `low`. 측정 없이 정한 값이다(kpubdata#812). `0` 이면 끔. 0 이상의 정수가 아니면 `serve` 가 기동을 거부한다",
+        default="`1024` (1 GiB)",
+        required="선택",
+        kind="integer",
+    ),
+    Setting(
         name="KPUBDATA_QUERY_MAX_CONCURRENCY",
         group="storage",
         description="동시 query child process 상한",
