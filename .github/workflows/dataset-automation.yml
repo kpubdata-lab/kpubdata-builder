@@ -1,0 +1,76 @@
+name: Dataset automation report
+
+# Run the agent commands on a schedule and report what they find (kpubdata#448).
+#
+# scripts/dataset_automation_report.py runs `kpubdata-builder monitor --check` over
+# the datasets kpubdata's catalogue marks application_required, and `discover` over
+# the data.go.kr pages they name, then keeps one issue: opened when an application
+# was approved or a page yields a draft, rewritten when that changes, left alone
+# otherwise.
+#
+#   schedule            runs, then files or updates the issue
+#   workflow_dispatch   the same; `dry_run` prints instead
+#   pull_request        a change to this file or the script: runs and prints only
+#
+# Read-only and report-only: nothing here records fixtures, writes a spec, runs
+# `pipeline` or opens a pull request. Without the KPUBDATA_DATAGO_API_KEY secret
+# (kpubdata#900) the script prints a notice that the secret is not configured and
+# exits 0.
+
+on:
+  schedule:
+    - cron: "43 2 * * *"  # daily, 02:43 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run and print; write no issue."
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - ".github/workflows/dataset-automation.yml"
+      - "scripts/dataset_automation_report.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run at a time writes the issue; a pull request's run is superseded by its
+  # next push.
+  group: dataset-automation-${{ github.event_name == 'pull_request' && github.ref || 'issue' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  report:
+    name: Monitor approvals and discover spec drafts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write  # the report is recorded as an issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+
+      - name: Install dependencies
+        run: uv sync --locked --no-sources
+
+      - name: Run, then file or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KPUBDATA_DATAGO_API_KEY: ${{ secrets.KPUBDATA_DATAGO_API_KEY }}
+          # A pull request only prints: its run must not write issues about a branch.
+          DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          args=(--run-url "${RUN_URL}" --work-dir "${RUNNER_TEMP}")
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          uv run --no-sources python scripts/dataset_automation_report.py "${args[@]}"

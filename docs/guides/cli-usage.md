@@ -420,6 +420,40 @@ publish: dataset.seoul_apt_trade -> local
   artifacts: 2
 ```
 
+### discover · monitor · pipeline — 정기 보고
+
+`dataset-automation.yml` 워크플로가 매일(02:43 UTC) `scripts/dataset_automation_report.py`
+를 돌린다 (kpubdata#448). 읽기 전용이고 보고만 한다.
+
+- `monitor --check`: kpubdata 카탈로그가 `application_required` 로 표시한 데이터셋 전부를,
+  작업 디렉터리(`RUNNER_TEMP`)의 상태 파일로 확인한다. `HEALTHY` 가 나오면 활용신청이
+  승인된 것이다.
+- `discover`: 그 데이터셋들이 가리키는 data.go.kr API 페이지마다 한 번씩 돌려, spec 초안에
+  엔드포인트가 잡히는지만 본다. 초안은 파일로 쓰지 않는다.
+- `pipeline`: 돌리지 않는다. `--skip-pr` 로도 실 API 로 fixture 를 기록하므로 읽기 전용이
+  아니다. 승인된 데이터셋에 대해 보고서가 다음 단계로 안내만 한다. 자동 신청(apply)과
+  실 API 기록·PR 생성은 신뢰된 러너와 secret 이 준비될 때까지 하지 않는다.
+
+결과는 이슈 **하나**("scheduled report of dataset application approvals and spec drafts",
+`epic:datasets`)에 남는다. 승인이나 초안이 있으면 열고, 지난 실행과 같으면 쓰지 않고, 달라지면
+두 표지(`dataset-automation:begin/end`) 사이만 고쳐 쓰고 댓글을 단다. 닫지는 않는다.
+rate limit 같은 그 밖의 상태는 지문(fingerprint)에 넣지 않아 밤마다의 잡음으로 이슈가
+바뀌지 않는다.
+
+data.go.kr 키(`KPUBDATA_DATAGO_API_KEY` secret)가 없으면 monitor 가 승인과 거절을 가를 수
+없으므로, "secret not configured" notice 를 남기고 아무것도 돌리거나 쓰지 않은 채 0 으로
+끝난다 (secret 등록은 kpubdata#900). pull request 와 `dry_run` 은 출력만 한다. 권한은
+`contents: read`, `issues: write` 이고, action 은 커밋 SHA 로 고정한다.
+
+지금의 `monitor` 는 spec 데이터셋만 확인할 수 있어, `application_required` 데이터셋(모두
+spec 이 아닌 어댑터 데이터셋)은 `SPEC_NOT_FOUND` 로 나온다. spec 이 없는 데이터셋을
+`Client.probe` 로 판정하는 일은 #1288 이 다룬다.
+
+```bash
+KPUBDATA_DATAGO_API_KEY=... uv run --no-sources \
+  python scripts/dataset_automation_report.py --dry-run --work-dir /tmp/report
+```
+
 ---
 
 ## 서비스 모드 (HTTP API)
