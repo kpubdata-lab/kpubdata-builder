@@ -186,6 +186,51 @@ services:
         max-size: ${LOG_MAX_SIZE:-20m}
         max-file: "${LOG_MAX_FILE:-5}"
 
+  # Studio(웹 화면)를 같은 VM 에 올린다 (#692). `--profile studio` 로 opt-in.
+  # Studio 는 정적 SPA 다: Builder 를 부르는 것은 이 컨테이너가 아니라 사용자의 브라우저다
+  # (docs/deploy.md §1). 그래서 BUILDER_API_URL 은 브라우저가 닿는 Builder 주소이고, 이
+  # 페이지의 오리진은 Builder 의 KPUBDATA_BUILDER_ALLOWED_ORIGINS 에 있어야 한다.
+  #
+  # 이미지는 Studio 저장소의 고정된 커밋에서 빌드한다. Studio 는 아직 이미지를 게시하지
+  # 않고, 태그 v0.4.0 은 Dockerfile 보다 오래됐다. 그래서 `image:` 를 적지 않는다 — 적으면
+  # 게시되지 않은 이미지를 pull 하려는 프로필이 된다(#675 의 `:cubrid` 와 같은 경우).
+  # STUDIO_REF 는 브랜치가 아니라 커밋이나 태그로 둔다: 같은 값이면 같은 화면이 올라온다.
+  studio:
+    build:
+      context: https://github.com/kpubdata-lab/kpubdata-studio.git#${STUDIO_REF:-023f0c3c84a2d794bf68aa027ef0e4b56bfd1ade}
+    container_name: kpubdata-studio
+    restart: unless-stopped
+    profiles:
+      - studio
+    environment:
+      # 이름은 Studio 이미지가 읽는 그대로다(kpubdata-studio docker/40-kpubdata-config.sh).
+      # .env 에서는 STUDIO_ 를 붙인 이름으로 적는다 — 같은 .env 의 Builder 설정과 섞이지
+      # 않게. OIDC_ISSUER 만은 Builder 와 같은 값이어야 하므로 같은 이름을 함께 쓴다.
+      BUILDER_API_URL: ${STUDIO_BUILDER_API_URL:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${STUDIO_OIDC_CLIENT_ID:-}
+      PRIVACY_URL: ${STUDIO_PRIVACY_URL:-}
+      TERMS_URL: ${STUDIO_TERMS_URL:-}
+      SUPPORT_CONTACT: ${STUDIO_SUPPORT_CONTACT:-}
+    ports:
+      # Builder 와 같이 기본은 루프백이다. 공개 주소는 앞단(Cloudflare Tunnel, 프록시)이 낸다.
+      - "${STUDIO_BIND:-127.0.0.1:8080}:8080"
+    networks:
+      - app-net
+    healthcheck:
+      # nginx-unprivileged(alpine) 에는 busybox wget 이 있다. config.js 는 컨테이너가
+      # 시작할 때 쓰는 파일이라, 이것이 응답하면 설정 스크립트도 끝난 것이다.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/config.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-20m}
+        max-file: "${LOG_MAX_FILE:-5}"
+
 volumes:
   builder-data:
   caddy-data:

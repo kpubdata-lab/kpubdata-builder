@@ -6,7 +6,10 @@
 
 | 경로 | 내용 |
 | :--- | :--- |
-| [`cubrid/`](./cubrid/) | VM 한 대에 Builder 와 CUBRID 를 함께 올리는 compose 구성 (ADR 0016) |
+| [`cubrid/`](./cubrid/) | VM 한 대에 Builder 와 CUBRID 를 함께 올리는 compose 구성 (ADR 0016). 퇴역 제안(ADR 0022, #1094) 중이라 위 compose 의 프로필 묶음에 넣지 않았다. `Docker` 워크플로는 이 파일의 이미지가 게시돼 있는지만 확인한다 (#692) |
+
+루트 compose 의 프로필(`caddy`, `studio`)과 각 프로필의 기동 smoke 는
+[`docs/deploy.md`](../docs/deploy.md) 의 "프로필과 기동 smoke" 절에 있습니다.
 
 ## Azure Container Apps 템플릿은 없앴습니다 (#1097)
 
