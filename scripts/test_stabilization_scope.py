@@ -1,6 +1,6 @@
 """Regression tests for the stabilization scope gate.
 
-Run: python3 -m unittest discover -s scripts -p test_stabilization_scope.py -v
+Run: python3 scripts/test_stabilization_scope.py -v
 """
 
 from __future__ import annotations
