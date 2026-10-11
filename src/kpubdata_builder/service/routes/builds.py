@@ -18,7 +18,13 @@ from ._guards import (
     check_run_exists,
     refuse_missing_provider_keys,
 )
-from ._parsing import optional_if_absent, optional_retry_of, optional_run_id, spec_from_body
+from ._parsing import (
+    decode_segment,
+    optional_if_absent,
+    optional_retry_of,
+    optional_run_id,
+    spec_from_body,
+)
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -74,7 +80,7 @@ def route(
 
     # The sole cancel endpoint as specified in ADR 0008 (#481). Do not add aliases.
     if method == "POST" and path.startswith("/builds/") and path.endswith("/cancel"):
-        cancel_run_id = path[len("/builds/") : -len("/cancel")]
+        cancel_run_id = decode_segment(path[len("/builds/") : -len("/cancel")])
         error = _validate_run_id(cancel_run_id)
         if error is not None:
             return error
@@ -87,7 +93,7 @@ def route(
         return access_error or service.cancel_build(cancel_run_id)
 
     if method == "GET" and path.startswith("/builds/") and "/" not in path[len("/builds/") :]:
-        run_id = path[len("/builds/") :]
+        run_id = decode_segment(path[len("/builds/") :])
         try:
             validate_path_segment(run_id, field_name="run_id")
         except ValueError as exc:
@@ -101,7 +107,7 @@ def route(
     if method == "GET" and path.startswith("/builds/") and path.endswith("/manifest"):
         rest = path[len("/builds/") :]
         parts = rest.split("/", 1)
-        run_id = parts[0]
+        run_id = decode_segment(parts[0])
         if len(parts) == 2 and parts[1] == "manifest":
             error = _validate_run_id(run_id)
             if error is not None:
@@ -110,7 +116,7 @@ def route(
             return ownership_error or service.manifest(run_id)
 
     if method == "GET" and path.startswith("/builds/") and path.endswith("/spec"):
-        run_id = path[len("/builds/") : -len("/spec")]
+        run_id = decode_segment(path[len("/builds/") : -len("/spec")])
         error = _validate_run_id(run_id)
         if error is not None:
             return error

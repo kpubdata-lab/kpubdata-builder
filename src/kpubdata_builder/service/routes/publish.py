@@ -11,6 +11,7 @@ from ...stages._path_safety import validate_path_segment
 from ..auth import Principal
 from ..responses import ServiceResponse
 from ._guards import check_active_run_access
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -36,7 +37,7 @@ def route(
     rest = path[len("/builds/") :]
 
     if method == "GET" and rest.endswith(_READINESS_SUFFIX):
-        run_id = rest[: -len(_READINESS_SUFFIX)]
+        run_id = decode_segment(rest[: -len(_READINESS_SUFFIX)])
         error = _validate_run_id(run_id)
         if error is not None:
             return error
@@ -63,7 +64,7 @@ def route(
         )
 
     if method == "GET" and rest.endswith(_RECEIPT_SUFFIX):
-        run_id = rest[: -len(_RECEIPT_SUFFIX)]
+        run_id = decode_segment(rest[: -len(_RECEIPT_SUFFIX)])
         error = _validate_run_id(run_id)
         if error is not None:
             return error
@@ -80,7 +81,7 @@ def route(
         return service.get_publish_receipt(run_id, target, destination, principal=principal)
 
     if method == "GET" and rest.endswith(_AUDIT_SUFFIX):
-        run_id = rest[: -len(_AUDIT_SUFFIX)]
+        run_id = decode_segment(rest[: -len(_AUDIT_SUFFIX)])
         error = _validate_run_id(run_id)
         if error is not None:
             return error
@@ -90,7 +91,7 @@ def route(
         return service.publish_audit_log(run_id, principal=principal)
 
     if method == "POST" and rest.endswith(_RECONCILE_SUFFIX):
-        run_id = rest[: -len(_RECONCILE_SUFFIX)]
+        run_id = decode_segment(rest[: -len(_RECONCILE_SUFFIX)])
         error = _validate_run_id(run_id)
         if error is not None:
             return error
@@ -100,7 +101,7 @@ def route(
         return service.reconcile_publish(run_id, body, principal=principal)
 
     if method == "DELETE" and rest.endswith(_RECEIPT_SUFFIX):
-        run_id = rest[: -len(_RECEIPT_SUFFIX)]
+        run_id = decode_segment(rest[: -len(_RECEIPT_SUFFIX)])
         error = _validate_run_id(run_id)
         if error is not None:
             return error
@@ -117,7 +118,7 @@ def route(
         return service.reset_publish_receipt(run_id, target, destination, principal=principal)
 
     if method == "POST" and rest.endswith(_PUBLISH_SUFFIX):
-        run_id = rest[: -len(_PUBLISH_SUFFIX)]
+        run_id = decode_segment(rest[: -len(_PUBLISH_SUFFIX)])
         error = _validate_run_id(run_id)
         if error is not None:
             return error

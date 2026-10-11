@@ -12,6 +12,7 @@ from ..auth import Principal
 from ..quality_api import ISSUE_STATUSES
 from ..responses import ServiceResponse
 from ._guards import check_ownership, check_run_exists
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ def route(
         return _issues(service, query, principal)
     if method != "GET" or not path.startswith("/builds/") or not path.endswith("/quality"):
         return None
-    run_id = path[len("/builds/") : -len("/quality")]
+    run_id = decode_segment(path[len("/builds/") : -len("/quality")])
     try:
         validate_path_segment(run_id, field_name="run_id")
     except ValueError as exc:

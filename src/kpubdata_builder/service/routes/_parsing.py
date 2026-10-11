@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from ...spec import JsonValue
 from ...stages._path_safety import validate_path_segment
 from ..responses import ServiceResponse
+
+
+def decode_segment(raw: str) -> str:
+    """Percent-decode one path segment, exactly once (#1277).
+
+    Routing runs on the raw path, so an encoded ``%2F`` never becomes a separator;
+    each captured segment is decoded here afterwards. Call it once per segment: a
+    second call would turn ``%253A`` into ``:`` instead of the literal ``%3A``.
+    """
+    return unquote(raw)
 
 
 def spec_from_body(body: Mapping[str, JsonValue] | None) -> str | ServiceResponse:

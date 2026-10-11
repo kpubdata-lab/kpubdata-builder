@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ...spec import JsonValue
 from ..auth import Principal
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -33,7 +34,8 @@ def route(
     if not path.startswith(_PREFIX):
         return None
     rest = path[len(_PREFIX) :]
-    analysis_id, _, action = rest.partition("/")
+    raw_id, _, action = rest.partition("/")
+    analysis_id = decode_segment(raw_id)
     if not analysis_id:
         return None
     if action == "run" and method == "POST":

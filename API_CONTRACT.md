@@ -137,6 +137,7 @@ When policy and implementation disagree, do not add implementation footnotes. Fi
 - **stage status**: four states — `completed`/`failed`/`not_run`/`unavailable`. Success is never guessed from filesystem presence alone; manifest failure records and sidecar completeness are checked together so partial/failed runs still distinguish "Bronze succeeded → Silver failed → Gold never ran".
 - **Secret/path non-exposure**: Bronze `fetch_params`/`provenance.fetch_params`, Gold export `options`/`output_path`, and every response never expose filesystem paths. Silver `sample` is returned within the preview limit persisted at build time (default 5 rows) and does not read the full Parquet.
 - `dataset_id` can contain characters that cannot be used verbatim in a URL path (slashes, spaces), so clients must percent-encode the `dataset_id` in `GET /datasets/{dataset_id}`. No new constraint is added to `BuildSpec.dataset_id` itself for this API.
+- **Path parameters are percent-encoded, and Builder decodes each one exactly once.** Any id placed in a path (`run_id`, a user id such as `oidc:<hex>`, `upload_id`, `analysis_id`, `dataset_id`, a table name) may be sent with `encodeURIComponent`; `oidc%3A<hex>` and `oidc:<hex>` name the same user. Builder routes on the raw path and decodes each captured segment afterwards, so `%2F` stays inside its segment and never turns into a separator. A client must encode once: a double-encoded `%253A` is decoded to the literal text `%3A`, not to `:` (#1277).
 
 ### Structured Quality/Schema Drift and History (#486)
 
