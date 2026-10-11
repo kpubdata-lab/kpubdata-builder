@@ -27,7 +27,7 @@ import json
 import sqlite3
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +36,12 @@ from typing import cast
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS, enable_wal
 
 from ..spec.models import JsonValue
-from ..store.schema_version import UnsupportedSchemaVersionError, stored_version
+from ..store.schema_version import (
+    UnsupportedSchemaVersionError,
+    open_read_only,
+    says_damaged,
+    stored_version,
+)
 from .models import BuildEvent, EventName, EventStatus, StageName
 
 SCHEMA_VERSION = 1
@@ -73,6 +78,25 @@ CREATE TABLE IF NOT EXISTS run_submissions (
 """
 
 
+# How a run that left no manifest ended (#1120): cancelled before it produced one, or
+# failed without ever running to its end — a restart, a shutdown, keys that were gone.
+# The terminal event says so to the run's owner, in a message written for them. This is
+# the record the build index is filled from, for a run it has no manifest to read: a
+# stable code, the stage reached and a sentence made of fixed phrases
+# (``manifest.endings``). One row per run, written before the terminal event and never
+# rewritten.
+_CREATE_ENDINGS_SQL = """
+CREATE TABLE IF NOT EXISTS run_endings (
+    run_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    code TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+)
+"""
+
+
 def events_store_path(output_root: Path) -> Path:
     """Where the event store of ``output_root`` is, whether or not it exists yet."""
     return output_root / _EVENTS_FILENAME
@@ -88,6 +112,25 @@ class RunSubmission:
     submitted_at: str
     #: The earlier run this one retries (#1042), when the submitter named one.
     retry_of: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RunEnding:
+    """How a run that left no manifest ended (#1120).
+
+    ``code``, ``stage`` and ``summary`` are ``manifest.endings`` vocabulary: nothing in
+    them comes from an exception, an event's message, a spec or a request.
+    """
+
+    run_id: str
+    status: str
+    stage: str
+    code: str
+    summary: str
+    recorded_at: str
+    #: Who submitted the run, from its submission record; None when there is none.
+    owner_id: str | None = None
+    created_by: str | None = None
 
 
 class BuildEventStore:
@@ -162,6 +205,8 @@ class BuildEventStore:
                 )
             self._conn.execute(_CREATE_TABLE_SQL)
             self._conn.execute(_CREATE_SUBMISSIONS_SQL)
+            # Added later (#1120); a store made before it gains an empty table.
+            self._conn.execute(_CREATE_ENDINGS_SQL)
             # ``retry_of`` came later (#1042). The table only gains a column: rows are
             # never rewritten, and a store made before it reads the column as NULL.
             columns = {
@@ -262,6 +307,30 @@ class BuildEventStore:
             retry_of=None if row[3] is None else str(row[3]),
         )
 
+    def record_ending(
+        self, run_id: str, *, status: str, stage: str, code: str, summary: str, at: datetime
+    ) -> bool:
+        """Record how ``run_id`` ended without a manifest (#1120).
+
+        The first record of a run stays: a run id is one attempt (#1042), and a second
+        ending for it — a restart marking a run whose record was written just before the
+        process died — changes nothing. Returns whether this call wrote the row.
+        """
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ValueError("at must be timezone-aware")
+        with self._transaction():
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO run_endings"
+                " (run_id, status, stage, code, summary, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id, status, stage, code, summary, at.astimezone(timezone.utc).isoformat()),
+            )
+            return cur.rowcount == 1
+
+    def ending(self, run_id: str) -> RunEnding | None:
+        """The recorded ending of ``run_id`` with who submitted it, or None."""
+        row = self._conn.execute(f"{_SELECT_ENDINGS} WHERE e.run_id = ?", (run_id,)).fetchone()
+        return None if row is None else _row_to_ending(row)
+
     def terminal_event(self, run_id: str) -> BuildEvent | None:
         """The run's last terminal event (finished, failed or cancelled), if it has one."""
         events = [
@@ -318,6 +387,51 @@ class BuildEventStore:
             delattr(self._local, "conn")
 
 
+_SELECT_ENDINGS = (
+    "SELECT e.run_id, e.status, e.stage, e.code, e.summary, e.recorded_at,"
+    " s.owner_id, s.created_by FROM run_endings e"
+    " LEFT JOIN run_submissions s ON s.run_id = e.run_id"
+)
+
+
+def _row_to_ending(row: tuple[object, ...]) -> RunEnding:
+    return RunEnding(
+        run_id=str(row[0]),
+        status=str(row[1]),
+        stage=str(row[2]),
+        code=str(row[3]),
+        summary=str(row[4]),
+        recorded_at=str(row[5]),
+        owner_id=None if row[6] is None else str(row[6]),
+        created_by=None if row[7] is None else str(row[7]),
+    )
+
+
+def read_run_endings(output_root: Path) -> tuple[RunEnding, ...]:
+    """Every recorded ending under ``output_root``, read without changing the store.
+
+    For a rebuild of the build index (#1120), which may run while a server has the
+    store open and must not create or alter it: the connection is read-only. Empty
+    when there is no store, or it has no such table yet — one written before this
+    record existed.
+
+    Raises:
+        sqlite3.Error: The store could not be read for another reason. A rebuild that
+            went on would drop every such run from the index without saying so.
+    """
+    path = events_store_path(output_root)
+    if not path.is_file():
+        return ()
+    try:
+        with closing(open_read_only(path)) as conn:
+            rows = conn.execute(f"{_SELECT_ENDINGS} ORDER BY e.run_id").fetchall()
+    except sqlite3.Error as exc:
+        if says_damaged(exc):
+            return ()
+        raise
+    return tuple(_row_to_ending(row) for row in rows)
+
+
 def _row_to_event(row: tuple[object, ...]) -> BuildEvent:
     seq, run_id, timestamp_text, event, status, source_key, stage, message, metrics_json = row
     metrics: dict[str, JsonValue] | None = None
@@ -341,4 +455,11 @@ def _row_to_event(row: tuple[object, ...]) -> BuildEvent:
     )
 
 
-__all__ = ["SCHEMA_VERSION", "BuildEventStore", "RunSubmission", "events_store_path"]
+__all__ = [
+    "SCHEMA_VERSION",
+    "BuildEventStore",
+    "RunEnding",
+    "RunSubmission",
+    "events_store_path",
+    "read_run_endings",
+]

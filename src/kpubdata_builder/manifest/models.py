@@ -46,6 +46,8 @@ class RunFailure:
             ``rate_limited`` …, #1187), ``pipeline_failed`` for any other source
             failure, a composition's ``join_*`` code or ``composition_failed``, or the
             table commit's reason (``conflict``, ``empty_result``, ``commit_failed``).
+            For a cancelled run, why it was cancelled: ``cancelled`` (on request),
+            ``time_limit_exceeded`` or ``server_shutdown`` (``manifest.endings``).
         summary: A sentence Builder wrote, chosen by the code and the stage — never a
             provider's text, an error's message, a key, a path, a column or a row.
     """

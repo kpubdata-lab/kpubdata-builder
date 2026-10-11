@@ -34,12 +34,19 @@ from typing_extensions import assert_never
 
 from ..events import BuildEvent, BuildEventStore
 from ..manifest import run_failure_summary, run_status_from_manifest
+from ..manifest.endings import (
+    CancellationCode,
+    RunEndingCode,
+    RunEndingStage,
+    RunEndingStatus,
+    run_ending_summary,
+)
 from ..pipeline import CancellationProbe, run_build
 from ..spec import BuildSpec, JsonValue
 from ..stages._path_safety import validate_path_segment
 from ..stages.bronze.build import SourceClient
 from ..store.artifacts import ArtifactStore
-from ..store.build_index import BuildIndex, BuildStatus
+from ..store.build_index import BuildIndex, BuildStatus, ending_entry
 from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
 from . import ownership as ownership_module
@@ -107,6 +114,32 @@ TIME_LIMIT_CANCELLED_MESSAGE = (
     "(KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS); narrow the request or ask the "
     "operator about the limit"
 )
+
+
+#: What a cancelled run's ``run_cancelled`` event says, by why it was cancelled.
+_CANCELLED_MESSAGES: dict[CancellationCode, str] = {
+    "cancelled": "build cancelled at a safe stage boundary",
+    "time_limit_exceeded": TIME_LIMIT_CANCELLED_MESSAGE,
+    "server_shutdown": SHUTDOWN_CANCELLED_MESSAGE,
+}
+
+#: How many of a run's latest events are read to say how far it had got (#1120).
+_STAGE_EVENTS = 200
+
+
+def _stage_reached(events: tuple[BuildEvent, ...]) -> RunEndingStage:
+    """How far a run that left no manifest had got, from its latest events (#1120).
+
+    The stage of the last event that names one; a source fetch is Bronze. A run with
+    only its submission never started. Sources run side by side, so this is the last
+    stage recorded, not the stage of every source.
+    """
+    for event in reversed(events):
+        if event.stage is not None:
+            return event.stage
+        if event.event.startswith("source_fetch"):
+            return "bronze"
+    return "started" if any(event.event == "run_started" for event in events) else "queued"
 
 
 class BuildRunsApiService:
@@ -266,6 +299,13 @@ class BuildRunsApiService:
                 upload_repository=self._upload_repository_for(spec_or_error),
                 event_store=self._event_store(),
                 cancellation=cancellation,
+                # Why, if the run ends cancelled (#1120). The pipeline sees only that it
+                # was asked to stop; who asked is known here.
+                cancellation_code=(
+                    None
+                    if cancellation is None or run_id is None
+                    else lambda: self._cancellation_code(run_id)
+                ),
                 catalog=self._table_catalog(),
                 # One workspace per owner when ownership is enforced, so one owner's
                 # refresh cannot replace another owner's table (#789).
@@ -443,7 +483,13 @@ class BuildRunsApiService:
         uploads as a synchronous one does (#998).
         """
         resolved_run_id = run_id or generate_run_id()
-        if self._build_index.get(resolved_run_id) is not None:
+        # A run that ended without a manifest is in the index too (#1120), and is not a
+        # completed run: its id is answered as before — the job handed back while the
+        # registry holds it, and ``run_id_ended`` from the route after that (#1042).
+        if (
+            self._build_index.get(resolved_run_id) is not None
+            and self._event_store().ending(resolved_run_id) is None
+        ):
             return ServiceResponse(
                 409,
                 {
@@ -502,6 +548,7 @@ class BuildRunsApiService:
             # this append fails, log only and absorb — registry already confirmed
             # "failed", so this secondary event recording failure must not obscure
             # original enqueue failure (re-raised exception).
+            self._record_ending(resolved_run_id, status="failed", code="enqueue_failed")
             try:
                 self._event_store().append(
                     BuildEvent(
@@ -743,6 +790,10 @@ class BuildRunsApiService:
         for run_id in store.unfinished_runs():
             if self._store.get_manifest(run_id) is not None:
                 continue
+            # The record first (#1120): once the event below is written the run no
+            # longer reads as unfinished, and a process that died between the two
+            # would leave it with no record for good.
+            self._record_ending(run_id, status="failed", code="interrupted")
             store.append(
                 BuildEvent(
                     seq=0,
@@ -771,6 +822,7 @@ class BuildRunsApiService:
             "held — the job waited longer than its keys are kept; submit it again under "
             "a new run_id"
         )
+        self._record_ending(run_id, status="failed", code="credentials_required")
         try:
             self._event_store().append(
                 BuildEvent(
@@ -797,6 +849,7 @@ class BuildRunsApiService:
         """
         ended = self._async_builds.begin_shutdown(SHUTDOWN_QUEUED_ERROR)
         for snapshot in ended:
+            self._record_ending(snapshot.run_id, status="failed", code="server_shutdown")
             try:
                 self._event_store().append(
                     BuildEvent(
@@ -841,7 +894,13 @@ class BuildRunsApiService:
         cannot undo confirmed terminal state, so log only and absorb like
         ``_record_enqueue_failure``. Called from worker thread, so exception
         propagation invalid. Message fixed string, no raw exception/path/credentials.
+
+        A run cancelled before it wrote a manifest — still queued, or stopped before
+        the pipeline began — gets its ending recorded first (#1120); one with a partial
+        manifest has the cancellation in that manifest's ``failures``.
         """
+        code = self._cancellation_code(run_id)
+        self._record_ending(run_id, status="cancelled", code=code)
         try:
             self._event_store().append(
                 BuildEvent(
@@ -850,17 +909,76 @@ class BuildRunsApiService:
                     run_id=run_id,
                     event="run_cancelled",
                     status="ok",
-                    message=(
-                        SHUTDOWN_CANCELLED_MESSAGE
-                        if run_id in self._cancelled_for_shutdown
-                        else TIME_LIMIT_CANCELLED_MESSAGE
-                        if self._async_builds.ran_past_time_limit(run_id)
-                        else "build cancelled at a safe stage boundary"
-                    ),
+                    message=_CANCELLED_MESSAGES[code],
                 )
             )
         except Exception:
             logger.error("failed to record run_cancelled event (run_id=%s)", run_id, exc_info=True)
+
+    def _cancellation_code(self, run_id: str) -> CancellationCode:
+        """Why ``run_id`` was cancelled: a shutdown, the time limit, or a request."""
+        if run_id in self._cancelled_for_shutdown:
+            return "server_shutdown"
+        if self._async_builds.ran_past_time_limit(run_id):
+            return "time_limit_exceeded"
+        return "cancelled"
+
+    def _record_ending(self, run_id: str, *, status: RunEndingStatus, code: RunEndingCode) -> None:
+        """Record how a run that left no manifest ended, and index it (#1120).
+
+        Such a run was in the event store only, as a terminal event whose message is
+        written for its owner; the build index is filled from manifests, so the run was
+        in no list once the job registry had let it go, and an administrator saw
+        nothing of it. The record — a stable code, the stage reached, a sentence of
+        fixed phrases — is written to the event store first and then copied into the
+        index, as a manifest's ``failures`` are; a rebuild of the index reads it back.
+
+        A run that has a manifest is left to it. Never raises: the run has already
+        ended, and whoever is ending it has more to do.
+        """
+        try:
+            if self._store.get_manifest(run_id) is not None:
+                return
+            store = self._event_store()
+            stage = _stage_reached(store.list_for_run(run_id, limit=_STAGE_EVENTS, tail=True))
+            store.record_ending(
+                run_id,
+                status=status,
+                stage=stage,
+                code=code,
+                summary=run_ending_summary(code, stage),
+                at=datetime.now(tz=timezone.utc),
+            )
+            ending = store.ending(run_id)
+        except Exception:
+            logger.exception("could not record how the run ended (run_id=%s)", run_id)
+            return
+        if ending is None:
+            return
+        logger.info(
+            "run ended without a manifest (run_id=%s status=%s code=%s stage=%s)",
+            run_id,
+            ending.status,
+            ending.code,
+            ending.stage,
+        )
+        entry = ending_entry(ending)
+        try:
+            self._build_index.insert_or_replace(
+                run_id=entry.run_id,
+                status=entry.status,
+                started_at=entry.started_at,
+                finished_at=entry.finished_at,
+                spec_digest=entry.spec_digest,
+                error=entry.error,
+                created_by=entry.created_by,
+                owner_id=entry.owner_id,
+                dataset_id=entry.dataset_id,
+            )
+        except Exception:
+            # The index is derived (ADR 0003): the record is with the run's events, and
+            # a rebuild of the index reads it from there.
+            logger.exception("build index update failed for an ended run (run_id=%s)", run_id)
 
 
 def _index_status(manifest: dict[str, object]) -> BuildStatus:
