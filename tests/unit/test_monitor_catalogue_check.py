@@ -211,19 +211,21 @@ def test_no_verdict_keeps_the_status_and_checks_are_paced(
 def test_the_key_is_used_and_never_printed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from kpubdata.core.dataset import Dataset
+    from kpubdata.transport.http import HttpTransport
 
     key = "monitor-test-key-0123456789"
     monkeypatch.setenv("KPUBDATA_DATAGO_API_KEY", key)
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
     seen: list[int] = []
 
-    def refuse(self: Dataset, **_: object) -> object:
-        # While the client is open, its key is one the log redaction rewrites.
+    def refuse(self: HttpTransport, *_: object, **__: object) -> object:
+        # The one point every version's provider call passes (kpubdata 0.10 lists through
+        # the dataset, main probes through the adapter first). While the client is open,
+        # its key is one the log redaction rewrites.
         seen.append(logging_redaction.active_count())
         raise TransportError(f"HTTP 403 for ?serviceKey={key}", status_code=403)
 
-    monkeypatch.setattr(Dataset, "list", refuse)
+    monkeypatch.setattr(HttpTransport, "request", refuse)
     path = _state(tmp_path, _ID)
 
     assert main(["monitor", "--state-file", str(path), "--check"]) == 0
