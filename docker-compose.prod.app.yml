@@ -14,8 +14,9 @@
 #   # Caddy(공개 TLS 진입)를 함께 띄우려면:
 #   docker compose -f docker-compose.prod.app.yml --profile caddy up -d
 #
-# 이미지는 프로덕션에서 GHCR(deploy 워크플로가 BUILDER_IMAGE로 주입)에서 pull한다.
-# 로컬 검증 시에는 build 컨텍스트(.)로 fallback한다.
+# 이미지는 GHCR 에서 pull 한다(BUILDER_IMAGE). 패키지가 비공개라 먼저 docker login ghcr.io 를
+# 한다. pull 이 실패하면 compose 가 build 컨텍스트(.)로 빌드해 같은 이름을 붙인다 — 게시된
+# 이미지가 아니다(docs/deploy.md §12).
 
 services:
   builder:
