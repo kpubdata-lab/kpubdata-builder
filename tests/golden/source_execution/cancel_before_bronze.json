@@ -1,0 +1,84 @@
+{
+  "endings": [],
+  "events": {
+    "<run>": [
+      [
+        "run_started",
+        "ok",
+        null,
+        "pipeline execution started",
+        null
+      ]
+    ]
+  },
+  "files": {
+    "buildspec.yaml": [
+      "dataset_id: permits.table",
+      "title: Permits",
+      "description: d",
+      "sources:",
+      "- kind: public_api",
+      "  alias: m",
+      "  schema:",
+      "    required:",
+      "    - id",
+      "    dtypes: {}",
+      "    casts: {}",
+      "  provider: datago",
+      "  dataset: air_station",
+      "  params: {}",
+      "exports:",
+      "- kind: jsonl",
+      "  output_path: data.jsonl",
+      "  options: {}",
+      "- kind: csv",
+      "  output_path: data.csv",
+      "  options: {}",
+      "metadata: {}",
+      "publish: false",
+      "splits: null",
+      "pii: null",
+      "license: null",
+      "quality: null",
+      "composition: null"
+    ]
+  },
+  "index": {
+    "dataset_id": "permits.table",
+    "error": "m: the run was cancelled on request at the bronze stage",
+    "error_code": "cancelled",
+    "error_stage": "bronze",
+    "status": "cancelled"
+  },
+  "manifest": {
+    "build_id": "r1",
+    "composition": null,
+    "created_by": null,
+    "drift_evaluation": {},
+    "errors": [],
+    "failures": [
+      {
+        "code": "cancelled",
+        "source_key": "m",
+        "stage": "bronze",
+        "summary": "the run was cancelled on request at the bronze stage"
+      }
+    ],
+    "inputs": [
+      "m"
+    ],
+    "inputs_fingerprint": null,
+    "outputs": [],
+    "owner_id": null,
+    "partial": true,
+    "provenance": [],
+    "quality_results": {},
+    "row_counts": {},
+    "schema_drift": {},
+    "schema_summaries": {},
+    "schema_version": "1.0.0",
+    "status": "cancelled",
+    "warnings": []
+  },
+  "response_status": 409
+}

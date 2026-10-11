@@ -1,0 +1,125 @@
+{
+  "endings": [],
+  "events": {
+    "<run>": [
+      [
+        "run_started",
+        "ok",
+        null,
+        "pipeline execution started",
+        null
+      ],
+      [
+        "run_failed",
+        "fail",
+        null,
+        "1 source(s) failed",
+        null
+      ]
+    ],
+    "m": [
+      [
+        "stage_started",
+        "ok",
+        "bronze",
+        null,
+        null
+      ],
+      [
+        "source_fetch_started",
+        "ok",
+        null,
+        null,
+        null
+      ],
+      [
+        "source_fetch_failed",
+        "fail",
+        null,
+        "source 'm': the provider refused this key for this dataset: the key has no approved application (활용신청) for it. Apply for the dataset with this key at the provider, or wait until the application is approved, then build again.",
+        {
+          "reason": "application_required"
+        }
+      ],
+      [
+        "stage_failed",
+        "fail",
+        "bronze",
+        "source 'm': the provider refused this key for this dataset: the key has no approved application (활용신청) for it. Apply for the dataset with this key at the provider, or wait until the application is approved, then build again.",
+        null
+      ]
+    ]
+  },
+  "files": {
+    "buildspec.yaml": [
+      "dataset_id: permits.table",
+      "title: Permits",
+      "description: d",
+      "sources:",
+      "- kind: public_api",
+      "  alias: m",
+      "  schema:",
+      "    required:",
+      "    - id",
+      "    dtypes: {}",
+      "    casts: {}",
+      "  provider: datago",
+      "  dataset: air_station",
+      "  params: {}",
+      "exports:",
+      "- kind: jsonl",
+      "  output_path: data.jsonl",
+      "  options: {}",
+      "- kind: csv",
+      "  output_path: data.csv",
+      "  options: {}",
+      "metadata: {}",
+      "publish: false",
+      "splits: null",
+      "pii: null",
+      "license: null",
+      "quality: null",
+      "composition: null"
+    ]
+  },
+  "index": {
+    "dataset_id": "permits.table",
+    "error": "m: source 'm': the provider refused this key for this dataset: the key has no approved application (활용신청) for it. Apply for the dataset with this key at the provider, or wait until the application is approved, then build again.",
+    "error_code": "application_required",
+    "error_stage": "bronze",
+    "status": "failed"
+  },
+  "manifest": {
+    "build_id": "r1",
+    "composition": null,
+    "created_by": null,
+    "drift_evaluation": {},
+    "errors": [
+      "m: source 'm': the provider refused this key for this dataset: the key has no approved application (활용신청) for it. Apply for the dataset with this key at the provider, or wait until the application is approved, then build again."
+    ],
+    "failures": [
+      {
+        "code": "application_required",
+        "source_key": "m",
+        "stage": "bronze",
+        "summary": "source 'm': the provider refused this key for this dataset: the key has no approved application (활용신청) for it. Apply for the dataset with this key at the provider, or wait until the application is approved, then build again."
+      }
+    ],
+    "inputs": [
+      "m"
+    ],
+    "inputs_fingerprint": null,
+    "outputs": [],
+    "owner_id": null,
+    "partial": false,
+    "provenance": [],
+    "quality_results": {},
+    "row_counts": {},
+    "schema_drift": {},
+    "schema_summaries": {},
+    "schema_version": "1.0.0",
+    "status": "failed",
+    "warnings": []
+  },
+  "response_status": 502
+}
