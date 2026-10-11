@@ -316,7 +316,46 @@
       "source_silver": "m",
       "splits": null
     },
-    "gold/m/table.parquet": "33bedd0fd3743417a0fa259c82181edc8d7c86664cecba7bb3e7858ac571fbb9",
+    "gold/m/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "[masked]",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "[masked]",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "silver/m/preview.json": {
       "rows": [
         {
@@ -386,7 +425,46 @@
       },
       "row_count": 3
     },
-    "silver/m/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "silver/m/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "silver/m/validation.json": {
       "ok": true,
       "problems": []

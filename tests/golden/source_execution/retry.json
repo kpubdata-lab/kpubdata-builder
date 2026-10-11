@@ -584,7 +584,52 @@
         "source_silver": "datago.air_quality",
         "splits": null
       },
-      "gold/datago.air_quality/table.parquet": "02cd3957dab93d1efd783e94a27f770af8368b16c1dbb051667c53a05793ccc4",
+      "gold/datago.air_quality/table.parquet": {
+        "columns": [
+          [
+            "sido",
+            "VARCHAR"
+          ],
+          [
+            "n",
+            "BIGINT"
+          ]
+        ],
+        "rows": [
+          [
+            "a",
+            "1"
+          ],
+          [
+            "a",
+            "2"
+          ],
+          [
+            "b",
+            "1"
+          ],
+          [
+            "b",
+            "2"
+          ],
+          [
+            "c",
+            "1"
+          ],
+          [
+            "c",
+            "2"
+          ],
+          [
+            "d",
+            "1"
+          ],
+          [
+            "d",
+            "2"
+          ]
+        ]
+      },
       "silver/datago.air_quality/preview.json": {
         "rows": [
           {
@@ -638,7 +683,52 @@
         },
         "row_count": 8
       },
-      "silver/datago.air_quality/table.parquet": "02cd3957dab93d1efd783e94a27f770af8368b16c1dbb051667c53a05793ccc4",
+      "silver/datago.air_quality/table.parquet": {
+        "columns": [
+          [
+            "sido",
+            "VARCHAR"
+          ],
+          [
+            "n",
+            "BIGINT"
+          ]
+        ],
+        "rows": [
+          [
+            "a",
+            "1"
+          ],
+          [
+            "a",
+            "2"
+          ],
+          [
+            "b",
+            "1"
+          ],
+          [
+            "b",
+            "2"
+          ],
+          [
+            "c",
+            "1"
+          ],
+          [
+            "c",
+            "2"
+          ],
+          [
+            "d",
+            "1"
+          ],
+          [
+            "d",
+            "2"
+          ]
+        ]
+      },
       "silver/datago.air_quality/validation.json": {
         "ok": true,
         "problems": []

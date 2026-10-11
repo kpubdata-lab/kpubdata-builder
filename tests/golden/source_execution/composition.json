@@ -448,7 +448,46 @@
       "source_silver": "b",
       "splits": null
     },
-    "gold/b/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "gold/b/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "gold/combined/README.md": [
       "# Permits",
       "",
@@ -617,7 +656,67 @@
       "source_silver": "m+b",
       "splits": null
     },
-    "gold/combined/table.parquet": "4f05062e63cd2520f6e7a0c9fe9a05f3931dceefa0b7e143b00b0116c475659e",
+    "gold/combined/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ],
+        [
+          "name_b",
+          "VARCHAR"
+        ],
+        [
+          "tel_b",
+          "VARCHAR"
+        ],
+        [
+          "v_b",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "gold/m/README.md": [
       "# Permits",
       "",
@@ -747,7 +846,46 @@
       "source_silver": "m",
       "splits": null
     },
-    "gold/m/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "gold/m/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "silver/b/preview.json": {
       "rows": [
         {
@@ -817,7 +955,46 @@
       },
       "row_count": 3
     },
-    "silver/b/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "silver/b/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "silver/b/validation.json": {
       "ok": true,
       "problems": []
@@ -891,7 +1068,46 @@
       },
       "row_count": 3
     },
-    "silver/m/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "silver/m/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "silver/m/validation.json": {
       "ok": true,
       "problems": []

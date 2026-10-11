@@ -207,7 +207,46 @@
       },
       "row_count": 3
     },
-    "silver/m/table.parquet": "52fa967986e896163aa6a892bf4b9bc4671686fb0de9b4e13b5d028fffc7154a",
+    "silver/m/table.parquet": {
+      "columns": [
+        [
+          "id",
+          "VARCHAR"
+        ],
+        [
+          "name",
+          "VARCHAR"
+        ],
+        [
+          "tel",
+          "VARCHAR"
+        ],
+        [
+          "v",
+          "BIGINT"
+        ]
+      ],
+      "rows": [
+        [
+          "1",
+          "shop 1",
+          "010-0000-0000",
+          "10"
+        ],
+        [
+          "2",
+          "shop 2",
+          "02-000-0000",
+          "20"
+        ],
+        [
+          "3",
+          "shop 3",
+          null,
+          "30"
+        ]
+      ]
+    },
     "silver/m/validation.json": {
       "ok": true,
       "problems": []

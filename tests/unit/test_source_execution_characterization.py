@@ -33,6 +33,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
+import duckdb
 import kpubdata
 import pytest
 
@@ -199,7 +200,7 @@ def _scrub(value: object, root: Path) -> object:
 
 
 def _files(run_dir: Path) -> dict[str, object]:
-    """Every file the run wrote besides its manifest: text as text, the rest by digest.
+    """Every file the run wrote besides its manifest: text as text, Parquet as rows.
 
     The manifest's ``artifact_digest`` covers Gold's bytes, a card's collection time
     among them, so it is compared here instead, file by file, with the time left out.
@@ -217,9 +218,20 @@ def _files(run_dir: Path) -> dict[str, object]:
                 files[name] = [json.loads(line) for line in text.splitlines()]
             else:
                 files[name] = text.splitlines()
+        elif path.suffix == ".parquet":
+            files[name] = _parquet(path)
         else:
             files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     return files
+
+
+def _parquet(path: Path) -> dict[str, object]:
+    """A Parquet file's columns and rows: its bytes carry the writer's version."""
+    with duckdb.connect() as connection:
+        result = connection.execute("SELECT * FROM read_parquet(?)", [str(path)])
+        columns = [[column[0], str(column[1])] for column in result.description or ()]
+        rows = [[None if v is None else str(v) for v in row] for row in result.fetchall()]
+    return {"columns": columns, "rows": rows}
 
 
 def _events(service: BuilderService, run_id: str) -> dict[str, list[list[object]]]:
