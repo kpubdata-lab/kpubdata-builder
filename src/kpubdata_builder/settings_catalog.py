@@ -510,6 +510,14 @@ SETTINGS: tuple[Setting, ...] = (
         required="local publish 사용 시 필수",
     ),
     Setting(
+        name="KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH",
+        group="publish",
+        description="`true`면 개인정보 scan 이 통과한 run 만 게시한다(#1113). 통과는 run 이 성공했고 BuildSpec 의 `pii.mode` 가 `block` 이며 `allow_columns` 가 비어 있다는 뜻이다. scan 이 없거나(`pii_scan_missing`), 끝나지 않았거나(`pii_scan_pending`), 실패했거나(`pii_scan_failed`), 발견을 막지 않았으면(`pii_scan_unverified`) readiness 의 blocker 가 되고 publish 는 409 로 거절되며 거절은 `GET .../publish/audit` 에 `refused:<code>` 로 남는다. HF·Kaggle·local 모든 target 에 적용된다. **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜져 있다.** 단일 사용자 배포의 기본은 꺼짐이다. scan 은 찾도록 만든 형태만 찾으며, 통과가 개인정보가 없다는 보장은 아니다. 어떤 입력을 개인정보로 볼지와 법적 근거는 아직 정해지지 않았다(kpubdata#836, kpubdata#846)",
+        default="미설정(다중 사용자 배포에서는 켜짐)",
+        required="선택",
+        kind="flag",
+    ),
+    Setting(
         name="HF_TOKEN",
         group="publish",
         description="Hugging Face 게시 토큰. **단일 사용자 배포에서만** 읽는다 — 저장된 publish credential 이 없을 때의 서버 쪽 값이다. 다중 사용자 배포에서는 이 변수를 읽지 않고, 요청의 `X-Publish-Credential` 헤더만 쓴다(#925). CLI `publish` 도 이 값을 쓴다",

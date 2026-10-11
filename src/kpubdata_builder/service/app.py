@@ -533,7 +533,11 @@ _BuildListEntry = dict[str, str | None]
 # 1.119.0 -> 1.120.0: CatalogDataset gains query_parameters, the dataset's query
 #   definition read from DatasetRef.to_dict(); null when kpubdata gives none (#1281,
 #   additive).
-API_CONTRACT_VERSION = "1.120.0"
+# 1.120.0 -> 1.121.0: with the hosted personal-data gate on (multi-user, or
+#   KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH), readiness and publish report the
+#   pii_scan_* blockers and a refused publish is audited as refused:<code> (#1113,
+#   additive).
+API_CONTRACT_VERSION = "1.121.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

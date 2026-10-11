@@ -154,6 +154,7 @@ FLAGS: dict[str, tuple[bool, frozenset[str]]] = {
         frozenset({"true", "1", "yes", "on"}),
     ),
     "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": (False, frozenset({"true", "1"})),
+    "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH": (False, frozenset({"true", "1"})),
 }
 #: The words that say off on purpose. Any other word is off too, and gets a warning.
 _OFF_WORDS = frozenset({"false", "0"})
@@ -264,13 +265,15 @@ def forced_on(name: str) -> bool:
 
     Sign-in through OIDC makes a deployment multi-user, and so does
     ``ENFORCE_OWNERSHIP``; a multi-user deployment keeps each user's runs apart and
-    uses nobody's credentials but the requester's (ADR 0012).
+    uses nobody's credentials but the requester's (ADR 0012), and publishes only what its
+    personal-data scan passed (#1113).
     """
     if name == "ENFORCE_OWNERSHIP":
         return oidc_enabled()
     if name in (
         "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL",
         "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL",
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH",
     ):
         return multi_user_mode()
     return False

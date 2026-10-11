@@ -36,6 +36,11 @@ from kpubdata_builder.service import publish as publish_service
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.jobs import AsyncBuildExecutor
 from kpubdata_builder.service.publish_credentials import resolve_publish_credentials
+from kpubdata_builder.service.publish_pii_gate import (
+    PII_SCAN_ISSUE_CODES,
+    PiiScanCheck,
+    default_pii_scan_check,
+)
 from kpubdata_builder.service.redistribution import (
     TermsLookup,
     is_public,
@@ -127,6 +132,7 @@ class PublishApiService:
         credential_repository: CredentialRepository | None = None,
         terms_lookup: TermsLookup = kpubdata_terms,
         visibility_probe: VisibilityProbe | None = None,
+        pii_scan_check: PiiScanCheck = default_pii_scan_check,
     ) -> None:
         self._output_root = output_root
         self._publish_receipts = publish_receipts
@@ -134,6 +140,9 @@ class PublishApiService:
         self._credential_repository = credential_repository
         self._terms_lookup = terms_lookup
         self._visibility_probe = visibility_probe or _publisher_visibility
+        # Whether a run's personal-data scan passed, asked when the hosted gate is on
+        # (#1113). Replaceable: the input scope it should enforce is not decided yet.
+        self._pii_scan_check = pii_scan_check
 
     def _publish_context(
         self, run_id: str
@@ -204,6 +213,7 @@ class PublishApiService:
                 self._credential_repository, owner_id, resolved_target
             ),
             terms_lookup=self._terms_lookup,
+            pii_scan_check=self._pii_scan_check,
         )
         return ServiceResponse(
             200,
@@ -314,8 +324,17 @@ class PublishApiService:
             credentials=credentials,
             options=options,
             terms_lookup=self._terms_lookup,
+            pii_scan_check=self._pii_scan_check,
         )
         if not readiness.ready or readiness.artifacts is None:
+            self._record_pii_refusal(
+                readiness.blockers,
+                owner_key=owner_key,
+                run_id=run_id,
+                target=resolved_target,
+                destination=destination,
+                options=options,
+            )
             return ServiceResponse(
                 409,
                 {
@@ -482,6 +501,41 @@ class PublishApiService:
                 {"error": "publish failed due to an unexpected error", "code": "publish_failed"},
             )
         return ServiceResponse(200, response_body)
+
+    def _record_pii_refusal(
+        self,
+        blockers: tuple[publish_service.PublishIssue, ...],
+        *,
+        owner_key: str,
+        run_id: str,
+        target: str,
+        destination: str,
+        options: dict[str, object],
+    ) -> None:
+        """Put a personal-data gate refusal in the publish audit log (#1113).
+
+        The refusal stands whether or not the record could be written: a failed write
+        is logged with its exception type only, and the publish is still refused.
+        """
+        code = next((b.code for b in blockers if b.code in PII_SCAN_ISSUE_CODES), None)
+        if code is None:
+            return
+        try:
+            self._publish_receipts.record_refusal(
+                owner_key=owner_key,
+                run_id=run_id,
+                target=target,
+                destination=destination,
+                options=options,
+                code=code,
+            )
+        except Exception as exc:
+            logger.error(
+                "publish refusal audit failed: run_id=%s target=%s error_type=%s",
+                run_id,
+                target,
+                type(exc).__name__,
+            )
 
     def get_publish_receipt(
         self,
