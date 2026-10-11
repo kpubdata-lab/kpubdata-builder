@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.119.0"
+  version: "1.120.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.120.0 adds `query_parameters` to `CatalogDataset`, the dataset's query definition for form generation (#1281, additive). Each item has `name` (the provider's own), `alias` (the name a kpubdata caller uses, or null), `type`, `required`, `enum`, `description` and `example`. It is read from kpubdata's public `DatasetRef.to_dict()`, and is null when kpubdata gives the dataset no definition (unknown, not "no parameters"). `type` is null for a catalogue entry, which declares none, and for a type Builder has not mapped. `request_parameters` is unchanged.
     v1.119.0 adds a per-user query rate and a per-provider egress limit, and every 429 that says how long to wait sends `Retry-After` (#1245, additive). In a multi-user deployment each user may start `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in any 60 seconds; one more of `POST /query`, `POST /warehouse/query`, `POST /warehouse/rows`, `POST /warehouse/aggregate` or `POST /warehouse/exports` is answered 429 `query_rate_limited` with `retry_after_seconds`, before anything is resolved or run. `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` bounds the calls Builder makes to one provider in any 60 seconds, for all users together: a build waits for its turn, `POST /preview` answers 429 `provider_egress_limited` with `retry_after_seconds`, and `POST /providers/{provider}/probe` lists the datasets it did not reach in `not_probed`. Both are off (`0`) by default. A 429 whose body carries `retry_after_seconds` — `auth_throttled` and `probe_rate_limited` included — now also carries the `Retry-After` header with the same number (`components.headers.RetryAfter`). A query whose client closes the connection while it runs is stopped and gets no response.
     v1.118.0 lets a deployment refuse a build there is no room for (#1099, additive). Before `POST /builds` queues a job it may now answer 503 `disk_space_low`, when the filesystem under the output directory has less free space than `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB`, or — in a multi-user deployment — 409 `run_storage_quota_exceeded`, when the requester's finished runs and one reservation of `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` per queued or running build of theirs, this one included, would pass `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`; the body gives `limit_bytes` and `used_bytes`. Nothing is recorded for a refused run. Every one of these settings is off until the maintainer sets it, so a deployment that sets none answers as before. The synchronous `POST /build` is unchanged.
     v1.117.0 tells readiness apart from liveness and adds metrics (#1101, additive). `GET /readyz` answers without authentication, as `GET /healthz` does: 200 `ready` when the build index can be read, the output directory can be written, its filesystem has the free space the deployment asks for, and the build workers run; 503 `not_ready` otherwise, with the same body naming the check that failed. A full build queue is not a failure: it is `accepting_builds: false` and the status stays `ready`. The body names checks and states only, never a path, a size or an error text, and the answer is reused for a few seconds whoever asks. `GET /metrics` gives an administrator the Prometheus text page: queue depth, running builds, workers, build durations and queue waits, responses by status and stable code (429 and 5xx among them), free disk and the readiness checks. Anyone else gets 403. `GET /healthz` is unchanged and stays the liveness probe.
@@ -377,6 +378,14 @@ paths:
                                 required: true
                                 description: 조회할 시·도
                                 example: 서울
+                            query_parameters:
+                              - name: sidoName
+                                alias: null
+                                type: string
+                                required: true
+                                enum: [서울, 부산, 대구]
+                                description: 조회할 시·도
+                                example: 서울
                             application:
                               required: true
                               url: https://www.data.go.kr/data/15073861/openapi.do
@@ -390,6 +399,7 @@ paths:
                             query_support: null
                             requires_service_key: true
                             request_parameters: []
+                            query_parameters: null
                             application: null
                       - name: ecos
                         datasets:
@@ -403,6 +413,7 @@ paths:
                             query_support: null
                             requires_service_key: false
                             request_parameters: []
+                            query_parameters: null
                             application: null
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -7274,6 +7285,7 @@ components:
           query_support,
           requires_service_key,
           request_parameters,
+          query_parameters,
           application,
         ]
       description: >
@@ -7329,6 +7341,18 @@ components:
             선택한 Dataset에 전달하는 요청 파라미터의 secret-free 설명 (#490 후속,
             additive). raw_metadata에서 allowlist로 추린 것으로 serviceKey 등 시크릿
             파라미터는 포함되지 않는다. metadata가 없으면 빈 배열.
+        query_parameters:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/CatalogQueryParameter"
+          description: >-
+            The dataset's query definition, for generating an input form (#1281,
+            additive). Read from kpubdata's public `DatasetRef.to_dict()`, with the
+            provider's values passed through unparsed. null when kpubdata gives the
+            dataset no definition: unknown, never "no parameters", and never an empty
+            array. Authentication, paging and format parameters are not in the
+            definition, and a secret-like name is dropped. `request_parameters` is
+            unchanged.
         application:
           oneOf:
             - type: "null"
@@ -7364,6 +7388,36 @@ components:
         example:
           type: [string, "null"]
           description: 근거 있는 예시 값 (없으면 null)
+
+    CatalogQueryParameter:
+      type: object
+      required: [name, alias, type, required, enum, description, example]
+      properties:
+        name:
+          type: string
+          description: The provider's own name for the parameter.
+        alias:
+          type: [string, "null"]
+          description: >-
+            The name a kpubdata caller uses, when it differs from `name`; null when
+            the parameter is not aliased.
+        type:
+          type: [string, "null"]
+          enum: [string, integer, number, date_yyyymmdd, date_yyyymm, null]
+          description: >-
+            How the value is written, in kpubdata's words. null when kpubdata declares
+            none (a catalogue entry) or declares one Builder has not mapped. Not guessed.
+        required:
+          type: boolean
+        enum:
+          type: [array, "null"]
+          items:
+            type: string
+          description: The values the provider accepts, when the definition lists them; null otherwise.
+        description:
+          type: [string, "null"]
+        example:
+          type: [string, "null"]
 
     CatalogApplication:
       type: object

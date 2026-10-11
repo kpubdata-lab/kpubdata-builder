@@ -530,7 +530,10 @@ _BuildListEntry = dict[str, str | None]
 #   query_rate_limited past KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE; POST /preview answers
 #   429 provider_egress_limited past KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE; a 429
 #   with retry_after_seconds carries Retry-After (#1245, additive).
-API_CONTRACT_VERSION = "1.119.0"
+# 1.119.0 -> 1.120.0: CatalogDataset gains query_parameters, the dataset's query
+#   definition read from DatasetRef.to_dict(); null when kpubdata gives none (#1281,
+#   additive).
+API_CONTRACT_VERSION = "1.120.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
