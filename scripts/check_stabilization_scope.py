@@ -17,7 +17,7 @@ from pathlib import Path
 
 _FEATURE_TITLE = re.compile(r"^feat(?:\([^)\n]+\))?!?:\s")
 _EXCEPTION = re.compile(r"(?m)^Scope exception:\s*YES\s*$")
-_RISK = re.compile(r"(?m)^Existing flow or risk:\s*(.+\S)\s*$")
+_RISK = re.compile(r"(?m)^Existing flow or risk:[ \t]*(\S[^\r\n]{19,})[ \t]*$")
 _ISSUE = re.compile(
     r"(?im)^(?:Closes|Fixes|Refs|Relates)\s+(?:(?:[\w.-]+/){1,2})?#\d+\b"
 )
