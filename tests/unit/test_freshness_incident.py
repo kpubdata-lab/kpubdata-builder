@@ -39,6 +39,15 @@ def test_there_are_five_scheduled_workflows() -> None:
     ]
 
 
+def test_the_air_quality_workflow_has_no_cron_trigger() -> None:
+    # Publishing is stopped over source license limits (#759, #1244).
+    workflow = _load(_WORKFLOWS / "scheduled-air-quality.yml")
+    triggers = workflow.get("on", workflow.get(True))
+
+    assert "schedule" not in triggers
+    assert "workflow_dispatch" in triggers
+
+
 @pytest.mark.parametrize("path", _SCHEDULED, ids=lambda p: p.stem)
 def test_each_scheduled_workflow_reports_a_failure_of_any_job(path: Path) -> None:
     jobs = _load(path)["jobs"]

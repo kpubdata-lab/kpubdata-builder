@@ -214,7 +214,7 @@ scripts/publish_to_hf.py  →  scripts/pipeline/{fetch,transform,package,publish
 - 해당 모듈에는 `DEPRECATED` 표시가 붙어 있으며, 프로덕션 호환을 위해서만 유지한다.
 - 이 경로는 **레거시로서** 마지막 config 가 옮겨질 때까지 Polars 를 쓴다(`legacy-publish` extra)
   ([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md) D1). 대기오염정보 게시는 멈춰 있다
-  (`scheduled-air-quality.yml` disabled, #759).
+  (`scheduled-air-quality.yml` 비활성, cron 줄도 제거, #759, #1244).
 
 ### 9.3 통합 계획
 
