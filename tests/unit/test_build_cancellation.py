@@ -865,6 +865,39 @@ class TestCancelOwnership:
         assert isinstance(status, ServiceResponse)
         assert status.body["status"] == "succeeded"
 
+    def test_an_administrator_cannot_cancel_another_owners_build(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Until the maintainers decide who may cancel another owner's build (#1241),
+        an administrator is answered like any other user who does not own the run, and
+        the build goes on to its own ending."""
+        monkeypatch.setenv(_OWNERSHIP_ENV, "true")
+        entered = threading.Event()
+        release = threading.Event()
+        completed = threading.Event()
+        service = _BlockingCancelService(
+            output_root=tmp_path, entered=entered, release=release, completed=completed
+        )
+        try:
+            self._oidc(monkeypatch, "oidc:owner-a", label="a")
+            dispatch(service, "POST", "/builds", {"spec": VALID_SPEC_YAML, "run_id": "run1"})
+            assert entered.wait(timeout=5)
+
+            monkeypatch.setattr(
+                app_module,
+                "authenticate",
+                lambda **_kwargs: Principal(
+                    kind="oidc", identifier="admin", owner_id="oidc:admin", is_admin=True
+                ),
+            )
+            response = dispatch(service, "POST", "/builds/run1/cancel", None)
+        finally:
+            release.set()
+
+        assert response.status_code == 404
+        assert completed.wait(timeout=5)
+        _await_job_status(service, "run1", "succeeded")
+
     def test_same_label_different_stable_owner_cannot_cancel(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
