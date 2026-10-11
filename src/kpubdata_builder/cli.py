@@ -401,6 +401,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually delete matching run workspaces. Without this flag the command is a dry run.",
     )
 
+    prune_runs_cmd = subparsers.add_parser(
+        "prune-runs",
+        help=(
+            "List (and optionally delete) succeeded and failed runs past their retention, "
+            "keeping any run something still refers to (#1099)."
+        ),
+    )
+    prune_runs_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    prune_runs_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Table catalog root, whose snapshots keep the runs that made them "
+            "(default: KPUBDATA_BUILDER_WAREHOUSE, or none)."
+        ),
+    )
+    prune_runs_cmd.add_argument(
+        "--retention-days",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help=(
+            "Days a run is kept after it finished. Defaults to "
+            "KPUBDATA_BUILDER_RUN_RETENTION_DAYS; when that is unset or 0, no run expires."
+        ),
+    )
+    prune_runs_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete the expired runs. Without this flag the command is a dry run.",
+    )
+
     gc_cmd = subparsers.add_parser(
         "warehouse-gc",
         help="Reclaim snapshots and staging directories nothing needs any more (#738).",
@@ -1472,6 +1509,83 @@ def _run_prune_cancelled(*, output_dir: str, ttl_hours: float | None, apply: boo
     return 0
 
 
+def _megabytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _run_prune_runs(
+    *, output_dir: str, warehouse: str | None, retention_days: int | None, apply: bool
+) -> int:
+    """List, or with ``--apply`` delete, the runs past their retention (#1099).
+
+    The retention comes from ``--retention-days``, else
+    ``KPUBDATA_BUILDER_RUN_RETENTION_DAYS``; unset or ``0`` is off, and then only what an
+    interrupted pass left is finished. Each kept run is printed with the reason, and
+    the last line says how much space went or would go.
+    """
+    from .retention import RUN_RETENTION_DAYS_ENV, collect_expired_runs
+
+    days = retention_days
+    if days is None:
+        raw_env = os.environ.get(RUN_RETENTION_DAYS_ENV, "").strip()
+        if raw_env:
+            try:
+                days = int(raw_env)
+            except ValueError:
+                days = -1
+            if days < 0:
+                print(
+                    f"error: {RUN_RETENTION_DAYS_ENV}={raw_env!r} is not a whole number of "
+                    "days >= 0",
+                    file=sys.stderr,
+                )
+                return 1
+    elif days < 0:
+        print("error: --retention-days must be >= 0", file=sys.stderr)
+        return 1
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+
+    output_root = Path(output_dir)
+    mode = "APPLY (deleting)" if apply else "dry run (nothing will be deleted)"
+    retention = f"{days} day(s)" if days else "off"
+    print(f"pruning expired runs under {output_root}, retention {retention} — {mode}", flush=True)
+
+    report = collect_expired_runs(
+        output_root,
+        retention_days=days,
+        apply=apply,
+        warehouse_root=Path(warehouse) if warehouse else None,
+    )
+
+    for run_id in report.interrupted:
+        verb = "finished deleting" if report.applied else "would finish deleting"
+        print(f"{verb}: {run_id} (an earlier pass was interrupted)", flush=True)
+    deleted = set(report.deleted)
+    for run in report.expired:
+        if report.applied and run.run_id not in deleted:
+            continue
+        verb = "deleted" if report.applied else "would delete"
+        print(
+            f"{verb}: {run.run_id} ({run.status}, finished {run.finished_at.isoformat()}, "
+            f"{_megabytes(run.size_bytes)})",
+            flush=True,
+        )
+    for kept in report.kept:
+        print(f"kept: {kept.run_id} ({kept.reason})", flush=True)
+    if report.index_rebuilt:
+        print("rebuilt the build index from the manifests", flush=True)
+    count = len(report.deleted) if report.applied else len(report.expired)
+    freed = "freed" if report.applied else "would free"
+    print(
+        f"{count} run(s) {'deleted' if report.applied else 'to delete'}, {freed} "
+        f"{_megabytes(report.freed_bytes)}; {len(report.kept)} expired run(s) kept, "
+        f"{report.retained} within the retention",
+        flush=True,
+    )
+    return 0
+
+
 def _run_discover(url: str, *, dataset_id: str | None, output: str | None) -> int:
     """Discover API metadata from a data.go.kr URL.
 
@@ -1722,6 +1836,10 @@ def _written_roots(args: argparse.Namespace) -> list[Path]:
         return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
     if command in ("rebuild-index", "prune-cancelled"):
         return [Path(args.output_dir)]
+    if command == "prune-runs":
+        # The warehouse is read, not written, but a restore must not swap it midway.
+        warehouse = args.warehouse or os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+        return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
     if command in ("warehouse-gc", "warehouse-hold"):
         return [Path(args.warehouse)]
     return []
@@ -1851,6 +1969,13 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _run_prune_cancelled(
             output_dir=args.output_dir,
             ttl_hours=args.ttl_hours,
+            apply=args.apply,
+        )
+    if command == "prune-runs":
+        return _run_prune_runs(
+            output_dir=args.output_dir,
+            warehouse=args.warehouse,
+            retention_days=args.retention_days,
             apply=args.apply,
         )
     if command == "discover":

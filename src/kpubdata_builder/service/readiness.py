@@ -171,7 +171,9 @@ def _check_filesystem(
     return _FilesystemResult(state_store, output_dir, disk, usage)
 
 
-def _disk_usage(path: Path) -> DiskUsage:
+def measure_disk_usage(path: Path) -> DiskUsage:
+    """Free and total bytes of the filesystem ``path`` is on. Build admission reads it
+    too (``run_storage``, #1099)."""
     usage = shutil.disk_usage(path)
     return DiskUsage(free_bytes=usage.free, total_bytes=usage.total)
 
@@ -187,7 +189,7 @@ class ReadinessProbe:
         async_builds: AsyncBuildExecutor,
         cache_seconds: float = DEFAULT_CACHE_SECONDS,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-        disk_usage: Callable[[Path], DiskUsage] = _disk_usage,
+        disk_usage: Callable[[Path], DiskUsage] = measure_disk_usage,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._output_root = output_root
@@ -276,4 +278,5 @@ __all__ = [
     "Readiness",
     "ReadinessProbe",
     "disk_thresholds",
+    "measure_disk_usage",
 ]

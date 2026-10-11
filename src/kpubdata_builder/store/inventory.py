@@ -257,6 +257,13 @@ OUTPUT_PATHS: tuple[OutputPath, ...] = (
         why="`rebuild-index` 가 쓰는 도중의 인덱스",
     ),
     OutputPath(
+        name="지우던 run",
+        pattern=".run-gc",
+        is_dir=True,
+        kind="left_out",
+        why="`prune-runs --apply` 가 지우려고 옮겨 둔 run. 중단됐으면 다음 `prune-runs --apply` 가 마저 지운다(#1099)",
+    ),
+    OutputPath(
         name="복구 전 상태",
         pattern=".before-restore-*",
         is_dir=True,

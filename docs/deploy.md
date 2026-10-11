@@ -239,7 +239,7 @@ kpubdata-builder restore --recover --output-dir /data
 **같은 시점이라는 것의 범위.** 저장소마다 SQLite 온라인 백업을 하는 것만으로는 전체가 같은
 시점이 되지 않는다 — 두 저장소를 복사하는 사이에 끝난 빌드는 한쪽에서만 끝나 있다. 그래서
 백업은 **아무것도 쓰지 않을 때만** 돈다. 상태를 쓰는 명령(`serve` 는 떠 있는 내내, `build`,
-`rebuild-index`, `prune-cancelled`, `warehouse-gc`, `warehouse-hold`)은 출력 디렉터리와 웨어하우스의
+`rebuild-index`, `prune-cancelled`, `prune-runs`, `warehouse-gc`, `warehouse-hold`)은 출력 디렉터리와 웨어하우스의
 `.state.lock` 을 공유 잠금으로 쥐고, `backup`·`restore` 는 배타 잠금을 기다리지 않고 잡는다. 하나라도
 쥐고 있으면 백업은 거부하고("in use"), 백업·복구 중에는 쓰는 명령이 시작하지 않는다. 잠금은
 `flock` 이라 프로세스가 어떻게 끝나든 커널이 푼다. 그러므로 백업 파일은 **출력 디렉터리의 한
@@ -278,6 +278,7 @@ kpubdata-builder restore --recover --output-dir /data
 | `_builds.sqlite.bak*` | 뺀다 | `rebuild-index` 가 바꾸기 전의 인덱스 |
 | `_builds.sqlite.tmp*` | 뺀다 | `rebuild-index` 가 쓰는 도중의 인덱스 |
 | `.before-restore-*` (디렉터리) | 뺀다 | `restore` 가 옮겨 둔 그 전 상태 |
+| `.run-gc` (디렉터리) | 뺀다 | `prune-runs --apply` 가 지우려고 옮겨 둔 run(§6.3). 중단됐으면 다음 `prune-runs --apply` 가 마저 지운다 |
 
 저장소 옆의 `-wal`·`-shm`·`-journal` 은 복사하지 않는다 — 온라인 백업이 그 내용을 담는다. 웨어하우스
 안에서는 카탈로그가 정한다: 읽을 수 있는 스냅샷(committed, quarantined)만 담고 lease 와 staging 은
@@ -305,6 +306,85 @@ kpubdata-builder restore --recover --output-dir /data
 정리(prune), RPO·RTO 는 메인테이너가 정한다. 이 명령은 요청받을 때 받고, 받으라는 곳에 둘 뿐이다.
 깨끗한 환경에서의 복구 리허설 기록, 인증 서버 데이터베이스의 백업과 복구, 삭제 기록(tombstone)과의
 대조도 아직 없다(#1095).
+
+### 6.3 run 보관기한과 저장량 (#1099)
+
+빌드는 run 마다 작업 공간(`/data/<run_id>/`)을 남기고, 지금까지는 아무것도 그것을 지우지 않았다 —
+취소된 partial run 만 `prune-cancelled` 가 정리한다. 성공·실패한 run 은 디스크에 계속 쌓이고,
+디스크가 차면 모든 사용자의 빌드와 조회가 함께 실패한다. 여기서는 세 가지를 둔다.
+
+**정하지 않은 것 — 모든 수치는 기본이 끔이다.** 보관기한, 사용자별 저장량 상한, 예약 크기,
+빌드에 필요한 여유 공간은 사용자 약관·삭제 정책·백업 보존 정책과 맞춰 메인테이너가 정한다
+(kpubdata#812). 그 결정 전까지 이 릴리스는 아무 run 도 지우지 않고 아무 빌드도 거절하지 않는다.
+이슈에 나온 30일은 예시이지 정책이 아니다. 설정은 `docs/deployment.md` 의 설정 표에 있다.
+
+| 설정 | 하는 일 | 기본 |
+|---|---|---|
+| `KPUBDATA_BUILDER_RUN_RETENTION_DAYS` | `prune-runs` 가 지우는 run 의 나이(일) | 끔 |
+| `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES` | 다중 사용자 배포에서 사용자 한 명의 끝난 run 합계 상한 | 끔 |
+| `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` | 대기·실행 중인 build 하나가 미리 차지하는 크기 | `0` |
+| `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` | build 를 받는 데 필요한 여유 공간 | 끔 |
+
+**1) 기한이 지난 run 정리 — `prune-runs`.** 기본은 dry run 이라 아무것도 지우지 않고, 지울 run
+마다 상태·끝난 시각·크기를, 남길 run 마다 이유를 적고, 마지막 줄에 지우면 비는 크기를 말한다.
+`--apply` 를 줄 때에만 지운다. 같은 명령을 다시 돌려도 안전하다 — 이미 지운 run 은 더 없다.
+
+```bash
+# 무엇이 지워질지 본다 (아무것도 바꾸지 않는다)
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder prune-runs --output-dir /data --warehouse /data/warehouse --retention-days 30
+# 지운다
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder prune-runs --output-dir /data --warehouse /data/warehouse --apply
+```
+
+`serve` 가 떠 있어도 돌릴 수 있다. 정기 GC 는 이 명령을 호스트의 cron 이나 systemd timer 로
+돌리는 것이다(주기도 메인테이너가 정한다). 다른 쓰는 명령처럼 상태 잠금(§6.2)을 공유로 쥐므로
+백업·복구 중에는 시작하지 않고, 이 명령이 도는 동안 백업은 거부된다.
+
+지우는 run 은 manifest 의 `finished_at` 이 기한보다 오래된 **성공·실패** run 이다. 파일의 수정
+시각으로는 판단하지 않고, `finished_at` 이 없는 run 은 남긴다(`no_finish_time`). 취소된 run 은
+`prune-cancelled` 의 정책을 따른다. 기한이 지났어도 다음 run 은 지우지 않고 이유를 적는다.
+
+| 이유 | 무엇인가 |
+|---|---|
+| `running` | run 이벤트에 제출·시작이 있고 끝이 없다 |
+| `retry_source` | 아직 끝나지 않은 run 이 이 run 을 재시도한다(checkpoint 를 이어받을 수 있다, #1103) |
+| `published` | 게시 영수증이 이 run 을 가리킨다(상태와 무관하게) |
+| `held` | 이 run 의 warehouse snapshot 에 hold 가 있다(`warehouse-hold`) |
+| `leased` | 이 run 의 warehouse snapshot 을 지금 질의가 읽고 있다 |
+| `snapshot` | 이 run 이 만든 committed warehouse snapshot 이 있다 — 내보내기가 그 run 의 BuildSpec 을 읽는다 |
+
+warehouse snapshot 은 `warehouse-gc` 가 정리한다. 그 run 의 snapshot 이 회수된 뒤의 `prune-runs` 가
+run 을 지운다. 그래서 `--warehouse`(또는 `KPUBDATA_BUILDER_WAREHOUSE`)를 반드시 준다 — 주지 않으면
+snapshot 의 참조를 볼 수 없다. 참조는 run 마다 지우기 직전에 다시 읽으므로, 명령이 도는 사이에
+들어온 게시나 재시도는 그 run 을 지킨다.
+
+**삭제의 순서와 중단.** run 하나를 지우는 것은 세 단계다: 작업 공간을 `/data/.run-gc/` 로 이름을
+바꾸고(한 번에 출력 디렉터리에서 빠진다), 빌드 인덱스의 행을 지우고, 파일을 지운다. 어느 단계에서
+죽든 다음 `prune-runs --apply` 가 `.run-gc/` 에 남은 것의 인덱스 행과 파일을 먼저 마저 지운다(dry
+run 은 그것을 "would finish deleting" 으로 알린다). 인덱스 행이 지워지지 않았으면 manifest 에서
+인덱스를 다시 만든다(`rebuild-index` 와 같다). run 의 이벤트 타임라인(`_build_events.sqlite`)은
+지우지 않는다. 사용자와 그 데이터의 삭제는 #1102 가 다룬다.
+
+**2) 사용자별 저장량 — 예약하고 받는다.** 다중 사용자 배포에서 `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`
+를 정하면 `POST /builds` 가 job 을 큐에 넣기 전에 그 사용자의 끝난 run 작업 공간 합계를 잰다. 빌드의
+크기는 끝나야 알 수 있으므로 대기·실행 중인 그 사용자의 build 마다
+`KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` 를 예약한 것으로 치고, 합계와 예약(이번 것 포함)이 상한을
+넘거나 합계가 이미 상한에 닿았으면 409 `run_storage_quota_exceeded`(`limit_bytes`, `used_bytes`)로
+거절한다. 예약은 job registry 의 잠금 안에서 세므로 동시에 들어온 두 제출이 마지막 자리를 함께
+가져가지 못한다. 업로드는 따로 한도가 있고(#1045) run 작업 공간 밖에 있어 두 번 세지 않는다.
+warehouse snapshot 도 세지 않는다. 실행 중인 build 가 예약보다 크게 자랄 수는 있다 — 예약은 상한을
+넘는 제출을 막는 장치이지 정확한 회계가 아니다. 거절된 run 은 아무것도 기록되지 않는다.
+
+**3) 디스크가 부족하면 받지 않는다.** `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` 를 정하면, 출력 디렉터리의
+파일시스템 여유 공간이 그보다 작을 때 `POST /builds` 가 503 `disk_space_low` 로 답한다. 여유 공간은
+`/readyz`(§7.1)와 같은 방식으로 잰다. 응답은 경로도 크기도 말하지 않는다. 두 거절 모두 `/metrics` 의
+응답 수(상태·코드별)에 나타난다. 동기 `POST /build` 는 사용자별 build 상한(#1189)처럼 이 검사를 하지
+않는다 — Studio 는 `POST /builds` 로 제출한다.
+
+**하지 않는 것.** `VACUUM`, export·spill·staging 디렉터리의 정리, 기한이 지난 업로드의 일괄 정리,
+디스크가 가득 찼을 때의 aggressive 모드는 이 명령에 없다 — 이슈의 `maintain` 명령 범위다(#1099).
 
 ## 7. 헬스체크·종료
 

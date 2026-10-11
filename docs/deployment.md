@@ -47,6 +47,10 @@
 | 변수명 | 설명 | 기본값 | 필수 여부 |
 | :--- | :--- | :--- | :--- |
 | `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` | `prune-cancelled --apply`가 cancelled partial run을 정리하기까지의 보존 시간(시간). 미설정이면 정리 대상 없음(#549) | 미설정 | 선택 |
+| `KPUBDATA_BUILDER_RUN_RETENTION_DAYS` | `prune-runs` 가 성공·실패한 run 의 작업 공간을 지우기까지의 보존 일수(#1099). manifest 의 `finished_at` 으로 세고, 실행 중이거나 재시도가 이어받는 run, 게시 영수증이 있는 run, warehouse snapshot 이 있는(hold·lease 포함) run 은 지우지 않는다. 취소된 run 은 `prune-cancelled` 가 따로 다룬다. 값은 메인테이너가 정한다(kpubdata#812) — 정해지기 전까지 기본은 끔이다. 미설정이나 `0` 이면 만료되는 run 이 없다. `--retention-days` 가 이 값보다 우선한다 | 미설정 (끔) | 선택 |
+| `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES` | 다중 사용자 배포에서 사용자 한 명의 끝난 run 작업 공간이 차지할 수 있는 합계 크기(바이트, #1099). 그 합계와 대기·실행 중인 그 사용자의 build 마다의 예약(`KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES`)이 이 값을 넘으면 `POST /builds` 가 409 `run_storage_quota_exceeded` 로 답한다. 업로드(#1045)와 warehouse snapshot 은 세지 않는다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔. 단일 사용자 배포와 동기 `POST /build` 에는 적용하지 않는다 | 미설정 (끔) | 선택 |
+| `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` | `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES` 를 판단할 때 대기·실행 중인 build 하나가 미리 차지하는 크기(바이트, #1099). build 의 크기는 끝나야 알 수 있으므로 이 예약으로 동시에 들어온 제출이 함께 상한을 넘지 못하게 한다. `0` 이면 예약 없이, 끝난 run 의 합계가 상한에 닿았을 때에만 거절한다. 값은 메인테이너가 정한다(kpubdata#812) | `0` | 선택 |
+| `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` | 출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `POST /builds` 가 build 를 받지 않고 503 `disk_space_low` 로 답한다(#1099). 여유 공간은 `/readyz` 와 같은 방식으로 잰다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다 | 미설정 (끔) | 선택 |
 | `KPUBDATA_BUILDER_MAX_WORKERS` | 동시 요청 스레드 상한 | `10` | 선택 |
 | `KPUBDATA_BUILDER_MAX_BUILDS` | 동시에 도는 build 수의 상한 — 동기 `POST /build` 와 비동기 job 을 합쳐서(`serve --max-builds`, #1028). 한도에 닿으면 동기 build 는 기다리고 비동기 job 은 큐에 남는다 | `KPUBDATA_BUILDER_MAX_WORKERS` 값 | 선택 |
 | `KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS` | 비동기 build 한 건이 실행을 시작한 뒤 돌 수 있는 시간(초, #1119). 큐에서 기다린 시간은 세지 않는다. 넘으면 취소를 요청하고, build 는 다음 안전한 단계 경계에서 멈춰 `cancelled` 로 끝나며 그 `run_cancelled` 이벤트가 이유를 말한다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다 | `21600` (6시간) | 선택 |
@@ -119,7 +123,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 37 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 41 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |
