@@ -49,6 +49,7 @@ from ..uploads import (
     UploadRepository,
     resolve_max_upload_bytes,
 )
+from ..uploads.store import SCHEMA as uploads_schema
 from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
 from . import monitoring as monitoring_service
@@ -61,6 +62,7 @@ from . import (
     request_log,
 )
 from . import publish as publish_service
+from .analyses_api import SCHEMA as analyses_schema
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
@@ -74,6 +76,7 @@ from .monitoring_api import MonitoringApiService
 from .pii_reads import PiiLookup, client_pii_lookup
 from .probe_limit import ProbeLimiter
 from .profiles_api import ProfilesApiService
+from .provider_tests import SCHEMA as provider_tests_schema
 from .provider_tests import ProviderTestLog
 from .providers import (
     CredentialResolver,
@@ -94,6 +97,7 @@ from .redistribution import (
     kpubdata_terms,
 )
 from .responses import FileResponse, ServiceResponse
+from .revisions import SCHEMA as revisions_schema
 from .revisions import RevisionStore
 from .revisions_api import RevisionsApiService
 from .routes import ROUTE_ADAPTERS
@@ -104,6 +108,7 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import ExpiringUploads, UploadsService
+from .user_ledger import SCHEMA as user_ledger_schema
 from .user_ledger import LedgerUnavailableError, UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
@@ -594,6 +599,7 @@ class BuilderService:
         # Durable idempotency receipt for external publish side effects. Object
         # creation does not create files; SQLite lazily initialized on first POST claim.
         self._publish_receipts = publish_service.PublishReceiptStore(output_root)
+        self._refuse_newer_stores()
         self._query_service = query_service or QueryService()
         repository = credential_repository or _credential_repository_from_env(output_root)
         self._credential_resolver = CredentialResolver(repository)
@@ -778,6 +784,32 @@ class BuilderService:
                 if self._event_store_lazy is None:
                     self._event_store_lazy = BuildEventStore(self._output_root)
         return self._event_store_lazy
+
+    def _refuse_newer_stores(self) -> None:
+        """Refuse, at the start, a store a newer release wrote (#1096).
+
+        These stores are opened on first use so that a deployment that never uses one
+        has no file for it. One that is already there is looked at now, on a read-only
+        connection that creates and changes nothing: a rolled-back deployment then does
+        not start, rather than starting and failing the first request that needs the
+        store. The credential store is not here because it is opened at the start when
+        it is used at all, and refuses there.
+
+        Raises:
+            UnsupportedSchemaVersionError: One of the stores is newer than this release.
+        """
+        directory = self._output_root / ".service"
+        stores = [
+            (publish_service.RECEIPTS_SCHEMA, self._publish_receipts.path),
+            (provider_tests_schema, directory / "provider_tests.sqlite3"),
+            (revisions_schema, directory / "revisions.sqlite3"),
+            (user_ledger_schema, directory / "users.sqlite3"),
+            (analyses_schema, directory / "analyses.sqlite3"),
+        ]
+        if self._upload_repository_override is None:
+            stores.append((uploads_schema, directory / "uploads.sqlite3"))
+        for schema, path in stores:
+            schema.refuse_newer(path)
 
     @property
     def _upload_repository(self) -> UploadRepository:

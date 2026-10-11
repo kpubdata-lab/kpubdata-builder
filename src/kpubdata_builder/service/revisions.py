@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from kpubdata_builder.sqlite_settings import BUSY_TIMEOUT_SECONDS
+from kpubdata_builder.store.schema_version import StoreSchema
 
 from .. import logging_redaction
 from ..spec import JsonValue
@@ -134,6 +135,42 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _create_v1(conn: sqlite3.Connection) -> None:
+    """Version 1: the two tables and the index as every release so far has made them."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS revisions ("
+        " workspace TEXT NOT NULL, kind TEXT NOT NULL, doc_id TEXT NOT NULL,"
+        " revision INTEGER NOT NULL, content TEXT NOT NULL, note TEXT,"
+        " author TEXT NOT NULL, created_at TEXT NOT NULL, reverted_from INTEGER,"
+        " idempotency_key TEXT,"
+        " PRIMARY KEY (workspace, kind, doc_id, revision))"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_revisions_idempotency"
+        " ON revisions(workspace, kind, doc_id, idempotency_key)"
+        " WHERE idempotency_key IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS revision_audit ("
+        " seq INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL,"
+        " kind TEXT NOT NULL, doc_id TEXT NOT NULL, revision INTEGER NOT NULL,"
+        " action TEXT NOT NULL, author TEXT NOT NULL, at TEXT NOT NULL)"
+    )
+
+
+#: The store's schema, one step per version (#1096). A file from before the store
+#: recorded a version has both tables, so the first step finds them and keeps them.
+SCHEMA = StoreSchema(
+    store="document revision store",
+    migrations=(_create_v1,),
+    remedy=(
+        "Run the release that wrote it, or restore the output directory from a backup "
+        "taken before the upgrade; the revision history and its audit trail cannot be "
+        "rebuilt from anything else."
+    ),
+)
+
+
 class RevisionStore:
     """SQLite store of document revisions and their audit trail."""
 
@@ -141,26 +178,7 @@ class RevisionStore:
         self._path = path
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS revisions ("
-                " workspace TEXT NOT NULL, kind TEXT NOT NULL, doc_id TEXT NOT NULL,"
-                " revision INTEGER NOT NULL, content TEXT NOT NULL, note TEXT,"
-                " author TEXT NOT NULL, created_at TEXT NOT NULL, reverted_from INTEGER,"
-                " idempotency_key TEXT,"
-                " PRIMARY KEY (workspace, kind, doc_id, revision))"
-            )
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_revisions_idempotency"
-                " ON revisions(workspace, kind, doc_id, idempotency_key)"
-                " WHERE idempotency_key IS NOT NULL"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS revision_audit ("
-                " seq INTEGER PRIMARY KEY AUTOINCREMENT, workspace TEXT NOT NULL,"
-                " kind TEXT NOT NULL, doc_id TEXT NOT NULL, revision INTEGER NOT NULL,"
-                " action TEXT NOT NULL, author TEXT NOT NULL, at TEXT NOT NULL)"
-            )
+        SCHEMA.bring_up_to_date(path, lambda: sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS))
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
