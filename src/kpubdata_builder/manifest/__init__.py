@@ -9,6 +9,7 @@ Key components:
     - manifest_writer / write_manifest: Disk recording functions
     - status_from_manifest: Single rule for reading run terminal state from recorded manifest (#481)
     - run_status_from_manifest: The outcome a caller is told, a failed table commit included (#1106)
+    - run_failure_cause: The stable code and stage of that failure (#1120)
     - run_ending_summary: The fixed sentence for a cancelled or unfinished run (#1120)
 """
 
@@ -29,7 +30,12 @@ from .provenance import (
     summarize_reported_totals,
 )
 from .schema_summary import FieldSummary, SchemaSummary, build_schema_summary
-from .status import run_failure_summary, run_status_from_manifest, status_from_manifest
+from .status import (
+    run_failure_cause,
+    run_failure_summary,
+    run_status_from_manifest,
+    status_from_manifest,
+)
 from .writer import manifest_writer, write_manifest
 
 __all__ = [
@@ -53,6 +59,7 @@ __all__ = [
     "manifest_writer",
     "snapshot_coverage",
     "run_ending_summary",
+    "run_failure_cause",
     "run_failure_summary",
     "run_status_from_manifest",
     "status_from_manifest",

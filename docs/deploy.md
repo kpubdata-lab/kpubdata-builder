@@ -83,7 +83,7 @@ replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 
 | 인증 실패 스로틀, probe 간격 | 클라이언트가 replica 를 바꿔 가며 한도를 피한다 |
 
 그래서 재시작하면 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호를 받았을 때의 처리는
-§7, 다중 사용자 배포에서 중단된 run 의 표시는 #683 을 본다.
+§7, 중단된 run 의 표시는 #683·#1120 을 본다.
 
 ### 6.0 이전 릴리스로 되돌렸을 때 (#1096)
 
@@ -216,8 +216,9 @@ docker run --rm -p 8000:8000 \
   빌드에는 사용자의 취소와 같은 방식으로 멈추라고 한 뒤 10초를 더 준다(다음 단계 경계에서
   `cancelled` 로 끝나고 이벤트가 이유를 적는다). **컨테이너의 종료 대기 시간은 그 합보다 길게**
   둔다 — compose 의 `stop_grace_period: 120s`. Docker 의 기본값 10초로는 실행 중인 빌드가
-  SIGKILL 로 끊긴다. 그렇게 끊긴 run 은 manifest 없이 남고, 다중 사용자 배포는 다음 기동 때
-  `credentials_required` 로 표시한다(#683).
+  SIGKILL 로 끊긴다. 그렇게 끊긴 run 은 manifest 없이 남고, 다음 기동 때 `failed` 로
+  표시된다 — 다중 사용자 배포는 `credentials_required` 로(#683), 단일 사용자 배포는 키가
+  남아 있으므로 `interrupted: …` 오류만으로(#1120). 둘 다 종료 기록의 code 는 `interrupted` 다.
   이 동작은 `scripts/shutdown_drain_smoke.py` 가 `Docker` 워크플로에서 실제 compose 와
   이미지로 확인한다: 빌드 하나가 실행 중이고 둘이 대기 중일 때 `docker compose stop` 으로
   내리고(유예 시간이 기본값일 때와 1초일 때), SIGKILL 로도 끊은 뒤, 같은 `/data` 로 다시 올려

@@ -690,14 +690,12 @@ def serve(
     validate_storage_config()
     # Read now, so a value that cannot be used stops the start rather than the stop.
     grace_seconds = shutdown_grace_seconds()
-    # A multi-user deployment keeps job keys in memory only (#683): runs a previous
-    # process left unfinished can never resume, so they are failed now, as
-    # credentials_required, rather than left looking in progress.
+    # Jobs are held in memory only (#683, #1120): runs a previous process left
+    # unfinished never resume, so they are failed now rather than left looking in
+    # progress — in a multi-user deployment as credentials_required, its keys being gone.
     interrupted = service.mark_interrupted_runs()
     if interrupted:
-        _logger.warning(
-            "marked %d interrupted run(s) failed as credentials_required", len(interrupted)
-        )
+        _logger.warning("marked %d interrupted run(s) failed", len(interrupted))
     # Uploads past the retention period go now (#1045); an owner's are also dropped
     # whenever they upload. Only a multi-user deployment keeps a retention period.
     expired = service.purge_expired_uploads()

@@ -508,7 +508,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.114.0 -> 1.115.0: a cancelled run's manifest records where and why it was cancelled,
 #   and a run that ended without a manifest is in the build index — listed by GET /builds
 #   and GET /admin/runs with a fixed one-line reason (#1120, additive; no schema changes).
-API_CONTRACT_VERSION = "1.115.0"
+# 1.115.0 -> 1.116.0: GET /admin/runs gives each run's error_code and error_stage, from
+#   Builder's vocabulary only; a single-user deployment marks the runs a restart
+#   interrupted as failed too (#1120, additive).
+API_CONTRACT_VERSION = "1.116.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1300,14 +1303,15 @@ class BuilderService:
         return self._build_runs.drain_for_shutdown(grace_seconds, cancel_seconds)
 
     def mark_interrupted_runs(self) -> tuple[str, ...]:
-        """At startup of a multi-user deployment, fail runs a restart interrupted (#683).
+        """At startup, fail the runs a restart interrupted (#683, #1120).
 
-        A single-user deployment keeps its stored and environment keys, so nothing is
-        lost with a restart and nothing is marked.
+        A multi-user deployment fails them as ``credentials_required``: their keys were
+        held in memory. A single-user deployment keeps its stored and environment keys,
+        but its job registry is in memory too, so an interrupted run is not resumed
+        there either; it used to be left looking unfinished for good, with no record of
+        why it ended. Both record the ending as ``interrupted``.
         """
-        if not ownership_module.multi_user_mode():
-            return ()
-        return self._build_runs.mark_interrupted_runs()
+        return self._build_runs.mark_interrupted_runs(keys_lost=ownership_module.multi_user_mode())
 
     def _record_run_cancelled(self, run_id: str) -> None:
         """Record the cancelled terminal event (#481); never raises."""
