@@ -16,3 +16,9 @@ f224f8f77b913077c857d52413a9369011bcdaa5:docs/deployment.md:curl-auth-header:201
 # scripts/proxy_chain_smoke.py — a marker value (`marker-api-key-7c3f90`) the proxy smoke
 # sends in X-API-Key and checks never reaches Caddy's log (#1100). Not a key.
 15798dacc9123497c3a9e39dede44c33f3e288e7:scripts/proxy_chain_smoke.py:generic-api-key:70
+
+# tests/unit/test_effective_settings.py (#1108) — made-up canary values the test sets
+# for KPUBDATA_BUILDER_API_KEY and KAGGLE_KEY to prove they never reach the output. The
+# file now builds them from a tail so no literal matches; these are the earlier commit.
+9e083e6b23ae653fa5d45a54098d59b5765d255c:tests/unit/test_effective_settings.py:generic-api-key:35
+9e083e6b23ae653fa5d45a54098d59b5765d255c:tests/unit/test_effective_settings.py:generic-api-key:40

@@ -75,8 +75,41 @@ def render(catalog: Any) -> str:
     lines += [
         f"| `{variable.name}` | {variable.description} |" for variable in catalog.INTERNAL_VARIABLES
     ]
-    lines += ["", END]
+    lines += ["", *_naming(catalog), "", END]
     return "\n".join(lines)
+
+
+def _naming(catalog: Any) -> list[str]:
+    """How settings are named, and what happens to a name that changes."""
+    lines = [
+        "### 변수 이름과 이름을 바꿀 때의 규칙",
+        "",
+        "설정의 이름은 다음 중 하나의 모양이다.",
+        "",
+        "| 이름 | 무엇의 설정인가 | 설정 수 |",
+        "| :--- | :--- | :--- |",
+    ]
+    for family in catalog.NAME_FAMILIES:
+        count = sum(1 for setting in catalog.SETTINGS if family.holds(setting.name))
+        lines.append(f"| {family.label} | {family.description} | {count} |")
+    lines += ["", *catalog.NAMING_POLICY, ""]
+    renamed = [
+        (earlier, setting) for setting in catalog.SETTINGS for earlier in setting.earlier_names
+    ]
+    if not renamed:
+        lines.append("지금 읽는 이전 이름은 없다 — 이름이 바뀐 설정이 아직 없다.")
+        return lines
+    lines += [
+        "지금 읽는 이전 이름은 다음과 같다.",
+        "",
+        "| 이전 이름 | 지금 이름 | 새 이름이 나온 릴리스 |",
+        "| :--- | :--- | :--- |",
+    ]
+    lines += [
+        f"| `{earlier.name}` | `{setting.name}` | {earlier.renamed_in} |"
+        for earlier, setting in renamed
+    ]
+    return lines
 
 
 def replace_block(document: str, block: str) -> str:
