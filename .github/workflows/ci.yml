@@ -73,6 +73,11 @@ jobs:
       - name: Action pin gate
         run: python3 scripts/check_action_pins.py
 
+      # kpubdata POLICY 0.1: a review or verification level is written meaning first,
+      # code in parentheses -- "unit tests (V1)", never a bare V2 (kpubdata#878, #894).
+      - name: Plain review and verification codes
+        run: python3 scripts/check_plain_codes.py
+
       # The service contract tests pass a deliberate break as long as the document and
       # the code change together. This compares the contract with the base branch's:
       # any normative change must raise info.version, and a break must raise its major

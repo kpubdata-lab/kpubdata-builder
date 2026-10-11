@@ -88,6 +88,15 @@ starting nothing.
 Say "done" with the command's output. If tests failed, paste the failure. If a step
 was skipped, say it was skipped.
 
+## Write codes in plain words
+
+Never write a review level (`R0`..`R3`) or a verification level (`V0`..`V5`) alone.
+Meaning first, code in parentheses: "unit tests (V1)", "an approval from someone other
+than the author (R3)". The glossary is
+[kpubdata POLICY 0.1 and 0.2](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md#codes).
+`scripts/check_plain_codes.py` fails CI on a bare code in tracked Markdown and issue
+forms.
+
 ## Labels — what an agent applies
 
 **[POLICY.md](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md) sections 2.1, 2.1.1 and 2.1.2 are the label reference.**
