@@ -1,0 +1,96 @@
+name: Image re-scan
+
+# Scan the images a deployment runs again, on a schedule (#1107).
+#
+# docker.yml scans Builder's image when it is built. An image that nobody rebuilds
+# still gains advisories, and the images the compose files pull from elsewhere (Caddy,
+# CUBRID) were never scanned at all. scripts/image_rescan.py reads the image
+# references from the compose files, scans each for HIGH and CRITICAL vulnerabilities
+# — those without a fix included — and keeps one open issue per image: opened when
+# there is something to report, rewritten when the list changes, left alone when it
+# is the same as the last run's.
+#
+#   schedule            scans, then files or updates the issues
+#   workflow_dispatch   the same; `dry_run` prints instead, `images` adds references
+#                       (the digest a deployment really runs, for one)
+#   pull_request        a change to this file or the script: scans and prints only
+#
+# Nothing here builds, publishes, merges or closes anything.
+
+on:
+  schedule:
+    - cron: "41 4 * * *"  # daily, 04:41 UTC
+  workflow_dispatch:
+    inputs:
+      images:
+        description: "Further image references to scan, separated by spaces."
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Scan and print; write no issue."
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - ".github/workflows/image-rescan.yml"
+      - "scripts/image_rescan.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run at a time writes the issues; a pull request's run is superseded by its
+  # next push.
+  group: image-rescan-${{ github.event_name == 'pull_request' && github.ref || 'issues' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rescan:
+    name: Re-scan deployed images
+    runs-on: ubuntu-latest
+    # 43 seconds for four images on this workflow's first pull request run (2026-10).
+    # The rest is room for the vulnerability database's download on a slow day.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read  # Builder's image is pulled from GHCR
+      issues: write   # the findings are recorded as issues
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The installer and the Trivy version that docker.yml's trivy-action uses, so
+      # the build's gate and this scan read an image the same way.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514  # v0.2.6
+        with:
+          version: v0.70.0
+          cache: true
+
+      - name: Scan, then file or update the issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXTRA_IMAGES: ${{ inputs.images }}
+          # A pull request only prints: its run must not write issues about a branch.
+          DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          args=(--run-url "${RUN_URL}" --work-dir "${RUNNER_TEMP}")
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          for image in ${EXTRA_IMAGES}; do
+            args+=(--image "${image}")
+          done
+          python3 scripts/image_rescan.py "${args[@]}"

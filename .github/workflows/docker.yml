@@ -147,9 +147,11 @@ jobs:
 
       # The production compose with its Caddy profile, the repository's Caddyfile and
       # this image: a forged X-Forwarded-For is not believed at any hop, and one
-      # client's authentication failures do not lock out another (#1098).
+      # client's authentication failures do not lock out another (#1098). The same
+      # chain's responses carry the security headers, Strict-Transport-Security only
+      # over TLS, and the runner's Chrome refuses to show one in a frame (#1107).
       - name: Proxy chain smoke
-        run: python3 scripts/proxy_chain_smoke.py --image kpubdata-builder:ci
+        run: python3 scripts/proxy_chain_smoke.py --image kpubdata-builder:ci --browser google-chrome
 
       # The production compose keeps /data on a volume that outlives the container
       # (#1097): what is written there is still there after the stack is taken down

@@ -27,13 +27,44 @@
 	}
 }
 
+# 모든 응답에 붙이는 보안 헤더 (#1107). 아래 두 사이트가 import 한다.
+#
+# Builder 는 JSON API 이고 어떤 화면에도 iframe 으로 들어갈 이유가 없으므로 삽입을
+# 전부 거부한다. Studio 는 Builder 를 fetch 로 부르지 frame 으로 띄우지 않는다.
+# scripts/proxy_chain_smoke.py 가 실제 Caddy 를 거친 응답에서 이 값들을 확인하고,
+# 브라우저가 그 응답을 iframe 에 띄우기를 거부하는지도 본다.
+(security_headers) {
+	header {
+		# 응답 본문을 Content-Type 과 다른 형식으로 추측해 실행하지 않게 한다.
+		X-Content-Type-Options "nosniff"
+		# 다른 사이트의 iframe 삽입 거부. frame-ancestors 를 읽는 브라우저는 그것을 따르고
+		# X-Frame-Options 는 그것을 모르는 브라우저를 위한 것이다.
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'"
+		# API 주소에서 나가는 요청에 경로(run id, 테이블 이름)를 싣지 않는다.
+		Referrer-Policy "no-referrer"
+		# API 응답이 쓸 일이 없는 브라우저 기능. Studio 이미지가 보내는 값과 같다.
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+	}
+
+	# HSTS 는 TLS 로 나간 응답에만 붙인다. 평문 HTTP 응답의 이 헤더는 브라우저가 무시하고
+	# RFC 6797 §7.2 도 보내지 말라고 한다. 1년 동안 HTTPS 로만 오게 한다.
+	# includeSubDomains 와 preload 는 넣지 않는다 — 이 이름 옆의 다른 이름들이 모두
+	# HTTPS 인지는 도메인 전체를 본 뒤에 정할 일이고, preload 는 되돌리기 어렵다 (#1107).
+	@over_tls protocol https
+	header @over_tls Strict-Transport-Security "max-age=31536000"
+}
+
 # Caddy 자체 헬스 엔드포인트 (compose healthcheck 및 Cloudflare 상태 확인용).
 :80 {
+	import security_headers
+
 	@healthz path /healthz
 	respond @healthz "ok" 200
 }
 
 {$APP_DOMAIN} {
+	import security_headers
 	encode gzip zstd
 
 	# 무인증 liveness 프로브는 그대로 통과 (Builder /healthz, #372).
