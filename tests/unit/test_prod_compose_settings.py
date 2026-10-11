@@ -51,6 +51,8 @@ NOT_PASSED: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_STORAGE_BACKEND",
         "KPUBDATA_BUILDER_CUBRID_URL",
         "KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT",
+        # On whatever it says in a multi-user deployment, which production is (#1113).
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH",
         "HF_TOKEN",
         "KAGGLE_USERNAME",
         "KAGGLE_KEY",

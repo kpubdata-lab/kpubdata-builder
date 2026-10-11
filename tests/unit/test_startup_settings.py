@@ -368,6 +368,7 @@ def _flag_readers() -> dict[str, Callable[[], bool]]:
     from kpubdata_builder.service import publish_credentials
     from kpubdata_builder.service.auth import _is_dev_mode, _ownership_enforced
     from kpubdata_builder.service.providers import require_own_provider_credential
+    from kpubdata_builder.service.publish_pii_gate import pii_gate_required
 
     return {
         "KPUBDATA_BUILDER_DEV_MODE": _is_dev_mode,
@@ -377,6 +378,7 @@ def _flag_readers() -> dict[str, Callable[[], bool]]:
         "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": lambda: (
             not publish_credentials.server_fallback_allowed()
         ),
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH": pii_gate_required,
     }
 
 
@@ -594,6 +596,7 @@ def _effective() -> dict[str, Callable[[], bool]]:
     from kpubdata_builder.service.auth import _is_dev_mode
     from kpubdata_builder.service.ownership import enforce_ownership
     from kpubdata_builder.service.providers import require_own_provider_credential
+    from kpubdata_builder.service.publish_pii_gate import pii_gate_required
 
     return {
         "KPUBDATA_BUILDER_DEV_MODE": _is_dev_mode,
@@ -602,6 +605,7 @@ def _effective() -> dict[str, Callable[[], bool]]:
         "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": lambda: (
             not publish_credentials.server_fallback_allowed()
         ),
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH": pii_gate_required,
     }
 
 

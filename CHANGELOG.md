@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- A hosted deployment publishes only runs whose personal-data scan passed (#1113, API contract 1.121.0, additive). In a multi-user deployment, and in a single-user one with `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH=true`, publish readiness and publish refuse a run with `pii_scan_missing`, `pii_scan_pending`, `pii_scan_failed` or `pii_scan_unverified` unless it succeeded under `pii.mode: block` with no `allow_columns`, for every target. A refused publish is recorded in the publish audit log as `refused:<code>`. A single-user deployment is unchanged unless the variable is set. Which inputs count as personal data is still to be decided (kpubdata#836, kpubdata#846), so the gate refuses by default and its check is replaceable.
+
 - `GET /catalog` gives each dataset's query definition, so Studio can build an input form (#1281, API contract 1.120.0, additive). `CatalogDataset.query_parameters` lists, for each parameter, `name` (the provider's own), `alias` (the name a kpubdata caller uses), `type`, `required`, `enum`, `description` and `example`. It is read from kpubdata's public `DatasetRef.to_dict()`. A catalogue entry, which declares no type, has `type` null; a dataset with no definition has the whole field null, never `[]`. `request_parameters` is unchanged.
 
 - A user can be held to a query rate, a provider to a call rate, and a query stops when its client leaves (#1245, API contract 1.119.0, additive). Both rates are off until the maintainer sets them.

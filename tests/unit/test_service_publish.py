@@ -61,6 +61,9 @@ PII_ALLOW_SPEC_YAML = LICENSED_SPEC_YAML.replace(
     "license: CC-BY-4.0\n", "pii:\n  mode: allow\nlicense: CC-BY-4.0\n"
 )
 
+# Scanned for personal data, so a multi-user deployment's publish gate lets it through (#1113).
+SCANNED_SPEC_YAML = LICENSED_SPEC_YAML + "pii:\n  mode: block\n"
+
 FAILING_SPEC_YAML = LICENSED_SPEC_YAML.replace("dataset: air_quality\n", "dataset: missing\n")
 
 
@@ -1200,7 +1203,7 @@ class TestReceiptReconcile:
         failing = _SpyPublisher("huggingface", error=RuntimeError("remote blew up"))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
         service = _service(tmp_path)
-        _build(service, run_id, LICENSED_SPEC_YAML)
+        _build(service, run_id, SCANNED_SPEC_YAML)
         # The header is ignored in a single-user deployment and is the only token a
         # multi-user one accepts (#925), so the same helper serves both.
         resp = _publish(service, run_id, publish_credential_headers=("HF_TOKEN=hf_test_token",))
@@ -1380,7 +1383,7 @@ class TestReceiptReconcile:
         failing = _SpyPublisher("huggingface", error=RuntimeError("boom"))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
         service = _service(tmp_path)
-        _build(service, "run-owned-reconcile", LICENSED_SPEC_YAML)
+        _build(service, "run-owned-reconcile", SCANNED_SPEC_YAML)
         # Multi-user: the server HF_TOKEN no longer serves anyone (#925).
         assert (
             _publish(

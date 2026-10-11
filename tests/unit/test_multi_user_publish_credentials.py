@@ -33,7 +33,7 @@ from kpubdata_builder.service.publish_credentials import (
 )
 
 from .test_service import _FakeClient
-from .test_service_publish import LICENSED_SPEC_YAML, _SpyPublisher
+from .test_service_publish import SCANNED_SPEC_YAML, _SpyPublisher
 
 _REQUEST_TOKEN = "hf_test_token_925"
 _STORED_TOKEN = "hf_stored_before_switch_925"
@@ -222,7 +222,7 @@ class TestMultiUserPublishOverHttp:
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", spy)
         repository = _repository(tmp_path)
         service = _service(tmp_path, repository)
-        built = dispatch(service, "POST", "/build", {"spec": LICENSED_SPEC_YAML, "run_id": "r1"})
+        built = dispatch(service, "POST", "/build", {"spec": SCANNED_SPEC_YAML, "run_id": "r1"})
         assert isinstance(built, ServiceResponse) and built.status_code == 200, built.body
         return service, spy, repository
 

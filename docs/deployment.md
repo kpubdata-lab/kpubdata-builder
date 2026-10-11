@@ -94,6 +94,7 @@
 | 변수명 | 설명 | 기본값 | 필수 여부 |
 | :--- | :--- | :--- | :--- |
 | `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT` | HTTP `local` publish target의 루트 디렉터리(절대 경로). destination은 이 안의 상대 `owner/name`로 한정된다(#550). 미설정이면 local target blocker | 미설정 | local publish 사용 시 필수 |
+| `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH` | `true`면 개인정보 scan 이 통과한 run 만 게시한다(#1113). 통과는 run 이 성공했고 BuildSpec 의 `pii.mode` 가 `block` 이며 `allow_columns` 가 비어 있다는 뜻이다. scan 이 없거나(`pii_scan_missing`), 끝나지 않았거나(`pii_scan_pending`), 실패했거나(`pii_scan_failed`), 발견을 막지 않았으면(`pii_scan_unverified`) readiness 의 blocker 가 되고 publish 는 409 로 거절되며 거절은 `GET .../publish/audit` 에 `refused:<code>` 로 남는다. HF·Kaggle·local 모든 target 에 적용된다. **다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 값과 무관하게 켜져 있다.** 단일 사용자 배포의 기본은 꺼짐이다. scan 은 찾도록 만든 형태만 찾으며, 통과가 개인정보가 없다는 보장은 아니다. 어떤 입력을 개인정보로 볼지와 법적 근거는 아직 정해지지 않았다(kpubdata#836, kpubdata#846) | 미설정(다중 사용자 배포에서는 켜짐) | 선택 |
 | `HF_TOKEN` | Hugging Face 게시 토큰. **단일 사용자 배포에서만** 읽는다 — 저장된 publish credential 이 없을 때의 서버 쪽 값이다. 다중 사용자 배포에서는 이 변수를 읽지 않고, 요청의 `X-Publish-Credential` 헤더만 쓴다(#925). CLI `publish` 도 이 값을 쓴다 | 미설정 | 선택 |
 | `KAGGLE_USERNAME` | Kaggle 게시 계정. `KAGGLE_KEY` 와 함께 있어야 쓴다. 읽는 조건은 `HF_TOKEN` 과 같다 — 단일 사용자 배포에서만, 다중 사용자 배포에서는 읽지 않는다(#925) | 미설정 | 선택 |
 | `KAGGLE_KEY` | Kaggle API 키. `KAGGLE_USERNAME` 과 한 쌍이다 | 미설정 | 선택 |
@@ -125,7 +126,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 43 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 44 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |

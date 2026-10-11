@@ -171,6 +171,18 @@ BuildSpec 으로 만든 run 은 **kpubdata 가 데이터셋마다 선언한 조�
 - 2026-09-30 현재 kpubdata 카탈로그의 어떤 데이터셋도 `redistribution` 을 선언하지 않았으므로, BuildSpec 경로의 **공개 게시는 모두 막힌다**. 조건을 정하는 일은 kpubdata#524 다.
 - 선언된 PII(#689, #900)는 같은 출구(`/query`, `/preview`, stage 상세, artifact 다운로드)에서 약관 판정 **다음에** 확인한다. 약관이 `forbidden` 이 아니면 Silver·Bronze 를 읽는 경로가 선언 컬럼을 Gold 처럼 가리거나(질의·미리보기·sample), 원본 파일이면 403 `declared_pii_withheld` 로 거부한다. kpubdata 선언을 읽지 못하면 가릴 컬럼을 모르므로 503 `pii_declaration_unavailable` 로 거부한다(모르는 것은 허가가 아니다). 결정과 이유는 [API_CONTRACT.md](API_CONTRACT.md#declared-pii-in-silver-and-bronze-reads-900) 의 "Declared PII in Silver and Bronze Reads".
 
+### 호스팅 배포의 개인정보 게시 gate (#1113)
+
+여러 사용자가 쓰는 호스팅 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 개인정보 scan 이 통과한 run 만 HTTP 로 게시할 수 있다. 회원 본인의 동의만으로는 데이터에 들어 있는 제3자의 개인정보를 공개할 근거가 되지 않기 때문이다. 어떤 입력을 개인정보로 볼지와 법적 근거는 아직 정해지지 않았으므로(kpubdata#836, kpubdata#846, kpubdata 의 [docs/compliance/data-flows.md](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/compliance/data-flows.md)) gate 는 판단하지 않고 기본으로 거절한다.
+
+- **언제 켜지나**: 다중 사용자 배포에서는 항상 켜져 있다. 단일 사용자 배포는 기본으로 꺼져 있고, `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH=true` 로 켤 수 있다. CLI `kpubdata-builder publish` 와 로컬 SDK 사용은 바뀌지 않는다.
+- **무엇이 통과인가**: Builder 에 있는 scan 은 BuildSpec 의 `pii` 정책 하나다(#441, 빌드 중 Silver 값을 scan). run 이 성공했고 `pii.mode: block` 이며 `allow_columns` 가 비어 있을 때만 통과다 — `block` 은 발견하면 빌드를 실패시키므로, 성공한 run 은 scan 이 찾는 형태가 없었다는 뜻이다.
+- **무엇이 거절인가** (readiness 의 blocker, publish 의 409): `pii_scan_missing` (`pii` 정책 없음 — 아무것도 scan 하지 않음), `pii_scan_pending` (run 이 아직 끝나지 않음), `pii_scan_failed` (run 실패·취소, 또는 scan 결과를 읽지 못함), `pii_scan_unverified` (`warn`·`allow` 이거나 `allow_columns` 로 받아들인 열이 있음).
+- **대상**: HF·Kaggle·local 세 target 모두. Builder 에는 run 을 다른 사용자에게 공유하는 기능이 없으므로 외부로 나가는 길은 publish 뿐이다. 업로드한 파일로 만든 run 도 같은 publish gate 를 지난다.
+- **감사 기록**: 거절된 publish 는 `GET /builds/{run_id}/publish/audit` 에 action `refused:<code>`, actor `gate` 로 남는다. 기록에는 요청의 fingerprint(해시)와 코드만 있고 destination, 데이터 값, credential 은 없다.
+- **판단은 바꿀 수 있다**: `PublishApiService(pii_scan_check=...)` 로 다른 check 를 넣을 수 있다. check 가 예외를 내거나 모르는 상태를 돌려주면 `pii_scan_failed` 로 거절한다(fail-closed).
+- scan 은 찾도록 만든 형태만 찾는다. 통과는 데이터에 개인정보가 없다는 보장이 아니다.
+
 ### 데이터셋 카드 (#694)
 
 BuildSpec 경로의 Gold 출력마다 카드(`README.md`)와 같은 내용의 `card.json` 이 생긴다. 카드는
