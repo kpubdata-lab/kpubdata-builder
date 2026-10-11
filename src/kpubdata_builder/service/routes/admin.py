@@ -36,6 +36,7 @@ from ..build_runs_api import INTERRUPTED_CODE, SHUTDOWN_QUEUED_ERROR
 from ..jobs import BuildJobSnapshot
 from ..responses import ServiceResponse
 from ..user_ledger import SignupStatus
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -80,7 +81,8 @@ def _decide_user(
     service: BuilderService, principal: Principal, path: str
 ) -> ServiceResponse | None:
     """``POST /admin/users/{user_id}/approve|reject`` (#785), recorded in the audit log."""
-    user_id, _, action = path[len(_USERS) + 1 :].partition("/")
+    raw_id, _, action = path[len(_USERS) + 1 :].partition("/")
+    user_id = decode_segment(raw_id)
     if not user_id or action not in _DECISIONS:
         return None
     audit_action = f"admin.users.{action}"

@@ -12,6 +12,7 @@ from .. import stages as stages_service
 from ..auth import Principal
 from ..responses import ServiceResponse
 from ._guards import check_ownership, check_run_exists
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ def route(
     if method != "GET" or not path.startswith("/builds/") or "/stages" not in path:
         return None
     segments = path[len("/builds/") :].split("/")
-    run_id = segments[0]
+    run_id = decode_segment(segments[0])
     try:
         validate_path_segment(run_id, field_name="run_id")
     except ValueError as exc:
@@ -44,7 +45,7 @@ def route(
     if len(segments) != 3 or segments[1] != "stages" or not segments[2]:
         return None
 
-    stage = segments[2]
+    stage = decode_segment(segments[2])
     if stage not in stages_service.STAGE_NAMES:
         return ServiceResponse(
             400, {"error": f"invalid stage: {stage!r}; must be one of bronze/silver/gold"}

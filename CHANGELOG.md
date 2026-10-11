@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Approving or rejecting a user with a percent-encoded id (`oidc%3A<hex>`, what Studio sends) no longer answers 404 (#1277). Every route now decodes each captured path segment exactly once, after routing on the raw path, so `%2F` never becomes a separator and `%253A` is not decoded twice. The API contract is unchanged in shape; it now says path ids are percent-encoded.
+
 - An operator can delete one user and their data, and the user stays deleted (#1102). The API contract is unchanged.
   - `kpubdata-builder delete-user USER_ID --output-dir DIR [--warehouse DIR] [--apply] [--wait SECONDS]` counts, step by step, what would go; with `--apply` it first writes a tombstone (`.service/deleted-users/<subject>.json`) and then deletes the user's saved analyses (releasing their holds first), warehouse exports, warehouse tables and snapshots, runs (workspace, index row, events, submission and ending records), uploads, saved provider keys, provider test results and sign-up ledger row, and finally looks for the user in every store. `delete-user --resume` finishes every deletion that began and did not complete, without the user's id. It holds the state lock like every other writer.
   - From the tombstone on, the server refuses the user with the existing 403 `signup_rejected`, before the sign-up ledger is read, so signing in again does not record them anew. A new build of theirs is refused with nothing recorded; one being submitted as the deletion began is cancelled right after it is recorded; a queued one is cancelled when a worker takes it and never starts; a running one is cancelled at its next stage boundary and cannot commit a normal ending.
