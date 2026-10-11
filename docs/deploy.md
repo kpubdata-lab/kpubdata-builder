@@ -120,8 +120,8 @@ provider 자격 증명 저장소는 실제로 쓸 때만 확인한다 — 마스
 이전 릴리스로 운영) → 재업그레이드를 거치면, 사본은 롤백 뒤 이전 릴리스가 쓴 내용까지 담는다.
 예전에는 처음 뜬 사본을 그대로 두어서, 두 번째로 되돌릴 때 그 사이의 쓰기를 잃었다. 되돌릴 때는
 사본을 옮기지 말고 복사해 두는 편이 낫다. **사본은 카탈로그뿐이다** — 스냅샷 파일은 들어 있지 않으므로,
-그 뒤에 쓰인 것이 있는 웨어하우스에 사본만 되돌려 놓으면 그만큼을 잃는다. 전체 복구는 `warehouse
-backup` 으로 받은 백업으로 한다. 인덱스는 `serve` 가 요청을 받기 전에
+그 뒤에 쓰인 것이 있는 웨어하우스에 사본만 되돌려 놓으면 그만큼을 잃는다. 전체 복구는 `backup`
+으로 받은 백업으로 한다(§6.2). 인덱스는 `serve` 가 요청을 받기 전에
 manifest 에서 다시 만든다 — 인덱스 파일이 아예 없을 때도 같다. 예전에는 비운 채로 떠서
 `rebuild-index` 를 따로 돌리기 전까지 이전 run 이 목록에 보이지 않았다. run 이 많으면 그만큼
 기동이 늦어진다(run 마다 manifest 하나를 읽는다). 그 밖의 일곱 저장소는 아직 첫 버전뿐이라 올릴
@@ -202,6 +202,109 @@ docker run --rm -p 8000:8000 \
 - serve 시작 시 `KPUBDATA_BUILDER_CUBRID_URL` 미설정·드라이버 미설치면 fail-closed 로 기동을 거부한다.
 - 마이그레이션(FS→CUBRID)·정본 이전·리스크는 [ADR 0016](./adrs/0016-cubrid-state-backend.md) 참조.
 - CUBRID 는 같은 VM 에 컨테이너로 함께 띄운다(docker-compose, `infra/cubrid/` 참조).
+
+### 6.2 전체 상태의 백업과 복구 (#1095)
+
+`warehouse-backup` 은 카탈로그와 스냅샷만 담는다. 아래 세 명령은 출력 디렉터리(`/data`)의
+**모든 상태**를 하나의 파일로 받고, 그 파일을 검증한 뒤에만 통째로 되돌린다. 상태 백엔드가
+CUBRID 이면(`KPUBDATA_BUILDER_STORAGE_BACKEND=cubrid`) 셋 모두 거부한다 — 인덱스와 키가
+CUBRID 에 있어 이 백업이 담지 못한다(ADR 0022).
+
+```bash
+# 1) 서버를 내린다. SIGTERM 이 실행 중인 빌드를 끝내거나 멈춘다(§7) — 이것이 쓰기를 멈추는 방법이다.
+docker compose -f docker-compose.prod.app.yml stop builder
+
+# 2) 백업. ARCHIVE 는 /data 밖이어야 한다(안이면 거부한다 — 자기 자신을 복사하게 된다).
+docker compose -f docker-compose.prod.app.yml run --rm --no-deps \
+  -v /srv/backups:/backups --entrypoint kpubdata-builder builder \
+  backup /backups/state-$(date -u +%Y%m%dT%H%M%SZ).tar --output-dir /data
+
+# 3) 서버를 다시 올린다.
+docker compose -f docker-compose.prod.app.yml start builder
+
+# 백업 파일 검증 — 복구가 하는 검사를 그대로 하고 아무것도 바꾸지 않는다
+kpubdata-builder verify-backup ARCHIVE [--work-dir DIR]
+
+# 복구 (서버를 내린 상태에서). 지금의 상태는 지우지 않고 옆으로 옮겨 둔다
+kpubdata-builder restore ARCHIVE --output-dir /data
+# 복구가 도중에 죽었을 때 — 그 전 상태를 되돌려 놓는다
+kpubdata-builder restore --recover --output-dir /data
+```
+
+웨어하우스는 `--warehouse`(없으면 `KPUBDATA_BUILDER_WAREHOUSE`)로 주며, compose 처럼 출력
+디렉터리 바로 아래(`/data/warehouse`)여야 한다. 출력 디렉터리 밖의 웨어하우스는 한 번의 교체로
+함께 되돌릴 수 없어서 거부하고 `warehouse-backup` 을 안내한다. 카탈로그가 든 디렉터리를
+`--warehouse` 로 알려 주지 않으면 그것도 거부한다(카탈로그의 규칙대로 복사하기 위해).
+
+**같은 시점이라는 것의 범위.** 저장소마다 SQLite 온라인 백업을 하는 것만으로는 전체가 같은
+시점이 되지 않는다 — 두 저장소를 복사하는 사이에 끝난 빌드는 한쪽에서만 끝나 있다. 그래서
+백업은 **아무것도 쓰지 않을 때만** 돈다. 상태를 쓰는 명령(`serve` 는 떠 있는 내내, `build`,
+`rebuild-index`, `prune-cancelled`, `warehouse-gc`, `warehouse-hold`)은 출력 디렉터리와 웨어하우스의
+`.state.lock` 을 공유 잠금으로 쥐고, `backup`·`restore` 는 배타 잠금을 기다리지 않고 잡는다. 하나라도
+쥐고 있으면 백업은 거부하고("in use"), 백업·복구 중에는 쓰는 명령이 시작하지 않는다. 잠금은
+`flock` 이라 프로세스가 어떻게 끝나든 커널이 푼다. 그러므로 백업 파일은 **출력 디렉터리의 한
+시점**이다. 인증 서버(Keycloak)의 데이터베이스, 환경 변수와 compose 설정, 출력 디렉터리 밖의
+것은 들어 있지 않다.
+
+**비밀은 저장된 그대로.** provider 키 저장소는 SQLite 가 가진 그대로(키마다
+`KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` 로 암호화된 채) 들어간다. master key 는 백업에 넣지 않고,
+읽지도 출력하지도 않는다. 백업 파일의 `backup.json` 이 그 변수 이름만 적어 둔다 — 복구한 곳에서
+같은 키를 설정해야 키를 읽을 수 있다. master key 는 백업 파일과 다른 곳에 보관한다.
+
+**백업 파일.** 압축하지 않은 tar 하나다(산출물이 Parquet 이라 더 줄지 않는다).
+
+| 경로 | 내용 |
+|---|---|
+| `output/<경로>` | 저장소마다 SQLite 온라인 백업으로 뜬 사본(저널 모드 DELETE), 그리고 아래 표의 파일 |
+| `warehouse/` | 웨어하우스 백업(`warehouse-backup` 과 같은 형식) — 카탈로그와 읽을 수 있는 스냅샷 |
+| `backup.json` | 형식, 릴리스, 시각, 멤버마다 SHA-256·크기, 저장소마다 스키마 버전, 빠진 것 |
+
+파일은 대상 옆에 쓰다가 마지막에 이름을 바꾸고, 작업 사본도 대상 옆(또는 `--work-dir`)에 둔다.
+실패하면 끝난 것처럼 보이는 파일이 남지 않는다.
+
+**무엇이 들어가는지 — 목록.** 저장소는 §6.0.1 의 열 개, 그 밖의 경로는 아래 표다. 목록의 정본은
+`src/kpubdata_builder/store/inventory.py` 의 `OUTPUT_PATHS` 이고, 출력 디렉터리에 **두 목록 어디에도
+없는 것이 있으면 백업은 그 경로를 적고 거부한다** — 아무도 상태인지 아닌지 정하지 않은 것을 빼고
+받은 백업은 불완전한 백업이기 때문이다. `tests/unit/test_state_backup.py` 가 코드가 실제로 만드는
+경로와 `.service/` 아래에 붙이는 이름을 이 목록에 대조하고, 이 표에 모든 항목이 있는지 확인한다.
+
+| 경로 | 백업 | 무엇인가 |
+|---|---|---|
+| `[!._]*` (디렉터리) | 담는다 | run 작업 공간 — run 마다 하나. manifest(정본), BuildSpec 사본, Bronze·Silver·Gold 산출물 |
+| `.service/uploads.sqlite3.blobs` | 담는다 | 큰 업로드의 내용. 업로드 저장소의 행이 `blob_path` 와 SHA-256 으로 가리킨다 |
+| `.service/exports` | 담는다 | 내보내기 기록과 묶음 |
+| `.state.lock` | 뺀다 | 백업·복구 중 쓰기를 막는 잠금 파일 |
+| `.readyz-*` | 뺀다 | `/readyz` 가 잠깐 만드는 파일 |
+| `_builds.sqlite.bak*` | 뺀다 | `rebuild-index` 가 바꾸기 전의 인덱스 |
+| `_builds.sqlite.tmp*` | 뺀다 | `rebuild-index` 가 쓰는 도중의 인덱스 |
+| `.before-restore-*` (디렉터리) | 뺀다 | `restore` 가 옮겨 둔 그 전 상태 |
+
+저장소 옆의 `-wal`·`-shm`·`-journal` 은 복사하지 않는다 — 온라인 백업이 그 내용을 담는다. 웨어하우스
+안에서는 카탈로그가 정한다: 읽을 수 있는 스냅샷(committed, quarantined)만 담고 lease 와 staging 은
+뺀다(`warehouse/backup.py`).
+
+**복구 — 검증, staging, 교체.** 복구는 먼저 모든 멤버의 checksum, 저장소마다 SQLite
+`integrity_check` 와 기록된 스키마 버전, 웨어하우스의 카탈로그와 스냅샷 대조, 업로드 행과 파일의
+대조를 한다. 하나라도 실패하면 아무것도 옮기지 않고 모든 이유를 적어 거부한다. **이 릴리스보다 새로운
+버전의 저장소가 있으면 거부한다**(§6.0 — 그 저장소를 쓴 릴리스로 복구한다). 오래된 버전은 받아들이고,
+저장소가 열릴 때 앞으로 마이그레이션된다. 검증을 통과하면 출력 디렉터리 안의 `.restoring/` 에 풀고
+(`/data` 는 마운트 지점이라 통째로 이름을 바꿀 수 없어서 같은 파일시스템 안에 둔다), 이름 바꾸기만으로
+교체한다: 지금의 내용을 `.restoring/previous/` 로, 새 내용을 제자리로. 각 단계 전에 journal 을 쓴다.
+끝나면 그 전 내용은 `.before-restore-<시각>/` 에 남는다 — **덮어쓰거나 지우는 것은 없다.** 확인한 뒤
+운영자가 지운다(그동안 디스크를 두 배 쓴다). 마지막으로 빌드 인덱스를 manifest 에서 다시 만든다
+(`rebuild-index` 와 같다).
+
+**복구가 도중에 죽으면.** 풀던 중이면 출력 디렉터리는 그대로이고 `.restoring/` 만 남는다(다음
+`backup` 이 그것을 보고 거부한다). 교체하던 중이면 journal 이 남고, `serve` 와 다른 쓰는 명령은
+"interrupted" 를 말하며 시작하지 않는다 — 두 상태가 섞인 디렉터리로 뜨지 않게. `restore --recover`
+가 journal 을 읽어 그 전 상태를 그대로 되돌리고, 다시 `restore` 를 해도 먼저 그렇게 한다.
+테스트는 복구를 별도 프로세스에서 돌리다 교체 도중(옮겨 내던 중, 옮겨 넣던 중)과 풀던 중에 죽이고,
+`--recover` 뒤의 출력 디렉터리가 바이트 단위로 그 전과 같은지 확인한다.
+
+**정하지 않은 것.** 백업 주기, 보존 기간, 외부의 암호화된 보관소(예: restic)로 올리기와 그 뒤의
+정리(prune), RPO·RTO 는 메인테이너가 정한다. 이 명령은 요청받을 때 받고, 받으라는 곳에 둘 뿐이다.
+깨끗한 환경에서의 복구 리허설 기록, 인증 서버 데이터베이스의 백업과 복구, 삭제 기록(tombstone)과의
+대조도 아직 없다(#1095).
 
 ## 7. 헬스체크·종료
 

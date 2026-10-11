@@ -55,6 +55,15 @@ positional arguments:
                      Restore a warehouse backup into an empty directory, after
                      checking the catalog and the snapshot files against each
                      other (#705).
+    backup           Write all of Builder's state — every SQLite store, the
+                     runs, the uploads, the warehouse — into one archive, while
+                     nothing writes it (#1095).
+    verify-backup    Check a state archive as a restore would — checksums,
+                     SQLite integrity, schema versions, the warehouse and the
+                     uploads — and change nothing (#1095).
+    restore          Replace the output directory's state with a verified state
+                     archive, by staging and then swapping it; the earlier state
+                     is kept aside (#1095).
     warehouse-hold   Place, release or list holds that keep a snapshot past
                      garbage collection (#705, #797).
 
