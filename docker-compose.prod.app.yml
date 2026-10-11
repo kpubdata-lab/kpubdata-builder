@@ -130,6 +130,17 @@ services:
           # 위 environment 의 리소스 예산과 함께 바꾼다 (#993). 512M 은 DuckDB 연결
           # 하나의 기본 한도(1GB)보다도 작았다.
           memory: ${BUILDER_MEMORY_LIMIT:-3G}
+    # 컨테이너 로그의 크기 제한 (#1100). Builder 의 요청 로그·build 로그·감사 로그는
+    # stderr 로 나가 Docker 가 파일로 받는다. 제한이 없으면 그 파일이 디스크가 찰
+    # 때까지 자란다. 파일 하나가 max-size 에 닿으면 새 파일로 넘어가고, max-file 개를
+    # 넘으면 가장 오래된 것을 지운다 — 기본값으로 컨테이너당 최대 100MB.
+    # 크기만 제한한다: 컨테이너를 다시 만들면(이미지 교체, `down`) 로그도 사라진다
+    # (docs/deploy.md "로그의 보관과 열람").
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-20m}
+        max-file: "${LOG_MAX_FILE:-5}"
 
   # 공개 진입 리버스 프록시. Cloudflare → Caddy → builder.
   # Cloudflare SSL mode: Full(strict). `--profile caddy`로 opt-in.
@@ -165,6 +176,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    # Caddy 의 접근 로그도 같은 제한을 받는다 (#1100). 값은 builder 와 같은 변수다.
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-20m}
+        max-file: "${LOG_MAX_FILE:-5}"
 
 volumes:
   builder-data:

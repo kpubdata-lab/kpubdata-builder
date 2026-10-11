@@ -25,6 +25,31 @@
 		import trusted_proxies.caddy
 		trusted_proxies_strict
 	}
+
+	# Caddy 가 쓰는 모든 로그 줄에서 자격증명이 실릴 수 있는 자리를 지운다 (#1100).
+	# 아래 사이트의 접근 로그(`log`)와, 업스트림 오류 때 Caddy 가 요청을 덧붙여 쓰는
+	# 오류 로그가 모두 이 기본 로거로 나가므로 한 곳에서 거른다.
+	#
+	# - request>headers: 요청 헤더 전체. Authorization, X-API-Key, X-Provider-Key,
+	#   X-Publish-Credential, Cookie 가 여기에 있다. Caddy 가 스스로 가리는 것은
+	#   Authorization·Cookie 등 몇 개뿐이라, 이름을 골라 지우지 않고 통째로 지운다 —
+	#   새 헤더가 생겨도 로그에 들어가지 않는다.
+	# - resp_headers: 응답 헤더 전체. Content-Disposition 에 사용자가 정한 파일 이름이
+	#   들어간다.
+	# - request>uri: `?` 부터 끝까지를 지운다. 쿼리 문자열의 값은 남지 않고, 쿼리가
+	#   있었다는 사실만 남는다. 경로는 남는다.
+	#
+	# 줄은 stderr 로 나가고 Docker 가 받아 둔다. 크기 제한은 compose 의 `logging:` 이 한다.
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				resp_headers delete
+				request>uri regexp "[?].*" "?[removed]"
+			}
+		}
+	}
 }
 
 # Caddy 자체 헬스 엔드포인트 (compose healthcheck 및 Cloudflare 상태 확인용).
@@ -35,6 +60,11 @@
 
 {$APP_DOMAIN} {
 	encode gzip zstd
+
+	# 접근 로그 (#1100): 요청마다 한 줄. 무엇을 지우는지는 위 `log default` 가 정한다.
+	# 여기에 `output` 이나 `format` 을 적으면 이 사이트의 줄이 그 거름을 거치지 않는
+	# 별도 로거로 나가므로 적지 않는다.
+	log
 
 	# 무인증 liveness 프로브는 그대로 통과 (Builder /healthz, #372).
 	# 그 외 모든 요청은 Builder 백엔드로 프록시. 인증(X-API-Key / Bearer)은

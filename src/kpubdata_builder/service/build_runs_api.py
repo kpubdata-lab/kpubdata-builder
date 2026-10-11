@@ -42,8 +42,8 @@ from ..store.artifacts import ArtifactStore
 from ..store.build_index import BuildIndex, BuildStatus
 from ..uploads import UploadRepository
 from ..warehouse import TableCatalog
+from . import build_log, request_credentials
 from . import ownership as ownership_module
-from . import request_credentials
 from .auth import Principal
 from .build_limits import resolve_owner_build_limit
 from .build_slots import BuildSlots
@@ -252,6 +252,19 @@ class BuildRunsApiService:
                     "code": "build_queue_full",
                 },
             )
+        # The build's two log lines (#1100). An async job's are written by its worker,
+        # which is what holds the slot here; a synchronous build's are written here,
+        # under the id the run is about to get.
+        if takes_slot and run_id is None:
+            run_id = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        log_owner_id = manifest_owner_id if manifest_owner_id is not None else owner_id
+        if log_owner_id is None and principal is not None:
+            log_owner_id = principal.owner_id
+        log_started_at = (
+            build_log.started(run_id, mode="sync", owner_id=log_owner_id)
+            if takes_slot and run_id is not None
+            else None
+        )
         try:
             result = run_build(
                 spec_or_error,
@@ -277,10 +290,37 @@ class BuildRunsApiService:
                 # By provider, to say which provider's key a refusal was about (#1187).
                 provider_keys=dict(provider_keys),
             )
+        except Exception as exc:
+            if log_started_at is not None and run_id is not None:
+                build_log.ended(
+                    run_id,
+                    mode="sync",
+                    status="failed",
+                    started_at=log_started_at,
+                    owner_id=log_owner_id,
+                    error_type=type(exc).__name__,
+                )
+            raise
         finally:
             if takes_slot:
                 self._build_slots.release()
             self._close_client(client)
+        if log_started_at is not None:
+            build_log.ended(
+                result.context.run_id,
+                mode="sync",
+                # As the answer below and the build index say it: a build whose table
+                # was not committed did not succeed.
+                status=(
+                    "cancelled"
+                    if result.status == "cancelled"
+                    else "succeeded"
+                    if result.status == "ok" and not result.warehouse_failures
+                    else "failed"
+                ),
+                started_at=log_started_at,
+                owner_id=log_owner_id,
+            )
         secret_values = tuple(provider_keys.values())
         if secret_values:
             try:
