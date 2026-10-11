@@ -73,6 +73,7 @@ nav:
       - DuckDB 단일 tabular 엔진(제안): adrs/0021-duckdb-tabular-engine.md
       - SQLite 단일 상태·CUBRID 퇴역(제안): adrs/0022-sqlite-only-state-and-cubrid-retirement.md
       - 공개 엔드포인트와 그 경계: adrs/0023-public-endpoint-with-auth-and-cors.md
+      - 파생 snapshot 과 계보(제안): adrs/0024-derived-snapshots-and-lineage.md
 
 markdown_extensions:
   - admonition
