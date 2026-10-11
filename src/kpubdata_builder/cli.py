@@ -1767,7 +1767,14 @@ def _run_discover(url: str, *, dataset_id: str | None, output: str | None) -> in
 
 def _run_monitor(*, state_file: str, add: str | None, check: bool) -> int:
     """Manage and check pending dataset applications."""
-    from .agent.monitor import MonitorState, check_approval
+    import time
+
+    from .agent.monitor import (
+        CHECK_INTERVAL_SECONDS,
+        MonitorState,
+        check_approval,
+        open_catalogue_client,
+    )
 
     state_path = Path(state_file)
     state = MonitorState.load(state_path)
@@ -1785,20 +1792,26 @@ def _run_monitor(*, state_file: str, add: str | None, check: bool) -> int:
 
         print(f"Checking {len(state.pending)} pending dataset(s)...\n")
         changed = False
-        for p in list(state.pending):
-            status = check_approval(p.dataset_id)
-            old_status = p.status
-            p.status = status
-            p.last_checked = (
-                __import__("datetime")
-                .datetime.now(__import__("datetime").timezone.utc)
-                .strftime("%Y-%m-%dT%H:%M:%SZ")
-            )
-
-            icon = "APPROVED" if status == "HEALTHY" else status
-            print(f"  {p.dataset_id:40s} {old_status} -> {icon}")
-            if status != old_status:
-                changed = True
+        with open_catalogue_client() as client:
+            for index, p in enumerate(list(state.pending)):
+                if index:
+                    time.sleep(CHECK_INTERVAL_SECONDS)
+                status = check_approval(p.dataset_id, client=client)
+                old_status = p.status
+                p.last_checked = (
+                    __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+                if status is None:
+                    # No verdict (a rate limit, a timeout): the status stays as it was.
+                    print(f"  {p.dataset_id:40s} {old_status} (no verdict, unchanged)")
+                    continue
+                p.status = status
+                icon = "APPROVED" if status == "HEALTHY" else status
+                print(f"  {p.dataset_id:40s} {old_status} -> {icon}")
+                if status != old_status:
+                    changed = True
 
         if changed:
             state.save(state_path)

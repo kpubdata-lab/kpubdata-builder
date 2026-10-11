@@ -445,9 +445,33 @@ data.go.kr 키(`KPUBDATA_DATAGO_API_KEY` secret)가 없으면 monitor 가 승인
 끝난다 (secret 등록은 kpubdata#900). pull request 와 `dry_run` 은 출력만 한다. 권한은
 `contents: read`, `issues: write` 이고, action 은 커밋 SHA 로 고정한다.
 
-지금의 `monitor` 는 spec 데이터셋만 확인할 수 있어, `application_required` 데이터셋(모두
-spec 이 아닌 어댑터 데이터셋)은 `SPEC_NOT_FOUND` 로 나온다. spec 이 없는 데이터셋을
-`Client.probe` 로 판정하는 일은 #1288 이 다룬다.
+`monitor --check` 는 데이터셋마다 이렇게 판정한다 (#1288).
+
+- **spec 이 있는 데이터셋**: 지금처럼 `verify_dataset` 으로 확인한다.
+- **spec 이 없는 데이터셋**(`application_required` 데이터셋은 모두 어댑터 카탈로그
+  데이터셋이다): 먼저 kpubdata 공개 API `Client.probe` 에 묻고, probe 가 답하지 않으면
+  (kpubdata 0.10 의 probe 는 spec 데이터셋만 판정한다) `list(page_size=1)` 로 한 건만
+  요청해 kpubdata 의 표준 예외로 판정한다. 키는 `KPUBDATA_DATAGO_API_KEY` 하나를
+  `datago` 이름으로만 넘기고(`localdata`·`semas` 도 이 키를 쓴다), 출력이나 상태 파일에
+  쓰지 않으며, 클라이언트가 열려 있는 동안 로그 마스킹에 등록한다.
+
+| 결과 | monitor 상태 |
+|---|---|
+| probe `available`, `list` 성공 | `HEALTHY` (승인됨) |
+| probe `application_required`, 403 (`AuthError` 또는 403 을 담은 `TransportError`) | `NEEDS_APPLICATION` (아직 대기) |
+| 401 | `INVALID_KEY` (아직 대기) |
+| probe `retired` | `BROKEN_ENDPOINT` |
+| kpubdata 가 모르는 데이터셋 | `SPEC_NOT_FOUND` |
+| rate limit, timeout, 5xx, 키 없음, 파라미터 오류, 그 밖의 probe 상태 | 판정 없음 — 상태를 바꾸지 않는다 |
+
+호출은 데이터셋마다 한 번이고, provider 별 egress 한도(`KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE`,
+#1245)에 차례를 기다린 뒤 나간다. 데이터셋 사이에는 1초(`CHECK_INTERVAL_SECONDS`)를 쉬고,
+응답은 15초까지만 기다린다(재시도 없음). 정기 보고는 열린 이슈가 승인됨으로 적어 둔 데이터셋을
+`HEALTHY` 로 시작하므로, 판정이 없는 밤에는 승인 목록이 그대로이고 실제 거절이 나와야
+빠진다. dry run 은 이슈를 읽지 않는다.
+
+data.go.kr 은 등록되지 않은 키와 활용신청하지 않은 서비스를 모두 403 으로 답하므로, 가짜 키로
+돌린 dry run 은 94개 모두 `NEEDS_APPLICATION` 이 된다.
 
 ```bash
 KPUBDATA_DATAGO_API_KEY=... uv run --no-sources \

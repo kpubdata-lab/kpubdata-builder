@@ -6,7 +6,11 @@ This runs the two that can run without writing anything, and reports:
 
 - ``monitor --check`` over every dataset kpubdata's catalogue marks
   ``application_required``, from a state file in the work directory. A dataset it
-  finds ``HEALTHY`` has had its application approved.
+  finds ``HEALTHY`` has had its application approved. The datasets the open issue
+  lists as approved start the run as ``HEALTHY`` (not in a dry run, which reads no
+  issue): a check that gives no verdict (a
+  rate limit, a timeout) leaves a status as it was, so a night's noise does not take
+  an approval off the list; a refusal does.
 - ``discover`` once per data.go.kr API page those datasets name, printing the draft
   spec rather than writing it.
 - ``pipeline`` is not run. It records fixtures against the live API and opens a pull
@@ -38,7 +42,7 @@ import os
 import re
 import sys
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -57,6 +61,8 @@ _PAGE = re.compile(r"^https://www\.data\.go\.kr/data/\d+/openapi\.do$")
 _ENDPOINT = re.compile(r"^\s*Endpoint:\s*(\S*)\s*$", re.M)
 _BEGIN = re.compile(r"<!-- dataset-automation:begin fingerprint=(\w+) -->")
 _END = "<!-- dataset-automation:end -->"
+_APPROVED_SECTION = re.compile(r"### Approved[^\n]*\n(.*?)(?:\n### |\Z)", re.S)
+_APPROVED_ITEM = re.compile(r"^- `([^`]+)`$", re.M)
 _BLOCK = re.compile(
     r"<!-- dataset-automation:begin fingerprint=\w+ -->.*?<!-- dataset-automation:end -->", re.S
 )
@@ -103,10 +109,33 @@ def pending_datasets() -> list[Pending]:
     )
 
 
-def run_monitor(pending: Sequence[Pending], run: Run, directory: Path) -> dict[str, str]:
-    """``monitor --check`` over ``pending``; each dataset's status after the check."""
+def approved_in(body: str) -> set[str]:
+    """The datasets an earlier report, in ``body``, lists as approved."""
+    block = _BLOCK.search(body)
+    section = _APPROVED_SECTION.search(block.group(0)) if block else None
+    return set(_APPROVED_ITEM.findall(section.group(1))) if section else set()
+
+
+def run_monitor(
+    pending: Sequence[Pending],
+    run: Run,
+    directory: Path,
+    *,
+    approved_before: Collection[str] = (),
+) -> dict[str, str]:
+    """``monitor --check`` over ``pending``; each dataset's status after the check.
+
+    A dataset in ``approved_before`` starts as ``HEALTHY``, so that a check giving no
+    verdict keeps it there.
+    """
     state_file = directory / "monitor-state.yaml"
-    seed = [{"dataset_id": each.dataset_id, "status": "NEEDS_APPLICATION"} for each in pending]
+    seed = [
+        {
+            "dataset_id": each.dataset_id,
+            "status": APPROVED if each.dataset_id in approved_before else "NEEDS_APPLICATION",
+        }
+        for each in pending
+    ]
     state_file.write_text(yaml.safe_dump({"pending": seed}), encoding="utf-8")
     result = run([*CLI, "monitor", "--state-file", str(state_file), "--check"])
     if result.returncode != 0:
@@ -277,8 +306,20 @@ def main(
         return 2
     print(f"{len(pending)} dataset(s) marked application_required")
 
+    # A dry run reads no issue either, so no approval carries over into it.
+    before: set[str] = set()
+    if not args.dry_run:
+        try:
+            issue = open_issue(TITLE, run)
+        except RuntimeError as error:
+            print(f"::error::{error}")
+            return 1
+        before = approved_in(issue["body"] or "") if issue else set()
+
     try:
-        statuses = run_monitor(pending, run, args.work_dir) if pending else {}
+        statuses = (
+            run_monitor(pending, run, args.work_dir, approved_before=before) if pending else {}
+        )
     except RuntimeError as error:
         print(f"::error::{error}")
         return 1
