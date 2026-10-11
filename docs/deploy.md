@@ -1152,7 +1152,15 @@ python3 scripts/check_cloudflare_ranges.py --write   # 파일의 목록을 다�
 4. **롤백:** 이전 커밋의 `ops/caddy/trusted_proxies.caddy` 로 되돌리고 2를 다시 한다.
    Caddy 가 새 설정을 읽지 못하면 `caddy reload` 가 실패하고 이전 설정으로 계속 동작한다.
 
-이 비교를 정기적으로 돌리는 워크플로는 아직 없다. 지금은 사람이 돌린다.
+이 비교는 `cloudflare-ranges.yml` 워크플로가 매일(05:17 UTC) `scripts/cloudflare_ranges_watch.py`
+로 돌린다(#1236). 파일이 공개 목록과 다르면 `chore(deploy): Cloudflare's published ranges
+differ from the Caddy trusted proxies` 이슈를 **하나** 연다. 차이가 달라지면 같은 이슈의
+목록을 고쳐 쓰고 댓글을 달며, 같으면 아무것도 쓰지 않는다. 차이가 사라져도 이슈를 닫지
+않는다 — 파일을 고친 풀 리퀘스트가 배포되고 방화벽 목록까지 맞춰졌는지는 사람이 확인한다.
+공개 목록을 읽지 못하면(네트워크 오류, 빈 목록) 워크플로가 실패한다. pull request 에서는
+비교해 출력만 하고 이슈를 쓰지 않는다. 권한은 `contents: read`, `issues: write` 이고
+`GITHUB_TOKEN` 외의 secret 은 쓰지 않는다. 이 워크플로는 파일을 고치거나 풀 리퀘스트를
+열지 않는다.
 
 #### 배포 후 확인
 
@@ -1163,6 +1171,29 @@ Cloudflare 를 거친 실제 요청으로 한 번 확인한다. 서로 다른 �
 2. 다른 쪽에서 같은 시각에 요청해 `401`(또는 올바른 키로 `200`)을 받는다. 여기서도
    `429` 가 나오면 두 클라이언트가 한 버킷에 있는 것이다 — Caddy 가 Cloudflare 엣지를
    신뢰하지 못하고 있다(대역 목록, `caddy reload` 여부를 본다).
+
+#### 서버 시계 (chrony)
+
+로그인 토큰(Keycloak·Google ID 토큰)의 `exp`·`nbf`·`iat` 는 서버 시계로 검사한다.
+Builder 는 60초의 여유(leeway)만 둔다(`service/auth.py`). 서버 시계가 그보다 어긋나면
+올바른 토큰이 `401` 로 거절되고, 그 거절은 인증 실패로 세어져 `429 auth_throttled` 까지
+이어질 수 있다. 증상은 "일부 또는 전체 사용자가 갑자기 로그인되지 않는다" 이며 키·대역
+문제와 구별되지 않으므로 시계를 먼저 본다.
+
+```bash
+chronyc tracking      # System time 이 NTP 시각과 얼마나 다른가, Leap status 가 Normal 인가
+chronyc sources -v    # 가리키는 서버 중 하나에 '*'(동기화 중)가 있는가
+timedatectl           # 'System clock synchronized: yes', 'NTP service: active'
+```
+
+- **경보 기준(제안).** `chronyc tracking` 의 `System time` 이 **0.5초** 를 넘거나 `Leap status`
+  가 `Normal` 이 아니거나 `chronyc sources` 에 `*` 가 없는 상태가 5분 이상 가면 알린다. 60초
+  여유의 한참 앞에서 잡으려는 값이다. 이 숫자는 측정 없이 정한 것이다.
+- **고치기.** `sudo systemctl restart chrony` 뒤 `sudo chronyc makestep` 으로 한 번에 맞춘다.
+  VM 이 일시 정지됐다 깨어난 경우 시계가 크게 뛰므로 그때도 같다.
+- 컨테이너는 호스트 시계를 쓴다. 시계는 컨테이너 안이 아니라 VM 에서 맞춘다.
+- 경보를 어디에서 받을지(메트릭 수집기, 메일)는 배포 대상이 정해져야 고를 수 있다
+  (kpubdata-lab/kpubdata#812). 위 기준을 실제 배포에서 적용하고 이슈 #1236 에 결과를 남긴다.
 
 #### 응답 보안 헤더 (#1107)
 
