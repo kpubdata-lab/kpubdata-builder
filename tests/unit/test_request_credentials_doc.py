@@ -38,17 +38,24 @@ def test_the_proxy_reaches_builder_over_plain_http_on_the_compose_network() -> N
     assert "**평문 HTTP.**" in _DOC
 
 
-def test_the_proxy_keeps_no_access_log() -> None:
-    """Caddy logs requests only where a ``log`` directive says so. If one is added, the
-    document's claim — and whether the two key headers are kept out — must be revisited."""
+def test_the_proxy_keeps_an_access_log_without_the_two_key_headers() -> None:
+    """Caddy logs requests since #1100, so the document says so and says what is cut.
+
+    The two key headers travel as request headers, and the log's filter removes every
+    request header rather than named ones. If the ``log`` directive goes, or the filter
+    stops removing the headers, the document's claim must be revisited.
+    """
     directives = [
         line.strip()
         for line in _CADDYFILE.splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
 
-    assert not any(re.match(r"log\b", line) for line in directives)
-    assert "접근 로그는 켜져 있지 않다 (`log` 지시어 없음)" in _DOC
+    assert "log" in directives
+    assert "log default {" in directives
+    assert "request>headers delete" in directives
+    assert "접근 로그는 켜져 있고, 요청 헤더 전체와 쿼리 문자열을 지우고 쓴다" in _DOC
+    assert "접근 로그는 켜져 있지 않다" not in _DOC
 
 
 def test_builders_port_is_published_on_the_loopback_only_by_default() -> None:

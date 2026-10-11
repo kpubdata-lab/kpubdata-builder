@@ -243,6 +243,15 @@ def _wait_terminal(world: _World, service: BuilderService, run_id: str) -> Servi
     raise AssertionError(f"job {run_id} did not finish")
 
 
+def _build_line_events(world: _World) -> list[str]:
+    """The events of the build log's lines among the records the gate searches."""
+    return [
+        json.loads(record.getMessage())["event"]
+        for record in world.caplog.records
+        if record.name == "kpubdata_builder.build"
+    ]
+
+
 SCENARIOS = ["success", "400", "403", "429", "500", "timeout", "redirect", "echo"]
 
 
@@ -259,6 +268,8 @@ def test_no_trace_of_the_key_after_a_synchronous_build(world: _World, mode: str)
 
     # The canary did go upstream — otherwise finding nothing proves nothing.
     assert any(hits_in(str(r.url)) for r in world.upstream.requests)
+    # The build's own two lines (#1100) are among the records searched.
+    assert _build_line_events(world) == ["build_started", "build_ended"]
     assert world.leaks() == {}
     # And no client's key is still held for log scrubbing once the calls are done.
     assert logging_redaction.active_count() == 0
@@ -312,6 +323,7 @@ def test_no_trace_after_an_async_build_and_a_restart(world: _World) -> None:
     world.call(restarted.provider_credential("datago", principal=_PRINCIPAL))
 
     assert any(hits_in(str(r.url)) for r in world.upstream.requests)
+    assert _build_line_events(world) == ["build_started", "build_ended"]
     assert world.leaks() == {}
 
 

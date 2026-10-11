@@ -3,12 +3,12 @@
 Linux VM 한 대에 **builder + CUBRID** 를 Docker Compose 로 함께 띄우는 최소 구성. 특정
 클라우드를 전제하지 않는다 — Docker 가 도는 VM 과 붙일 수 있는 디스크 하나면 된다.
 CUBRID 상태 백엔드는 [ADR 0016](../../docs/adrs/0016-cubrid-state-backend.md), 배포 스토리는
-[docs/deploy.md](../../docs/deploy.md) 를 따른다. (Azure Bicep 구성은 상위 [`infra/`](../) 참조 — 병존한다.)
+[docs/deploy.md](../../docs/deploy.md) 를 따른다.
 
 ## 전제
 
 - **단일 replica** — 상태 백엔드가 단일 인스턴스 전제(ADR 0010/0016).
-- **Builder 는 internal ingress** (공개 노출 없음, ADR 0009). Studio 는 같은 VM 이나 같은 사설망에서 호출.
+- **Builder 의 포트는 밖으로 열지 않는다.** Studio 가 붙는 배포에서는 사용자의 브라우저가 Builder 를 부르므로 프록시(TLS)를 앞에 두어 공개 주소를 내고, 경계는 인증과 CORS allowlist 다([ADR 0023](../../docs/adrs/0023-public-endpoint-with-auth-and-cors.md)). 브라우저가 부르지 않는 배포는 프록시 없이 내부 서비스로 둔다.
 - **산출물 바이트는 블록 볼륨(`/data`)** 에 둔다 — CUBRID 백엔드여도 필수(쿼리 엔진이 실제
   parquet 경로를 요구, ADR 0016). CUBRID 엔 BuildIndex·credential·manifest 정본이 저장된다.
 

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 from ..spec import JsonValue
+from . import build_log
 from .build_limits import resolve_build_time_limit
 from .build_slots import BuildSlots
 
@@ -806,6 +807,11 @@ class AsyncBuildExecutor:
     ) -> None:
         if not self.registry.begin_run(run_id):
             return
+        # The build's two log lines (#1100): one now, one from ``_finish``. A job that
+        # ended in the queue never comes here and leaves neither.
+        snapshot = self.registry.get(run_id)
+        owner_id = snapshot.owner_id if snapshot is not None else None
+        started_at = build_log.started(run_id, mode="async", owner_id=owner_id)
         cancellation = self.registry.cancellation(run_id)
         if cancellation is None:  # pragma: no cover - create() always makes one together
             cancellation = RunCancellation()
@@ -827,7 +833,13 @@ class AsyncBuildExecutor:
             # have unknown internals (paths, SQL, credentials). Include type name (which
             # layer) without arbitrary internal strings.
             _logger.exception("build job %s failed with an unhandled exception", run_id)
-            self._finish(run_id, failed=True, error=f"internal error: {type(exc).__name__}")
+            self._finish(
+                run_id,
+                failed=True,
+                error=f"internal error: {type(exc).__name__}",
+                started_at=started_at,
+                error_type=type(exc).__name__,
+            )
             return
         finally:
             # Stopped as soon as the runner returns: a limit reached after the build
@@ -835,7 +847,7 @@ class AsyncBuildExecutor:
             if timer is not None:
                 timer.cancel()
         if response.status_code < 400:
-            self._finish(run_id, failed=False, response=response.body)
+            self._finish(run_id, failed=False, response=response.body, started_at=started_at)
             return
         # Don't distinguish failure/cancellation by status_code alone here (#481). Cancelled
         # run's build() also returns 4xx (409 summary), but terminal state decided only by
@@ -848,6 +860,7 @@ class AsyncBuildExecutor:
             failed=True,
             response=response.body,
             error=error if isinstance(error, str) else "build failed",
+            started_at=started_at,
         )
 
     def _time_limit(self) -> float | None:
@@ -884,9 +897,30 @@ class AsyncBuildExecutor:
         failed: bool,
         response: dict[str, JsonValue] | None = None,
         error: str | None = None,
+        started_at: float | None = None,
+        error_type: str | None = None,
     ) -> None:
-        """Confirm terminal state and call cancelled hook if ended as cancelled."""
+        """Confirm terminal state and call cancelled hook if ended as cancelled.
+
+        ``started_at`` is what ``build_log.started`` returned for this job; with it the
+        job's ending is written to the build log (#1100). The line says how the
+        registry ended the job, which is the one place that decides it, and takes
+        nothing of ``error`` or the response but its ``code``.
+        """
         snapshot = self.registry.finish(run_id, response=response, error=error, failed=failed)
+        if snapshot is not None and started_at is not None:
+            status = snapshot.status
+            if status in ("succeeded", "failed", "cancelled"):
+                build_log.ended(
+                    run_id,
+                    mode="async",
+                    status=status,
+                    started_at=started_at,
+                    owner_id=snapshot.owner_id,
+                    code=response.get("code") if response and status == "failed" else None,
+                    error_type=error_type if status == "failed" else None,
+                    time_limit=status == "cancelled" and self.ran_past_time_limit(run_id),
+                )
         if (
             snapshot is not None
             and snapshot.status == "cancelled"

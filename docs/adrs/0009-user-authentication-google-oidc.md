@@ -48,6 +48,7 @@ Google은 **공개 IdP**다. 계정만 있으면 누구나 서명·`aud` 검증�
 1. **인증 주체: 대안 D(Google OIDC 오프라인 검증)** — `pyjwt[crypto]` extra 도입, 서명 검증 직접 구현 금지. `PyJWKClient`로 JWKS 캐시·키 회전(TTL 3600s). `algorithms=["RS256"]` 고정(`alg: none`/HS* 거부), `iss`/`aud`/`exp`/`nbf`/`iat`(60s leeway)/`email_verified` 검증. 미해결 `kid` → 1회 재조회(레이트 리밋 필수, JWKS DoS 방지). 상세는 #385(B3).
 2. **허용 목록: 대안 A(env, fail-closed)** — `OIDC_ISSUER` 설정 시 `OIDC_ALLOWED_HD`/`OIDC_ALLOWED_SUBJECTS`/`OIDC_ALLOWED_EMAILS` 중 최소 하나는 필수, 아니면 기동 거부. 허용 목록 밖은 403(인증 성공·인가 실패). 상세는 #386(B4).
 3. **노출: 대안 A(internal ingress 기본)** — "Builder는 공개 인그레스를 갖지 않는다"를 배포 기본형으로. 허용 목록은 심층 방어.
+   > **2026-10-11 보충** 이 결정은 [ADR 0023](./0023-public-endpoint-with-auth-and-cors.md) 이 대체했다. Studio 가 정적 SPA 가 되어 사용자의 브라우저가 Builder 를 직접 부르므로, Studio 가 붙는 배포의 기본형은 공개 엔드포인트 + 인증 + CORS allowlist 다.
 4. **인가 범위: 본 ADR은 인증만** — run 소유권(C1/C2, #388/#389)은 v0.5로 분리. B2(#384, Principal 추상화)가 이미 토대를 마련했다.
 5. **서비스 계정은 `X-API-Key` 병행 유지** — 스케줄 워크플로는 Google 로그인이 불가하므로 `X-API-Key`를 유지한다. 두 인증 경로 모두 `Principal`(kind=`oidc`/`service`/`dev`)로 정규화.
 
