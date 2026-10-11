@@ -23,7 +23,6 @@ import yaml
 
 _ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW = _ROOT / ".github" / "workflows" / "dataset-automation.yml"
-_SCRIPT = _ROOT / "scripts" / "dataset_automation_report.py"
 
 
 def _load_script(name: str) -> ModuleType:
@@ -345,5 +344,6 @@ def test_every_action_is_pinned_and_only_the_data_go_kr_key_is_a_secret() -> Non
 
 
 def test_the_script_reads_the_secret_by_the_name_the_workflow_passes() -> None:
-    assert report.SECRET == "KPUBDATA_DATAGO_API_KEY"
-    assert report.SECRET in _SCRIPT.read_text(encoding="utf-8")
+    step = _workflow()["jobs"]["report"]["steps"][-1]
+
+    assert report.KEY_VARIABLE in step["env"]

@@ -47,7 +47,8 @@ from image_rescan import Run, _gh, _run, open_issue
 
 TITLE = "chore(datasets): scheduled report of dataset application approvals and spec drafts"
 LABELS = ("epic:datasets",)
-SECRET = "KPUBDATA_DATAGO_API_KEY"
+#: The variable the workflow fills from the repository secret of the same name.
+KEY_VARIABLE = "KPUBDATA_DATAGO_API_KEY"
 #: The command the report runs; ``uv run`` puts it on the path.
 CLI = ("kpubdata-builder",)
 APPROVED = "HEALTHY"
@@ -237,12 +238,12 @@ def record(
 
 def skip_without_secret(env: Mapping[str, str]) -> bool:
     """Say the secret is missing, in the log and the run's summary; ``True`` to stop."""
-    if env.get(SECRET, "").strip():
+    if env.get(KEY_VARIABLE, "").strip():
         return False
     message = (
-        f"secret {SECRET} is not configured, so monitor cannot tell an approval from a "
-        "refusal. Skipped; nothing was run or written. Register the secret to enable "
-        "this report (kpubdata#900)."
+        "secret KPUBDATA_DATAGO_API_KEY is not configured, so monitor cannot tell an "
+        "approval from a refusal. Skipped; nothing was run or written. Register the "
+        "secret to enable this report (kpubdata#900)."
     )
     print(f"::notice title=Dataset automation report skipped::{message}")
     summary = env.get("GITHUB_STEP_SUMMARY", "")
