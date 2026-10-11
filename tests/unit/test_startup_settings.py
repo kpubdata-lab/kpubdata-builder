@@ -14,6 +14,7 @@ import pytest
 
 from kpubdata_builder import settings_catalog as catalog
 from kpubdata_builder.cli import main
+from kpubdata_builder.egress import provider_calls_per_minute
 from kpubdata_builder.ingestion.url_fetch import default_max_fetch_bytes
 from kpubdata_builder.service import startup_settings
 from kpubdata_builder.service.auth_throttle import AuthFailureThrottle
@@ -22,6 +23,7 @@ from kpubdata_builder.service.build_limits import (
     resolve_owner_build_limit,
 )
 from kpubdata_builder.service.probe_limit import probe_interval_seconds
+from kpubdata_builder.service.query_rate import query_rate_per_minute
 from kpubdata_builder.service.request_credentials import _ttl_seconds
 from kpubdata_builder.service.run_storage import (
     resolve_build_min_free_bytes,
@@ -275,6 +277,18 @@ _FALLBACK_CASES: list[tuple[str, Callable[[], object], list[str], list[str]]] = 
     (
         "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER",
         resolve_owner_build_limit,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE",
+        query_rate_per_minute,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE",
+        provider_calls_per_minute,
         ["many", "-1", "1.5"],
         ["7"],
     ),

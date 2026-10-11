@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..quality import QualityCheckResult, evaluate_quality
+from ..rate_limit import RateLimited
 from ..spec import BuildSpec, JsonValue, SourceRef
 from ..spec.models import QualityPolicy
 from ..spec.validator import validate_spec
@@ -413,6 +414,10 @@ def _preview_source(
                 None if source.param_grid else _reported_total(bronze.call_totals)
             ),
         )
+    except RateLimited:
+        # Not this source's failure (#1245): the provider's egress limit is reached, and
+        # the whole preview is answered with how long to wait.
+        raise
     except Exception as exc:  # Convert preview failure to result
         failure = source_failure(exc, out_key, provider_keys=provider_keys)
         return SourcePreview(

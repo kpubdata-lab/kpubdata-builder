@@ -562,7 +562,7 @@ deadman 은 메인테이너의 결정과 운영 계정이 필요해 이 저장�
 | 계층 | 구현 | 기본값 | 포화 시 동작 |
 | :--- | :--- | :--- | :--- |
 | HTTP 요청 | 별도 `ThreadPoolExecutor` (`kpubdata-http`) | service 기본 10, ACA template 4 | executor의 무제한 내부 queue에서 대기. 명시적 `429`가 아니므로 앞단 ingress timeout/connection limit가 필요 |
-| 비동기 build | 별도 in-process `ThreadPoolExecutor` (`kpubdata-build`) | CLI가 HTTP와 같은 worker 설정 사용(service 기본 10, ACA 4), queued job 10 | queued 상태가 10건이면 제출을 `429`로 거절. 실행 중 job은 queue 수에 포함하지 않음 |
+| 비동기 build | 별도 in-process `ThreadPoolExecutor` (`kpubdata-build`) | `KPUBDATA_BUILDER_MAX_BUILDS`, 기본 2(HTTP worker 수가 더 작으면 그 수, #1245), queued job 10 | queued 상태가 10건이면 제출을 `429`로 거절. 실행 중 job은 queue 수에 포함하지 않음 |
 | query | `BoundedSemaphore` + 요청마다 `spawn` child process | service 기본 2, ACA template 1 | permit을 기다리지 않고 즉시 `429 query_busy`; 성공·실패 후 permit 반환 |
 
 `POST /build`는 동기식이므로 전체 pipeline이 끝날 때까지 HTTP worker 하나를 점유한다.
@@ -579,6 +579,49 @@ timeout을 제한하고, 장시간 동기 호출의 클라이언트 timeout을 �
 ADR 0008은 여전히 **제안됨(Proposed)** 상태다. 현재 비동기 build pool과 active registry는
 그 ADR의 일부 방향만 선행 구현한 것이며, 취소, persistent queue, crash recovery, partial
 manifest 정책까지 승인·완료됐다는 뜻이 아니다.
+
+### 8.1 사용자별 질의 빈도와 provider 별 호출 한도 (#1245)
+
+위 상한은 모두 **서비스 전체**의 것이다. 다중 사용자 배포에서는 한 사용자가 질의를 연달아 보내면 자리가
+날 때마다 그 사용자가 가져가 다른 사용자가 `429 query_busy` 를 받고, 한 사용자의 build 가 provider 를
+많이 부르면 provider 가 서버 주소를 막아 모두가 막힌다. 두 한도가 이를 나눈다. 둘 다 **기본은 끔**이고,
+같은 방식으로 센다: 60초 안의 어느 구간에도 한도보다 많은 일이 시작되지 않는다(sliding window). 상태는
+프로세스 메모리에만 있어 재시작하면 잊는다.
+
+| 한도 | 세는 단위 | 넘으면 |
+| :--- | :--- | :--- |
+| `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` | 사용자(owner) 한 명. `POST /query`, `/warehouse/query`, `/warehouse/rows`, `/warehouse/aggregate`, `/warehouse/exports` 를 합쳐서. 단일 사용자 배포에는 적용하지 않는다 | 질의를 해석·실행하기 전에 `429 query_rate_limited` 와 `retry_after_seconds`, 같은 수의 `Retry-After` 헤더 |
+| `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` | provider 하나. 모든 사용자·build·preview·probe 를 합쳐서. kpubdata 에서 받는 page 하나 또는 probe 의 dataset 하나가 한 번 | build 는 차례를 기다린다. preview 는 `429 provider_egress_limited` + `Retry-After`, probe 는 닿지 못한 dataset 을 `not_probed` 로 |
+
+provider 호출은 kpubdata 가 하므로 Builder 는 HTTP 요청 하나하나를 보지 못한다. 첫 page 를 넘기기 전에
+모든 page 를 요청하는 kpubdata dataset(#481)은 한 호출 안에서 한꺼번에 나가고, 그 몫은 뒤의 호출들이
+기다린다 — 분 단위로는 한도가 지켜지지만 그런 dataset 의 한 호출 안에서는 지켜지지 않는다. provider 연결
+테스트(`POST /providers/{provider}/test`)는 요청 하나에 한 번이고 세지 않는다.
+
+429 를 돌려주는 다른 한도(`auth_throttled`, `probe_rate_limited`)도 이제 `Retry-After` 헤더를 함께
+보낸다. 거절은 다른 응답처럼 요청 로그의 `code` 와 `/metrics` 의 `http_responses_total{status,code}`
+에 나타난다(#1272).
+
+**측정.** `scripts/measure_query_load.py` 가 질의 경로에 부하를 걸고, 본 것을 그 기계의 정보와 함께 JSON
+으로 출력한다. 아래는 **로컬 한 번의 실행이고 배포를 대표하지 않는다** — 다른 작업이 함께 돌던 개발용
+데스크톱(load average 약 1.6)에서, HTTP·프록시 없이 프로세스 안에서 쟀다. 배포에 맞는 수는 배포할
+하드웨어와 설정에서 같은 스크립트를 돌려 정한다.
+
+```text
+$ uv run python scripts/measure_query_load.py --seconds 10
+machine: Intel Core i5-9400F (6 cores), 31.3 GiB, Linux 5.15, Python 3.12.13, DuckDB 1.5.6
+table: 200,000 rows, query: GROUP BY over 200 groups, KPUBDATA_QUERY_MAX_CONCURRENCY=2
+clients  completed  query_busy  queries/min  p50 ms  p95 ms
+1        33         0           193.1        310.7   313.9
+2        62         0           369.3        324.9   327.3
+4        62         400         369.5        324.6   327.1
+8        62         1200        368.0        326.6   328.5
+rate limiter: 3.76 µs per admission
+```
+
+질의 하나는 이 기계에서 약 0.31초이고 대부분이 child process 를 띄우는 시간이다. 처리량은 query 자리 수에서
+멈추고(자리 2 개에 분당 약 370), 그보다 많은 클라이언트는 `query_busy` 를 받는다. 사용자별 한도를 정할 때는
+배포에서 잰 분당 처리량을 동시에 질의하는 사용자 수로 나눈 값이 출발점이 된다.
 
 ## 9. 리소스 예산과 튜닝
 
@@ -606,10 +649,12 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | 실행 단위 | 상한 | 설정 |
 | :--- | :--- | :--- |
 | HTTP worker thread | 기본 10 | `KPUBDATA_BUILDER_MAX_WORKERS` / `serve --max-workers` |
-| 동시 build (동기 `POST /build` + 비동기 job **합계**) | 기본은 HTTP worker 수, queued 10 | `KPUBDATA_BUILDER_MAX_BUILDS` / `serve --max-builds` (#1028) |
+| 동시 build (동기 `POST /build` + 비동기 job **합계**) | 기본 2(HTTP worker 수가 더 작으면 그 수), queued 10 | `KPUBDATA_BUILDER_MAX_BUILDS` / `serve --max-builds` (#1028, #1245) |
 | 동시 preview | 기본 무제한(요청 스레드가 상한) | `KPUBDATA_BUILDER_MAX_PREVIEWS` / `serve --max-previews` (#1028) |
 | build 하나 안의 source fetch thread | **build 당** 최대 4 (`_MAX_PARALLEL_SOURCES`) | 코드 상수 |
 | query child process | 기본 2 | `KPUBDATA_QUERY_MAX_CONCURRENCY` |
+| 사용자 한 명이 60초에 시작하는 질의 | **기본 끔**. 다중 사용자 배포에서만 적용. 넘으면 `429 query_rate_limited` + `Retry-After` | `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` (#1245) |
+| provider 하나에 60초 동안 하는 호출(모든 사용자 합계) | **기본 끔**. build 는 기다리고, preview 는 `429 provider_egress_limited` + `Retry-After`, probe 는 `not_probed` | `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` (#1245) |
 | query child 하나의 메모리 | **기본 무제한**. 설정하면 child 의 address space 를 제한해 초과한 질의만 실패(`400 query_failed`)하고 서버와 다른 요청은 계속된다 | `KPUBDATA_QUERY_MAX_MEMORY_MB` |
 | 동시에 도는 query child 들의 메모리 합 | **기본 없음**(개수 상한만). 설정하면 질의마다 자기 child 메모리 상한만큼 예산에서 예약하고, 예산이 모자라면 기다리지 않고 `429 query_busy` 로 거부한다. 성공·실패·timeout·취소 어느 경로로 끝나도 예약을 돌려준다. SQL·행 읽기·집계·내보내기·프로파일 모두 같은 예산을 쓴다 | `KPUBDATA_QUERY_MEMORY_BUDGET_MB` |
 | DuckDB thread | **연결 하나당** 기본 2. build 는 실행 중인 source 마다 연결 하나 | `KPUBDATA_DUCKDB_THREADS` |
@@ -648,8 +693,11 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 지금은 `KPUBDATA_BUILDER_MAX_BUILDS` 가 두 경로를 합친 상한이다: 한도에 닿으면 동기 build 는 자리를
 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`(기본 30초)까지 기다리고, 그래도 없으면 요청 스레드를 돌려주며 429
 `build_queue_full` 로 답한다(#1040). 비동기 job 은 자리를 얻을 때까지 `queued` 로 남는다 — 기다리는 job 은 서비스 전체에서 `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS`(기본 10)까지이고, 넘으면 `POST /builds` 가 429 `build_queue_full` 로 답한다(#1108). `KPUBDATA_BUILDER_MAX_PREVIEWS` 를 주면 preview 도 그 수까지만
-함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 `MAX_WORKERS` 값을 따른다 — 그 값만 설정해 둔
-배포의 비동기 worker 수는 그대로이고, 이제 그 수가 두 경로 합계의 상한이다.
+함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 2 이고, `MAX_WORKERS` 가 그보다 작으면 그
+값이다(#1245). 그 전에는 `MAX_WORKERS` 값(기본 10)을 따랐다 — 아래 메모리 예산은 build 2 개로 계산돼
+있는데 기본 설정으로는 10 개가 돌 수 있었고, 동기 build 10 개가 요청 스레드를 모두 잡을 수 있었다.
+production compose 는 전부터 `MAX_BUILDS=2` 를 넘기므로 바뀌지 않는다. `MAX_WORKERS` 만 크게 설정해 두고
+build 도 그만큼 돌리던 배포는 `KPUBDATA_BUILDER_MAX_BUILDS` 를 함께 적어야 한다.
 
 **1 vCPU / 2 GiB 예시.** 동시 build 를 둘로 묶고 나머지를 맞춘다.
 
@@ -686,8 +734,12 @@ build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 �
 
 query worker 의 종료는 네 경로 모두에서 child process 를 남기지 않는다: 성공, 실패(child 가 스스로
 끝나지 않아도 1초 뒤 terminate), timeout(terminate 를 무시하면 kill), 요청 취소(대기 중인 요청 thread 가
-중단되면 child 도 멈춘다). 클라이언트가 연결을 끊은 것은 서버가 따로 감지하지 않는다 — 그 질의는 timeout
-까지 돌고 같은 정리를 거친다. preview(`/query`)는 SQL 결과를 `limit + 1` 행에서 자르므로 전체 결과를 만들지
+중단되면 child 도 멈춘다), 클라이언트가 떠남(#1245). 요청을 처리하는 동안 HTTP 계층이 그 연결을 지켜보고,
+query engine 은 child 를 기다리는 사이 0.1초마다 클라이언트가 연결을 닫았는지 본다. 닫았으면 child 를 멈추고
+query 자리와 메모리 예약을 돌려주며, 응답은 보내지 않는다(요청 로그와 `/metrics` 에는 상태 499). 연결을 닫은
+것은 소켓이 끝(EOF)에 닿은 것으로 판단하므로, 요청을 보낸 뒤 쓰기 쪽만 닫는(half-close) 클라이언트는 떠난 것으로
+보인다 — 브라우저·Studio·Caddy 는 그렇게 하지 않는다. Caddy 를 거치면 브라우저가 떠날 때 Caddy 가 upstream
+연결을 닫는 것으로 전달된다. preview(`/query`)는 SQL 결과를 `limit + 1` 행에서 자르므로 전체 결과를 만들지
 않고, 전체 결과 export 는 query 와 다른 timeout(`EXPORT_TIMEOUT_SECONDS`, 60초)으로 같은 메모리 예산을 쓴다.
 
 query timing은 다음 경계를 사용한다.

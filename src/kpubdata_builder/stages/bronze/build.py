@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
+from ... import egress
 from ...spec import JsonValue
 from .checkpoint import CombinationCheckpoint
 from .models import (
@@ -162,6 +163,7 @@ def build_bronze_artifact(
         raise ValueError("a bounded fetch is a preview and keeps no checkpoint")
 
     dataset = client.dataset(source_key)
+    provider = source_key.partition(".")[0]
     page_size = _page_size(dataset, bound)
     budget = _Budget(rows=bound.rows, pages=bound.pages) if bound is not None else None
     call_totals: list[CallTotal] = []
@@ -183,7 +185,11 @@ def build_bronze_artifact(
             elif use_checkpoint is not None:
                 with use_checkpoint.fragment(index) as fragment:
                     reported = _fetch_call(
-                        dataset, call_params, fragment.write_batch, page_size=page_size
+                        dataset,
+                        call_params,
+                        fragment.write_batch,
+                        provider=provider,
+                        page_size=page_size,
                     )
                     total = _call_total(index, reported, fetched=fragment.record_count)
                     use_checkpoint.finish(
@@ -194,7 +200,12 @@ def build_bronze_artifact(
             else:
                 before = writer.record_count
                 reported = _fetch_call(
-                    dataset, call_params, writer.write_batch, page_size=page_size, budget=budget
+                    dataset,
+                    call_params,
+                    writer.write_batch,
+                    provider=provider,
+                    page_size=page_size,
+                    budget=budget,
                 )
                 call_totals.append(
                     _call_total(index, reported, fetched=writer.record_count - before)
@@ -255,10 +266,15 @@ def _fetch_call(
     params: dict[str, JsonValue],
     write: Callable[[Iterable[dict[str, JsonValue]]], object],
     *,
+    provider: str = "",
     page_size: int | None = None,
     budget: _Budget | None = None,
 ) -> list[int | None]:
     """Fetch one call page by page, handing each page to ``write``; returns page totals.
+
+    Each page is one call to ``provider`` under the egress limit (#1245, ``egress``):
+    a build waits for its turn; a bounded fetch is a preview, which a person is waiting
+    on, and is refused with ``RateLimited`` instead.
 
     With a ``budget``, pages stop once it is spent. ``max_pages`` is passed too, because
     kpubdata's spec datasets request every page before yielding the first (#481): only
@@ -271,7 +287,9 @@ def _fetch_call(
         call_params["page_size"] = page_size
     batches: Iterable[DatasetResult]
     max_pages: int | None = None
+    take_turn = egress.wait_for_call if budget is None else egress.admit_call
     if not isinstance(dataset, PaginatedSourceDataset):
+        take_turn(provider)
         batches = (dataset.list(**call_params),)
     elif budget is None:
         batches = dataset.list_all(**call_params)
@@ -280,8 +298,17 @@ def _fetch_call(
         batches = dataset.list_all(max_pages=max_pages, **call_params)
     reported: list[int | None] = []
     iterator = iter(batches)
+    # A page is asked for only while the one before says another follows.
+    another = isinstance(dataset, PaginatedSourceDataset)
     try:
-        for batch in iterator:
+        while True:
+            if another:
+                # Before the page is asked for: a lazy ``list_all`` requests it here.
+                take_turn(provider)
+            batch = next(iterator, None)
+            if batch is None:
+                break
+            another = another and _has_more(batch)
             written = write(batch.items)
             reported.append(_reported_total(batch))
             if budget is None:

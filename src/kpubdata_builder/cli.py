@@ -212,7 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Max builds running at once, async jobs and synchronous POST /build together "
-            "(default: KPUBDATA_BUILDER_MAX_BUILDS, else the request thread count)."
+            "(default: KPUBDATA_BUILDER_MAX_BUILDS, else 2, or the request thread count "
+            "when that is smaller)."
         ),
     )
     serve_cmd.add_argument(
@@ -1011,7 +1012,8 @@ def _run_serve(
         max_workers: Max concurrent request threads. If None, use KPUBDATA_BUILDER_MAX_WORKERS env,
             else default (10) (#374).
         max_builds: Max builds running at once, on either path (#1028). If None, use
-            KPUBDATA_BUILDER_MAX_BUILDS env, else ``max_workers``.
+            KPUBDATA_BUILDER_MAX_BUILDS env, else ``DEFAULT_MAX_BUILDS`` or
+            ``max_workers``, whichever is smaller (#1245).
         max_previews: Max previews running at once (#1028). If None, use
             KPUBDATA_BUILDER_MAX_PREVIEWS env, else no limit.
         warehouse: Table catalog root (#703). If None, use KPUBDATA_BUILDER_WAREHOUSE env,
@@ -1031,6 +1033,7 @@ def _run_serve(
     """
     from .service import BuilderService
     from .service.app import DEFAULT_BUILD_WAIT_SECONDS
+    from .service.build_limits import DEFAULT_MAX_BUILDS
     from .service.effective_settings import effective_settings
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
@@ -1073,11 +1076,13 @@ def _run_serve(
     # both the request threads and the async build workers, so lowering it to bound
     # builds starved every other request, and synchronous builds on the request
     # threads ran on top of the async ones. Priority: --max-builds flag >
-    # KPUBDATA_BUILDER_MAX_BUILDS env > the request thread count (what a deployment that
-    # only set MAX_WORKERS had as its async worker count).
+    # KPUBDATA_BUILDER_MAX_BUILDS env > DEFAULT_MAX_BUILDS, or the request thread count
+    # when that is smaller (#1245). The default was the request thread count, 10: ten
+    # builds against a memory budget the deployment guide computes for two, and ten
+    # synchronous builds could hold every request thread.
     if max_builds is None:
         env_builds = _count_from_env("KPUBDATA_BUILDER_MAX_BUILDS")
-        max_builds = env_builds if env_builds is not None else max_workers
+        max_builds = env_builds if env_builds is not None else min(max_workers, DEFAULT_MAX_BUILDS)
     if max_builds < 1:
         raise SystemExit(f"max_builds must be >= 1, got {max_builds}")
     # Priority: --max-previews flag > KPUBDATA_BUILDER_MAX_PREVIEWS env > no limit.
