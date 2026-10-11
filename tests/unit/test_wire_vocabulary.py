@@ -70,6 +70,11 @@ class TestAnUnknownKpubdataValueBecomesABuilderValue:
     def test_pagination(self) -> None:
         assert vocabulary.pagination_mode("spiral") is None
 
+    def test_query_parameter_type(self) -> None:
+        assert vocabulary.query_parameter_type("date_yyyymm") == "date_yyyymm"
+        assert vocabulary.query_parameter_type("geometry") is None
+        assert vocabulary.query_parameter_type(None) is None
+
     def test_the_catalog_body_carries_only_contract_values(self) -> None:
         dataset = SimpleNamespace(
             dataset_key="future.dataset",
@@ -87,6 +92,7 @@ class TestAnUnknownKpubdataValueBecomesABuilderValue:
                 max_page_size=None,
             ),
             raw_metadata={},
+            to_dict=lambda: {"request_parameters": None},
         )
 
         body = _catalog_dataset_body(cast(Any, dataset), requires_service_key=False)

@@ -106,6 +106,25 @@ _PAGINATION_FROM_KPUBDATA: dict[str, PaginationMode] = {
     "none": "none",
 }
 
+QueryParameterType = Literal["string", "integer", "number", "date_yyyymmdd", "date_yyyymm"]
+"""How a query parameter's value is written (``CatalogQueryParameter.type``)."""
+
+QUERY_PARAMETER_TYPES: tuple[QueryParameterType, ...] = (
+    "string",
+    "integer",
+    "number",
+    "date_yyyymmdd",
+    "date_yyyymm",
+)
+
+_QUERY_PARAMETER_TYPE_FROM_KPUBDATA: dict[str, QueryParameterType] = {
+    "string": "string",
+    "integer": "integer",
+    "number": "number",
+    "date_yyyymmdd": "date_yyyymmdd",
+    "date_yyyymm": "date_yyyymm",
+}
+
 
 def _value(member: object) -> str | None:
     """A kpubdata enum member's string value, or the string itself."""
@@ -146,3 +165,12 @@ def pagination_mode(member: object) -> PaginationMode | None:
     naming a paging mode the dataset may not have.
     """
     return _PAGINATION_FROM_KPUBDATA.get(_value(member) or "")
+
+
+def query_parameter_type(value: object) -> QueryParameterType | None:
+    """Map a kpubdata parameter type; ``None`` when absent or not mapped.
+
+    A catalogue entry declares no type, and a type Builder has not mapped is not
+    guessed at: the client sees "unknown" and offers a free text field.
+    """
+    return _QUERY_PARAMETER_TYPE_FROM_KPUBDATA.get(value) if isinstance(value, str) else None

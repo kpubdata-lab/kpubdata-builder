@@ -2302,6 +2302,10 @@ class _FakeCatalogRef:
         if license is not None:
             self.license = license
 
+    def to_dict(self) -> dict[str, object]:
+        """The public view Builder reads the query definition from (#1281)."""
+        return {"request_parameters": self.raw_metadata.get("request_parameters")}
+
 
 class TestCatalog:
     """Dynamic catalog provider lookup (#436). ADR 0011 — no hardcoding."""
@@ -2598,6 +2602,122 @@ class TestCatalog:
         assert "internal_hint" not in json.dumps(resp.body, ensure_ascii=False)
         assert "leak me" not in json.dumps(resp.body, ensure_ascii=False)
 
+    def test_catalog_query_parameters_come_from_the_public_definition(self, tmp_path: Path) -> None:
+        """An aliased parameter swaps names; type and enum are kept (#1281)."""
+        ref = _FakeCatalogRef(
+            "datago",
+            "air_station",
+            "측정소",
+            service_key=True,
+            raw_metadata_extra={
+                "request_parameters": [
+                    {
+                        "name": "station",
+                        "api_name": "stationName",
+                        "type": "string",
+                        "required": True,
+                        "description": "측정소",
+                        "example": "종로구",
+                    },
+                    {
+                        "name": "dataTerm",
+                        "type": "string",
+                        "required": False,
+                        "enum": ["DAILY", "MONTH", "3MONTH"],
+                    },
+                    {"name": "ym", "type": "date_yyyymm", "required": True},
+                    {"name": "serviceKey", "type": "string", "required": True},
+                    {"name": "odd", "type": "geometry", "required": False},
+                ],
+            },
+        )
+        resp = self._service_with_catalog(tmp_path, [ref]).catalog()
+
+        providers = cast(list[dict[str, object]], resp.body["providers"])
+        dataset = cast(dict[str, object], providers[0]["datasets"][0])
+        assert dataset["query_parameters"] == [
+            {
+                "name": "stationName",
+                "alias": "station",
+                "type": "string",
+                "required": True,
+                "enum": None,
+                "description": "측정소",
+                "example": "종로구",
+            },
+            {
+                "name": "dataTerm",
+                "alias": None,
+                "type": "string",
+                "required": False,
+                "enum": ["DAILY", "MONTH", "3MONTH"],
+                "description": None,
+                "example": None,
+            },
+            {
+                "name": "ym",
+                "alias": None,
+                "type": "date_yyyymm",
+                "required": True,
+                "enum": None,
+                "description": None,
+                "example": None,
+            },
+            {
+                "name": "odd",
+                "alias": None,
+                "type": None,
+                "required": False,
+                "enum": None,
+                "description": None,
+                "example": None,
+            },
+        ]
+
+    def test_catalog_query_parameters_of_a_catalogue_entry_have_no_type(
+        self, tmp_path: Path
+    ) -> None:
+        ref = _FakeCatalogRef(
+            "datago",
+            "entry",
+            "목록",
+            raw_metadata_extra={
+                "request_parameters": [
+                    {
+                        "name": "sidoName",
+                        "required": True,
+                        "description": "시·도",
+                        "example": "서울",
+                    }
+                ]
+            },
+        )
+        resp = self._service_with_catalog(tmp_path, [ref]).catalog()
+
+        providers = cast(list[dict[str, object]], resp.body["providers"])
+        dataset = cast(dict[str, object], providers[0]["datasets"][0])
+        assert dataset["query_parameters"] == [
+            {
+                "name": "sidoName",
+                "alias": None,
+                "type": None,
+                "required": True,
+                "enum": None,
+                "description": "시·도",
+                "example": "서울",
+            }
+        ]
+
+    def test_catalog_query_parameters_are_null_without_a_definition(self, tmp_path: Path) -> None:
+        """No definition is null, never an empty array; request_parameters keeps [] (#1281)."""
+        ref = _FakeCatalogRef("datago", "hospital_info", "병원")
+        resp = self._service_with_catalog(tmp_path, [ref]).catalog()
+
+        providers = cast(list[dict[str, object]], resp.body["providers"])
+        dataset = cast(dict[str, object], providers[0]["datasets"][0])
+        assert dataset["query_parameters"] is None
+        assert dataset["request_parameters"] == []
+
     def test_catalog_never_exposes_raw_metadata_or_secrets(self, tmp_path: Path) -> None:
         """raw_metadata and secret-like values never exposed in response (#490)."""
         ref = _FakeCatalogRef(
@@ -2635,6 +2755,7 @@ class TestCatalog:
             "query_support",
             "requires_service_key",
             "request_parameters",
+            "query_parameters",
             "application",
             "quota",
         }
