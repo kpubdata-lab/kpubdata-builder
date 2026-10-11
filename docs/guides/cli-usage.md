@@ -46,6 +46,9 @@ positional arguments:
     verify           Verify dataset specs against live APIs.
     prune-cancelled  List (and optionally delete) cancelled partial-run
                      artifacts past a TTL (#549).
+    prune-runs       List (and optionally delete) succeeded and failed runs
+                     past their retention, keeping any run something still
+                     refers to (#1099).
     warehouse-gc     Reclaim snapshots and staging directories nothing needs
                      any more (#738).
     warehouse-backup
@@ -325,6 +328,25 @@ warehouse warehouse: reclaimed 2 directories
 회수는 **빌드를 실패시키지 않는다.** 커밋까지 간 빌드는 사용자가 요청한 데이터셋을 이미
 만들었고, 청소가 실패했다고 그걸 버리는 건 잘못된 교환이다. 실패하면 로그에 남고, 나중에
 이 명령으로 따라잡는다.
+
+---
+
+### prune-runs — 기한이 지난 run 정리
+
+성공·실패한 run 의 작업 공간은 아무것도 지우지 않으면 디스크에 계속 쌓인다. `prune-runs` 는
+manifest 의 `finished_at` 이 보관기한(`--retention-days`, 없으면
+`KPUBDATA_BUILDER_RUN_RETENTION_DAYS`)보다 오래된 run 을 찾는다. 기본은 dry run 이라 지울 run 과
+크기, 남길 run 과 이유만 적고, `--apply` 를 줘야 지운다. 실행 중이거나 재시도가 이어받는 run, 게시한
+run, warehouse snapshot(hold·lease 포함)이 있는 run 은 지우지 않는다. 보관기한의 기본은 끔이다 —
+값은 메인테이너가 정한다. 자세한 동작과 중단 뒤의 복구는 [배포 가이드 §6.3](../deploy.md) 에 있다.
+
+```console
+$ kpubdata-builder prune-runs --output-dir /data --warehouse /data/warehouse --retention-days 30
+pruning expired runs under /data, retention 30 day(s) — dry run (nothing will be deleted)
+would delete: 20260801T000000Z (ok, finished 2026-08-01T00:10:00+00:00, 12.3 MB)
+kept: 20260802T000000Z (published)
+1 run(s) to delete, would free 12.3 MB; 1 expired run(s) kept, 4 within the retention
+```
 
 ---
 

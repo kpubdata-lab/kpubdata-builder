@@ -516,7 +516,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.116.0 -> 1.117.0: GET /readyz, readiness apart from liveness, without
 #   authentication; GET /metrics, the Prometheus text page, for administrators (#1101,
 #   additive).
-API_CONTRACT_VERSION = "1.117.0"
+# 1.117.0 -> 1.118.0: POST /builds may answer 503 disk_space_low and, in a multi-user
+#   deployment, 409 run_storage_quota_exceeded; both are off until configured (#1099,
+#   additive).
+API_CONTRACT_VERSION = "1.118.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

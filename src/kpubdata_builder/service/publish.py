@@ -378,6 +378,21 @@ class PublishReceiptStore:
             return "state_unknown", receipt
         return "in_progress", receipt
 
+    def has_receipt(self, run_id: str) -> bool:
+        """Whether any receipt names ``run_id``, in any state and for any owner (#1099).
+
+        Run retention keeps such a run: its artifacts are what was published.
+        """
+        self._initialize()
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM publish_receipts WHERE run_id = ? LIMIT 1", (run_id,)
+            ).fetchone()
+        finally:
+            connection.close()
+        return row is not None
+
     def mark_succeeded(self, fingerprint: str, result: dict[str, object]) -> None:
         self._set_terminal(fingerprint, state="succeeded", result=result)
 

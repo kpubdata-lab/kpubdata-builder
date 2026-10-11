@@ -6,11 +6,12 @@ store alone: a build that finishes between two of them leaves its ending in one 
 in the other. So a backup does not run beside a writer at all.
 
 Every command that writes state — ``serve`` for as long as it runs, ``build``,
-``rebuild-index``, ``prune-cancelled``, ``warehouse-gc`` and ``warehouse-hold`` — holds
-a *shared* lock on the directory it writes. ``backup`` and ``restore`` take it
-*exclusively* and do not wait: while anything holds it they refuse, and while they hold
-it every writer refuses to start. Stopping the server is what drains it: ``SIGTERM``
-finishes or cancels the running builds as on any shutdown (``docs/deploy.md`` §7).
+``rebuild-index``, ``prune-cancelled``, ``prune-runs``, ``warehouse-gc`` and
+``warehouse-hold`` — holds a *shared* lock on the directory it writes. ``backup`` and
+``restore`` take it *exclusively* and do not wait: while anything holds it they refuse,
+and while they hold it every writer refuses to start. Stopping the server is what drains
+it: ``SIGTERM`` finishes or cancels the running builds as on any shutdown
+(``docs/deploy.md`` §7).
 
 The lock is ``flock`` on ``.state.lock`` in the directory. The kernel releases it when
 the process ends, however it ends, so a killed server leaves no lock behind. It is not

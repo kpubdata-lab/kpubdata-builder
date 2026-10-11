@@ -23,6 +23,11 @@ from kpubdata_builder.service.build_limits import (
 )
 from kpubdata_builder.service.probe_limit import probe_interval_seconds
 from kpubdata_builder.service.request_credentials import _ttl_seconds
+from kpubdata_builder.service.run_storage import (
+    resolve_build_min_free_bytes,
+    resolve_owner_storage_limit,
+    resolve_storage_reserve,
+)
 from kpubdata_builder.service.startup_settings import check_settings
 from kpubdata_builder.service.upload_limits import resolve_upload_limits
 from kpubdata_builder.stages.bronze.checkpoint import checkpoint_max_age_seconds
@@ -41,6 +46,7 @@ _NOT_CHECKED: dict[str, str] = {
     "OIDC_ALLOWED_SUBJECTS": "validate_oidc_config",
     "OIDC_ALLOWED_EMAILS": "validate_oidc_config",
     "KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS": "read by prune-cancelled, not by serve",
+    "KPUBDATA_BUILDER_RUN_RETENTION_DAYS": "read by prune-runs, not by serve",
     "KPUBDATA_BUILDER_WAREHOUSE": "a path, created on first use",
     "KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT": "a path, resolved on publish",
     "HF_TOKEN": "a secret",
@@ -269,6 +275,24 @@ _FALLBACK_CASES: list[tuple[str, Callable[[], object], list[str], list[str]]] = 
     (
         "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER",
         resolve_owner_build_limit,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES",
+        resolve_owner_storage_limit,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES",
+        resolve_storage_reserve,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_BUILD_MIN_FREE_MB",
+        resolve_build_min_free_bytes,
         ["many", "-1", "1.5"],
         ["7"],
     ),

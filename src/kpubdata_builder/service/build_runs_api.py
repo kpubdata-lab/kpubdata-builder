@@ -59,6 +59,7 @@ from .providers import ProviderCredentialConflictError, ProviderCredentialRequir
 from .redaction import redact_json_secrets, redact_secret_text
 from .request_credentials import JobCredentials
 from .responses import ServiceResponse
+from .run_storage import storage_admission
 from .source_policy import url_source_refusal
 
 logger = logging.getLogger(__name__)
@@ -627,6 +628,9 @@ class BuildRunsApiService:
             if refusal is not None:
                 return refusal
 
+        # Room for the build (#1099): measured here, outside the registry's lock, and
+        # judged with the owner's reservations under it. None while every check is off.
+        storage = storage_admission(self._output_root, self._build_index, owner_id or created_by)
         try:
             result = self._async_builds.submit(
                 spec_yaml=spec_yaml,
@@ -639,6 +643,7 @@ class BuildRunsApiService:
                 # Read per submission, like the upload limits: the deployment's mode
                 # comes from the environment (#1189).
                 max_active_per_owner=resolve_owner_build_limit(),
+                storage=storage,
                 runner=runner,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
@@ -680,6 +685,37 @@ class BuildRunsApiService:
                         ),
                         "code": "build_owner_limit",
                         "limit": result.owner_limit,
+                    },
+                )
+            case "disk_low":
+                # The output filesystem has less free space than a build needs (#1099).
+                # Nothing was recorded for the run; it says no path and no size.
+                return ServiceResponse(
+                    503,
+                    {
+                        "error": (
+                            "the server is low on disk space and is not accepting builds; "
+                            "submit the build again later"
+                        ),
+                        "code": "disk_space_low",
+                    },
+                )
+            case "storage_quota":
+                # The owner's runs, with this build's reservation, would pass their
+                # limit (#1099). Nothing was recorded for the run.
+                admission = result.storage
+                if admission is None or admission.limit_bytes is None:
+                    raise RuntimeError("storage_quota refusal is missing its measurement")
+                return ServiceResponse(
+                    409,
+                    {
+                        "error": (
+                            "your runs use the storage one user may keep; submit this "
+                            "build when older runs have expired"
+                        ),
+                        "code": "run_storage_quota_exceeded",
+                        "limit_bytes": admission.limit_bytes,
+                        "used_bytes": admission.used_bytes,
                     },
                 )
             case "shutting_down":
