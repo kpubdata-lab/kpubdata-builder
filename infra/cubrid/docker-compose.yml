@@ -12,7 +12,7 @@
 # CUBRID 이미지 태그/버전은 sqlalchemy-cubrid 지원 범위(CUBRID 10.2–11.4) 내에서 고정한다.
 services:
   cubrid:
-    image: cubrid/cubrid:11.3
+    image: cubrid/cubrid:11.4
     privileged: true # CUBRID 공식 이미지 요구사항
     environment:
       CUBRID_DB: kpubdata
