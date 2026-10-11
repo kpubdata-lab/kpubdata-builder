@@ -49,7 +49,6 @@ _PINNED: tuple[tuple[str, str, str | None], ...] = (
         "(spec: 'SpecDefinition', payload: 'dict[str, object]') -> 'int | None'",
     ),
     ("kpubdata.core.spec", "SpecDefinition", None),
-    ("kpubdata.core.spec", "ExampleSpec", None),
     ("kpubdata.transport.http", "HttpTransport", None),
     ("kpubdata.config", "KPubDataConfig", None),
 )

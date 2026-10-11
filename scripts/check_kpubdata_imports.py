@@ -58,9 +58,15 @@ TARGET_ENV = "KPUBDATA_IMPORT_GATE_TARGET"
 _TARGETS = ("released", "unreleased")
 
 _VERIFY_REASON = (
-    "verify/ re-implements kpubdata's `make verify` against its spec model, executor "
-    "and transport; kpubdata has no public verify API (kpubdata#667). Signatures are "
-    "pinned by tests/unit/test_kpubdata_internal_surface.py."
+    "verify/ checks one request in stages (response envelope, parser, pagination) with "
+    "kpubdata's spec executor and transport; Client.probe reports one status, not stages "
+    "(compared in builder#1111). kpubdata#914 proposes Dataset.parse_raw so call_raw + "
+    "parse_raw can replace these. Signatures are pinned by "
+    "tests/unit/test_kpubdata_internal_surface.py."
+)
+_SPEC_TYPE_REASON = (
+    "type annotation only: find_spec/discover_specs are public but the SpecDefinition "
+    "they return is not; kpubdata#913 proposes exporting it."
 )
 
 #: (path, module, name) -> reason. ``name`` is "" for ``import module``.
@@ -81,11 +87,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "kpubdata.core.executor",
         "extract_total_count",
     ): _VERIFY_REASON,
-    ("src/kpubdata_builder/verify/runner.py", "kpubdata.core.spec", "ExampleSpec"): (
-        _VERIFY_REASON
-    ),
     ("src/kpubdata_builder/verify/runner.py", "kpubdata.core.spec", "SpecDefinition"): (
-        _VERIFY_REASON
+        _SPEC_TYPE_REASON
     ),
     ("src/kpubdata_builder/verify/runner.py", "kpubdata.transport.http", "HttpTransport"): (
         _VERIFY_REASON
