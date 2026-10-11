@@ -69,7 +69,7 @@ STORES: tuple[StateStore, ...] = (
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
         versioning="schema_version",
-        if_lost="잃어도 된다 — manifest 에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`)",
+        if_lost="잃어도 된다 — manifest 와, manifest 없이 끝난 run 은 run 이벤트 저장소의 종료 기록에서 다시 만든다(`serve` 가 기동할 때, 또는 `rebuild-index`)",
     ),
     StateStore(
         name="run 이벤트와 제출 기록",
@@ -79,7 +79,7 @@ STORES: tuple[StateStore, ...] = (
         timeout_seconds=BUSY_TIMEOUT_SECONDS,
         journal="wal",
         versioning="schema_version",
-        if_lost="run 의 타임라인과 제출자 기록을 잃는다. 다시 만들 수 없다",
+        if_lost="run 의 타임라인과 제출자 기록, manifest 없이 끝난 run 의 종료 기록(#1120)을 잃는다. 다시 만들 수 없다",
     ),
     StateStore(
         name="게시 영수증",
