@@ -50,9 +50,9 @@ jobs:
   rescan:
     name: Re-scan deployed images
     runs-on: ubuntu-latest
-    # Four images and the vulnerability database; measured on this workflow's first
-    # pull request run, then set to about twice that.
-    timeout-minutes: 15
+    # 43 seconds for four images on this workflow's first pull request run (2026-10).
+    # The rest is room for the vulnerability database's download on a slow day.
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: read  # Builder's image is pulled from GHCR
