@@ -18,6 +18,7 @@ import os
 import sqlite3
 import sys
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -457,6 +458,71 @@ def build_parser() -> argparse.ArgumentParser:
         "warehouse",
         metavar="DIR",
         help="Where to restore. Must not exist or be empty; nothing is overwritten.",
+    )
+
+    state_backup_cmd = subparsers.add_parser(
+        "backup",
+        help=(
+            "Write all of Builder's state — every SQLite store, the runs, the uploads, "
+            "the warehouse — into one archive, while nothing writes it (#1095)."
+        ),
+    )
+    state_backup_cmd.add_argument(
+        "archive", metavar="ARCHIVE", help="The archive to write. Must not exist."
+    )
+    state_backup_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    state_backup_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Table catalog root, a directory of the output directory "
+            "(default: KPUBDATA_BUILDER_WAREHOUSE, or none)."
+        ),
+    )
+    state_backup_cmd.add_argument(
+        "--work-dir",
+        default=None,
+        metavar="DIR",
+        help="Where the working copies go (default: beside ARCHIVE). Not in the output.",
+    )
+
+    verify_backup_cmd = subparsers.add_parser(
+        "verify-backup",
+        help=(
+            "Check a state archive as a restore would — checksums, SQLite integrity, "
+            "schema versions, the warehouse and the uploads — and change nothing (#1095)."
+        ),
+    )
+    verify_backup_cmd.add_argument("archive", metavar="ARCHIVE")
+    verify_backup_cmd.add_argument(
+        "--work-dir",
+        default=None,
+        metavar="DIR",
+        help="Where the archive is unpacked to be checked (default: beside ARCHIVE).",
+    )
+
+    state_restore_cmd = subparsers.add_parser(
+        "restore",
+        help=(
+            "Replace the output directory's state with a verified state archive, by "
+            "staging and then swapping it; the earlier state is kept aside (#1095)."
+        ),
+    )
+    state_restore_cmd.add_argument("archive", metavar="ARCHIVE", nargs="?", default=None)
+    state_restore_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    state_restore_cmd.add_argument(
+        "--recover",
+        action="store_true",
+        help="Only undo (or finish) a restore that was interrupted; give no ARCHIVE.",
     )
 
     hold_cmd = subparsers.add_parser(
@@ -980,61 +1046,73 @@ def _run_serve(
         print(f"error: {ENV_KEYS_UNSUPPORTED}", file=sys.stderr)
         return 1
 
-    from .store import bring_index_up_to_date
-    from .store.schema_version import UnsupportedSchemaVersionError, says_unreachable
+    # The state lock is taken here, after every check that writes nothing, so a server
+    # that refuses to start leaves no lock file behind; it is held until the server
+    # stops, so no backup or restore runs beside it (#1095).
+    from .store.state_lock import StateInUse, state_lock
 
-    try:
-        # Before the service opens the index: an older one would be emptied there, and
-        # the server would answer as healthy with every earlier run missing (#1096).
-        indexed = bring_index_up_to_date(Path(output_dir))
-        if indexed:
-            print(f"rebuilt the build index from the manifests: {indexed} run(s)", flush=True)
-        service = BuilderService(
-            output_root=Path(output_dir),
-            client_factory=_create_client,
-            async_max_workers=max_builds,
-            max_concurrent_builds=max_builds,
-            max_concurrent_previews=max_previews,
-            build_wait_seconds=build_wait_seconds,
-            warehouse_root=Path(warehouse) if warehouse is not None else None,
+    roots = [Path(output_dir)] + ([Path(warehouse)] if warehouse else [])
+    with ExitStack() as held:
+        try:
+            held.enter_context(state_lock(roots, exclusive=False, purpose="`serve`"))
+        except StateInUse as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        from .store import bring_index_up_to_date
+        from .store.schema_version import UnsupportedSchemaVersionError, says_unreachable
+
+        try:
+            # Before the service opens the index: an older one would be emptied there, and
+            # the server would answer as healthy with every earlier run missing (#1096).
+            indexed = bring_index_up_to_date(Path(output_dir))
+            if indexed:
+                print(f"rebuilt the build index from the manifests: {indexed} run(s)", flush=True)
+            service = BuilderService(
+                output_root=Path(output_dir),
+                client_factory=_create_client,
+                async_max_workers=max_builds,
+                max_concurrent_builds=max_builds,
+                max_concurrent_previews=max_previews,
+                build_wait_seconds=build_wait_seconds,
+                warehouse_root=Path(warehouse) if warehouse is not None else None,
+            )
+        except (UnsupportedSchemaVersionError, SnapshotStateError) as exc:
+            # A state store a newer release wrote: said in one line, and left as it is
+            # (#1096). This is what a rolled-back deployment meets. The catalog says it
+            # with its own error, as it did before it was opened at start.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except sqlite3.OperationalError as exc:
+            # A state store that could not be reached to begin with — locked by another
+            # process, on a disk that cannot be written. Said in one line as the refusals
+            # above are; the store is as it was (#1157). Any other database error is not
+            # this — a migration that failed, a statement this release got wrong — and
+            # keeps its traceback: "could not be opened" would be a wrong answer to it.
+            if not says_unreachable(exc):
+                raise
+            print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
+            return 1
+        # What this process was given, so that a log answers "which values is it running
+        # with" without anyone comparing .env to the compose file (#1108). Only what is not
+        # at its default: `kpubdata-builder settings` prints all of them. A secret is shown
+        # as set, never as its value.
+        in_effect = effective_settings(flags=flags, earlier=earlier_names).lines(only_set=True)
+        print("settings in effect (the rest are at their defaults):", flush=True)
+        for line in in_effect:
+            print(f"  {line}", flush=True)
+        # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
+        print(
+            f"serving kpubdata-builder on http://{host}:{port} "
+            f"(output: {output_dir}, max_workers: {max_workers}, max_builds: {max_builds}, "
+            f"max_previews: {max_previews if max_previews is not None else 'unlimited'}, "
+            f"warehouse: {warehouse or 'none'})",
+            flush=True,
         )
-    except (UnsupportedSchemaVersionError, SnapshotStateError) as exc:
-        # A state store a newer release wrote: said in one line, and left as it is
-        # (#1096). This is what a rolled-back deployment meets. The catalog says it
-        # with its own error, as it did before it was opened at start.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except sqlite3.OperationalError as exc:
-        # A state store that could not be reached to begin with — locked by another
-        # process, on a disk that cannot be written. Said in one line as the refusals
-        # above are; the store is as it was (#1157). Any other database error is not
-        # this — a migration that failed, a statement this release got wrong — and
-        # keeps its traceback: "could not be opened" would be a wrong answer to it.
-        if not says_unreachable(exc):
-            raise
-        print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
-        return 1
-    # What this process was given, so that a log answers "which values is it running
-    # with" without anyone comparing .env to the compose file (#1108). Only what is not
-    # at its default: `kpubdata-builder settings` prints all of them. A secret is shown
-    # as set, never as its value.
-    in_effect = effective_settings(flags=flags, earlier=earlier_names).lines(only_set=True)
-    print("settings in effect (the rest are at their defaults):", flush=True)
-    for line in in_effect:
-        print(f"  {line}", flush=True)
-    # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
-    print(
-        f"serving kpubdata-builder on http://{host}:{port} "
-        f"(output: {output_dir}, max_workers: {max_workers}, max_builds: {max_builds}, "
-        f"max_previews: {max_previews if max_previews is not None else 'unlimited'}, "
-        f"warehouse: {warehouse or 'none'})",
-        flush=True,
-    )
-    try:
-        serve(service, host=host, port=port, max_workers=max_workers)
-    except KeyboardInterrupt:
-        print("\nshutting down", file=sys.stderr)
-    return 0
+        try:
+            serve(service, host=host, port=port, max_workers=max_workers)
+        except KeyboardInterrupt:
+            print("\nshutting down", file=sys.stderr)
+        return 0
 
 
 def _run_settings(*, as_json: bool, earlier_names: Sequence[EarlierNameUse] = ()) -> int:
@@ -1149,6 +1227,95 @@ def _run_warehouse_restore(*, backup: str, warehouse: str) -> int:
         return 1
     tables = catalog.list_tables()
     print(f"restored {len(tables)} table(s) into {warehouse}")
+    return 0
+
+
+def _run_state_backup(
+    *, archive: str, output_dir: str, warehouse: str | None, work_dir: str | None
+) -> int:
+    """Back up all of the state; exit 1 with every reason when the archive would not be whole."""
+    from .store import state_backup
+    from .store.state_lock import StateInUse
+
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+    try:
+        result = state_backup.backup(
+            Path(output_dir),
+            Path(archive),
+            warehouse=Path(warehouse) if warehouse else None,
+            work_dir=Path(work_dir) if work_dir else None,
+        )
+    except state_backup.StateBackupRefused as exc:
+        print("error: backup refused — no archive was written:", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    except StateInUse as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    snapshots = "no warehouse" if result.snapshots is None else f"{result.snapshots} snapshot(s)"
+    print(
+        f"backed up {result.stores} store(s), {result.files} file(s) and {snapshots} "
+        f"to {result.path}"
+    )
+    if result.left_out:
+        print(f"left out {len(result.left_out)} path(s) the inventory says are not state:")
+        for path in result.left_out:
+            print(f"  - {path}")
+    print(
+        f"not in the archive: {state_backup.MASTER_KEY_VARIABLE} (the provider keys in it are "
+        "encrypted under it), the identity provider's database, and the settings"
+    )
+    return 0
+
+
+def _run_verify_backup(*, archive: str, work_dir: str | None) -> int:
+    """Check an archive as a restore would; exit 1 with every problem."""
+    from .store import state_backup
+
+    problems = state_backup.verify(Path(archive), work_dir=Path(work_dir) if work_dir else None)
+    if problems:
+        print(f"error: {archive} would not restore:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    print(f"{archive} is whole: every checksum, store and reference checks out")
+    return 0
+
+
+def _run_state_restore(*, archive: str | None, output_dir: str, recover: bool) -> int:
+    """Restore an archive, or undo an interrupted restore; exit 1 rather than restore part."""
+    from .store import state_backup
+    from .store.state_lock import StateInUse
+
+    if recover == (archive is not None):
+        print("error: give either ARCHIVE or --recover", file=sys.stderr)
+        return 2
+    try:
+        if archive is None:
+            done = state_backup.recover(Path(output_dir))
+            print(done or f"no interrupted restore in {output_dir}")
+            return 0
+        result = state_backup.restore(Path(archive), Path(output_dir))
+    except state_backup.StateBackupRefused as exc:
+        print("error: restore refused — nothing was changed:", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    except StateInUse as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if result.recovered:
+        print(f"first {result.recovered}")
+    print(f"restored {archive} into {result.output_root}")
+    if result.previous is not None:
+        print(f"the state it replaced is in {result.previous}; delete it once satisfied")
+    print(f"rebuilt the build index from the manifests: {result.indexed} run(s)")
+    print(
+        f"set {state_backup.MASTER_KEY_VARIABLE} to the key the backup was taken with, or the "
+        "restored provider keys cannot be read"
+    )
     return 0
 
 
@@ -1547,7 +1714,42 @@ def _run_verify(
     return 1 if failed else 0
 
 
+def _written_roots(args: argparse.Namespace) -> list[Path]:
+    """The state directories a command writes, which it holds while it runs (#1095)."""
+    command = args.command
+    if command == "build":
+        warehouse = args.warehouse
+        return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
+    if command in ("rebuild-index", "prune-cancelled"):
+        return [Path(args.output_dir)]
+    if command in ("warehouse-gc", "warehouse-hold"):
+        return [Path(args.warehouse)]
+    return []
+
+
 def dispatch(args: argparse.Namespace) -> int:
+    """Run the command, holding the state it writes against a backup or a restore (#1095).
+
+    A command that writes state holds a shared lock on each directory it writes for as
+    long as it runs (``store/state_lock.py``). One that cannot — a backup or a restore
+    holds the directory, or a restore into it was interrupted — refuses to start.
+    ``serve`` takes its lock itself, once its settings have been checked.
+    """
+    from .store.state_lock import StateInUse, state_lock
+
+    roots = _written_roots(args)
+    if not roots:
+        return _dispatch(args)
+    with ExitStack() as held:
+        try:
+            held.enter_context(state_lock(roots, exclusive=False, purpose=f"`{args.command}`"))
+        except StateInUse as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return _dispatch(args)
+
+
+def _dispatch(args: argparse.Namespace) -> int:
     """Pass parsed argparse result to actual command execution function.
 
     Args:
@@ -1622,6 +1824,19 @@ def dispatch(args: argparse.Namespace) -> int:
         return _run_warehouse_backup(warehouse=args.warehouse, destination=args.destination)
     if command == "warehouse-restore":
         return _run_warehouse_restore(backup=args.backup, warehouse=args.warehouse)
+    if command == "backup":
+        return _run_state_backup(
+            archive=args.archive,
+            output_dir=args.output_dir,
+            warehouse=args.warehouse,
+            work_dir=args.work_dir,
+        )
+    if command == "verify-backup":
+        return _run_verify_backup(archive=args.archive, work_dir=args.work_dir)
+    if command == "restore":
+        return _run_state_restore(
+            archive=args.archive, output_dir=args.output_dir, recover=args.recover
+        )
     if command == "warehouse-hold":
         return _run_warehouse_hold(
             warehouse=args.warehouse,

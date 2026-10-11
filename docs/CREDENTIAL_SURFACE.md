@@ -47,7 +47,7 @@
 | 8 | manifest | 남지 않는다 | `spec/serializer.py:18` 이 명시 키를 `<redacted>` 로 치환. 디스크 확인함 |
 | 9 | logs | 남지 않는다 — 게이트가 확인한다 (#686) | 아래 참조. 전에는 **남았다**: httpx 가 요청마다 `?serviceKey=` 가 붙은 URL 을 INFO 로 찍었다 |
 | 10 | temp files | 남지 않는다 | `publishers/kaggle.py:55` — `KAGGLE_CONFIG_DIR` 을 빈 임시 디렉터리로 돌린다 |
-| 11 | backup | **확인 못 했다** | 백업 절차가 정의되어 있지 않다. SQLite 파일을 복사하면 ciphertext 가 따라간다 |
+| 11 | backup | ciphertext 만 남는다 (#1095) | `kpubdata-builder backup` 은 credential 저장소를 SQLite 가 가진 그대로(암호화된 채) 담고, master key 는 담지도 읽지도 출력하지도 않는다. `tests/unit/test_state_backup.py` 가 평문 키와 master key 가 백업 파일·출력에 없는지 확인한다. 백업 파일을 어디에 두는지는 운영자가 정한다 |
 | 12 | SQLite WAL | 남지 않는다 | credential store 는 WAL 을 쓰지 않는다. WAL 은 `store/build_index.py:134` 뿐이고 거기엔 credential 이 없다 |
 | 13 | browser storage | **부분적으로 남는다** | 아래 참조 |
 | 14 | reverse proxy logs | 저장소의 Caddy 구성에서는 남지 않는다 — `Docker` 워크플로가 확인한다 (#1100) | `ops/caddy/Caddyfile` 이 요청·응답 헤더 전체와 쿼리 문자열을 지우고 쓴다. `scripts/proxy_chain_smoke.py` 가 표식 값을 실은 요청을 보내고 Caddy 의 로그를 읽는다. Cloudflare 쪽 로깅과 다른 프록시는 **확인 못 했다** |
@@ -200,8 +200,9 @@ GitHub Actions 는 배포의 영역이다(17번).
 - **9. logs** — redaction 필터가 없으므로 "안 샌다" 고 말할 근거가 없다.
   개별 지점에서 조심하고 있을 수는 있지만, **그것을 확인하는 장치가 없다.**
   `#686`(canary key leakage gate)이 정확히 이 공백을 메운다.
-- **11. backup** — 절차가 없다. 절차를 만들 때 ciphertext 와 master key 를
-  같은 곳에 백업하지 말 것.
+- **11. backup** — 절차는 `kpubdata-builder backup`(#1095, `docs/deploy.md` §6.2)이다.
+  백업 파일에는 ciphertext 만 있다. master key 를 백업 파일과 같은 곳에 두지 말 것 —
+  둘을 어디에 둘지는 운영자가 정한다.
 - **14. reverse proxy** — `docs/deploy.md` 에 권고가 없다.
 - **16. crash dump** — Python 기본 traceback 은 지역변수를 싣지 않지만,
   `faulthandler` 나 OS 코어덤프는 프로세스 메모리를 남긴다.
