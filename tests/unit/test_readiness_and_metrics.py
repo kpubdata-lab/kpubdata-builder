@@ -357,6 +357,14 @@ def test_responses_are_counted_by_status_429s_and_5xx_included(served: str) -> N
     _get(f"{served}/no-such-route", "secret")
     _get(f"{served}/version", "wrong")
 
+    # Counted in the handler's ``finally``, after the answer is written: the client can
+    # read the answer before the count lands.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and (
+        registry.response_count(404) < before_404 + 1
+        or registry.response_count(401, "unauthorized") < before_401 + 1
+    ):
+        time.sleep(0.01)
     assert registry.response_count(404) == before_404 + 1
     assert registry.response_count(401, "unauthorized") == before_401 + 1
 
