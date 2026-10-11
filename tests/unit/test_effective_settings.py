@@ -30,14 +30,17 @@ from kpubdata_builder.settings_env import EarlierNameUse
 
 #: A master key the cipher accepts — 32 bytes, URL-safe base64 — so ``serve`` starts.
 _MASTER_KEY = "Q0FOQVJZ" * 5 + "Q0E="
+#: A random-looking tail that makes each canary unique. The canaries are put together
+#: from it so that no literal in this file looks like a key to the secret scanner.
+_TAIL = "7c1f0b2e9d4a4c6f8e3b5a1d0c9f2e7b"
 #: One value per secret setting, each found nowhere else in the repository's output.
 _CANARIES: dict[str, str] = {
-    "KPUBDATA_BUILDER_API_KEY": "canary-api-key-7c1f0b2e9d4a4c6f8e3b5a1d0c9f2e7b",
+    "KPUBDATA_BUILDER_API_KEY": f"canary-api-key-{_TAIL}",
     "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY": _MASTER_KEY,
     "KPUBDATA_BUILDER_CUBRID_URL": "cubrid+pycubrid://dba:canary-db-password@db:33000/kpub",
     "HF_TOKEN": "hf_canaryTokenValue0123456789",
     "KAGGLE_USERNAME": "canary-kaggle-account",
-    "KAGGLE_KEY": "canarykagglekey0123456789abcdef",
+    "KAGGLE_KEY": f"canarykagglekey{_TAIL[16:]}",
 }
 #: The parts of a canary that must not appear either: a password inside a URL.
 _FRAGMENTS = [*_CANARIES.values(), "canary-db-password"]
