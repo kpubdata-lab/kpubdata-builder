@@ -12,6 +12,7 @@ Key functions:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import sqlite3
@@ -36,6 +37,7 @@ from .service.redistribution import (
     publish_issues,
     visibility_issue,
 )
+from .settings_env import EarlierNameUse, apply_earlier_names
 from .spec import load_spec
 from .spec.validator import validate_spec
 from .stages.bronze.build import SourceClient
@@ -245,6 +247,19 @@ def build_parser() -> argparse.ArgumentParser:
             "Like --replay, from a fixture directory (see `fixtures export`). "
             "Default: KPUBDATA_BUILDER_REPLAY_DIR, or no replay."
         ),
+    )
+
+    settings_cmd = subparsers.add_parser(
+        "settings",
+        help=(
+            "Print the settings this environment gives Builder, with every secret "
+            "redacted, and check them as `serve` does at start (#1108)."
+        ),
+    )
+    settings_cmd.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a JSON array, one object per setting, instead of lines.",
     )
 
     fixtures_cmd = subparsers.add_parser(
@@ -833,6 +848,7 @@ def _run_serve(
     warehouse: str | None = None,
     replay: bool = False,
     replay_dir: str | None = None,
+    earlier_names: Sequence[EarlierNameUse] = (),
 ) -> int:
     """Run BuilderService as HTTP server (#249).
 
@@ -851,6 +867,8 @@ def _run_serve(
         replay: Serve provider responses from the bundled fixtures (#837).
         replay_dir: Serve them from this directory. If None and ``replay`` is off, use
             KPUBDATA_BUILDER_REPLAY_DIR env, else no replay.
+        earlier_names: Settings that were written under a name they used to have, as
+            ``main`` found them, so the settings printed at start say so (#1108).
 
     Returns:
         int: Exit code. 0 on graceful shutdown via Ctrl-C/SIGTERM, 1 when a setting
@@ -861,6 +879,7 @@ def _run_serve(
     """
     from .service import BuilderService
     from .service.app import DEFAULT_BUILD_WAIT_SECONDS
+    from .service.effective_settings import effective_settings
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
     # Every setting is read once before anything is built from them (#1108): what
@@ -869,14 +888,21 @@ def _run_serve(
 
     # A flag takes the place of its variable, whose value is then never read. ``--port``
     # always has one: the variable is the entrypoint's, which passes it as the flag.
-    overridden = {"KPUBDATA_BUILDER_PORT"}
+    # ``--host`` and ``--output-dir`` always have one too, for the same reason.
+    flags: dict[str, str | int | float] = {
+        "KPUBDATA_BUILDER_PORT": port,
+        "KPUBDATA_BUILDER_HOST": host,
+        "KPUBDATA_BUILDER_OUTPUT_DIR": output_dir,
+    }
     if max_workers is not None:
-        overridden.add("KPUBDATA_BUILDER_MAX_WORKERS")
+        flags["KPUBDATA_BUILDER_MAX_WORKERS"] = max_workers
     if max_builds is not None:
-        overridden.add("KPUBDATA_BUILDER_MAX_BUILDS")
+        flags["KPUBDATA_BUILDER_MAX_BUILDS"] = max_builds
     if max_previews is not None:
-        overridden.add("KPUBDATA_BUILDER_MAX_PREVIEWS")
-    report = check_settings(overridden=overridden)
+        flags["KPUBDATA_BUILDER_MAX_PREVIEWS"] = max_previews
+    if warehouse is not None:
+        flags["KPUBDATA_BUILDER_WAREHOUSE"] = warehouse
+    report = check_settings(overridden=flags.keys())
     for warning in report.warnings:
         print(f"warning: {warning}", file=sys.stderr)
     if report.problems:
@@ -988,6 +1014,14 @@ def _run_serve(
             raise
         print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
         return 1
+    # What this process was given, so that a log answers "which values is it running
+    # with" without anyone comparing .env to the compose file (#1108). Only what is not
+    # at its default: `kpubdata-builder settings` prints all of them. A secret is shown
+    # as set, never as its value.
+    in_effect = effective_settings(flags=flags, earlier=earlier_names).lines(only_set=True)
+    print("settings in effect (the rest are at their defaults):", flush=True)
+    for line in in_effect:
+        print(f"  {line}", flush=True)
     # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
     print(
         f"serving kpubdata-builder on http://{host}:{port} "
@@ -1001,6 +1035,34 @@ def _run_serve(
     except KeyboardInterrupt:
         print("\nshutting down", file=sys.stderr)
     return 0
+
+
+def _run_settings(*, as_json: bool, earlier_names: Sequence[EarlierNameUse] = ()) -> int:
+    """Print the settings this environment gives Builder, and check them (#1108).
+
+    Reads what ``serve`` would read, with no flag in the way, and starts nothing. Every
+    setting is printed, the ones at their default included; a secret is printed as set
+    or not set, never as its value.
+
+    Returns:
+        int: 0 when ``serve`` would accept the settings as written, 1 when it would
+        refuse to start. The problems and warnings are the ones ``serve`` prints.
+    """
+    from .service.effective_settings import effective_settings
+    from .service.startup_settings import check_settings
+
+    settings = effective_settings(earlier=earlier_names)
+    if as_json:
+        print(json.dumps(settings.as_list(), ensure_ascii=False, indent=2))
+    else:
+        for line in settings.lines():
+            print(line)
+    report = check_settings()
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    for problem in report.problems:
+        print(f"error: {problem}", file=sys.stderr)
+    return 1 if report.problems else 0
 
 
 def _count_from_env(name: str) -> int | None:
@@ -1533,7 +1595,10 @@ def dispatch(args: argparse.Namespace) -> int:
             warehouse=args.warehouse,
             replay=args.replay,
             replay_dir=args.replay_dir,
+            earlier_names=getattr(args, "earlier_names", ()),
         )
+    if command == "settings":
+        return _run_settings(as_json=args.json, earlier_names=getattr(args, "earlier_names", ()))
     if command == "fixtures":
         return _run_fixtures_export(destination=args.destination)
     if command == "verify":
@@ -1623,6 +1688,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     # Provider keys ride in request URLs, and the HTTP library logs those URLs (#686).
     logging_redaction.install()
+    # A setting written under a name it used to have is moved to the name its reader
+    # knows, before any command reads one (#1108). The line names the two variables.
+    args.earlier_names = apply_earlier_names()
+    for use in args.earlier_names:
+        print(f"warning: {use.warning()}", file=sys.stderr)
     return dispatch(args)
 
 

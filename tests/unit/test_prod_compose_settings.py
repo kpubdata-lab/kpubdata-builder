@@ -189,10 +189,75 @@ def _settings() -> set[str]:
 
 def test_every_setting_is_passed_or_listed_as_not_passed() -> None:
     """A new setting cannot go undecided: the stack passes it, or says it does not."""
-    passed = set(_environment())
+    # A name a setting used to have is passed beside it while it is still read; it is
+    # not a setting of its own.
+    passed = set(_environment()) - set(catalog.earlier_names())
 
     assert passed.isdisjoint(NOT_PASSED)
     assert passed | NOT_PASSED == _settings()
+
+
+def _earlier_name_problems(
+    environment: dict[str, str | None], settings: tuple[catalog.Setting, ...]
+) -> list[str]:
+    """Where the stack would keep a value written under an earlier name from being read.
+
+    ``kpubdata-builder`` reads an earlier name only when the current one is empty
+    (``settings_env``). So the stack has to hand the process the earlier name, and must
+    not fill the current one with a default: a default always wins, and the value an
+    operator has in ``.env`` under the old name would be dropped without a word.
+    """
+    problems: list[str] = []
+    for setting in settings:
+        if not setting.earlier_names or setting.name not in environment:
+            continue
+        current = _substituted(environment[setting.name])
+        if current is None or current.default:
+            problems.append(
+                f"{setting.name} is passed with a value of its own, so its earlier names "
+                "are never read"
+            )
+        for earlier in setting.earlier_names:
+            passed = earlier.name in environment and _substituted(environment[earlier.name])
+            if not passed or passed.name != earlier.name:
+                problems.append(f"{earlier.name} is still read but the stack does not pass it")
+    return problems
+
+
+def test_a_renamed_setting_is_passed_so_that_its_earlier_name_is_still_read() -> None:
+    assert _earlier_name_problems(_environment(), catalog.SETTINGS) == []
+
+
+@pytest.mark.parametrize(
+    ("environment", "problem"),
+    [
+        ({"NEW": "${NEW:-}", "OLD": "${OLD:-}"}, None),
+        # Not passed at all: nothing to hold the stack to.
+        ({}, None),
+        ({"NEW": "${NEW:-}"}, "OLD is still read but the stack does not pass it"),
+        ({"NEW": "${NEW:-}", "OLD": "${ELSE:-}"}, "OLD is still read but the stack does not"),
+        ({"NEW": "${NEW:-10}", "OLD": "${OLD:-}"}, "NEW is passed with a value of its own"),
+        ({"NEW": "10", "OLD": "${OLD:-}"}, "NEW is passed with a value of its own"),
+    ],
+)
+def test_a_stack_that_hides_an_earlier_name_is_refused(
+    environment: dict[str, str | None], problem: str | None
+) -> None:
+    renamed = catalog.Setting(
+        name="NEW",
+        group="builds",
+        description="d",
+        default="d",
+        required="d",
+        earlier_names=(catalog.EarlierName("OLD", "0.5.0"),),
+    )
+
+    problems = _earlier_name_problems(environment, (renamed,))
+
+    if problem is None:
+        assert problems == []
+    else:
+        assert any(problem in found for found in problems), problems
 
 
 def test_each_variable_is_passed_under_its_own_name() -> None:

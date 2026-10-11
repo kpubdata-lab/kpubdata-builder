@@ -102,6 +102,9 @@ def test_nothing_set_is_nothing_to_report() -> None:
         ("KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT", "ten"),
         ("OIDC_JWKS_TTL", "1h"),
         ("OIDC_JWKS_TTL", "3600.0"),
+        ("KPUBDATA_BUILDER_MAX_QUEUED_BUILDS", "0"),
+        ("KPUBDATA_BUILDER_MAX_QUEUED_BUILDS", "1001"),
+        ("KPUBDATA_BUILDER_MAX_QUEUED_BUILDS", "many"),
     ],
 )
 def test_unusable_value_is_a_problem_that_names_the_variable(
@@ -128,6 +131,7 @@ def test_unusable_value_is_a_problem_that_names_the_variable(
         ("KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS", "0"),
         ("KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT", "2.5"),
         ("OIDC_JWKS_TTL", "300"),
+        ("KPUBDATA_BUILDER_MAX_QUEUED_BUILDS", "1000"),
         ("KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY", "QUJD" * 8 + "QUJDQUJDQUI="),
     ],
 )

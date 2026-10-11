@@ -34,6 +34,9 @@ positional arguments:
     build            Execute a BuildSpec through the Medallion pipeline.
     publish          Publish build artifacts to a local or remote destination.
     serve            Run the Builder HTTP service.
+    settings         Print the settings this environment gives Builder, with
+                     every secret redacted, and check them as `serve` does at
+                     start (#1108).
     fixtures         Export the replay fixtures bundled with this package
                      (#837).
     rebuild-index    Rebuild the build index from filesystem scans.
@@ -524,6 +527,18 @@ $ curl -s http://127.0.0.1:8000/artifacts/run-20240601
 [`contract/builder-api.yaml`](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/contract/builder-api.yaml)을 참고하세요.
 
 ---
+
+### settings — 지금 환경의 설정 보기
+
+```console
+$ kpubdata-builder settings
+$ kpubdata-builder settings --json
+```
+
+이 환경에서 Builder 가 읽게 될 설정을 모두 출력하고, `serve` 가 시작할 때 하는 검사를 그대로 합니다.
+아무것도 띄우지 않습니다. 비밀 값을 담는 설정은 값 대신 `<redacted>` 로 나옵니다. `serve` 가 기동을
+거부할 값이 있으면 종료 코드가 1 입니다. 출력의 읽는 법은
+[배포 및 설정 가이드](../deployment.md)의 "실제로 쓰이는 설정 보기"에 있습니다.
 
 ## 환경 변수
 

@@ -64,6 +64,7 @@ from . import publish as publish_service
 from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
+from .build_limits import resolve_max_queued_builds
 from .build_runs_api import BuildRunsApiService
 from .build_slots import BuildSlots
 from .builds_api import BuildArtifactsApiService
@@ -534,7 +535,7 @@ class BuilderService:
         probe_datasets: provider_probe.ListDatasets = provider_probe.spec_dataset_ids,
         probe_limiter: ProbeLimiter | None = None,
         async_max_workers: int = 10,
-        async_max_queue_size: int = 10,
+        async_max_queue_size: int | None = None,
         max_concurrent_builds: int | None = None,
         max_concurrent_previews: int | None = None,
         build_wait_seconds: float | None = DEFAULT_BUILD_WAIT_SECONDS,
@@ -708,7 +709,13 @@ class BuilderService:
         self._async_builds = AsyncBuildExecutor(
             build_slots=self._build_slots,
             max_workers=async_max_workers,
-            max_queue_size=async_max_queue_size,
+            # The queue's size is the deployment's (#1108): what the caller gives, else
+            # KPUBDATA_BUILDER_MAX_QUEUED_BUILDS, else the 10 that used to be written here.
+            max_queue_size=(
+                async_max_queue_size
+                if async_max_queue_size is not None
+                else resolve_max_queued_builds()
+            ),
             # running job safely terminates at boundary exactly once (#481). Terminal
             # event only recorded at terminal transition by the terminating side, so
             # queued/running cancellation both end with single run_cancelled, avoiding

@@ -51,6 +51,7 @@
 | `KPUBDATA_BUILDER_MAX_BUILDS` | 동시에 도는 build 수의 상한 — 동기 `POST /build` 와 비동기 job 을 합쳐서(`serve --max-builds`, #1028). 한도에 닿으면 동기 build 는 기다리고 비동기 job 은 큐에 남는다 | `KPUBDATA_BUILDER_MAX_WORKERS` 값 | 선택 |
 | `KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS` | 비동기 build 한 건이 실행을 시작한 뒤 돌 수 있는 시간(초, #1119). 큐에서 기다린 시간은 세지 않는다. 넘으면 취소를 요청하고, build 는 다음 안전한 단계 경계에서 멈춰 `cancelled` 로 끝나며 그 `run_cancelled` 이벤트가 이유를 말한다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다 | `21600` (6시간) | 선택 |
 | `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER` | 다중 사용자 배포에서 사용자 한 명이 동시에 대기·실행 중으로 둘 수 있는 비동기 build 수(#1189). 넘으면 `POST /builds` 가 429 `build_owner_limit` 로 답하고, 큐는 다른 사용자에게 열려 있다. 측정 없이 정한 출발값이다(kpubdata#812). `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `2` | 선택 |
+| `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS` | 실행을 기다리는 비동기 build 수의 상한 — 서비스 전체에서, 누가 제출했든(#1108). 실행 중인 build 는 세지 않는다. 넘으면 `POST /builds` 가 429 `build_queue_full` 로 답한다. 기다리는 job 은 제출된 spec 과, 다중 사용자 배포에서는 요청의 provider 키를 메모리에 두므로 이 값이 그 양의 상한이다. `1` 이상 `1000` 이하의 정수여야 하고, 아니면 `serve` 가 기동을 거부한다. 코드에 고정돼 있던 값(10)을 기본값으로 두었고, 상한 1000 과 함께 측정 없이 정한 값이다(kpubdata#812) | `10` | 선택 |
 | `KPUBDATA_BUILDER_MAX_PREVIEWS` | 동시에 도는 preview 수의 상한(`serve --max-previews`, #1028). 넘는 preview 는 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` 까지 기다리고, 그래도 자리가 없으면 429 `preview_queue_full` 로 답한다(#1068) | 미설정 (무제한) | 선택 |
 | `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS` | SIGTERM 뒤 실행 중인 비동기 빌드가 끝나기를 기다리는 시간(초, #1118). 지나면 남은 빌드에 멈추라고 하고 10초를 더 기다린다. `0` 이면 바로 멈추라고 한다. 유한한 0 이상의 수가 아니면(`inf`, `nan`, 음수, 숫자가 아닌 값) `serve` 가 기동을 거부한다. 대기 중이던 작업은 이 값과 무관하게 시작하지 않고 끝난다. 컨테이너의 종료 대기 시간(compose `stop_grace_period`, 기본 설정 120초)을 이 값 + 10초보다 길게 둔다 | `90` | 선택 |
 | `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` | 동기 `POST /build` 가 build 자리를 기다리는 상한(초, #1040). 넘으면 아무것도 가져오지 않은 채 429 `build_queue_full` 로 답한다. `0` 이면 자리가 없을 때 바로 거절한다. 비동기 `POST /builds` 는 기다리지 않고 큐에 넣는다. 유한한 0 이상의 수여야 한다 — `nan`, `inf`, 음수, 숫자가 아닌 값이면 `serve` 가 기동을 거절하고, 빈 값이면 기본값을 쓴다(#1068). preview 자리 대기에도 같은 상한이 쓰인다 | `30` | 선택 |
@@ -110,6 +111,30 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 | `KPUBDATA_MODE` | `KPUBDATA_BUILDER_REPLAY_DIR` 가 있을 때 Builder 가 `replay` 로 설정한다. kpubdata 가 읽는 값이다 |
 | `KPUBDATA_REPLAY_DIR` | `KPUBDATA_BUILDER_REPLAY_DIR` 가 있을 때 Builder 가 그 디렉터리의 절대 경로로 설정한다. kpubdata 가 읽는 값이다 |
 
+### 변수 이름과 이름을 바꿀 때의 규칙
+
+설정의 이름은 다음 중 하나의 모양이다.
+
+| 이름 | 무엇의 설정인가 | 설정 수 |
+| :--- | :--- | :--- |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 35 |
+| `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
+| `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
+| `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |
+| `ENFORCE_OWNERSHIP` (접두어 없음) | 접두어 없이 만들어진 이름이다(#389) | 1 |
+| `HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY` | Hugging Face 와 Kaggle 의 도구가 정한 이름이다. Builder 가 정한 것이 아니어서 바꿀 수 없다 | 3 |
+
+- **새 설정의 이름은 `KPUBDATA_BUILDER_` 로 시작한다.** 그렇지 않은 이름은 위 표에 있는 것이 전부이고, 더 늘지 않는다 — 다른 이름의 설정을 추가하면 `tests/unit/test_settings_naming.py` 가 실패한다.
+- **지금 있는 이름은 바꾸지 않았다.** 접두어가 섞여 있지만 이름마다 가리키는 대상이 위 표처럼 정해져 있고, 이름을 바꾸면 운영 중인 배포의 `.env` 를 고쳐야 한다. 이름을 바꿀 이유가 생기면 아래 규칙을 따른다.
+- **이름을 바꿀 때 이전 이름은 계속 읽는다.** 이전 이름을 `settings_catalog.py` 의 그 설정에 `earlier_names` 로 남긴다. `kpubdata-builder` 명령은 시작할 때 이전 이름에 적힌 값을 새 이름으로 옮기고(`settings_env.py`), 설정을 읽는 코드는 새 이름만 읽는다.
+- **우선순위: 새 이름이 이긴다.** 새 이름에 값이 있으면 그 값을 쓰고 이전 이름은 무시한다. 새 이름이 없거나 빈 문자열일 때에만 이전 이름의 값을 쓴다 — 빈 문자열은 설정하지 않은 것으로 본다. 이전 이름이 여럿이면 가장 최근의 이름이 먼저다.
+- **경고: 이전 이름에 값이 있으면 시작할 때마다 표준 오류에 `warning:` 한 줄을 남긴다.** 줄은 이전 이름과 새 이름만 말하고 **값은 출력하지 않는다.** 새 이름과 함께 적혀 있어 무시된 경우에도 알린다.
+- **사용중단: 이전 이름은 새 이름이 나온 릴리스와 그 뒤 두 번의 릴리스에서 읽는다.** 릴리스는 월 1회이므로 세 달이다. 그 뒤의 릴리스에서 지울 수 있고, 지우는 릴리스는 CHANGELOG 에 호환되지 않는 변경으로 적는다. 지운 뒤에 이전 이름만 적은 배포는 그 설정이 기본값으로 돈다.
+- **compose 와 컨테이너 진입점은 같은 변경에서 함께 고친다.** production compose 가 넘기는 설정의 이름을 바꾸면 compose 가 이전 이름도 넘겨야 하고, 새 이름에 기본값을 채워 넘겨서는 안 된다 — 값이 채워진 새 이름이 언제나 이기므로 `.env` 에 적힌 이전 이름이 읽히지 않는다(`tests/unit/test_prod_compose_settings.py` 가 검사한다). `docker-entrypoint.sh` 가 직접 읽는 설정은 진입점이 이전 이름을 읽지 않으므로 이전 이름을 둘 수 없다(`tests/unit/test_settings_naming.py`).
+- **`kpubdata-builder` 명령을 거치지 않고 Builder 를 Python 에서 직접 쓰는 코드**는 이전 이름을 옮기지 않는다. 그런 코드는 `kpubdata_builder.settings_env.apply_earlier_names()` 를 먼저 부른다.
+
+지금 읽는 이전 이름은 없다 — 이름이 바뀐 설정이 아직 없다.
+
 <!-- settings:end -->
 
 ### 기동할 때의 설정 검사 (#1108)
@@ -120,6 +145,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
   - DuckDB 자원: `KPUBDATA_DUCKDB_THREADS`, `KPUBDATA_DUCKDB_MEMORY_LIMIT`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE`
   - 쿼리 자원: `KPUBDATA_QUERY_MAX_CONCURRENCY`, `KPUBDATA_QUERY_MAX_MEMORY_MB`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
   - 상태 저장: `KPUBDATA_BUILDER_STORAGE_BACKEND`, `KPUBDATA_BUILDER_CUBRID_URL`
+  - 비동기 build 대기열: `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS` (`1` 이상 `1000` 이하의 정수)
   - 그 밖: `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`, `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`, `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT`, `OIDC_JWKS_TTL`
   - `serve` 가 직접 읽는 값: `KPUBDATA_BUILDER_MAX_WORKERS`, `KPUBDATA_BUILDER_MAX_BUILDS`, `KPUBDATA_BUILDER_MAX_PREVIEWS`, `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`. 같은 이름의 플래그(`--max-builds` 등)를 주면 그 변수는 읽지 않으므로 검사하지도 않습니다
 - **`warning:` — 기동은 합니다.** 읽을 수 없는 값을 기본값으로 대신하는 설정입니다. 적은 값이 아니라 기본값으로 돌고 있다는 사실을 표준 오류에 한 줄로 알립니다.
@@ -131,6 +157,27 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
   - 켜고 끄는 값(`KPUBDATA_BUILDER_DEV_MODE`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)을 그 설정이 켜짐으로 읽는 말도 `false`/`0` 도 아닌 말로 적은 경우. 켜짐으로 읽는 말은 `true`/`1` 이고, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` 만 `yes`/`on` 도 받습니다. 나머지 셋에서 `yes` 나 `on` 은 **꺼진 것으로 읽힙니다.** 다만 다중 사용자 배포(`OIDC_ISSUER` 또는 `ENFORCE_OWNERSHIP`)는 `ENFORCE_OWNERSHIP` 과 두 `REQUIRE_OWN_*` 를 무엇이 적혀 있든 켜므로, 그때는 "꺼진 것으로 읽힌다" 가 아니라 **"무시된다 — 켜져 있다"** 고 알립니다(`false`/`0` 을 적은 경우에도).
 
 비밀 값을 담는 변수는 메시지에 값을 되풀이하지 않습니다. OIDC 설정의 조합과 CUBRID 연결은 이 검사 뒤에 따로 확인하며, 그때의 거부는 지금처럼 예외로 끝납니다.
+
+### 실제로 쓰이는 설정 보기 (#1108)
+
+`.env`, compose 파일, 위 표의 기본값을 눈으로 맞춰 보지 않아도 프로세스가 받은 값을 볼 수 있습니다.
+
+- **`kpubdata-builder settings`** 는 지금 환경에서 읽게 될 설정을 모두 한 줄씩 출력하고, 위의 기동 검사를 그대로 한 뒤 끝납니다. 아무것도 띄우지 않습니다. `serve` 가 기동을 거부할 값이 있으면 종료 코드가 1 입니다. `--json` 을 주면 설정마다 객체 하나인 JSON 배열을 출력합니다. 컨테이너가 받은 값을 보려면 컨테이너 안에서 실행합니다: `docker compose -f docker-compose.prod.app.yml exec builder kpubdata-builder settings`.
+- **`kpubdata-builder serve`** 는 시작할 때 `settings in effect` 아래에 기본값이 아닌 설정만 출력합니다. `--port` 처럼 플래그로 받은 값도 여기에 나옵니다.
+
+한 줄은 `이름 = 값  [출처]  # 덧붙일 말` 입니다.
+
+| 출처 | 뜻 |
+| :--- | :--- |
+| `[environment]` | 그 이름의 환경변수에서 읽었다 |
+| `[earlier name]` | 이름이 바뀌기 전의 환경변수에서 읽었다(아래 "변수 이름과 이름을 바꿀 때의 규칙") |
+| `[flag]` | `serve` 의 플래그가 그 변수를 대신했다. 변수의 값은 읽지 않는다 |
+| (출처 없음) | 설정하지 않았다. `(default: …)` 는 위 표의 기본값이다 |
+
+- **비밀 값은 출력하지 않습니다.** `settings_catalog.py` 에서 `secret` 으로 표시된 설정 — `KPUBDATA_BUILDER_API_KEY`, `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`, `KPUBDATA_BUILDER_CUBRID_URL`, `HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY` — 은 값 자리에 `<redacted>`(설정됨) 또는 `(not set)` 만 나옵니다. 이 출력을 만드는 객체가 그 값을 읽어 두지 않습니다. 그 밖의 설정은 적은 그대로 나오므로, 허용 목록의 이메일 주소(`OIDC_ALLOWED_EMAILS`)나 사용자 식별자는 출력에 보입니다 — 이 출력을 외부에 붙여 넣을 때에는 그 줄을 확인하세요.
+- 켜고 끄는 설정은 적힌 말이 아니라 **켜졌는지 꺼졌는지**(`on`/`off`)가 나옵니다. 다중 사용자 배포가 스스로 켜는 설정은 변수가 비어 있어도 `on` 이고 그 이유가 덧붙습니다.
+- 읽을 수 없는 값을 기본값으로 대신하는 설정에 그런 값을 적었다면 `(default: …)` 와 함께 무시됐다고 나옵니다.
+- 값의 범위를 판정하는 것은 여전히 기동 검사입니다. 이 출력은 받은 값을 보여 줄 뿐입니다.
 
 > **fail-closed (ADR 0006)**: `KPUBDATA_BUILDER_API_KEY` 미설정 + `DEV_MODE` 미설정 → 모든 요청 401.
 > 로컬 개발에서 인증 없이 띄우려면 `KPUBDATA_BUILDER_DEV_MODE=1`을 명시하세요.
