@@ -78,6 +78,7 @@ from ..spec import (
     write_buildspec_snapshot,
 )
 from ..spec.fingerprints import SourceFingerprints, fingerprint_source
+from ..spec.models import PiiPolicy
 from ..spec.validator import validate_spec
 from ..stages._path_safety import (
     LEGACY_CHECKPOINT_SUFFIX,
@@ -147,7 +148,12 @@ from .cancellation import BuildCancelled, CancellationProbe, raise_if_cancelled
 from .card_facts import card_source, personal_information, processing_steps, write_card
 from .context import BuildContext
 from .export import export_gold_package
-from .failures import SourceFailureReason, public_failure_message, source_failure
+from .failures import (
+    SourceFailure,
+    SourceFailureReason,
+    public_failure_message,
+    source_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -649,6 +655,201 @@ class _SourcePipelineResult:
     resumed: tuple[int, int] | None = None
 
 
+@dataclass
+class _SourceProgress:
+    """How far one source got, kept for the result of a run that stops early.
+
+    One per ``_run_source_pipeline`` call, never shared between threads (#247). Each
+    stage adds to it as it finishes, so a cancellation (#481) or a failure returns
+    exactly what was done: completed stages, written outputs, Bronze provenance and the
+    quality and drift results already evaluated (#486, #700). ``fetch_completed`` and
+    ``export_started`` tell which failure events the stopping point gets (#496).
+    """
+
+    completed: list[str] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
+    provenance_entry: SourceProvenance | None = None
+    row_count: int | None = None
+    quality_results: tuple[QualityCheckResult, ...] = ()
+    quality_evaluated: bool = False
+    schema_drift: tuple[SchemaDriftFinding, ...] = ()
+    drift_evaluation: tuple[DriftEvaluation, ...] = ()
+    silver: SilverDataset | None = None
+    silver_table_path: Path | None = None
+    fetch_completed: bool = False
+    export_started: bool = False
+
+    def stopped(
+        self,
+        source_key: str,
+        status: str,
+        *,
+        error: str | None = None,
+        reason: SourceFailureReason | None = None,
+    ) -> _SourcePipelineResult:
+        """The result of a source that was cancelled or failed after this progress."""
+        return _SourcePipelineResult(
+            outcome=SourceBuildOutcome(
+                source_key=source_key,
+                status=status,
+                stages_completed=tuple(self.completed),
+                error=error,
+                reason=reason,
+            ),
+            output_paths=tuple(self.outputs),
+            row_count=self.row_count,
+            provenance_entry=self.provenance_entry,
+            quality_results=self.quality_results,
+            quality_evaluated=self.quality_evaluated,
+            schema_drift=self.schema_drift,
+            drift_evaluation=self.drift_evaluation,
+            silver=self.silver,
+            silver_table_path=self.silver_table_path,
+        )
+
+
+def _record_source_failure(
+    recorder: BuildEventRecorder, output_key: str, progress: _SourceProgress, failure: SourceFailure
+) -> None:
+    """Record a failed source's events at the last boundary it actually reached (#496).
+
+    ``progress.completed`` is authoritative for how far each stage got, so the next
+    stage is the failed one. Stages that never started record nothing.
+    """
+    error_msg = failure.message
+    if "bronze" not in progress.completed:
+        if not progress.fetch_completed:
+            recorder.source_fetch_failed(output_key, message=error_msg, reason=failure.reason)
+        recorder.stage_failed(output_key, "bronze", message=error_msg)
+    elif "silver" not in progress.completed:
+        recorder.stage_failed(output_key, "silver", message=error_msg)
+    elif "gold" not in progress.completed:
+        recorder.stage_failed(output_key, "gold", message=error_msg)
+    elif progress.export_started:
+        recorder.stage_failed(output_key, "export", message=error_msg)
+
+
+def _check_pii_scan(
+    silver: SilverDataset,
+    policy: PiiPolicy | None,
+    *,
+    pii_declared: Mapping[str, tuple[str, ...]],
+    publish_unmasked: Sequence[str],
+) -> None:
+    """The PII scan gate (#441, QG-1); raises ``DatasetValidationError`` under ``block``.
+
+    Original values are not included in results or logs. ``block`` fails on detection,
+    ``warn`` logs, ``allow`` passes through. ``allow_columns`` and declared columns Gold
+    masks are handled; a ``publish_unmasked`` column is not (#902).
+    """
+    if policy is None:
+        return
+    handled = set(policy.allow_columns) | columns_masked_in_gold(pii_declared, publish_unmasked)
+    findings = [f for f in scan_pii(silver.table) if f.column not in handled]
+    if not findings:
+        return
+    if policy.mode == "block":
+        raise DatasetValidationError(
+            [f"PII 검출({f.kind}) @ {f.column}: {f.count}건" for f in findings]
+        )
+    if policy.mode == "warn":
+        logger.warning(
+            "PII 의심 컬럼 (warn): %s",
+            ", ".join(f"{f.kind}@{f.column}({f.count})" for f in findings),
+        )
+
+
+def _check_quality(quality_results: Sequence[QualityCheckResult]) -> None:
+    """The quality WARN/FAIL gate (#446, #486).
+
+    WARN logs only and continues; FAIL raises ``DatasetValidationError``, which halts
+    the source before Gold. The results themselves were recorded by the caller first,
+    so they survive the raise.
+    """
+    fail_results = [r for r in quality_results if r.status == "fail"]
+    if fail_results:
+        raise DatasetValidationError(_quality_failure_messages(fail_results))
+    for r in quality_results:
+        if r.status == "warn":
+            logger.warning(
+                "품질 위반(warn): %s%s actual=%s threshold=%s (#486)",
+                r.rule,
+                f" @ {r.column}" if r.column else "",
+                r.actual,
+                r.threshold,
+            )
+
+
+def _evaluate_drift(
+    silver: SilverDataset,
+    source: SourceRef,
+    *,
+    context: BuildContext,
+    output_key: str,
+    baseline_owner_id: str | None,
+) -> tuple[tuple[SchemaDriftFinding, ...], tuple[DriftEvaluation, ...]]:
+    """Drift of this source's Silver against earlier runs (#445, DRIFT-1).
+
+    Compared only against earlier successful runs of the same dataset_id and source_key,
+    so another dataset's silver cannot manufacture drift (#486), and only against the
+    same owner (#700): another user's run as the baseline turns row count and schema
+    changes into a metadata side channel.
+
+    The two axes do not share a baseline (#700). Columns should not depend on which
+    region was collected, so the schema axis takes the newest owned run. A row count
+    only means something against the same population read under the same contract, so
+    the volume axis takes the newest owned run that matches both — and reports why when
+    none does, instead of comparing.
+
+    Returns the findings and, per axis, whether it was evaluated at all.
+    """
+    baseline = find_previous_silver(
+        context.output_root,
+        context.run_id,
+        dataset_id=context.spec.dataset_id,
+        source_key=output_key,
+        owner_id=baseline_owner_id,
+    )
+    volume_baseline = find_previous_silver(
+        context.output_root,
+        context.run_id,
+        dataset_id=context.spec.dataset_id,
+        source_key=output_key,
+        owner_id=baseline_owner_id,
+        comparable=_volume_comparability(source),
+    )
+    drift_findings: list[DriftFinding] = []
+    evaluations: list[DriftEvaluation] = []
+    for axis, found in (("schema", baseline), ("volume", volume_baseline)):
+        if isinstance(found, SilverBaseline):
+            drift_findings.extend(
+                f
+                for f in detect_drift(silver.schema, silver.statistics, found.schema, found.stats)
+                if (f.kind in VOLUME_FINDING_KINDS) == (axis == "volume")
+            )
+            evaluations.append(
+                DriftEvaluation(
+                    axis=axis,
+                    evaluated=True,
+                    baseline_snapshot_id=found.run_id,
+                    detail=f"compared against run {found.run_id}",
+                )
+            )
+        else:
+            # Leaving the findings empty drops the key from the manifest, and then
+            # "there was no baseline" and "compared, nothing changed" are the same
+            # answer on the wire (#700). Record the failure to evaluate explicitly.
+            evaluations.append(
+                DriftEvaluation(
+                    axis=axis, evaluated=False, reason=found.reason, detail=found.detail
+                )
+            )
+            logger.info("드리프트 미평가(%s): %s — %s (#700)", axis, output_key, found.detail)
+    for f in drift_findings:
+        logger.warning("드리프트 감지: %s @ %s — %s (#445)", f.kind, f.column, f.detail)
+    return _to_schema_drift_findings(drift_findings), tuple(evaluations)
+
+
 def _run_source_pipeline(
     source: SourceRef,
     *,
@@ -675,8 +876,8 @@ def _run_source_pipeline(
     ``recorder`` emits structured events only at this source's actual
     execution boundaries (fetch/stage/quality) (#496) — incomplete stages
     are not misrepresented as done. Whether each stage completed is still
-    tracked via ``completed`` list; stages like export (reflected in
-    ``completed``) use ``export_started`` flag for separate tracking —
+    tracked in ``_SourceProgress.completed``; export (not reflected in
+    ``completed``) uses ``_SourceProgress.export_started`` for separate tracking —
     preserving existing partial-run outcome contract (``stages_completed``)
 
     Args:
@@ -690,26 +891,8 @@ def _run_source_pipeline(
             stage (no partial objects left), check only after prior
     """
     output_key = _output_source_key(source)
-    completed: list[str] = []
-    outputs: list[str] = []
-    provenance_entry: SourceProvenance | None = None
-    evaluated_row_count: int | None = None
-    captured_silver: SilverDataset | None = None
-    captured_silver_path: Path | None = None
-    # Structured Quality/Schema results survive exceptions (schema validation
-    # failure, quality FAIL, etc.) and outlive the source failure outcome
-    # (#486) — quality_results won't be lost due to exceptions below.
-    quality_results: tuple[QualityCheckResult, ...] = ()
-    quality_evaluated = False
-    schema_drift: tuple[SchemaDriftFinding, ...] = ()
-    drift_evaluation: tuple[DriftEvaluation, ...] = ()
-    # Track export stage progress separately from completed list (#496) —
-    # export runs after gold completion but isn't reflected in existing
-    # outcome model (stages_completed). fetch_completed separately tracks
-    # whether fetch succeeded vs. bronze persist success (persist can fail
-    # *after* fetch), distinguishing success boundaries.
-    export_started = False
-    fetch_completed = False
+    # Everything a cancelled or failed source still reports (#486, #496), in one place.
+    progress = _SourceProgress()
     gold_selection: GoldSelectionResult | None = None
     pii_declared: dict[str, tuple[str, ...]] | None = None
     pii_masking: PiiMaskResult | None = None
@@ -765,7 +948,7 @@ def _run_source_pipeline(
             staging_dir=staging_dir,
         )
         recorder.source_fetch_completed(output_key, record_count=bronze.record_count)
-        fetch_completed = True
+        progress.fetch_completed = True
         bronze = _retag_bronze_artifact(bronze, output_key=output_key)
         bronze_paths = persist_bronze_artifact(
             bronze, output_root=context.output_root, run_id=context.run_id
@@ -773,19 +956,21 @@ def _run_source_pipeline(
         shutil.rmtree(checkpoint_path, ignore_errors=True)
         resumed_combinations = bronze.resumed_combinations
         total_combinations = len(bronze.call_totals)
-        completed.append("bronze")
+        progress.completed.append("bronze")
         recorder.stage_completed(
             output_key,
             "bronze",
             message="Bronze written",
             metrics={"records": bronze.record_count},
         )
-        _record_output_paths(outputs, bronze_paths.records_path, bronze_paths.metadata_path)
+        _record_output_paths(
+            progress.outputs, bronze_paths.records_path, bronze_paths.metadata_path
+        )
         # Finalize immediately after bronze success: even if later stages fail
         # (partial failure), provenance survives (same as pre-parallelization
         # immediate append to shared list) (#247).
         provenance_provider, provenance_dataset = source_identity(source)
-        provenance_entry = build_source_provenance(
+        progress.provenance_entry = build_source_provenance(
             provider=provenance_provider,
             dataset=provenance_dataset,
             fetched_at=bronze.fetched_at,
@@ -830,23 +1015,23 @@ def _run_source_pipeline(
         # Closed before its connection (ExitStack runs callbacks last-in first-out), so a
         # late use of the table is a clear error, not a DuckDB one.
         resources.callback(silver.table.close)
-        evaluated_row_count = silver.statistics.row_count
+        progress.row_count = silver.statistics.row_count
 
         # Structured Quality/Schema evaluation (#486). Uses same common
         # evaluator as Preview — if exception occurs below, quality_results
         # already filled, surviving in failure outcome (#486).
-        quality_results = evaluate_quality(
+        progress.quality_results = evaluate_quality(
             silver,
             context.spec.quality,
             source_key=output_key,
             required_columns=required_columns,
             column_dtypes=column_dtypes,
         )
-        quality_evaluated = True
+        progress.quality_evaluated = True
         # Quality checkpoint event (#496) reflects #486 verdict — even if FAIL
         # causes source failure below, evaluation actually occurred and results
         # already recorded (partial-run visibility).
-        recorder.quality_evaluated(output_key, quality_results)
+        recorder.quality_evaluated(output_key, progress.quality_results)
 
         # Fail source if Silver validation failed. Validation is now a gate,
         # not advisory (#189). Existing error message contract preserved for
@@ -873,111 +1058,31 @@ def _run_source_pipeline(
         )
         publish_unmasked = source.gold.publish_unmasked if source.gold is not None else ()
 
-        # PII scan gate (#441, QG-1). Original values not included in
-        # results/logs. block: fail on detection, warn: manifest/log warning,
-        # allow: pass through. allow_columns and declared columns Gold masks are
-        # handled; a publish_unmasked column is not (#902).
-        if context.spec.pii is not None:
-            handled = set(context.spec.pii.allow_columns) | columns_masked_in_gold(
-                pii_declared, publish_unmasked
-            )
-            findings = [f for f in scan_pii(silver.table) if f.column not in handled]
-            if findings:
-                if context.spec.pii.mode == "block":
-                    raise DatasetValidationError(
-                        [f"PII 검출({f.kind}) @ {f.column}: {f.count}건" for f in findings]
-                    )
-                if context.spec.pii.mode == "warn":
-                    logger.warning(
-                        "PII 의심 컬럼 (warn): %s",
-                        ", ".join(f"{f.kind}@{f.column}({f.count})" for f in findings),
-                    )
-
-        # Quality WARN/FAIL gate (#446, #486). WARN logs only, continues;
-        # FAIL halts source before Gold entry. quality_results already filled
-        # above, survives even if raise here.
-        fail_results = [r for r in quality_results if r.status == "fail"]
-        if fail_results:
-            raise DatasetValidationError(_quality_failure_messages(fail_results))
-        for r in quality_results:
-            if r.status == "warn":
-                logger.warning(
-                    "품질 위반(warn): %s%s actual=%s threshold=%s (#486)",
-                    r.rule,
-                    f" @ {r.column}" if r.column else "",
-                    r.actual,
-                    r.threshold,
-                )
-
-        # Drift detection (#445, DRIFT-1). Compared only against earlier successful
-        # runs of the same dataset_id and source_key, so another dataset's silver
-        # cannot manufacture drift (#486), and only against the same owner (#700):
-        # another user's run as the baseline turns row count and schema changes into
-        # a metadata side channel.
-        #
-        # The two axes do not share a baseline (#700). Columns should not depend on
-        # which region was collected, so the schema axis takes the newest owned run.
-        # A row count only means something against the same population read under
-        # the same contract, so the volume axis takes the newest owned run that
-        # matches both — and reports why when none does, instead of comparing.
-        baseline = find_previous_silver(
-            context.output_root,
-            context.run_id,
-            dataset_id=context.spec.dataset_id,
-            source_key=output_key,
-            owner_id=baseline_owner_id,
+        _check_pii_scan(
+            silver,
+            context.spec.pii,
+            pii_declared=pii_declared,
+            publish_unmasked=publish_unmasked,
         )
-        volume_baseline = find_previous_silver(
-            context.output_root,
-            context.run_id,
-            dataset_id=context.spec.dataset_id,
-            source_key=output_key,
-            owner_id=baseline_owner_id,
-            comparable=_volume_comparability(source),
+        _check_quality(progress.quality_results)
+
+        progress.schema_drift, progress.drift_evaluation = _evaluate_drift(
+            silver,
+            source,
+            context=context,
+            output_key=output_key,
+            baseline_owner_id=baseline_owner_id,
         )
-        drift_findings: list[DriftFinding] = []
-        evaluations: list[DriftEvaluation] = []
-        for axis, found in (("schema", baseline), ("volume", volume_baseline)):
-            if isinstance(found, SilverBaseline):
-                drift_findings.extend(
-                    f
-                    for f in detect_drift(
-                        silver.schema, silver.statistics, found.schema, found.stats
-                    )
-                    if (f.kind in VOLUME_FINDING_KINDS) == (axis == "volume")
-                )
-                evaluations.append(
-                    DriftEvaluation(
-                        axis=axis,
-                        evaluated=True,
-                        baseline_snapshot_id=found.run_id,
-                        detail=f"compared against run {found.run_id}",
-                    )
-                )
-            else:
-                # Leaving the findings empty drops the key from the manifest, and then
-                # "there was no baseline" and "compared, nothing changed" are the same
-                # answer on the wire (#700). Record the failure to evaluate explicitly.
-                evaluations.append(
-                    DriftEvaluation(
-                        axis=axis, evaluated=False, reason=found.reason, detail=found.detail
-                    )
-                )
-                logger.info("드리프트 미평가(%s): %s — %s (#700)", axis, output_key, found.detail)
-        schema_drift = _to_schema_drift_findings(drift_findings)
-        for f in drift_findings:
-            logger.warning("드리프트 감지: %s @ %s — %s (#445)", f.kind, f.column, f.detail)
-        drift_evaluation = tuple(evaluations)
 
         silver_paths = persist_silver_dataset(
             silver, output_root=context.output_root, run_id=context.run_id
         )
-        completed.append("silver")
+        progress.completed.append("silver")
         recorder.stage_completed(
             output_key,
             "silver",
             message="Silver written",
-            metrics={"row_count": evaluated_row_count},
+            metrics={"row_count": progress.row_count},
         )
         # Capture Silver only after passing all gates (schema/PII/quality) —
         # composition (#506) uses this value directly for join, so validated
@@ -985,10 +1090,10 @@ def _run_source_pipeline(
         if capture_silver:
             # Composition reads the persisted table file after this source's connection
             # has closed (#876).
-            captured_silver = silver
-            captured_silver_path = silver_paths.table_path
+            progress.silver = silver
+            progress.silver_table_path = silver_paths.table_path
         _record_output_paths(
-            outputs,
+            progress.outputs,
             silver_paths.table_path,
             silver_paths.schema_path,
             silver_paths.stats_path,
@@ -1043,12 +1148,12 @@ def _run_source_pipeline(
         gold_paths = persist_gold_package(
             gold, output_root=context.output_root, run_id=context.run_id
         )
-        completed.append("gold")
+        progress.completed.append("gold")
         recorder.stage_completed(
             output_key, "gold", message="Gold written", metrics={"row_count": gold.table.height}
         )
         _record_output_paths(
-            outputs,
+            progress.outputs,
             gold_paths.table_path,
             gold_paths.package_path,
             *gold_paths.splits_paths.values(),
@@ -1061,12 +1166,12 @@ def _run_source_pipeline(
         # export stage (#496): SourceBuildOutcome.stages_completed unchanged
         # (existing model per #488 stage API), but actual export execution
         # boundary records started/completed/failed separately.
-        export_started = True
+        progress.export_started = True
         recorder.stage_started(output_key, "export")
         export_paths = export_gold_package(
             gold, output_dir=gold_paths.gold_dir, table_path=gold_paths.table_path
         )
-        _record_output_paths(outputs, *export_paths)
+        _record_output_paths(progress.outputs, *export_paths)
 
         card = build_dataset_card(
             title=context.spec.title,
@@ -1093,13 +1198,16 @@ def _run_source_pipeline(
             # Where the data comes from and what was done to it (#694).
             provenance=(
                 card_source(
-                    source, spec=context.spec, provenance=provenance_entry, label=output_key
+                    source,
+                    spec=context.spec,
+                    provenance=progress.provenance_entry,
+                    label=output_key,
                 ),
             ),
             processing=processing_steps(source, context.spec),
             personal_information=personal_information(context.spec, pii_masking),
         )
-        _record_output_paths(outputs, *write_card(gold_paths.gold_dir, card))
+        _record_output_paths(progress.outputs, *write_card(gold_paths.gold_dir, card))
 
         # BuildSpec.exports fully executed above by export_gold_package —
         # package.export_plan.targets is spec.exports (#629). Previously,
@@ -1118,18 +1226,18 @@ def _run_source_pipeline(
         )
         return _SourcePipelineResult(
             outcome=SourceBuildOutcome(
-                source_key=output_key, status="ok", stages_completed=tuple(completed)
+                source_key=output_key, status="ok", stages_completed=tuple(progress.completed)
             ),
-            output_paths=tuple(outputs),
-            row_count=evaluated_row_count,
+            output_paths=tuple(progress.outputs),
+            row_count=progress.row_count,
             schema_summary=schema_summary,
-            provenance_entry=provenance_entry,
-            quality_results=quality_results,
-            quality_evaluated=quality_evaluated,
-            schema_drift=schema_drift,
-            drift_evaluation=drift_evaluation,
-            silver=captured_silver,
-            silver_table_path=captured_silver_path,
+            provenance_entry=progress.provenance_entry,
+            quality_results=progress.quality_results,
+            quality_evaluated=progress.quality_evaluated,
+            schema_drift=progress.schema_drift,
+            drift_evaluation=progress.drift_evaluation,
+            silver=progress.silver,
+            silver_table_path=progress.silver_table_path,
             gold_selection=gold_selection,
             pii_declared=pii_declared,
             pii_masking=pii_masking,
@@ -1139,61 +1247,15 @@ def _run_source_pipeline(
         # Cooperative cancellation is not failure (#481) — caught before
         # common except below so not interpreted as "this source failed". No
         # failure events (stage_failed/source_fetch_failed), error field empty.
-        # Already completed stages (completed) and outputs preserved in partial
-        # manifest — unstarted stages never recorded as successful.
-        return _SourcePipelineResult(
-            outcome=SourceBuildOutcome(
-                source_key=output_key,
-                status="cancelled",
-                stages_completed=tuple(completed),
-            ),
-            output_paths=tuple(outputs),
-            row_count=evaluated_row_count,
-            provenance_entry=provenance_entry,
-            quality_results=quality_results,
-            quality_evaluated=quality_evaluated,
-            schema_drift=schema_drift,
-            drift_evaluation=drift_evaluation,
-            silver=captured_silver,
-            silver_table_path=captured_silver_path,
-        )
+        # Already completed stages and outputs preserved in partial manifest —
+        # unstarted stages never recorded as successful.
+        return progress.stopped(output_key, "cancelled")
     except Exception as exc:  # Convert stage failure to result for manifest
         # Shared with preview (#954): allow-listed errors keep their message, any
         # other is logged server-side and replaced with a generic one (#225).
         failure = source_failure(exc, output_key, provider_keys=provider_keys)
-        error_msg = failure.message
-        # Record failure event per last boundary actually reached (#496) —
-        # completed list is authoritative for "how far did each stage get",
-        # so next stage is the failed one. Unstarted stages don't record as
-        # failures (no events at all).
-        if "bronze" not in completed:
-            if not fetch_completed:
-                recorder.source_fetch_failed(output_key, message=error_msg, reason=failure.reason)
-            recorder.stage_failed(output_key, "bronze", message=error_msg)
-        elif "silver" not in completed:
-            recorder.stage_failed(output_key, "silver", message=error_msg)
-        elif "gold" not in completed:
-            recorder.stage_failed(output_key, "gold", message=error_msg)
-        elif export_started:
-            recorder.stage_failed(output_key, "export", message=error_msg)
-        return _SourcePipelineResult(
-            outcome=SourceBuildOutcome(
-                source_key=output_key,
-                status="failed",
-                stages_completed=tuple(completed),
-                error=error_msg,
-                reason=failure.reason,
-            ),
-            output_paths=tuple(outputs),
-            row_count=evaluated_row_count,
-            provenance_entry=provenance_entry,
-            quality_results=quality_results,
-            quality_evaluated=quality_evaluated,
-            schema_drift=schema_drift,
-            drift_evaluation=drift_evaluation,
-            silver=captured_silver,
-            silver_table_path=captured_silver_path,
-        )
+        _record_source_failure(recorder, output_key, progress, failure)
+        return progress.stopped(output_key, "failed", error=failure.message, reason=failure.reason)
     finally:
         # The connection first: its tables and temp files go before the staged records.
         resources.close()
