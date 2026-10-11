@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- The compose bundle's Studio now starts with Ask KPubData off (#1274). The default `STUDIO_REF` moves to a Studio commit that includes kpubdata-studio#933 and #936, so a Studio from the bundle no longer sends questions and data to any https address, and its Content-Security-Policy `connect-src` has no bare `https:`. The `studio` service passes `ASSISTANT_ENABLED` (from `STUDIO_ASSISTANT_ENABLED`, default `false`), `ASSISTANT_ALLOWED_ORIGINS` and `ACCOUNT_URL`; the Docker smoke asserts the assistant is off, and a test fails if the default `STUDIO_REF` falls behind the commit that added this.
 - Expired runs can be collected safely, and a deployment can refuse a build there is no room for (#1099, API contract 1.118.0, additive). Every limit is off until the maintainer sets it.
   - `kpubdata-builder prune-runs --output-dir DIR [--warehouse DIR] [--retention-days N] [--apply]` lists the succeeded and failed runs whose manifest `finished_at` is older than the retention (`KPUBDATA_BUILDER_RUN_RETENTION_DAYS`), each with its size, and the space removing them frees; it deletes only with `--apply`, and running it again is safe. Cancelled runs keep `prune-cancelled`'s policy. A file's modification time is never used.
   - A run is kept, with the reason printed, while it is running, while an unfinished run retries it, while a publish receipt names it, or while the warehouse has a committed snapshot of it — held, leased or not. The references are read again just before each run is deleted.

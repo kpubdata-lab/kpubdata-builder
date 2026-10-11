@@ -207,7 +207,7 @@ services:
   # STUDIO_REF 는 브랜치가 아니라 커밋이나 태그로 둔다: 같은 값이면 같은 화면이 올라온다.
   studio:
     build:
-      context: https://github.com/kpubdata-lab/kpubdata-studio.git#${STUDIO_REF:-023f0c3c84a2d794bf68aa027ef0e4b56bfd1ade}
+      context: https://github.com/kpubdata-lab/kpubdata-studio.git#${STUDIO_REF:-978216b44a7e9fd805490758f7d176c002d00582}
     container_name: kpubdata-studio
     restart: unless-stopped
     profiles:
@@ -222,6 +222,12 @@ services:
       PRIVACY_URL: ${STUDIO_PRIVACY_URL:-}
       TERMS_URL: ${STUDIO_TERMS_URL:-}
       SUPPORT_CONTACT: ${STUDIO_SUPPORT_CONTACT:-}
+      ACCOUNT_URL: ${STUDIO_ACCOUNT_URL:-}
+      # Ask KPubData 는 기본이 꺼짐이다(kpubdata-studio#933): 켜지 않으면 외부 AI 로 아무것도
+      # 보내지 않고 CSP connect-src 에도 https: 가 없다. 켜면 ALLOWED_ORIGINS 의 https
+      # origin 으로만 질문과 근거가 나간다.
+      ASSISTANT_ENABLED: ${STUDIO_ASSISTANT_ENABLED:-false}
+      ASSISTANT_ALLOWED_ORIGINS: ${STUDIO_ASSISTANT_ALLOWED_ORIGINS:-}
     ports:
       # Builder 와 같이 기본은 루프백이다. 공개 주소는 앞단(Cloudflare Tunnel, 프록시)이 낸다.
       - "${STUDIO_BIND:-127.0.0.1:8080}:8080"

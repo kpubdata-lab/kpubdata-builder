@@ -20,7 +20,9 @@ for every service's health check, and then asks, from inside the network:
   are ``proxy_chain_smoke.py``'s and are not repeated here.
 - ``studio``: the page and ``/config.js`` are served, ``/config.js`` names the Builder
   address the stack was given, and the call the browser makes to that address — with
-  the page's origin — answers 200 and is allowed by CORS.
+  the page's origin — answers 200 and is allowed by CORS. Ask KPubData is off by
+  default: ``assistantEnabled`` is ``"false"`` and the page's Content-Security-Policy
+  ``connect-src`` holds no bare ``https:`` (kpubdata-studio#933).
 
 ``--published`` asks the registry for every image the deployment compose files name
 (``image_rescan.deployed_images``, the same list the scheduled rescan reads) and fails
@@ -131,6 +133,19 @@ def _expect(problems: list[str], profile: str, what: str, ok: bool) -> None:
         problems.append(f"[{profile}] {what}")
 
 
+def assistant_off(config: str, headers: dict[str, str]) -> bool:
+    """True when ``/config.js`` and the page's CSP say Ask KPubData is off."""
+    policy = {key.lower(): value for key, value in headers.items()}.get(
+        "content-security-policy", ""
+    )
+    connect = [
+        directive.split()[1:]
+        for directive in policy.split(";")
+        if directive.strip().startswith("connect-src")
+    ]
+    return '"assistantEnabled": "false"' in config and bool(connect) and "https:" not in connect[0]
+
+
 def readiness_ok(answer: Answer) -> bool:
     """``/readyz`` answered, unauthenticated, as a ready service does (#1101).
 
@@ -191,6 +206,12 @@ def check_profile(override: Path, profile: str) -> list[str]:
             profile,
             "Studio's /config.js names the Builder address it was given",
             config.status == 200 and f'"builderApiUrl": "{BUILDER_URL}"' in config.body,
+        )
+        _expect(
+            problems,
+            profile,
+            "Ask KPubData is off by default (assistantEnabled false, no https: in connect-src)",
+            assistant_off(config.body, page.headers),
         )
         call = _get(override, profile, f"{BUILDER_URL}/version", {**key, "Origin": STUDIO_ORIGIN})
         _expect(
