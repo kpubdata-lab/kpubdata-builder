@@ -229,6 +229,13 @@ OUTPUT_PATHS: tuple[OutputPath, ...] = (
         why="내보내기마다 디렉터리 하나",
     ),
     OutputPath(
+        name="사용자 삭제 기록(tombstone)",
+        pattern=".service/deleted-users",
+        is_dir=True,
+        kind="files",
+        why="`delete-user` 가 사용자마다 남기는 삭제 journal. 서버는 이것이 있는 사용자를 거부하고, `restore` 는 지금의 기록을 복원하는 상태로 옮긴 뒤 그 사용자의 데이터를 다시 지운다(#1102)",
+    ),
+    OutputPath(
         name="상태 잠금",
         pattern=".state.lock",
         is_dir=False,

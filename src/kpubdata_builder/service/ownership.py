@@ -81,6 +81,15 @@ def warehouse_workspace(owner_id: str | None) -> str:
     """
     if owner_id is None or not enforce_ownership():
         return PERSONAL_WORKSPACE
+    return owner_workspace(owner_id)
+
+
+def owner_workspace(owner_id: str) -> str:
+    """The workspace of ``owner_id``'s own, whether or not ownership is enforced now.
+
+    What ``warehouse_workspace`` names when it is. A user's deletion (#1102) reads it
+    directly: a command run without the server's environment must still find it.
+    """
     return "ws_" + hashlib.sha256(owner_id.encode("utf-8")).hexdigest()[:16]
 
 

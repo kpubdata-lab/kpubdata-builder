@@ -22,7 +22,7 @@ from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from . import __version__, logging_redaction
 from .errors import PublishError, SpecLoadError, ValidationError
@@ -54,6 +54,9 @@ from .warehouse import (
 )
 from .warehouse import backup as warehouse_backup
 from .warehouse import gc as warehouse_gc
+
+if TYPE_CHECKING:
+    from .service.user_deletion import DeletionReport
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -436,6 +439,52 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         help="Actually delete the expired runs. Without this flag the command is a dry run.",
+    )
+
+    delete_user_cmd = subparsers.add_parser(
+        "delete-user",
+        help=(
+            "Delete one user and their data step by step, and shut them out first (#1102). "
+            "Without --apply, only says what would go."
+        ),
+    )
+    delete_user_cmd.add_argument(
+        "user_id",
+        metavar="USER_ID",
+        nargs="?",
+        default=None,
+        help="The user's id as `GET /admin/users` gives it (oidc:...). Not with --resume.",
+    )
+    delete_user_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    delete_user_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help="Table catalog root (default: KPUBDATA_BUILDER_WAREHOUSE, or none).",
+    )
+    delete_user_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete. Without this flag the command is a dry run and writes nothing.",
+    )
+    delete_user_cmd.add_argument(
+        "--wait",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "How long to wait for the user's builds to end before refusing (default: 0). "
+            "The server cancels them once the deletion has begun."
+        ),
+    )
+    delete_user_cmd.add_argument(
+        "--resume",
+        action="store_true",
+        help="Finish every deletion that began and did not complete; give no USER_ID.",
     )
 
     gc_cmd = subparsers.add_parser(
@@ -1349,6 +1398,14 @@ def _run_state_restore(*, archive: str | None, output_dir: str, recover: bool) -
     if result.previous is not None:
         print(f"the state it replaced is in {result.previous}; delete it once satisfied")
     print(f"rebuilt the build index from the manifests: {result.indexed} run(s)")
+    for subject in result.deletions_reapplied:
+        state = "still blocked" if subject in result.deletions_pending else "complete"
+        print(f"deleted again the user of deletion {subject}, whose data the archive held: {state}")
+    if result.deletions_pending:
+        print(
+            "the user of a blocked deletion stays shut out; run `kpubdata-builder delete-user "
+            "--resume` once what blocks it is resolved"
+        )
     print(
         f"set {state_backup.MASTER_KEY_VARIABLE} to the key the backup was taken with, or the "
         "restored provider keys cannot be read"
@@ -1584,6 +1641,82 @@ def _run_prune_runs(
         flush=True,
     )
     return 0
+
+
+def _print_deletion(report: DeletionReport) -> None:
+    mode = "deleted" if report.applied else "would delete"
+    for step in report.steps:
+        if step.step in ("tombstone", "verify") and not step.blocked:
+            continue
+        if step.step != "jobs" and not step.blocked:
+            print(f"{mode}: {step.step} ({step.removed})", flush=True)
+        for reason in step.blocked:
+            print(f"blocked: {step.step}: {reason}", flush=True)
+
+
+def _run_delete_user(
+    *,
+    user_id: str | None,
+    output_dir: str,
+    warehouse: str | None,
+    apply: bool,
+    wait_seconds: float,
+    resume: bool,
+) -> int:
+    """Delete a user and their data, or say what would go (#1102).
+
+    Exit 0 when the deletion is complete (or, as a dry run, when nothing blocks it), 1
+    when something blocks it — what does is printed — and 2 for a wrong invocation.
+    The deletion's subject, not the user's id, is what the output and the audit name.
+    """
+    from .service import user_deletion
+
+    if resume == (user_id is not None):
+        print("error: give either USER_ID or --resume", file=sys.stderr)
+        return 2
+    if wait_seconds < 0:
+        print("error: --wait must be >= 0", file=sys.stderr)
+        return 2
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+    output_root = Path(output_dir)
+    warehouse_root = Path(warehouse) if warehouse else None
+    try:
+        if resume:
+            reports = user_deletion.resume_pending(
+                output_root, warehouse_root=warehouse_root, wait_seconds=wait_seconds
+            )
+            if not reports:
+                print(f"no unfinished deletion in {output_root}")
+        else:
+            assert user_id is not None  # noqa: S101 - checked above
+            reports = (
+                user_deletion.delete_user(
+                    output_root,
+                    user_id,
+                    warehouse_root=warehouse_root,
+                    apply=apply,
+                    wait_seconds=wait_seconds,
+                ),
+            )
+    except user_deletion.DeletionRefused as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    blocked = False
+    for report in reports:
+        mode = "APPLY (deleting)" if report.applied else "dry run (nothing will be changed)"
+        print(f"deletion {report.subject} — {mode}", flush=True)
+        _print_deletion(report)
+        blocked = blocked or bool(report.blocked)
+        if report.applied and report.complete:
+            print(f"deletion {report.subject} is complete", flush=True)
+        elif report.applied:
+            print(
+                f"deletion {report.subject} is not complete; the user stays shut out. "
+                "Resolve what is blocked and run this again (or `delete-user --resume`).",
+                flush=True,
+            )
+    return 1 if blocked else 0
 
 
 def _run_discover(url: str, *, dataset_id: str | None, output: str | None) -> int:
@@ -1840,6 +1973,9 @@ def _written_roots(args: argparse.Namespace) -> list[Path]:
         # The warehouse is read, not written, but a restore must not swap it midway.
         warehouse = args.warehouse or os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
         return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
+    if command == "delete-user":
+        warehouse = args.warehouse or os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+        return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
     if command in ("warehouse-gc", "warehouse-hold"):
         return [Path(args.warehouse)]
     return []
@@ -1970,6 +2106,15 @@ def _dispatch(args: argparse.Namespace) -> int:
             output_dir=args.output_dir,
             ttl_hours=args.ttl_hours,
             apply=args.apply,
+        )
+    if command == "delete-user":
+        return _run_delete_user(
+            user_id=args.user_id,
+            output_dir=args.output_dir,
+            warehouse=args.warehouse,
+            apply=args.apply,
+            wait_seconds=args.wait,
+            resume=args.resume,
         )
     if command == "prune-runs":
         return _run_prune_runs(

@@ -73,7 +73,7 @@ from .build_slots import BuildSlots
 from .builds_api import BuildArtifactsApiService
 from .datasets_api import DatasetsApiService
 from .exports_api import ExportsApiService
-from .jobs import AsyncBuildExecutor
+from .jobs import AsyncBuildExecutor, RunCancellation
 from .monitoring_api import MonitoringApiService
 from .pii_reads import PiiLookup, client_pii_lookup
 from .probe_limit import ProbeLimiter
@@ -111,8 +111,14 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import ExpiringUploads, UploadsService
+from .user_deletion import OwnerDeletionProbe, is_deleted
+from .user_ledger import (
+    REJECTED_BODY,
+    LedgerUnavailableError,
+    UserLedger,
+    admission_refusal,
+)
 from .user_ledger import SCHEMA as user_ledger_schema
-from .user_ledger import LedgerUnavailableError, UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
 logger = logging.getLogger(__name__)
@@ -1239,7 +1245,17 @@ class BuilderService:
         cancellation: CancellationProbe | None = None,
         if_absent: bool = False,
     ) -> ServiceResponse:
-        """Execute the pipeline and return the result (see ``BuildRunsApiService.build``)."""
+        """Execute the pipeline and return the result (see ``BuildRunsApiService.build``).
+
+        A synchronous build of a user is given a probe that stops it once the user is
+        deleted (#1102): one that began before the deletion must not write a run after it.
+        """
+        owner = manifest_owner_id if manifest_owner_id is not None else owner_id
+        if cancellation is None and owner is not None:
+            latch = RunCancellation()
+            cancellation = OwnerDeletionProbe(
+                latch, lambda: self.owner_deleted(owner), latch.request
+            )
         return self._build_runs.build(
             spec_yaml,
             run_id=run_id,
@@ -1267,7 +1283,47 @@ class BuilderService:
 
         The runner is ``self._run_build_job``, looked up now, so a subclass override
         is what the worker calls.
+
+        A deleted owner's build is refused before anything is recorded (#1102), and the
+        deletion is read again once the job is accepted: a request let in just before
+        the deletion began is cancelled there. The submission is recorded before that
+        second check, so a deletion either sees the run or the check sees the deletion.
         """
+        if owner_id is not None and self.owner_deleted(owner_id):
+            return ServiceResponse(403, dict(REJECTED_BODY))
+        response = self._submit_build(
+            spec_yaml,
+            run_id=run_id,
+            created_by=created_by,
+            owner_id=owner_id,
+            retry_of=retry_of,
+            if_absent=if_absent,
+        )
+        accepted = response.body.get("run_id")
+        if (
+            response.status_code == 202
+            and owner_id is not None
+            and isinstance(accepted, str)
+            and self.owner_deleted(owner_id)
+        ):
+            self.cancel_build(accepted)
+            return ServiceResponse(403, dict(REJECTED_BODY))
+        return response
+
+    def owner_deleted(self, owner_id: str) -> bool:
+        """Whether ``owner_id``'s deletion has begun (#1102): read from disk each time."""
+        return is_deleted(self._output_root, owner_id)
+
+    def _submit_build(
+        self,
+        spec_yaml: str,
+        *,
+        run_id: str | None,
+        created_by: str | None,
+        owner_id: str | None,
+        retry_of: str | None,
+        if_absent: bool,
+    ) -> ServiceResponse:
         return self._build_runs.submit_build(
             spec_yaml,
             runner=self._run_build_job,
@@ -1445,6 +1501,18 @@ class BuilderService:
             # The submission asked for new tables (#1223).
             build = partial(build, if_absent=True)
         try:
+            if manifest_owner_id is not None:
+                owner = manifest_owner_id
+                if self.owner_deleted(owner):
+                    # Deleted while the job waited (#1102): it never starts. The registry
+                    # ends it as cancelled, and the hook records why.
+                    self._async_builds.request_cancel(run_id)
+                    return ServiceResponse(409, {"error": "build cancelled", "run_id": run_id})
+                cancellation = OwnerDeletionProbe(
+                    cancellation,
+                    lambda: self.owner_deleted(owner),
+                    lambda: self._async_builds.request_cancel(run_id),
+                )
             with request_credentials.request_scope(keys):
                 # The keys were there when the job was submitted (#1070) and are not
                 # now: it waited in the queue longer than a job's keys are kept. Without
@@ -1921,6 +1989,11 @@ def _dispatch_impl(
     principal = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
     if isinstance(principal, ServiceResponse):
         return principal
+
+    # A deleted user (#1102) is refused as a rejected sign-up, before the ledger is read:
+    # reading it would record them anew, as a first sign-in.
+    if principal.owner_id is not None and service.owner_deleted(principal.owner_id):
+        return ServiceResponse(403, dict(REJECTED_BODY))
 
     # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
     # administrator; a rejected one is shut out even when a list admits them.

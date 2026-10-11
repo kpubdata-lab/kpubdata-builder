@@ -49,6 +49,9 @@ positional arguments:
     prune-runs       List (and optionally delete) succeeded and failed runs
                      past their retention, keeping any run something still
                      refers to (#1099).
+    delete-user      Delete one user and their data step by step, and shut
+                     them out first (#1102). Without --apply, only says what
+                     would go.
     warehouse-gc     Reclaim snapshots and staging directories nothing needs
                      any more (#738).
     warehouse-backup
@@ -346,6 +349,34 @@ pruning expired runs under /data, retention 30 day(s) — dry run (nothing will 
 would delete: 20260801T000000Z (ok, finished 2026-08-01T00:10:00+00:00, 12.3 MB)
 kept: 20260802T000000Z (published)
 1 run(s) to delete, would free 12.3 MB; 1 expired run(s) kept, 4 within the retention
+```
+
+---
+
+### delete-user — 사용자와 그 데이터의 삭제
+
+삭제 요청을 받은 사용자 한 명과 그 데이터를 지운다. `USER_ID` 는 `GET /admin/users` 가 주는
+`user_id`(`oidc:...`)다. 기본은 dry run 이라 단계마다 지울 개수만 적고 아무것도 쓰지 않는다.
+`--apply` 를 주면 먼저 삭제 기록(tombstone)을 남겨 서버가 그 사용자를 거부하게 하고, 그다음
+단계별로 지운다. 무엇이 막으면(끝나지 않은 빌드, hold·lease 가 있는 snapshot) 그것을 적고 종료
+코드 1 로 멈추며, 다시 돌리면 이어서 끝낸다. 자세한 동작은 [배포 가이드 §6.4](../deploy.md) 에 있다.
+
+```console
+$ kpubdata-builder delete-user oidc:3f9a… --output-dir /data --warehouse /data/warehouse
+deletion 5c1e… — dry run (nothing will be changed)
+would delete: analyses (1)
+would delete: exports (0)
+would delete: warehouse (2)
+would delete: runs (3)
+would delete: uploads (1)
+would delete: provider_keys (1)
+would delete: provider_tests (1)
+would delete: ledger (1)
+$ kpubdata-builder delete-user oidc:3f9a… --output-dir /data --warehouse /data/warehouse --apply --wait 60
+…
+deletion 5c1e… is complete
+$ kpubdata-builder delete-user --resume --output-dir /data --warehouse /data/warehouse
+no unfinished deletion in /data
 ```
 
 ---

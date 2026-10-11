@@ -27,7 +27,7 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -309,6 +309,35 @@ class BuildEventStore:
             submitted_at=str(row[2]),
             retry_of=None if row[3] is None else str(row[3]),
         )
+
+    def runs_submitted_by(self, owner_id: str) -> tuple[str, ...]:
+        """The runs ``owner_id`` submitted, as recorded (#1102)."""
+        rows = self._conn.execute(
+            "SELECT run_id FROM run_submissions WHERE owner_id = ? ORDER BY run_id", (owner_id,)
+        ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def submission_owners(self) -> frozenset[str]:
+        """Every owner a submission names (#1102)."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT owner_id FROM run_submissions WHERE owner_id IS NOT NULL"
+        ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    def forget_runs(self, run_ids: Sequence[str]) -> int:
+        """Remove every row of ``run_ids`` — events, submission, ending (#1102).
+
+        The one exception to append-only: a user's deletion erases their runs, and the
+        submission row names them. Returns the event rows removed.
+        """
+        removed = 0
+        with self._transaction():
+            for run_id in run_ids:
+                cur = self._conn.execute("DELETE FROM build_events WHERE run_id = ?", (run_id,))
+                removed += max(cur.rowcount, 0)
+                self._conn.execute("DELETE FROM run_submissions WHERE run_id = ?", (run_id,))
+                self._conn.execute("DELETE FROM run_endings WHERE run_id = ?", (run_id,))
+        return removed
 
     def record_ending(
         self, run_id: str, *, status: str, stage: str, code: str, summary: str, at: datetime
