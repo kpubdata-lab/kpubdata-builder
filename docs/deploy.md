@@ -461,14 +461,15 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 
 | 구성 요소 | 호스팅 | 산출물 |
 | :--- | :--- | :--- |
-| Studio(프론트엔드) | Cloudflare Pages 정적 배포 | studio 저장소 (`VITE_BUILDER_API_URL`=Builder 의 공개 주소) |
+| Studio(프론트엔드) | Cloudflare Pages 정적 배포, 또는 같은 VM 의 `--profile studio` | studio 저장소 (`VITE_BUILDER_API_URL`, 컨테이너에서는 `STUDIO_BUILDER_API_URL`=Builder 의 공개 주소) |
 | Builder(백엔드) | VM 의 Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
 | 상태 | VM 에 붙인 디스크 `/data` | `builder-data` 볼륨 (네트워크 FS 금지, §6) |
 | CI/CD | GitHub Actions → GHCR (이미지까지) | `.github/workflows/docker.yml` — VM 으로의 자동 배포는 없다(아래) |
 
 배포 산출물:
 
-- `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy 스택. migration/ETL/DB 없음.
+- `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy, Studio 스택. migration/ETL/DB 없음. 프로필은 아래
+  "프로필과 기동 smoke" 절.
 - `ops/caddy/Caddyfile` — Cloudflare → Caddy → `builder:8000` 리버스 프록시.
 - `.env.app.example` — VM-local `.env` 템플릿(placeholder secret만). `.env`는 커밋 금지.
 - 자동 배포 워크플로(`deploy.yml`)와 rollout 스크립트는 **제거됐다**(2026-10-05). 그 워크플로가
@@ -486,7 +487,55 @@ VM 최초 준비:
 cp .env.app.example .env   # 값 채우고 chmod 600
 docker compose -f docker-compose.prod.app.yml up -d            # IP-only
 docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TLS 진입
+docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio up -d  # Studio 도 같은 VM 에
 ```
+
+### 프로필과 기동 smoke (#692)
+
+배포는 `docker-compose.prod.app.yml` 하나에서 시작한다. 프로필은 셋이고, 함께 켤 수 있다.
+
+| 프로필 | 올라오는 것 | 이미지 |
+| :--- | :--- | :--- |
+| (없음) | Builder | `BUILDER_IMAGE`, 기본 `ghcr.io/kpubdata-lab/kpubdata-builder:latest` |
+| `caddy` | + Caddy (Cloudflare → Caddy → Builder, 80/443) | `caddy:2.8-alpine` |
+| `studio` | + Studio (nginx, `STUDIO_BIND` 기본 `127.0.0.1:8080`) | Studio 저장소의 고정된 커밋(`STUDIO_REF`)에서 빌드 |
+
+- **Studio 는 pull 하지 않고 빌드한다.** Studio 는 아직 이미지를 게시하지 않고, 태그 `v0.4.0` 은 Studio 의
+  Dockerfile 보다 오래됐다. 그래서 compose 는 `image:` 없이 Studio 저장소의 커밋 하나를 빌드한다. 첫 `up` 은
+  Studio 를 빌드하느라 몇 분 걸린다. Studio 가 이미지를 게시하면 고정된 이미지로 바꾼다.
+- **Studio 는 Builder 를 부르지 않는다. 사용자의 브라우저가 부른다**(§1). `STUDIO_BUILDER_API_URL` 은
+  브라우저가 닿는 Builder 주소이고, Studio 페이지의 오리진은 `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 에 있어야 한다.
+  둘 다 비우면 Studio 는 내장 데모 데이터로 뜬다.
+- **CUBRID 스택(`infra/cubrid/`)은 이 묶음에 들어오지 않는다.** CUBRID 백엔드는 퇴역이 제안돼 있다(ADR 0022,
+  #1094). 그 compose 는 그대로 두고, 아래 게시 확인에서 그 이미지가 받아지는지만 본다.
+- **Keycloak 은 이 묶음에 없다.** 인증 서버를 직접 운영할지 관리형 서비스를 쓸지는 아직 정하지 않았다
+  (#1124). 직접 운영하기로 하면 realm 설정, 영속 데이터베이스, SMTP, TLS 를 갖춘 프로필로 더한다.
+
+`Docker` 워크플로가 둘을 확인한다(`scripts/compose_profiles_smoke.py`).
+
+- **프로필별 기동** — 그 실행에서 빌드한 Builder 이미지로 각 프로필을 따로 올리고, 모든 서비스의 헬스체크가
+  통과하기를 기다린 뒤 네트워크 안에서 묻는다. Builder 는 `/healthz` 200, `/version` 이 키와 함께 200, 키 없이
+  401. `caddy` 는 Caddy 의 `/healthz` 와 Caddy 를 거친 `/version`. `studio` 는 페이지와 `/config.js`,
+  `/config.js` 에 적힌 Builder 주소, 그리고 그 주소로 페이지의 오리진을 실어 보낸 호출이 200 이고 CORS 가
+  그 오리진을 허용하는지. 같은 체인의 위조 헤더·보안 헤더·로그는 `proxy_chain_smoke.py` 가, `/data` 의
+  보존은 `data_volume_smoke.py` 가, 종료는 `shutdown_drain_smoke.py` 가 본다 — 여기서 되풀이하지 않는다.
+- **이미지 게시** — 두 compose 파일(`docker-compose.prod.app.yml`, `infra/cubrid/docker-compose.yml`)의 기본
+  이미지가 레지스트리에 있는지 묻는다. #675 처럼 아무 워크플로도 올리지 않는 태그를 기본값으로 두면 여기서
+  실패한다. Builder 의 패키지는 비공개라서 이 작업은 패키지 읽기 권한만 가진 토큰으로 로그인한다 — 로그인
+  없는 VM 에서 `ghcr.io/kpubdata-lab/kpubdata-builder` 를 받으려면 그 VM 도 로그인해야 한다.
+
+로컬에서 같은 것을 돌릴 수 있다. 호스트의 다른 Docker 네트워크가 `172.28.250.0/24` 와 겹치면
+`APP_NET_SUBNET`, `APP_NET_IP_RANGE`, `CADDY_IPV4`, `KPUBDATA_BUILDER_TRUSTED_PROXIES` 를 환경변수로 함께 바꾼다.
+
+```bash
+docker build -t kpubdata-builder:ci .
+python3 scripts/compose_profiles_smoke.py --image kpubdata-builder:ci                    # 세 프로필
+python3 scripts/compose_profiles_smoke.py --image kpubdata-builder:ci --profile studio   # 하나만
+python3 scripts/compose_profiles_smoke.py --published                                    # 게시 확인
+```
+
+이 smoke 가 보지 않는 것: 실제 인증 서버로의 로그인(OIDC), 공개 인증서를 쓰는 TLS, 문서만 보고 깨끗한 VM 에
+올리는 리허설(kpubdata-studio#900), Studio 에서 시작해 빌드 산출물까지 가는 재생 기반 end-to-end 시험.
 
 > fail-closed(§2, ADR 0006): 인증 수단이 하나도 없으면 컨테이너가 기동을 거부한다.
 > `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`는 재기동 사이에 동일 값을 유지해야 한다(ADR 0012).

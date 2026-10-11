@@ -1,0 +1,82 @@
+"""The production compose's profiles and the smoke that starts each of them (#692).
+
+These do not start a container; ``scripts/compose_profiles_smoke.py`` does, in the
+Docker workflow. They hold what keeps that smoke honest: it starts every profile the
+compose file declares, the Studio profile does not ask for an image nobody publishes,
+and the published-image check reports an image the registry does not have.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import sys
+from pathlib import Path
+from types import ModuleType
+
+import yaml
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_script(name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, _ROOT / "scripts" / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+smoke = _load_script("compose_profiles_smoke")
+
+
+def _services() -> dict[str, dict[str, object]]:
+    compose = yaml.safe_load((_ROOT / "docker-compose.prod.app.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    assert isinstance(services, dict)
+    return services
+
+
+def test_the_smoke_starts_every_profile_the_compose_declares() -> None:
+    declared: set[str] = set()
+    for service in _services().values():
+        profiles = service.get("profiles", [])
+        assert isinstance(profiles, list)
+        declared |= {str(profile) for profile in profiles}
+
+    assert declared | {"default"} == set(smoke.PROFILES)
+
+
+def test_studio_is_built_from_a_pinned_commit_not_pulled() -> None:
+    studio = _services()["studio"]
+
+    # An `image:` would be pulled first, and Studio publishes none (#675's case).
+    assert "image" not in studio
+    assert studio["profiles"] == ["studio"]
+    build = studio["build"]
+    assert isinstance(build, dict)
+    context = re.fullmatch(
+        r"https://github\.com/kpubdata-lab/kpubdata-studio\.git#\$\{STUDIO_REF:-(\w+)\}",
+        str(build["context"]),
+    )
+    assert context, build["context"]
+    # A full commit, not a branch: the same value brings up the same screens.
+    assert re.fullmatch(r"[0-9a-f]{40}", context.group(1))
+
+
+def test_studio_listens_on_the_loopback_by_default() -> None:
+    assert _services()["studio"]["ports"] == ["${STUDIO_BIND:-127.0.0.1:8080}:8080"]
+
+
+def test_the_published_check_reads_both_deployment_compose_files() -> None:
+    images = smoke.published_images()
+
+    assert "caddy:2.8-alpine" in images
+    # The CUBRID stack's Builder image: the tag #675 found unpublished.
+    assert "ghcr.io/kpubdata-lab/kpubdata-builder:cubrid" in images
+
+
+def test_an_image_the_registry_does_not_have_is_reported() -> None:
+    assert smoke.missing_images(["a:1", "b:2"], inspect=["false"]) == ["a:1", "b:2"]
+    assert smoke.missing_images(["a:1"], inspect=["true"]) == []

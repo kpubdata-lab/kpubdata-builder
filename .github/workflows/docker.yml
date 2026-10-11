@@ -31,6 +31,9 @@ on:
       - "scripts/proxy_chain_smoke.py"
       - "scripts/data_volume_smoke.py"
       - "scripts/shutdown_drain_smoke.py"
+      - "scripts/compose_profiles_smoke.py"
+      - "scripts/image_rescan.py"
+      - "infra/cubrid/docker-compose.yml"
       - ".github/workflows/docker.yml"
   push:
     branches: [main]
@@ -48,6 +51,9 @@ on:
       - "scripts/proxy_chain_smoke.py"
       - "scripts/data_volume_smoke.py"
       - "scripts/shutdown_drain_smoke.py"
+      - "scripts/compose_profiles_smoke.py"
+      - "scripts/image_rescan.py"
+      - "infra/cubrid/docker-compose.yml"
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
@@ -170,6 +176,12 @@ jobs:
       - name: Shutdown drain smoke
         run: python3 scripts/shutdown_drain_smoke.py --image kpubdata-builder:ci
 
+      # Each profile of the production compose — Builder alone, with Caddy, with Studio —
+      # starts with this image, every service passes its health check, and one call goes
+      # through it (#692). Studio is built from the commit the compose file pins.
+      - name: Compose profiles smoke
+        run: python3 scripts/compose_profiles_smoke.py --image kpubdata-builder:ci
+
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
@@ -177,6 +189,34 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
+
+  # Every image the deployment compose files name by default can be pulled (#692). A
+  # default that points at a tag no workflow publishes — #675's `:cubrid` — fails here
+  # instead of on an operator's VM. It reads the registry, so it may only read packages.
+  published-images:
+    name: compose images are published
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # Builder's package is private, so the registry answers "unauthorized" for it
+      # without a login; that would read as missing.
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compose images are published
+        run: python3 scripts/compose_profiles_smoke.py --published
 
   publish:
     name: publish GHCR image
