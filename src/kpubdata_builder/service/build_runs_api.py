@@ -33,7 +33,7 @@ import yaml
 from typing_extensions import assert_never
 
 from ..events import BuildEvent, BuildEventStore
-from ..manifest import run_failure_summary, run_status_from_manifest
+from ..manifest import run_failure_cause, run_failure_summary, run_status_from_manifest
 from ..manifest.endings import (
     CancellationCode,
     RunEndingCode,
@@ -96,6 +96,17 @@ def _declared_dataset_id(spec_yaml: str) -> str | None:
 #: The stable code of a run a restart interrupted (#683, #996). It starts the failure
 #: event's message and is the ``code`` of the job status read back from that event.
 INTERRUPTED_CODE = "credentials_required"
+#: That event's message in a multi-user deployment, where the job's keys were in memory.
+KEYS_LOST_MESSAGE = (
+    f"{INTERRUPTED_CODE}: the server restarted and the job's provider keys, held only in "
+    "memory, are gone; submit it again under a new run_id"
+)
+#: That event's message in a single-user deployment (#1120). Its keys are stored and
+#: still there, but the job registry is in memory: nothing resumes the run either.
+RESTART_INTERRUPTED_MESSAGE = (
+    "interrupted: the server restarted before this job finished, and an interrupted job "
+    "is not resumed; submit it again under a new run_id"
+)
 #: What a job that was still queued when the server began to shut down ends with (#1118).
 SHUTDOWN_QUEUED_ERROR = (
     "interrupted: the server shut down before this job started; nothing was fetched or "
@@ -451,6 +462,7 @@ class BuildRunsApiService:
             manifest_data = json.loads(result.manifest_path.read_text(encoding="utf-8"))
             started_at = manifest_data.get("started_at")
             finished_at = manifest_data.get("finished_at")
+            error_code, error_stage = run_failure_cause(manifest_data)
             self._build_index.insert_or_replace(
                 run_id=result.context.run_id,
                 # The run's outcome as the manifest gives it (#1106): ``failed`` when a
@@ -462,6 +474,8 @@ class BuildRunsApiService:
                 # Why it failed, projected from the manifest (#1120): the index never
                 # carried it, so a failed run's reason was null everywhere it is listed.
                 error=run_failure_summary(manifest_data),
+                error_code=error_code,
+                error_stage=error_stage,
                 created_by=manifest_data.get("created_by"),
                 owner_id=manifest_data.get("owner_id"),
                 # dataset_id from canonical spec this run actually executed
@@ -816,15 +830,18 @@ class BuildRunsApiService:
             self.record_run_cancelled(run_id)
         return ServiceResponse(200, snapshot.to_body())
 
-    def mark_interrupted_runs(self) -> tuple[str, ...]:
-        """Fail every run a restart interrupted, as ``credentials_required`` (#683).
+    def mark_interrupted_runs(self, *, keys_lost: bool) -> tuple[str, ...]:
+        """Fail every run a restart interrupted (#683, #1120).
 
-        In a multi-user deployment a job's provider keys live only in memory, so after a
-        restart no interrupted job can go on: it is recorded as failed with that reason
-        instead of being left looking in progress, and the user submits it again with
-        their key. A run whose manifest exists had finished writing and is left alone.
-        Returns the run ids it marked.
+        The job registry is in memory, so after a restart nothing runs an interrupted
+        job again: it is recorded as failed instead of being left looking in progress,
+        and the user submits it again. ``keys_lost``: a multi-user deployment, whose job
+        keys lived only in memory too — the event then says ``credentials_required``,
+        and the owner's status read back from it carries that code. Either way the
+        ending is recorded as ``interrupted``. A run whose manifest exists had finished
+        writing and is left alone. Returns the run ids it marked.
         """
+        message = KEYS_LOST_MESSAGE if keys_lost else RESTART_INTERRUPTED_MESSAGE
         marked: list[str] = []
         store = self._event_store()
         for run_id in store.unfinished_runs():
@@ -841,9 +858,7 @@ class BuildRunsApiService:
                     run_id=run_id,
                     event="run_failed",
                     status="fail",
-                    message=f"{INTERRUPTED_CODE}: the server restarted and the job's "
-                    "provider keys, held only in memory, are gone; submit it again "
-                    "under a new run_id",
+                    message=message,
                 )
             )
             marked.append(run_id)
@@ -1014,6 +1029,8 @@ class BuildRunsApiService:
                 created_by=entry.created_by,
                 owner_id=entry.owner_id,
                 dataset_id=entry.dataset_id,
+                error_code=entry.error_code,
+                error_stage=entry.error_stage,
             )
         except Exception:
             # The index is derived (ADR 0003): the record is with the run's events, and

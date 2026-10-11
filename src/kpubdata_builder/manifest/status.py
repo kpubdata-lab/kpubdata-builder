@@ -114,4 +114,43 @@ def run_failure_summary(manifest: dict[str, object]) -> str | None:
     return None
 
 
-__all__ = ["run_failure_summary", "run_status_from_manifest", "status_from_manifest"]
+def run_failure_cause(manifest: dict[str, object]) -> tuple[str | None, str | None]:
+    """The stable code and the stage of the failure ``run_failure_summary`` states (#1120).
+
+    The same entry decides, so the index's ``error``, ``error_code`` and ``error_stage``
+    describe one failure. ``(None, None)`` for a run nothing in failed, and for a run
+    whose manifest was written before failures were recorded: its ``errors`` say
+    neither. A refused table commit of such a manifest is ``warehouse`` with its reason
+    when the reason is one Builder writes.
+
+    The values are what the manifest holds; ``GET /admin/runs`` admits only the codes
+    and stages Builder's vocabulary has.
+    """
+    failures = manifest.get("failures")
+    if isinstance(failures, list):
+        for failure in failures:
+            if isinstance(failure, dict):
+                summary = failure.get("summary")
+                if isinstance(summary, str) and summary:
+                    code, stage = failure.get("code"), failure.get("stage")
+                    return (
+                        code if isinstance(code, str) else None,
+                        stage if isinstance(stage, str) else None,
+                    )
+    if manifest.get("errors"):
+        return None, None
+    warehouse = manifest.get("warehouse_failures")
+    if isinstance(warehouse, dict):
+        for failure in warehouse.values():
+            reason = failure.get("reason") if isinstance(failure, dict) else None
+            code = reason if isinstance(reason, str) and reason in _COMMIT_REASONS else None
+            return code, "warehouse"
+    return None, None
+
+
+__all__ = [
+    "run_failure_cause",
+    "run_failure_summary",
+    "run_status_from_manifest",
+    "status_from_manifest",
+]

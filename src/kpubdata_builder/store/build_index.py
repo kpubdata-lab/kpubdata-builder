@@ -43,7 +43,9 @@ else:
 # is only derived lookup value for canonical stable owner identity. This index is derived,
 # so a schema change makes the table again and fills it from manifest.json in the same
 # transaction (``_init_db``); nothing in it is kept across a version.
-SCHEMA_VERSION = 5
+# Schema version 6: added error_code and error_stage columns (#1120), projected from the
+# same manifest ``failures`` entry (or recorded run ending) as ``error``.
+SCHEMA_VERSION = 6
 
 #: Run ids per ``IN (...)`` lookup in ``count_builds`` — under SQLite's 999-variable
 #: floor on old builds, and a size any backend takes.
@@ -76,6 +78,9 @@ class BuildEntry:
     created_by: str | None = None
     dataset_id: str | None = None
     owner_id: str | None = None
+    #: The stable code and the stage of the failure ``error`` states (#1120).
+    error_code: str | None = None
+    error_stage: str | None = None
 
 
 class BuildIndex(Protocol):
@@ -98,6 +103,8 @@ class BuildIndex(Protocol):
         created_by: str | None = None,
         dataset_id: str | None = None,
         owner_id: str | None = None,
+        error_code: str | None = None,
+        error_stage: str | None = None,
     ) -> None: ...
 
     def list_builds(self, limit: int | None = 50) -> list[BuildEntry]: ...
@@ -132,8 +139,8 @@ class BuildIndex(Protocol):
 _INSERT_ENTRY = """
     INSERT OR REPLACE INTO builds
     (run_id, status, started_at, finished_at, spec_digest, error, created_by,
-     dataset_id, owner_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     dataset_id, owner_id, error_code, error_stage)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -149,6 +156,8 @@ def _row_of(entry: BuildEntry) -> tuple[str | None, ...]:
         entry.created_by,
         entry.dataset_id,
         entry.owner_id,
+        entry.error_code,
+        entry.error_stage,
     )
 
 
@@ -259,7 +268,9 @@ class SqliteBuildIndex:
                         error TEXT,
                         created_by TEXT,
                         dataset_id TEXT,
-                        owner_id TEXT
+                        owner_id TEXT,
+                        error_code TEXT,
+                        error_stage TEXT
                     )
                     """
                 )
@@ -301,6 +312,8 @@ class SqliteBuildIndex:
         created_by: str | None = None,
         dataset_id: str | None = None,
         owner_id: str | None = None,
+        error_code: str | None = None,
+        error_stage: str | None = None,
     ) -> None:
         """Insert or replace build entry.
 
@@ -316,16 +329,13 @@ class SqliteBuildIndex:
                 snapshot are None — don't guess/fill dataset_id.
             owner_id: canonical stable owner identity (optional, #505). Legacy runs
                 without this field in manifest.json are None.
+            error_code: The stable code of the failure ``error`` states (#1120).
+            error_stage: Where that failure stopped the run (#1120).
         """
         try:
             with self._transaction():
                 self._conn.execute(
-                    """
-                    INSERT OR REPLACE INTO builds
-                    (run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                     dataset_id, owner_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                    _INSERT_ENTRY,
                     (
                         run_id,
                         status,
@@ -336,6 +346,8 @@ class SqliteBuildIndex:
                         created_by,
                         dataset_id,
                         owner_id,
+                        error_code,
+                        error_stage,
                     ),
                 )
         except Exception:
@@ -353,7 +365,7 @@ class SqliteBuildIndex:
         """
         sql = """
             SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                   dataset_id, owner_id
+                   dataset_id, owner_id, error_code, error_stage
             FROM builds
             ORDER BY finished_at DESC
         """
@@ -372,6 +384,8 @@ class SqliteBuildIndex:
                 created_by=row[6],
                 dataset_id=row[7],
                 owner_id=row[8],
+                error_code=row[9],
+                error_stage=row[10],
             )
             for row in cur
         ]
@@ -389,7 +403,7 @@ class SqliteBuildIndex:
         """
         sql = """
             SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                   dataset_id, owner_id
+                   dataset_id, owner_id, error_code, error_stage
             FROM builds
             WHERE dataset_id = ?
             ORDER BY finished_at DESC
@@ -409,6 +423,8 @@ class SqliteBuildIndex:
                 created_by=row[6],
                 dataset_id=row[7],
                 owner_id=row[8],
+                error_code=row[9],
+                error_stage=row[10],
             )
             for row in cur
         ]
@@ -466,7 +482,7 @@ class SqliteBuildIndex:
         # The two fragments are fixed text chosen above; every value is a parameter.
         sql = (
             "SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,"
-            " dataset_id, owner_id FROM builds"
+            " dataset_id, owner_id, error_code, error_stage FROM builds"
             f" WHERE {owned}{of_dataset}"
             " ORDER BY finished_at DESC LIMIT ?"
         )
@@ -482,6 +498,8 @@ class SqliteBuildIndex:
                 created_by=row[6],
                 dataset_id=row[7],
                 owner_id=row[8],
+                error_code=row[9],
+                error_stage=row[10],
             )
             for row in cur
         ]
@@ -508,7 +526,7 @@ class SqliteBuildIndex:
         cur = self._conn.execute(
             """
             SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                   dataset_id, owner_id
+                   dataset_id, owner_id, error_code, error_stage
             FROM builds
             WHERE finished_at IS NULL OR (finished_at >= ? AND finished_at < ?)
             ORDER BY finished_at ASC
@@ -526,6 +544,8 @@ class SqliteBuildIndex:
                 created_by=row[6],
                 dataset_id=row[7],
                 owner_id=row[8],
+                error_code=row[9],
+                error_stage=row[10],
             )
             for row in cur
         ]
@@ -582,7 +602,7 @@ class SqliteBuildIndex:
         cur = self._conn.execute(
             """
             SELECT run_id, status, started_at, finished_at, spec_digest, error, created_by,
-                   dataset_id, owner_id
+                   dataset_id, owner_id, error_code, error_stage
             FROM builds
             WHERE run_id = ?
             """,
@@ -601,6 +621,8 @@ class SqliteBuildIndex:
             created_by=row[6],
             dataset_id=row[7],
             owner_id=row[8],
+            error_code=row[9],
+            error_stage=row[10],
         )
 
     def delete(self, run_id: str) -> None:
@@ -677,7 +699,7 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
 
     import yaml
 
-    from ..manifest import run_failure_summary, run_status_from_manifest
+    from ..manifest import run_failure_cause, run_failure_summary, run_status_from_manifest
     from ..spec.serializer import BUILDSPEC_SNAPSHOT_FILENAME, compute_spec_digest
 
     if not output_root.exists():
@@ -700,6 +722,7 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
         # incorrectly promotes to success (ok) when rebuilding.
         # The run's outcome, a failed table commit included (#1106).
         status = cast(BuildStatus, run_status_from_manifest(manifest))
+        error_code, error_stage = run_failure_cause(manifest)
         snapshot_path = run_dir / BUILDSPEC_SNAPSHOT_FILENAME
         spec_digest: str | None = None
         dataset_id: str | None = None
@@ -737,6 +760,8 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
             created_by=manifest.get("created_by"),
             dataset_id=dataset_id,
             owner_id=manifest.get("owner_id"),
+            error_code=error_code,
+            error_stage=error_stage,
         )
 
 
@@ -756,6 +781,8 @@ def ending_entry(ending: RunEnding) -> BuildEntry:
         created_by=ending.created_by,
         dataset_id=None,
         owner_id=ending.owner_id,
+        error_code=ending.code,
+        error_stage=ending.stage,
     )
 
 
@@ -790,6 +817,8 @@ _BUILDS_COLUMNS = frozenset(
         "created_by",
         "dataset_id",
         "owner_id",
+        "error_code",
+        "error_stage",
     }
 )
 
@@ -876,6 +905,8 @@ def _rebuild_sqlite(output_root: Path) -> int:
                 created_by=entry.created_by,
                 dataset_id=entry.dataset_id,
                 owner_id=entry.owner_id,
+                error_code=entry.error_code,
+                error_stage=entry.error_stage,
             )
             count += 1
     finally:
