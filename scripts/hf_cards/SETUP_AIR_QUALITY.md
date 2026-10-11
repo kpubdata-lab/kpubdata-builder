@@ -60,7 +60,7 @@ This is normal — the pipeline handles it gracefully.
 
 ## Scheduled Updates
 
-`.github/workflows/scheduled-air-quality.yml` is **disabled** (#759) and stays disabled.
+`.github/workflows/scheduled-air-quality.yml` is **disabled** (#759), its cron line is removed (#1244), and it stays disabled.
 
 ## Correcting the published card
 
