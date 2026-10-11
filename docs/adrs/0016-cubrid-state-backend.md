@@ -10,6 +10,11 @@
     `cubrid://` 는 연결 시점에 `ImportError: Could not import CUBRIDdb` 로 죽으므로,
     `store/backend.py` 가 기동 시 정규화·검증한다.
 
+> **2026-10-11 보충** [ADR 0022](./0022-sqlite-only-state-and-cubrid-retirement.md)(제안됨, #1093)가 이 ADR 을
+> 대체하자고 제안한다 — 소유자가 2026-10-08 에 Builder 는 CUBRID 를 쓰지 않는다고 밝혔다. 0022 가 승인되기 전까지
+> 이 ADR 의 상태는 그대로다. 아래 "마이그레이션" 4번의 "credential 은 자동 이관되지 않는다"는 정확하지 않다:
+> 두 저장소는 같은 암호화와 같은 AAD 를 쓰므로, 같은 master key 라면 암호문을 그대로 옮길 수 있다(0022 §4).
+
 ## 맥락
 
 조직 요구사항으로 Builder 의 **영속 상태 백엔드를 CUBRID(한국형 RDBMS)로** 전환한다.
