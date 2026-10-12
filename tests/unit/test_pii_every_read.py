@@ -7,6 +7,10 @@ personal column, and then the read operations that are a ``POST``. A route added
 the contract is swept the day it is added, and a path parameter this test cannot fill
 fails it, so a new read cannot go unlooked at.
 
+Every answer's status is asserted too: a read answers 200, or is one of the few listed
+with the refusal it is expected to give and why. A new route that answers 400, 404 or
+502 here fails the sweep instead of passing it with nothing looked at.
+
 The same sweep over a run that opts the column out (``gold.publish_unmasked``) finds
 the values, which is what shows the sweep can see them.
 
@@ -39,6 +43,7 @@ _DATASET = "permits.restaurant"
 _SOURCE = "localdata.general_restaurant"
 _OPT_OUT = "    gold:\n      publish_unmasked: [siteTel]\n"
 _PARAMETER = re.compile(r"\{(\w+)\}")
+_DOCUMENT = "doc1"
 
 #: The read operations that are not a GET, by operation id, with the bodies to send.
 #: ``{table}`` is the warehouse table the build committed.
@@ -73,13 +78,11 @@ _POST_READS: dict[str, list[dict[str, JsonValue]]] = {
             ],
         },
     ],
-    "createWarehouseExport": [
-        {"table": "{table}", "sql": "SELECT * FROM dataset", "format": "csv"},
-    ],
 }
 
 #: The other POST operations: they write, or read nothing a build produced.
-#: ``createAnalysis`` and ``runAnalysis`` are reads of a table and are followed below.
+#: ``createAnalysis``, ``runAnalysis`` and ``createWarehouseExport`` are reads of a table:
+#: the sweep makes one of each first, so that the GETs read real ids.
 _POST_NOT_READS = frozenset(
     {
         "testProviderConnection",
@@ -96,7 +99,30 @@ _POST_NOT_READS = frozenset(
         "adminRejectUser",
     }
 )
-_POST_FOLLOWED = frozenset({"createAnalysis", "runAnalysis"})
+_POST_FOLLOWED = frozenset({"createAnalysis", "runAnalysis", "createWarehouseExport"})
+
+#: The query string a GET needs to reach its answer, by operation id. A list sweeps each.
+_GET_QUERIES: dict[str, list[str]] = {
+    "getBuildStageDetail": [f"source={_SOURCE}"],
+    "getPublishReadiness": ["target=huggingface", "target=kaggle", "target=local"],
+    "getPublishReceipt": ["target=local&destination=published"],
+}
+
+#: The GETs that do not answer 200 in this sweep, with the status they answer and why
+#: that is not a read left unlooked at. Anything else that is not 200 fails.
+_EXPECTED_REFUSALS: dict[str, tuple[int, str]] = {
+    # Not a read of the run: kpubdata's catalogue, which the fake client does not have.
+    "getCatalog": (502, "catalog_unavailable"),
+    "listProviders": (502, "catalog_unavailable"),
+    "getProviderStatus": (502, "catalog_unavailable"),
+    "getProviderCredential": (502, "catalog_unavailable"),
+    # The run was not published — its spec declares no licence, so it cannot be — and a
+    # receipt exists only for a publish. What a receipt records is the destination and
+    # the files' digests (``test_publish_receipt*.py``), no rows.
+    "getPublishReceipt": (404, "receipt_not_found"),
+}
+#: Bronze and Silver files of a source with a withheld column are refused (#900).
+_RAW_STAGE_REFUSAL = (403, "declared_pii_withheld")
 
 
 def _text(response: object) -> str:
@@ -132,6 +158,9 @@ class _Sweep:
         )
         (self.table,) = [cast(str, table["logical_name"]) for table in tables]
         files = cast(list[JsonValue], self._json("GET", f"/artifacts/{_RUN}")["files"])
+        self.answers: dict[str, tuple[int, str]] = {}
+        #: operation id of each GET answer, for the status expectations.
+        self.operations: dict[str, str] = {}
         self._fills: dict[str, list[str]] = {
             "run_id": [_RUN],
             "dataset_id": [_DATASET],
@@ -139,14 +168,58 @@ class _Sweep:
             "file_path": [str(f) for f in files],
             "name": [self.table],
             "provider": ["localdata"],
-            # Nothing of these exists for the run until this sweep makes one.
-            "upload_id": ["none"],
-            "export_id": ["none"],
-            "analysis_id": ["none"],
-            "kind": ["none"],
-            "doc_id": ["none"],
+            "kind": ["spec", "annotation"],
+            "doc_id": [_DOCUMENT],
         }
-        self.answers: dict[str, tuple[int, str]] = {}
+
+    def _made(self, label: str, response: object, key: str) -> str:
+        """Record what creating something answered and return the id it gave."""
+        self._record(label, response)
+        assert isinstance(response, ServiceResponse) and response.status_code == 200, response
+        body = cast(dict[str, JsonValue], response.body)
+        return cast(str, cast(dict[str, JsonValue], body.get("analysis", body))[key])
+
+    def _make_what_the_reads_need(self) -> None:
+        """An upload, an export, a saved analysis and two documents, so no id is made up."""
+        send = self.service
+        query: dict[str, JsonValue] = {"table": self.table, "sql": "SELECT * FROM dataset"}
+        self._fills["upload_id"] = [
+            self._made(
+                "POST /uploads",
+                dispatch(send, "POST", "/uploads", None, "format=csv", raw_body=b"a,b\n1,2\n"),
+                "upload_id",
+            )
+        ]
+        export = dispatch(send, "POST", "/warehouse/exports", {**query, "format": "csv"})
+        self._record("POST /warehouse/exports", export)
+        # An export of a column the spec publishes unmasked is refused by the export's
+        # own scan of the values (``export_blocked_pii``); there is then none to read.
+        self._fills["export_id"] = (
+            [cast(str, cast(dict[str, JsonValue], export.body)["export_id"])]
+            if isinstance(export, ServiceResponse) and export.status_code == 200
+            else []
+        )
+        self.analysis_id = self._made(
+            "POST /analyses",
+            dispatch(send, "POST", "/analyses", {"name": "all", **query}),
+            "analysis_id",
+        )
+        self._fills["analysis_id"] = [self.analysis_id]
+        documents: dict[str, JsonValue] = {
+            "spec": {"yaml": _SPEC.format(gold="")},
+            "annotation": {"text": "a note about the table"},
+        }
+        for kind, content in documents.items():
+            self._made(
+                f"PUT /revisions/{kind}/{_DOCUMENT}",
+                dispatch(
+                    send,
+                    "PUT",
+                    f"/revisions/{kind}/{_DOCUMENT}",
+                    {"content": content, "expected_revision": 0},
+                ),
+                "revision",
+            )
 
     def _json(self, method: str, path: str) -> dict[str, JsonValue]:
         response = dispatch(self.service, method, path, None)
@@ -171,53 +244,47 @@ class _Sweep:
         return response
 
     def run(self) -> None:
+        self._make_what_the_reads_need()
         for method, template, operation, *_ in OPERATIONS:
             if method == "GET":
                 for path in self._paths(template):
-                    query = f"source={_SOURCE}" if operation == "getBuildStageDetail" else ""
-                    self._record(f"GET {path}", dispatch(self.service, "GET", path, None, query))
+                    for query in _GET_QUERIES.get(operation, [""]):
+                        label = f"GET {path}" + (f"?{query}" if query else "")
+                        self.operations[label] = operation
+                        self._record(label, dispatch(self.service, "GET", path, None, query))
             elif method == "POST" and operation in _POST_READS:
                 for index, body in enumerate(_POST_READS[operation]):
                     sent = cast(
                         dict[str, JsonValue],
                         json.loads(json.dumps(body).replace("{table}", self.table)),
                     )
-                    response = self._record(
+                    self._record(
                         f"POST {template} #{index}",
                         dispatch(self.service, "POST", template, sent),
                     )
-                    if operation == "createWarehouseExport":
-                        self._follow_export(response)
-        self._saved_analysis()
+        path = f"/analyses/{self.analysis_id}/run"
+        self._record(f"POST {path}", dispatch(self.service, "POST", path, {}))
 
-    def _saved_analysis(self) -> None:
-        """Save a query over the table, then read it back and run it."""
-        saved = self._record(
-            "POST /analyses",
-            dispatch(
-                self.service,
-                "POST",
-                "/analyses",
-                {"name": "all", "table": self.table, "sql": "SELECT * FROM dataset"},
-            ),
-        )
-        assert isinstance(saved, ServiceResponse) and saved.status_code < 300, saved
-        analysis = cast(dict[str, JsonValue], cast(dict[str, JsonValue], saved.body)["analysis"])
-        analysis_id = analysis["analysis_id"]
-        path = f"/analyses/{analysis_id}"
-        self._record(f"GET {path}", dispatch(self.service, "GET", path, None))
-        self._record(f"POST {path}/run", dispatch(self.service, "POST", f"{path}/run", {}))
-        self._record("GET /analyses after", dispatch(self.service, "GET", "/analyses", None))
-
-    def _follow_export(self, response: object) -> None:
-        """Read back an export that was made; a refused one has nothing to read."""
-        assert isinstance(response, ServiceResponse), response
-        if response.status_code >= 300:
-            return
-        export_id = cast(dict[str, JsonValue], response.body)["export_id"]
-        for suffix in ("", "/download"):
-            path = f"/warehouse/exports/{export_id}{suffix}"
-            self._record(f"GET {path}", dispatch(self.service, "GET", path, None))
+    def unexpected_statuses(self) -> list[str]:
+        """Every answer whose status is not the one this sweep expects of it."""
+        wrong = []
+        for label, (status, text) in self.answers.items():
+            operation = self.operations.get(label)
+            if operation is None:
+                # A POST read, or something the sweep made: it worked, or was the
+                # export's own refusal.
+                expected, code = 200, ""
+                if label == "POST /warehouse/exports" and status == 403:
+                    expected, code = 403, "export_blocked_pii"
+            elif operation == "getBuildArtifactFile" and (
+                "/bronze/" in label or "/silver/" in label
+            ):
+                expected, code = _RAW_STAGE_REFUSAL
+            else:
+                expected, code = _EXPECTED_REFUSALS.get(operation, (200, ""))
+            if status != expected or code not in text:
+                wrong.append(f"{label}: {status}, expected {expected} {code}: {text[:200]}")
+        return wrong
 
     def showing_a_phone(self) -> list[str]:
         return sorted(
@@ -255,36 +322,27 @@ def test_no_read_shows_a_declared_value(tmp_path: Path, caplog: pytest.LogCaptur
     assert logged == []
 
 
-def test_the_sweep_reaches_the_reads_that_carry_rows(tmp_path: Path) -> None:
-    """An answer that is a refusal for another reason would hide a leak behind it."""
+def test_every_read_answers_or_is_a_listed_refusal(tmp_path: Path) -> None:
+    """A refusal for another reason would hide a leak behind it."""
     sweep = _Sweep(tmp_path)
 
     sweep.run()
 
+    assert sweep.unexpected_statuses() == []
+    # Every listed refusal is still met: an entry nothing answers is a stale excuse.
+    met = {
+        sweep.operations[label]
+        for label, (status, _) in sweep.answers.items()
+        if status != 200 and label in sweep.operations
+    }
+    assert met == {*_EXPECTED_REFUSALS, "getBuildArtifactFile"}
+    # The made-up ids are gone: what was created is what was read.
+    assert not any("/none" in label for label in sweep.answers)
     status = {label: answer[0] for label, answer in sweep.answers.items()}
-    gold = f"/artifacts/{_RUN}/gold/{_SOURCE}"
-    for label in (
-        f"GET /builds/{_RUN}/stages/silver",
-        f"GET /builds/{_RUN}/stages/gold",
-        f"GET /builds/{_RUN}/manifest",
-        f"GET /builds/{_RUN}/quality",
-        f"GET /datasets/{_DATASET}",
-        f"GET /warehouse/tables/{sweep.table}",
-        f"GET /warehouse/tables/{sweep.table}/profile",
-        f"GET {gold}/data.csv",
-        f"GET {gold}/data.jsonl",
-        f"GET {gold}/table.parquet",
-        "POST /preview #0",
-        "POST /warehouse/rows #0",
-    ):
-        assert status[label] == 200, (label, sweep.answers[label])
-    for label, code in status.items():
-        if label.startswith("POST "):
-            assert code < 300, (label, sweep.answers[label])
     assert any(label.endswith("/download") and code == 200 for label, code in status.items())
-    # The raw stages are refused, not served masked.
-    refused = [label for label, code in status.items() if code == 403]
-    assert refused and all("/bronze/" in label or "/silver/" in label for label in refused)
+    for kind in ("spec", "annotation"):
+        assert status[f"GET /revisions/{kind}/{_DOCUMENT}"] == 200
+        assert status[f"GET /revisions/{kind}/{_DOCUMENT}/history"] == 200
 
 
 def test_the_values_are_on_disk_only_in_the_runs_raw_stages(tmp_path: Path) -> None:
@@ -305,7 +363,7 @@ def test_the_sweep_sees_a_value_the_spec_publishes_unmasked(tmp_path: Path) -> N
     sweep.run()
 
     showing = sweep.showing_a_phone()
-    assert f"GET /builds/{_RUN}/stages/silver" in showing
+    assert f"GET /builds/{_RUN}/stages/silver?source={_SOURCE}" in showing
     assert f"GET /warehouse/tables/{sweep.table}/profile" in showing or any(
         label.startswith("POST /warehouse/rows") for label in showing
     )
