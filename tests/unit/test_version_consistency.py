@@ -103,6 +103,37 @@ def test_a_missing_changelog_heading_fails(tmp_path: Path) -> None:
     assert module.main([]) == 1
 
 
+def test_a_manifest_that_agrees_passes(tmp_path: Path) -> None:
+    """release-please's manifest at the declared version is the normal state."""
+    _write(tmp_path, version="0.4.0", changelog="0.4")
+    (tmp_path / ".release-please-manifest.json").write_text('{".": "0.4.0"}', encoding="utf-8")
+    module = _load(tmp_path)
+
+    assert module.main(["--tag", "v0.4.0"]) == 0
+
+
+def test_a_manifest_left_behind_fails(tmp_path: Path) -> None:
+    """A release written without the manifest (kpubdata#895): release-please would
+    raise the next version from the old one and open a pull request for a version
+    that is already out."""
+    _write(tmp_path, version="0.5.0", changelog="0.5")
+    (tmp_path / ".release-please-manifest.json").write_text('{".": "0.4.0"}', encoding="utf-8")
+    module = _load(tmp_path)
+
+    assert module.main([]) == 1
+    assert module.main(["--tag", "v0.5.0"]) == 1
+
+
+@pytest.mark.parametrize("text", ['{"packages/x": "0.4.0"}', "[]", "not json"])
+def test_a_manifest_without_the_root_version_fails(tmp_path: Path, text: str) -> None:
+    """A manifest that cannot be read is not a manifest that agrees."""
+    _write(tmp_path, version="0.4.0", changelog="0.4")
+    (tmp_path / ".release-please-manifest.json").write_text(text, encoding="utf-8")
+    module = _load(tmp_path)
+
+    assert module.main([]) == 1
+
+
 def test_the_real_repository_is_self_consistent() -> None:
     """The check passes against this repository as it stands.
 
