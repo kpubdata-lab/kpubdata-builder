@@ -182,5 +182,5 @@ the container portion of the audit.
 
 | Component | Reference | Declaration or gap | Status | Source |
 | --- | --- | --- | --- | --- |
-| Python/Debian base image | `python:3.12-slim-bookworm` | mixed Debian packages; exact installed versions and terms unverified | needs review | https://github.com/docker-library/python |
+| Python/Debian base image | `python:3.12-slim-trixie` | mixed Debian packages; exact installed versions and terms unverified | needs review | https://github.com/docker-library/python |
 | uv build-stage image | `ghcr.io/astral-sh/uv:0.11.8` | uv binary copied during build, removed from final image | recorded | https://github.com/astral-sh/uv |
