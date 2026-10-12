@@ -68,6 +68,17 @@ def test_the_incident_job_names_the_repository() -> None:
     assert "actions/checkout" not in _INCIDENT.read_text(encoding="utf-8")
 
 
+def test_reports_for_the_same_workflow_are_serialized_without_canceling() -> None:
+    job = _load(_INCIDENT)["jobs"]["report"]
+
+    assert job["concurrency"] == {
+        "group": "freshness-incident-${{ github.repository }}-${{ inputs.workflow }}",
+        "cancel-in-progress": False,
+    }
+
+
+
+
 # ----------------------------------------------------------------- the script, run
 
 
