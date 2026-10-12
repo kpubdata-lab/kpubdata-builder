@@ -161,7 +161,7 @@ services:
   # 공개 진입 리버스 프록시. Cloudflare → Caddy → builder.
   # Cloudflare SSL mode: Full(strict). `--profile caddy`로 opt-in.
   caddy:
-    image: caddy:2.8-alpine
+    image: caddy:2.11.6-alpine
     container_name: kpubdata-builder-caddy
     restart: unless-stopped
     profiles:

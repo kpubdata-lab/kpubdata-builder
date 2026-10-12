@@ -37,8 +37,8 @@ def _load_script(name: str) -> ModuleType:
 
 rescan = _load_script("image_rescan")
 
-_IMAGE = "caddy:2.8-alpine"
-_TITLE = "fix(security): caddy:2.8-alpine has HIGH or CRITICAL vulnerabilities"
+_IMAGE = "caddy:2.11.6-alpine"
+_TITLE = "fix(security): caddy:2.11.6-alpine has HIGH or CRITICAL vulnerabilities"
 
 
 def _vulnerability(identifier: str, fixed: str | None = "1.2.4", **extra: str) -> dict[str, Any]:
@@ -118,7 +118,7 @@ def test_every_image_of_the_deployment_files_is_scanned() -> None:
     assert len(named) == 2
     assert rescan.deployed_images() == [
         "ghcr.io/kpubdata-lab/kpubdata-builder:latest",
-        "caddy:2.8-alpine",
+        "caddy:2.11.6-alpine",
     ]
 
 
@@ -177,7 +177,7 @@ def test_a_scan_that_did_not_finish_is_an_error_not_an_empty_result() -> None:
     tools = _Tools(_report())
     tools.fail = "trivy image"
 
-    with pytest.raises(RuntimeError, match="could not scan caddy:2.8-alpine"):
+    with pytest.raises(RuntimeError, match="could not scan caddy:2.11.6-alpine"):
         rescan.scan_image(_IMAGE, tools)
 
 
@@ -201,7 +201,7 @@ def test_findings_without_an_open_issue_open_one(tmp_path: Path) -> None:
     assert "| `CVE-2026-0002` | HIGH | stdlib | 1.2.3 | no fix published | usr/bin/caddy |" in body
     assert "- Reachable in this deployment: not assessed" in body
     assert "- Urgent action needed: not assessed" in body
-    assert done == "caddy:2.8-alpine: opened https://github.com/o/r/issues/7"
+    assert done == "caddy:2.11.6-alpine: opened https://github.com/o/r/issues/7"
 
 
 def test_the_same_findings_are_not_filed_or_written_again(tmp_path: Path) -> None:
@@ -211,7 +211,7 @@ def test_the_same_findings_are_not_filed_or_written_again(tmp_path: Path) -> Non
     done = _record(tools, tmp_path)
 
     assert [call[1:3] for call in tools.calls if call[0] == "gh"] == [["issue", "list"]]
-    assert done == "caddy:2.8-alpine: #7 already lists these findings"
+    assert done == "caddy:2.11.6-alpine: #7 already lists these findings"
 
 
 def test_a_changed_list_rewrites_the_issue_and_keeps_what_a_person_wrote(tmp_path: Path) -> None:
@@ -235,7 +235,7 @@ def test_a_changed_list_rewrites_the_issue_and_keeps_what_a_person_wrote(tmp_pat
     assert "- Reachable in this deployment: no, the module is not loaded" in body
     assert "- New: `CVE-2026-0003`" in said
     assert "- No longer reported: `CVE-2026-0001`" in said
-    assert done == "caddy:2.8-alpine: updated #7"
+    assert done == "caddy:2.11.6-alpine: updated #7"
 
 
 def test_a_fix_that_appears_is_a_change(tmp_path: Path) -> None:
@@ -272,7 +272,7 @@ def test_an_issue_whose_findings_are_gone_is_told_so_once_and_left_open(tmp_path
 def test_no_finding_and_no_issue_writes_nothing(tmp_path: Path) -> None:
     tools = _Tools(_report())
 
-    assert _record(tools, tmp_path) == "caddy:2.8-alpine: no finding and no open issue"
+    assert _record(tools, tmp_path) == "caddy:2.11.6-alpine: no finding and no open issue"
     assert [call[1:3] for call in tools.calls if call[0] == "gh"] == [["issue", "list"]]
 
 
@@ -316,13 +316,13 @@ def test_a_failed_scan_fails_the_run_and_the_other_images_are_still_recorded(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tools = _Tools(_report(_vulnerability("CVE-2026-0001")))
-    tools.fail = "caddy:2.8-alpine"
+    tools.fail = "caddy:2.11.6-alpine"
 
     status = rescan.main(["--work-dir", str(tmp_path)], run=tools)
 
     assert status == 1
     assert len(tools.gh("issue", "create")) == 1
-    assert "::error::trivy could not scan caddy:2.8-alpine" in capsys.readouterr().out
+    assert "::error::trivy could not scan caddy:2.11.6-alpine" in capsys.readouterr().out
 
 
 def test_a_refused_issue_write_fails_the_run(tmp_path: Path) -> None:
