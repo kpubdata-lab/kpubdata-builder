@@ -83,7 +83,7 @@ RUN --mount=type=cache,target=/tmp/uv-cache,uid=10001,gid=10001 \
 
 # Then the project itself.
 COPY --chown=builder:builder src/ ./src/
-COPY --chown=builder:builder README.md LICENSE ./
+COPY --chown=builder:builder README.md LICENSE THIRD_PARTY_NOTICES.md ./
 RUN --mount=type=cache,target=/tmp/uv-cache,uid=10001,gid=10001 \
     _flags=""; for _e in ${EXTRAS}; do _flags="$_flags --extra $_e"; done; \
     UV_CACHE_DIR=/tmp/uv-cache uv sync --locked --no-sources $_flags

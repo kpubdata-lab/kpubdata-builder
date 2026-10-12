@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Builder now records locked Python package license declarations and bundled data provenance in `docs/compliance/license_inventory.json`, ships `THIRD_PARTY_NOTICES.md` with its distributions and image, and checks inventory drift in CI (#847). Unclear package declarations and exact Debian image contents remain for maintainer review.
+
 - Configured disk and per-owner run storage admission now applies to synchronous `POST /build` as well as async `POST /builds` (#1099, API contract 1.123.0). Both paths count their reservations under the same registry lock, and a synchronous reservation remains until its result and index handling finish. Defaults remain off; a refused sync request writes no run.
 
 - Accepted asynchronous builds that fail before writing a manifest now retain a safe terminal reason in the event store and build index (#1120, API contract 1.122.0). Administrators see `failed_without_manifest` and the reached stage; owners can still read the fixed reason after a restart. Exception and spec text do not enter the shared summary.

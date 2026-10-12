@@ -1,0 +1,724 @@
+{
+  "packages": {
+    "anyio==4.14.2": {
+      "version": "4.14.2",
+      "scope": "runtime",
+      "license": "MIT",
+      "source": "https://pypi.org/project/anyio/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "babel==2.18.0": {
+      "version": "2.18.0",
+      "scope": "extra:docs",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/python-babel/babel",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "backrefs==7.0": {
+      "version": "7.0",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/facelessuser/backrefs",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "bleach==6.4.0": {
+      "version": "6.4.0",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/bleach/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "build==1.4.2": {
+      "version": "1.4.2",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://build.pypa.io",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "certifi==2026.2.25": {
+      "version": "2026.2.25",
+      "scope": "runtime",
+      "license": "MPL-2.0",
+      "source": "https://github.com/certifi/python-certifi",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "cffi==2.1.1": {
+      "version": "2.1.1",
+      "scope": "runtime",
+      "license": "MIT-0",
+      "source": "https://pypi.org/project/cffi/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "charset-normalizer==3.4.7": {
+      "version": "3.4.7",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://pypi.org/project/charset-normalizer/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "click==8.3.3": {
+      "version": "8.3.3",
+      "scope": "extra:docs",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/pallets/click/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "colorama==0.4.6": {
+      "version": "0.4.6",
+      "scope": "extra:docs",
+      "license": "BSD License",
+      "source": "https://github.com/tartley/colorama",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "coverage==7.13.5": {
+      "version": "7.13.5",
+      "scope": "dev",
+      "license": "Apache-2.0",
+      "source": "https://github.com/coveragepy/coveragepy",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "cryptography==50.0.0": {
+      "version": "50.0.0",
+      "scope": "runtime",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "source": "https://github.com/pyca/cryptography",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "duckdb==1.5.6": {
+      "version": "1.5.6",
+      "scope": "runtime",
+      "license": "MIT License",
+      "source": "https://github.com/duckdb/duckdb-python",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "exceptiongroup==1.3.1": {
+      "version": "1.3.1",
+      "scope": "runtime",
+      "license": "",
+      "source": "https://pypi.org/project/exceptiongroup/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "execnet==2.1.2": {
+      "version": "2.1.2",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://execnet.readthedocs.io/en/latest/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "filelock==3.25.2": {
+      "version": "3.25.2",
+      "scope": "extra:huggingface",
+      "license": "",
+      "source": "https://pypi.org/project/filelock/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "fsspec==2026.9.0": {
+      "version": "2026.9.0",
+      "scope": "extra:huggingface",
+      "license": "",
+      "source": "https://pypi.org/project/fsspec/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "ghp-import==2.1.0": {
+      "version": "2.1.0",
+      "scope": "extra:docs",
+      "license": "Apache Software License",
+      "source": "https://github.com/c-w/ghp-import",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "h11==0.16.0": {
+      "version": "0.16.0",
+      "scope": "runtime",
+      "license": "MIT",
+      "source": "https://github.com/python-hyper/h11",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "hf-xet==1.4.3": {
+      "version": "1.4.3",
+      "scope": "extra:huggingface",
+      "license": "",
+      "source": "https://pypi.org/project/hf-xet/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "httpcore==1.0.9": {
+      "version": "1.0.9",
+      "scope": "runtime",
+      "license": "BSD-3-Clause",
+      "source": "https://www.encode.io/httpcore/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "httpx==0.28.1": {
+      "version": "0.28.1",
+      "scope": "runtime",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/encode/httpx",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "huggingface-hub==0.36.2": {
+      "version": "0.36.2",
+      "scope": "extra:huggingface",
+      "license": "",
+      "source": "https://pypi.org/project/huggingface-hub/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "idna==3.20": {
+      "version": "3.20",
+      "scope": "runtime",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/kjd/idna",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "importlib-metadata==9.0.0": {
+      "version": "9.0.0",
+      "scope": "dev",
+      "license": "",
+      "source": "https://pypi.org/project/importlib-metadata/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "iniconfig==2.3.0": {
+      "version": "2.3.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://github.com/pytest-dev/iniconfig",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "jinja2==3.1.6": {
+      "version": "3.1.6",
+      "scope": "extra:docs",
+      "license": "BSD License",
+      "source": "https://github.com/pallets/jinja/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "kaggle==1.7.4.5": {
+      "version": "1.7.4.5",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/kaggle/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "kaggle==1.8.4": {
+      "version": "1.8.4",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/kaggle/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "kagglesdk==0.1.23": {
+      "version": "0.1.23",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/kagglesdk/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "kpubdata==0.10.0": {
+      "version": "0.10.0",
+      "scope": "runtime",
+      "license": "MIT",
+      "source": "https://github.com/kpubdata-lab/kpubdata",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "librt==0.8.1": {
+      "version": "0.8.1",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://github.com/mypyc/librt",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "markdown==3.10.2": {
+      "version": "3.10.2",
+      "scope": "extra:docs",
+      "license": "BSD-3-Clause",
+      "source": "https://Python-Markdown.github.io/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "markupsafe==3.0.3": {
+      "version": "3.0.3",
+      "scope": "extra:docs",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/pallets/markupsafe/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "mergedeep==1.3.4": {
+      "version": "1.3.4",
+      "scope": "extra:docs",
+      "license": "UNKNOWN",
+      "source": "https://github.com/clarketm/mergedeep",
+      "basis": "installed",
+      "status": "needs review"
+    },
+    "mkdocs-get-deps==0.2.2": {
+      "version": "0.2.2",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/mkdocs/get-deps",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "mkdocs-material-extensions==1.3.1": {
+      "version": "1.3.1",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/facelessuser/mkdocs-material-extensions",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "mkdocs-material==9.7.7": {
+      "version": "9.7.7",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/squidfunk/mkdocs-material",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "mkdocs==1.6.1": {
+      "version": "1.6.1",
+      "scope": "extra:docs",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/mkdocs/mkdocs",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "mypy-extensions==1.1.0": {
+      "version": "1.1.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://github.com/python/mypy_extensions",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "mypy==1.20.0": {
+      "version": "1.20.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://www.mypy-lang.org/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "packaging==26.0": {
+      "version": "26.0",
+      "scope": "extra:docs",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "source": "https://github.com/pypa/packaging",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "paginate==0.5.7": {
+      "version": "0.5.7",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/Signum/paginate",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "pathspec==1.0.4": {
+      "version": "1.0.4",
+      "scope": "extra:docs",
+      "license": "Mozilla Public License 2.0 (MPL 2.0)",
+      "source": "https://pypi.org/project/pathspec/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "platformdirs==4.9.6": {
+      "version": "4.9.6",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/tox-dev/platformdirs",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pluggy==1.6.0": {
+      "version": "1.6.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://pypi.org/project/pluggy/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "polars-runtime-32==1.40.1": {
+      "version": "1.40.1",
+      "scope": "extra:legacy-publish",
+      "license": "MIT",
+      "source": "https://www.pola.rs/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "polars==1.40.1": {
+      "version": "1.40.1",
+      "scope": "extra:legacy-publish",
+      "license": "MIT License",
+      "source": "https://www.pola.rs/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "protobuf==7.34.1": {
+      "version": "7.34.1",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/protobuf/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "pyarrow==25.0.1": {
+      "version": "25.0.1",
+      "scope": "extra:parquet",
+      "license": "",
+      "source": "https://pypi.org/project/pyarrow/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "pycparser==3.0": {
+      "version": "3.0",
+      "scope": "runtime",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/eliben/pycparser",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pygments==2.20.0": {
+      "version": "2.20.0",
+      "scope": "extra:docs",
+      "license": "BSD-2-Clause",
+      "source": "https://pygments.org",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pyjwt==2.15.0": {
+      "version": "2.15.0",
+      "scope": "extra:auth",
+      "license": "MIT",
+      "source": "https://github.com/jpadilla/pyjwt",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pymdown-extensions==12.1": {
+      "version": "12.1",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/facelessuser/pymdown-extensions",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pyproject-hooks==1.2.0": {
+      "version": "1.2.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://github.com/pypa/pyproject-hooks",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pytest-cov==5.0.0": {
+      "version": "5.0.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://pypi.org/project/pytest-cov/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "pytest-xdist==3.8.0": {
+      "version": "3.8.0",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://github.com/pytest-dev/pytest-xdist",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "pytest==9.1.1": {
+      "version": "9.1.1",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://docs.pytest.org/en/latest/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "python-dateutil==2.9.0.post0": {
+      "version": "2.9.0.post0",
+      "scope": "extra:docs",
+      "license": "Dual License",
+      "source": "https://github.com/dateutil/dateutil",
+      "basis": "installed",
+      "status": "needs review"
+    },
+    "python-slugify==8.0.4": {
+      "version": "8.0.4",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/python-slugify/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "pyyaml-env-tag==1.1": {
+      "version": "1.1",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/waylan/pyyaml-env-tag",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "pyyaml==6.0.3": {
+      "version": "6.0.3",
+      "scope": "runtime",
+      "license": "MIT",
+      "source": "https://pyyaml.org/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "requests==2.33.1": {
+      "version": "2.33.1",
+      "scope": "extra:docs",
+      "license": "Apache-2.0",
+      "source": "https://github.com/psf/requests",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "ruff==0.15.9": {
+      "version": "0.15.9",
+      "scope": "dev",
+      "license": "MIT",
+      "source": "https://github.com/astral-sh/ruff",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "setuptools==84.0.0": {
+      "version": "84.0.0",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/setuptools/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "six==1.17.0": {
+      "version": "1.17.0",
+      "scope": "extra:docs",
+      "license": "MIT",
+      "source": "https://github.com/benjaminp/six",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "sqlglot==30.19.0": {
+      "version": "30.19.0",
+      "scope": "runtime",
+      "license": "MIT",
+      "source": "https://sqlglot.com/",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "text-unidecode==1.3": {
+      "version": "1.3",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/text-unidecode/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "tomli==2.4.1": {
+      "version": "2.4.1",
+      "scope": "dev",
+      "license": "",
+      "source": "https://pypi.org/project/tomli/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "tqdm==4.67.3": {
+      "version": "4.67.3",
+      "scope": "extra:huggingface",
+      "license": "",
+      "source": "https://pypi.org/project/tqdm/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "types-pyyaml==6.0.12.20250915": {
+      "version": "6.0.12.20250915",
+      "scope": "dev",
+      "license": "Apache-2.0",
+      "source": "https://github.com/python/typeshed",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "typing-extensions==4.15.0": {
+      "version": "4.15.0",
+      "scope": "runtime",
+      "license": "PSF-2.0",
+      "source": "https://github.com/python/typing_extensions",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "tzdata==2026.3": {
+      "version": "2026.3",
+      "scope": "dev",
+      "license": "Apache-2.0",
+      "source": "https://github.com/python/tzdata",
+      "basis": "other-version",
+      "status": "needs review"
+    },
+    "urllib3==2.8.0": {
+      "version": "2.8.0",
+      "scope": "runtime",
+      "license": "MIT",
+      "source": "https://pypi.org/project/urllib3/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "watchdog==6.0.0": {
+      "version": "6.0.0",
+      "scope": "extra:docs",
+      "license": "Apache-2.0",
+      "source": "https://github.com/gorakhargosh/watchdog/",
+      "basis": "installed",
+      "status": "recorded"
+    },
+    "webencodings==0.5.1": {
+      "version": "0.5.1",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/webencodings/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "xmltodict==0.15.1": {
+      "version": "0.15.1",
+      "scope": "extra:publish",
+      "license": "",
+      "source": "https://pypi.org/project/xmltodict/",
+      "basis": "none",
+      "status": "needs review"
+    },
+    "zipp==3.23.0": {
+      "version": "3.23.0",
+      "scope": "dev",
+      "license": "",
+      "source": "https://pypi.org/project/zipp/",
+      "basis": "none",
+      "status": "needs review"
+    }
+  },
+  "assets": [
+    {
+      "id": "replay-provider-responses",
+      "paths": [
+        "src/kpubdata_builder/replay_fixtures/datago/*"
+      ],
+      "kind": "recorded API response and metadata",
+      "in_wheel": true,
+      "origin": "copied from kpubdata recorded fixtures at 8740e7d (replay_fixtures/README.md)",
+      "terms": "provider data; applicable service terms require maintainer review",
+      "status": "needs review"
+    },
+    {
+      "id": "parity-test-inputs",
+      "paths": [
+        "tests/fixtures/duckdb_parity/*"
+      ],
+      "kind": "test data",
+      "in_wheel": false,
+      "origin": "committed test input; provenance of each row is not documented",
+      "terms": "review whether values were synthesized or copied from a provider",
+      "status": "needs review"
+    },
+    {
+      "id": "reference-district-codes",
+      "paths": [
+        "scripts/reference/seoul_district_codes.csv"
+      ],
+      "kind": "reference data",
+      "in_wheel": false,
+      "origin": "Seoul district names and administrative codes; exact source is unrecorded",
+      "terms": "source and applicable data terms require maintainer review",
+      "status": "needs review"
+    },
+    {
+      "id": "generated-test-baselines",
+      "paths": [
+        "tests/golden/*"
+      ],
+      "kind": "generated test results",
+      "in_wheel": false,
+      "origin": "generated by repository test baseline scripts from test scenarios",
+      "terms": "source test inputs retain their own terms",
+      "status": "needs review"
+    },
+    {
+      "id": "dataset-build-specs",
+      "paths": [
+        "specs/*",
+        "scripts/configs/*"
+      ],
+      "kind": "dataset build configuration",
+      "in_wheel": false,
+      "origin": "written here using provider dataset names, fields and documentation",
+      "terms": "provider data attribution and service terms remain separate from code MIT",
+      "status": "needs review"
+    },
+    {
+      "id": "contract-response-examples",
+      "paths": [
+        "contract/fixtures/responses.json"
+      ],
+      "kind": "generated API response examples",
+      "in_wheel": false,
+      "origin": "generated from Builder API contract (generate_response_fixtures.py)",
+      "terms": "project-authored examples; MIT",
+      "status": "recorded"
+    },
+    {
+      "id": "dataset-card-templates",
+      "paths": [
+        "scripts/hf_cards/*"
+      ],
+      "kind": "dataset publishing templates",
+      "in_wheel": false,
+      "origin": "written in this repository for published dataset cards",
+      "terms": "project-authored template; each dataset requires separate attribution",
+      "status": "recorded"
+    }
+  ],
+  "container_inputs": [
+    {
+      "name": "Python/Debian base image",
+      "version": "python:3.12-slim-bookworm",
+      "source": "https://github.com/docker-library/python",
+      "license": "mixed Debian packages; exact installed versions and terms unverified",
+      "status": "needs review"
+    },
+    {
+      "name": "uv build-stage image",
+      "version": "ghcr.io/astral-sh/uv:0.11.8",
+      "source": "https://github.com/astral-sh/uv",
+      "license": "uv binary copied during build, removed from final image",
+      "status": "recorded"
+    }
+  ]
+}
