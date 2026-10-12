@@ -731,6 +731,7 @@ class AsyncBuildExecutor:
         if_absent: bool = False,
         storage: StorageAdmission | None = None,
         mode: build_log.BuildMode = "async",
+        run_inline: bool = False,
     ) -> BuildJobSubmitResult:
         """Queue job. If "existing"/"queue_full"/"owner_limit", new submission not
         counted, so ``on_accept`` not called.
@@ -740,6 +741,8 @@ class AsyncBuildExecutor:
 
         ``mode`` is what the build log and the duration histogram call the job (#1100):
         ``sync`` for the job a synchronous ``POST /build`` waits for (#1242).
+        ``run_inline`` executes after admission on the caller's thread, which must
+        already hold the build slot; this preserves the synchronous slot wait bound.
 
         ``owner_id`` passes only to ``registry.create()`` — persisted in snapshot (#496
         follow-up, active run ownership check) — NOT passed to ``runner`` invocation
@@ -803,7 +806,12 @@ class AsyncBuildExecutor:
                 self.registry.discard(run_id)
                 raise
         try:
-            self._executor.submit(self._run, spec_yaml, run_id, created_by, runner, mode)
+            if run_inline:
+                if self._build_slots is None or not self._build_slots.held_by_current_thread():
+                    raise RuntimeError("inline build requires a slot held by its caller")
+                self._run_with_slot(spec_yaml, run_id, created_by, runner, mode)
+            else:
+                self._executor.submit(self._run, spec_yaml, run_id, created_by, runner, mode)
         except Exception:
             self.registry.mark_failed(run_id, error="failed to queue build job")
             if on_enqueue_failure is not None:

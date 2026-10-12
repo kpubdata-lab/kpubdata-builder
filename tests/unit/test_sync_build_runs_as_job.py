@@ -239,6 +239,29 @@ def test_a_refused_spec_records_nothing_and_leaves_the_run_id_free(tmp_path: Pat
         service._async_builds.shutdown()
 
 
+def test_a_synchronous_build_keeps_its_admitted_slot_until_it_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _SlowSource(0)
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: source)
+    release = service._build_slots.release
+    released_before_run: list[bool] = []
+
+    def observed_release() -> None:
+        released_before_run.append(not source.entered.is_set())
+        release()
+
+    monkeypatch.setattr(service._build_slots, "release", observed_release)
+    try:
+        answer = dispatch(service, "POST", "/build", {"spec": _spec(1), "run_id": "reserved"})
+
+        assert isinstance(answer, ServiceResponse)
+        assert answer.status_code == 200, answer.body
+        assert released_before_run == [False]
+    finally:
+        service._async_builds.shutdown()
+
+
 def test_a_job_cancelled_before_it_ran_answers_with_a_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

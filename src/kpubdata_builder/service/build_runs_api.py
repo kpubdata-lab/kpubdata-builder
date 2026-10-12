@@ -580,19 +580,21 @@ class BuildRunsApiService:
         retry_of: str | None = None,
         if_absent: bool = False,
         mode: build_log.BuildMode = "async",
+        run_inline: bool = False,
     ) -> ServiceResponse:
-        """Queue async build job and return initial state (#482).
+        """Register a build job and return its admission state (#482, #1242).
 
         ``mode`` names the job in the build log: ``sync`` when a synchronous
-        ``POST /build`` waits for it (#1242).
+        ``POST /build`` runs it on the request thread. ``run_inline`` requires the
+        caller to hold its build slot until execution ends.
 
         ``job_credentials`` (#683, multi-user mode): the request's provider keys are bound
         to the run id in memory as the job is accepted — before it can start — and
         dropped if it is never queued. ``job_keys`` are the ones to bind — the keys this
         spec uses (#1070); without it, every key the request carries.
 
-        ``runner`` is what the worker calls — ``BuilderService._run_build_job``, passed
-        at submit time so a subclass override is the one that runs.
+        ``runner`` is what executes the build — ``BuilderService._run_build_job``,
+        passed at submit time so a subclass override is the one that runs.
 
         A spec whose ``url`` source a multi-user deployment refuses (#685) is refused
         here, before it is queued, with the same 403 ``build`` would give; any other
@@ -715,6 +717,7 @@ class BuildRunsApiService:
                 storage=storage,
                 runner=runner,
                 mode=mode,
+                run_inline=run_inline,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
             )
