@@ -683,7 +683,10 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 스레드에서 2개, 비동기 job 이 2개 — build 4개가 돌 수 있었고, 나머지 요청 전부가 스레드 2개를 나눠 썼다.
 지금은 `KPUBDATA_BUILDER_MAX_BUILDS` 가 두 경로를 합친 상한이다: 한도에 닿으면 동기 build 는 자리를
 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`(기본 30초)까지 기다리고, 그래도 없으면 요청 스레드를 돌려주며 429
-`build_queue_full` 로 답한다(#1040). 비동기 job 은 자리를 얻을 때까지 `queued` 로 남는다 — 기다리는 job 은 서비스 전체에서 `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS`(기본 10)까지이고, 넘으면 `POST /builds` 가 429 `build_queue_full` 로 답한다(#1108). `KPUBDATA_BUILDER_MAX_PREVIEWS` 를 주면 preview 도 그 수까지만
+`build_queue_full` 로 답한다(#1040). 자리가 나면 동기 build 도 job 으로 등록되어 요청 스레드에서 그 슬롯을
+쥔 채로 실행된다(#1242) — 그래서 취소(`POST /builds/{run_id}/cancel`), 실행 시간 상한, 사용자별
+동시 build 상한, 종료 시의 drain 이 비동기 job 과 똑같이 적용된다. 비동기 worker 수는 기존 `MAX_WORKERS` 를
+따른다. 빌드가 거절할 spec·`url` source·provider 키 문제는 job 을 만들기 전에 답하므로 run 이 남지 않는다. 비동기 job 은 자리를 얻을 때까지 `queued` 로 남는다 — 기다리는 job 은 서비스 전체에서 `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS`(기본 10)까지이고, 넘으면 `POST /builds` 가 429 `build_queue_full` 로 답한다(#1108). `KPUBDATA_BUILDER_MAX_PREVIEWS` 를 주면 preview 도 그 수까지만
 함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 2 이고, `MAX_WORKERS` 가 그보다 작으면 그
 값이다(#1245). 그 전에는 `MAX_WORKERS` 값(기본 10)을 따랐다 — 아래 메모리 예산은 build 2 개로 계산돼
 있는데 기본 설정으로는 10 개가 돌 수 있었고, 동기 build 10 개가 요청 스레드를 모두 잡을 수 있었다.
@@ -1282,7 +1285,7 @@ Builder 는 답한 요청마다 한 줄을 남긴다. 표준 logging 의 `kpubda
 | `event` | `build_started` 는 build 가 실제로 돌기 시작한 때(비동기 build 는 큐에서 나와 build 슬롯을 얻은 때), `build_ended` 는 끝난 때 |
 | `run_id` | 두 줄을 잇는 값. **Builder 가 만든 형식의 run id 만 그대로 쓴다.** 아래 참고 |
 | `run_ref` | 클라이언트가 정한 run id 일 때 `run_id` 대신 쓰는 값 |
-| `mode` | `async`(`POST /builds`, 워커가 실행) 또는 `sync`(`POST /build`, 요청 스레드가 실행) |
+| `mode` | `async`(`POST /builds`) 또는 `sync`(`POST /build`). 둘 다 워커가 실행한다 — `sync` 는 요청이 그 job 이 끝나기를 기다린다(#1242) |
 | `status` | `succeeded` / `failed` / `cancelled`. 비동기 build 는 `GET /builds/{run_id}` 가 답하는 최종 상태와 같다 |
 | `duration_ms` | 시작 줄부터 끝 줄까지. 큐에서 기다린 시간은 들어가지 않는다 |
 | `code` | 실패한 비동기 build 의 답에 `code` 가 있을 때만. 요청 로그와 같은 목록(`request_log.KNOWN_CODES`)에 있는 값만 그대로 쓰고 나머지는 `other` |

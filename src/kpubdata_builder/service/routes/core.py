@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from functools import partial
 from typing import TYPE_CHECKING
 
 from ...pipeline import DEFAULT_PREVIEW_SEED
@@ -120,18 +119,14 @@ def route(
         refused = refuse_missing_provider_keys(service, spec)
         if refused is not None:
             return refused
-        # ``retry_of`` is passed only when the request named one: a service that overrides
-        # ``build`` with the signature it had before #1042 keeps working for every other
-        # request.
-        build = service.build if retry_of is None else partial(service.build, retry_of=retry_of)
-        if if_absent:
-            # Passed only when asked for, as retry_of is (#1223).
-            build = partial(build, if_absent=True)
-        return build(
+        # Run as a job and waited for (#1242), so a cancel, the time limit, the owner's
+        # limit and the shutdown drain reach it as they reach ``POST /builds``.
+        return service.build_and_wait(
             spec,
             run_id=run_id,
             created_by=principal.label,
             owner_id=principal.owner_id,
-            principal=principal,
+            retry_of=retry_of,
+            if_absent=if_absent,
         )
     return None
