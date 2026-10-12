@@ -129,6 +129,13 @@ TIME_LIMIT_CANCELLED_MESSAGE = (
 )
 
 
+#: A synchronous ``POST /build`` that found no build slot in time (#1040).
+BUILD_SLOTS_FULL_BODY: dict[str, JsonValue] = {
+    "error": "every build slot is in use; try again shortly",
+    "code": "build_queue_full",
+}
+
+
 #: What a cancelled run's ``run_cancelled`` event says, by why it was cancelled.
 _CANCELLED_MESSAGES: dict[CancellationCode, str] = {
     "cancelled": "build cancelled at a safe stage boundary",
@@ -291,13 +298,7 @@ class BuildRunsApiService:
         takes_slot = not self._build_slots.held_by_current_thread()
         if takes_slot and not self._build_slots.acquire(timeout=self._build_wait_seconds):
             self._close_client(client)
-            return ServiceResponse(
-                429,
-                {
-                    "error": "every build slot is in use; try again shortly",
-                    "code": "build_queue_full",
-                },
-            )
+            return ServiceResponse(429, dict(BUILD_SLOTS_FULL_BODY))
         # The build's two log lines (#1100). An async job's are written by its worker,
         # which is what holds the slot here; a synchronous build's are written here,
         # under the id the run is about to get.
@@ -552,8 +553,12 @@ class BuildRunsApiService:
         job_keys: Mapping[str, str] | None = None,
         retry_of: str | None = None,
         if_absent: bool = False,
+        mode: build_log.BuildMode = "async",
     ) -> ServiceResponse:
         """Queue async build job and return initial state (#482).
+
+        ``mode`` names the job in the build log: ``sync`` when a synchronous
+        ``POST /build`` waits for it (#1242).
 
         ``job_credentials`` (#683, multi-user mode): the request's provider keys are bound
         to the run id in memory as the job is accepted — before it can start — and
@@ -683,6 +688,7 @@ class BuildRunsApiService:
                 max_active_per_owner=resolve_owner_build_limit(),
                 storage=storage,
                 runner=runner,
+                mode=mode,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
             )
@@ -1047,6 +1053,30 @@ class BuildRunsApiService:
             )
         except Exception:
             logger.error("failed to record run_cancelled event (run_id=%s)", run_id, exc_info=True)
+
+    def sync_answer(self, run_id: str, response: ServiceResponse) -> ServiceResponse:
+        """What ``POST /build`` answers for the build its job ran (#1242).
+
+        A build that ended cancelled answers 409 as an error, saying why — a cancel, the
+        time limit or a shutdown. Read while the job's worker still holds the run, before
+        the registry lets go of the reason. Any other answer is the build's own.
+        """
+        if response.body.get("status") != "cancelled":
+            return response
+        return self.sync_cancelled(run_id, self._cancellation_code(run_id))
+
+    @staticmethod
+    def sync_cancelled(run_id: str, code: CancellationCode = "cancelled") -> ServiceResponse:
+        """The 409 of a ``POST /build`` whose job was cancelled (#1242)."""
+        return ServiceResponse(
+            409,
+            {
+                "error": _CANCELLED_MESSAGES[code],
+                "code": code,
+                "run_id": run_id,
+                "status": "cancelled",
+            },
+        )
 
     def _cancellation_code(self, run_id: str) -> CancellationCode:
         """Why ``run_id`` was cancelled: a shutdown, the time limit, or a request."""

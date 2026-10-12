@@ -1205,7 +1205,11 @@ paths:
             Every build slot is in use (`build_queue_full`, #1040). A synchronous build
             waits for a slot for a bounded time (`KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`)
             and is then turned away without having fetched anything; the same request
-            can be sent again. `POST /builds` queues instead of waiting.
+            can be sent again. `POST /builds` queues instead of waiting. Since the
+            synchronous build runs as a job that the request waits for (#1242), a
+            multi-user deployment also answers `build_owner_limit` here when the
+            requester already has `limit` builds queued or running, as `POST /builds`
+            does (#1189).
           content:
             application/json:
               schema:
@@ -1226,7 +1230,12 @@ paths:
             snapshot is refused here too (`empty_result`, #1186), unless the source
             declares `allow_empty`. Since 1.123.0, `run_storage_quota_exceeded` may
             refuse a synchronous build before it runs when the configured per-owner
-            run storage is full; the body gives `limit_bytes` and `used_bytes`.
+            run storage is full; the body gives `limit_bytes` and `used_bytes`. Since
+            the synchronous build runs as a job that the request waits for (#1242), a
+            build that is cancelled — through `POST /builds/{run_id}/cancel` (#481),
+            by the running-time limit (#1119) or by a server shutdown (#1118) — ends
+            here as an error with `status: cancelled`, its `run_id`, and `code`
+            `cancelled`, `time_limit_exceeded` or `server_shutdown`.
           content:
             application/json:
               schema:
@@ -1243,6 +1252,16 @@ paths:
                     code: run_storage_quota_exceeded
                     limit_bytes: 10737418240
                     used_bytes: 10737418240
+                BuildCancelledByTimeLimit:
+                  summary: The build ran past the time limit and was cancelled
+                  value:
+                    error: >-
+                      build cancelled at a safe stage boundary: it ran longer than
+                      this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS);
+                      narrow the request or ask the operator about the limit
+                    code: time_limit_exceeded
+                    run_id: air-quality-20260815
+                    status: cancelled
         "502":
           description: >-
             하나 이상의 소스 fetch/stage 실패. upstream 소스 의존 실패이며 매니페스트는
@@ -1269,7 +1288,9 @@ paths:
           description: >-
             Since 1.123.0, `disk_space_low` refuses a synchronous build before it
             runs when configured minimum free space is unavailable. The response
-            names no path or measured size, and no run is recorded.
+            names no path or measured size, and no run is recorded. `shutting_down`
+            (#1118, #1242): the server began to stop before the build started; nothing
+            was fetched, and the build can be sent again under a new `run_id`.
           content:
             application/json:
               schema:
