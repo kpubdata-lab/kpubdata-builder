@@ -67,8 +67,8 @@ off this machine and encrypted, and the recovery point and time objectives are t
 maintainers' to decide (#1095); this module takes a backup when it is asked to and
 leaves its file where it is told.
 
-Only the SQLite backend is backed up. ADR 0022 retires CUBRID; a CUBRID deployment's
-index and keys are in the database, which this cannot copy, so both commands refuse it.
+State is in SQLite and local files only (ADR 0022). A removed storage setting that is
+still set (the CUBRID backend's) refuses both commands, as it refuses every other.
 """
 
 from __future__ import annotations
@@ -148,18 +148,13 @@ class RestoreResult:
 
 
 def refuse_cubrid() -> None:
-    """Refuse a deployment whose state is in CUBRID, which this does not copy (ADR 0022)."""
-    from .backend import storage_backend
+    """Refuse a deployment that still sets a removed CUBRID setting (ADR 0022)."""
+    from .backend import RemovedStorageSettingError, refuse_removed_storage_settings
 
-    if storage_backend() == "cubrid":
-        raise StateBackupRefused(
-            [
-                "KPUBDATA_BUILDER_STORAGE_BACKEND is cubrid: the build index and the "
-                "provider keys are in the CUBRID database, which this backup does not "
-                "copy. ADR 0022 retires CUBRID; back that database up with CUBRID's own "
-                "tools, or move the deployment to SQLite first."
-            ]
-        )
+    try:
+        refuse_removed_storage_settings()
+    except RemovedStorageSettingError as exc:
+        raise StateBackupRefused([str(exc)]) from None
 
 
 def supported_versions() -> dict[str, int]:
@@ -399,7 +394,7 @@ def backup(
     """Write all of ``output_root``'s state to the archive ``destination``.
 
     Raises:
-        StateBackupRefused: The deployment is on CUBRID, ``destination`` exists or lies
+        StateBackupRefused: A removed CUBRID setting is set, ``destination`` exists or lies
             inside what is backed up, the output directory holds something the inventory
             does not list, a store fails its integrity check, or the warehouse backup
             refused. Every reason found is listed; nothing is written.
@@ -837,7 +832,7 @@ def restore(archive: Path, output_root: Path) -> RestoreResult:
     """Replace ``output_root``'s state with the archive's, whole or not at all.
 
     Raises:
-        StateBackupRefused: The deployment is on CUBRID, or the archive failed
+        StateBackupRefused: A removed CUBRID setting is set, or the archive failed
             verification; every reason is listed and ``output_root`` is as it was.
         StateInUse: Something is using the directory.
     """

@@ -136,8 +136,8 @@ class BuildArtifactsApiService:
         except ValueError as exc:
             return ServiceResponse(400, {"error": str(exc)})
 
-        # ADR 0016: Query manifest canonical through store (CUBRID rows first, FS fallback;
-        # local=FS). get_manifest normalizes path safety, corruption, nonexistence to None.
+        # Query the canonical manifest through the store (ADR 0003/0022).
+        # get_manifest normalizes path safety, corruption, nonexistence to None.
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
             return ServiceResponse(404, {"error": f"manifest not found: {run_id}"})
@@ -298,7 +298,7 @@ class BuildArtifactsApiService:
     ) -> ServiceResponse:
         """Return execution history list sorted descending by latest completion time.
 
-        Per ADR 0003, query the build index first (SQLite or CUBRID, ADR 0016); fall back
+        Per ADR 0003, query the build index first (SQLite, ADR 0022); fall back
         to filesystem scan if index missing or empty. When ENFORCE_OWNERSHIP+oidc, both
         paths apply _apply_ownership to expose only own runs (#433).
         """

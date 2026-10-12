@@ -2196,6 +2196,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.earlier_names = apply_earlier_names()
     for use in args.earlier_names:
         print(f"warning: {use.warning()}", file=sys.stderr)
+    # A CUBRID setting left behind stops every command, before anything is read or
+    # written: the state is in SQLite only now, and starting would put it somewhere the
+    # operator does not expect (ADR 0022). One line; the value is never shown.
+    from .store.backend import RemovedStorageSettingError, refuse_removed_storage_settings
+
+    try:
+        refuse_removed_storage_settings()
+    except RemovedStorageSettingError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     return dispatch(args)
 
 

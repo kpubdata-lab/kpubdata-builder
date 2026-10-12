@@ -120,12 +120,13 @@ def test_studio_listens_on_the_loopback_by_default() -> None:
     assert _services()["studio"]["ports"] == ["${STUDIO_BIND:-127.0.0.1:8080}:8080"]
 
 
-def test_the_published_check_reads_both_deployment_compose_files() -> None:
+def test_the_published_check_reads_the_deployment_compose_file() -> None:
     images = smoke.published_images()
 
     assert "caddy:2.8-alpine" in images
-    # The CUBRID stack's Builder image: the tag #675 found unpublished.
-    assert "ghcr.io/kpubdata-lab/kpubdata-builder:cubrid" in images
+    assert "ghcr.io/kpubdata-lab/kpubdata-builder:latest" in images
+    # The CUBRID stack and its `:cubrid` image were removed (ADR 0022, #1094).
+    assert not [image for image in images if "cubrid" in image]
 
 
 def test_an_image_the_registry_does_not_have_is_reported() -> None:

@@ -42,7 +42,7 @@ from ..spec import BuildSpec, JsonValue
 from ..stages.bronze.build import SourceClient
 from ..store import make_build_index
 from ..store.artifacts import make_artifact_store
-from ..store.backend import storage_backend
+from ..store.backend import refuse_removed_storage_settings
 from ..tabular import DEFAULT_PREVIEW_LIMIT
 from ..uploads import (
     SQLiteUploadRepository,
@@ -161,19 +161,14 @@ def _raise_provider_test_error(client: SourceClient, provider: str) -> None:
 def _credential_repository_from_env(output_root: Path) -> CredentialRepository | None:
     """Enable encrypted repository only if master key is set.
 
-    Backend follows KPUBDATA_BUILDER_STORAGE_BACKEND (ADR 0016): if cubrid,
-    share global Engine with CubridCredentialRepository; otherwise default
-    SQLite file.
+    The repository is the SQLite file under ``.service`` (ADR 0022); a removed storage
+    setting is refused first.
     """
+    refuse_removed_storage_settings()
     encoded_key = os.environ.get(_CREDENTIAL_MASTER_KEY_ENV)
     if not encoded_key:
         return None
     cipher = AesGcmCredentialCipher.from_base64(encoded_key)
-    if storage_backend() == "cubrid":
-        from ..credentials.store_cubrid import CubridCredentialRepository
-        from ..store.backend import get_engine
-
-        return CubridCredentialRepository(get_engine(), cipher)
     return SQLiteCredentialRepository(
         output_root / ".service" / "provider-credentials.sqlite3", cipher
     )
@@ -602,8 +597,8 @@ class BuilderService:
         if warehouse_root is not None and (warehouse_root / CATALOG_FILENAME).is_file():
             self._catalog = TableCatalog(warehouse_root)
         self._client_factory = client_factory
-        self._build_index = make_build_index(output_root)  # #309, ADR 0003/0016
-        self._store = make_artifact_store(output_root)  # ADR 0010/0016 (canonical manifest)
+        self._build_index = make_build_index(output_root)  # #309, ADR 0003/0022
+        self._store = make_artifact_store(output_root)  # ADR 0010/0022 (canonical manifest)
         # Run event timeline store (#496). Lazily created like _upload_repository —
         # preview never executes build, leaving no events ("Preview writes no files"
         # existing contract, #497 scope excludes #496 similarly), so no

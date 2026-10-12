@@ -72,7 +72,7 @@ Builder 는 **프로세스 하나**로 돈다. replica 를 2개 이상 띄울 �
   확인한다: 실제 compose 로 올리고, `/data` 에 쓰고, 컨테이너를 내렸다가 다시 올려 읽는다.
 
 replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 백엔드 분리(`ArtifactStore`,
-`make_build_index()`)는 구현되어 있고 CUBRID 백엔드(ADR 0016)도 있지만, 아래는 여전히
+`make_build_index()`)는 구현되어 있지만(구현은 SQLite 하나다, ADR 0022), 아래는 여전히
 **프로세스 메모리**에 있다(2026-10-07):
 
 | 프로세스 안에만 있는 것 | 둘 이상이면 |
@@ -94,7 +94,7 @@ replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 
 
 | 저장소 | 새 버전을 만나면 | 할 수 있는 일 |
 |---|---|---|
-| 빌드 인덱스 (`_builds.sqlite`, 또는 CUBRID 의 `builds`) | 기동 거부. 예전에는 표를 지우고 다시 만들어서, 새 릴리스로 돌아가면 인덱스가 비어 있었다 | 그 저장소를 쓴 릴리스를 띄우거나, `kpubdata-builder rebuild-index` 로 이 릴리스의 인덱스를 manifest 에서 다시 만든다 — 인덱스는 파생물이다 |
+| 빌드 인덱스 (`_builds.sqlite`) | 기동 거부. 예전에는 표를 지우고 다시 만들어서, 새 릴리스로 돌아가면 인덱스가 비어 있었다 | 그 저장소를 쓴 릴리스를 띄우거나, `kpubdata-builder rebuild-index` 로 이 릴리스의 인덱스를 manifest 에서 다시 만든다 — 인덱스는 파생물이다 |
 | run 이벤트 (`_build_events.sqlite`) | 기동 거부. 예전에는 버전을 보지 않고 열었다 | 그 저장소를 쓴 릴리스를 띄우거나, 업그레이드 전 백업에서 출력 디렉터리를 복구한다 — 이벤트는 다른 것에서 다시 만들 수 없다 |
 | 테이블 카탈로그 (웨어하우스의 `_warehouse.sqlite`) | 기동 거부. 예전에는 처음 쓰일 때 열려서, 기동이 아니라 그 요청이 실패했다 | 위와 같다 — 카탈로그도 다시 만들 수 없다 |
 | 게시 영수증, provider 자격 증명, 업로드, 문서 revision, 가입 원장, 저장한 분석 | 기동 거부. 예전에는 버전을 적지 않아서, 새 릴리스가 쓴 파일을 이 릴리스의 것으로 읽었다 | 그 저장소를 쓴 릴리스를 띄우거나, 업그레이드 전 백업에서 출력 디렉터리를 복구한다 — 여섯 모두 다른 것에서 다시 만들 수 없다 |
@@ -148,7 +148,7 @@ Builder 가 두는 SQLite 파일은 열 개다. 목록의 정본은 `src/kpubdat
 | 저장한 분석 | 출력 디렉터리의 `.service/analyses.sqlite3` | 30초 | 기본(rollback journal) | 버전 표 | 저장한 SQL 과 그것이 읽은 스냅샷의 기록을 잃는다. 다시 만들 수 없다 |
 | 테이블 카탈로그 | 웨어하우스의 `_warehouse.sqlite` | 30초 | WAL | 버전 표 | 어떤 스냅샷이 어느 테이블의 현재 것인지를 잃는다. 다시 만들 수 없다 |
 
-CUBRID 백엔드(§6.1)를 쓰면 빌드 인덱스와 provider 자격 증명은 CUBRID 에 있고 위 파일을 쓰지 않는다.
+상태는 위 SQLite 파일과 로컬 파일에만 있다. CUBRID 백엔드는 제거되었다(§6.1, ADR 0022).
 
 **지금의 방식.** 이 표는 정해 둔 규칙이 아니라 지금 코드가 하는 일이다. 저장소마다 다른 점은 다음과 같다.
 
@@ -175,40 +175,32 @@ CUBRID 백엔드(§6.1)를 쓰면 빌드 인덱스와 provider 자격 증명은 
   더하는 방식으로만 바뀌어 왔다. 버전을 적지 않는 저장소를 새로 두려면 목록의 그 항목에 이유를 적어야 하고
   (`unversioned_because`), 이유가 없으면 테스트가 실패한다. 그런 저장소는 지금 없다.
 
-### 6.1 CUBRID 상태 백엔드 (ADR 0016)
+### 6.1 CUBRID 상태 백엔드는 제거되었다 (ADR 0022, #1094)
 
-기본 백엔드는 sqlite/local(무외부의존)이다. 조직 요구로 CUBRID 를 쓰려면
-(VM 한 대 + Docker 단일 인스턴스 전제):
+CUBRID 상태 백엔드(ADR 0016)는 제거되었다. 상태는 SQLite 와 로컬 파일에만 있다(§6). `cubrid` extra,
+`:cubrid` 이미지, `infra/cubrid/` 구성도 함께 없앴다. CUBRID 로 운영 중인 배포는 없다고 소유자가
+확인했다(ADR 0022 승인 기록).
 
-```bash
-# 이미지에 CUBRID extra 포함
-docker build --build-arg EXTRAS="publish cubrid" -t kpubdata-builder:cubrid .
+남아 있는 CUBRID 설정은 **모든 명령**(`serve`, `build`, `rebuild-index`, `prune-cancelled`, `backup` 등)을
+시작하지 못하게 한다. 알림 없이 SQLite 로 넘어가거나 경고만 남기고 뜨지 않는다.
 
-# 실행 (env 로 백엔드 선택)
-docker run --rm -p 8000:8000 \
-  -e KPUBDATA_BUILDER_API_KEY="$API_KEY" \
-  -e KPUBDATA_BUILDER_STORAGE_BACKEND=cubrid \
-  -e KPUBDATA_BUILDER_CUBRID_URL="cubrid+pycubrid://user:pass@cubrid-host:33000/kpubdata?charset=utf8" \
-  # URL scheme 은 `cubrid+pycubrid://` 여야 한다 — 드라이버를 생략한 `cubrid://` 는
-  # legacy C-extension(CUBRIDdb) dialect 로 해석된다. 생략하면 기동 시 경고와 함께
-  # pycubrid 로 정규화하고, `cubrid+cubriddb://` 처럼 명시하면 기동을 거부한다(ADR 0016).
-  -v /mnt/blockvol/data:/data \
-  kpubdata-builder:cubrid
-```
+| 설정 | 거부하는 값 |
+| :--- | :--- |
+| `KPUBDATA_BUILDER_STORAGE_BACKEND` | 비어 있거나 `sqlite` 가 아닌 모든 값(`cubrid` 포함). 비어 있거나 `sqlite` 이면 아무 일도 하지 않는다 |
+| `KPUBDATA_BUILDER_CUBRID_URL` | 비어 있지 않은 모든 값. 오류는 URL 을 다시 적지 않는다(비밀번호가 들어 있다) |
 
-- **BuildIndex·Credential·manifest 문서**가 CUBRID 에 저장된다. **산출물 바이트는 여전히
-  `/data`(블록 볼륨)** 에 둔다 — 쿼리 엔진이 실제 parquet 경로를 요구하고 대용량 BLOB 을
-  RDBMS 에 넣지 않기 위함(ADR 0016). 따라서 `/data` 볼륨 마운트는 CUBRID 백엔드에서도 필수다.
-- serve 시작 시 `KPUBDATA_BUILDER_CUBRID_URL` 미설정·드라이버 미설치면 fail-closed 로 기동을 거부한다.
-- 마이그레이션(FS→CUBRID)·정본 이전·리스크는 [ADR 0016](./adrs/0016-cubrid-state-backend.md) 참조.
-- CUBRID 는 같은 VM 에 컨테이너로 함께 띄운다(docker-compose, `infra/cubrid/` 참조).
+오류는 `error:` 로 시작하는 한 줄이고, 종료 코드는 1 이다. 할 일은 둘 중 하나다.
+
+- CUBRID 데이터를 아직 대조하지 않았다면, CUBRID 백엔드가 있는 마지막 릴리스(v0.4.0)로 되돌려
+  [ADR 0022](./adrs/0022-sqlite-only-state-and-cubrid-retirement.md) §3 의 절차를 먼저 밟는다. 대조 도구는
+  그 릴리스에 없으므로 ADR 0022 승인 기록의 2026-10-12 보충대로 #1269 커밋의 소스에서 실행한다.
+- 대조를 마쳤다면(또는 CUBRID 를 쓴 적이 없다면) 두 설정을 `.env` 와 환경에서 지운다.
 
 ### 6.2 전체 상태의 백업과 복구 (#1095)
 
 `warehouse-backup` 은 카탈로그와 스냅샷만 담는다. 아래 세 명령은 출력 디렉터리(`/data`)의
-**모든 상태**를 하나의 파일로 받고, 그 파일을 검증한 뒤에만 통째로 되돌린다. 상태 백엔드가
-CUBRID 이면(`KPUBDATA_BUILDER_STORAGE_BACKEND=cubrid`) 셋 모두 거부한다 — 인덱스와 키가
-CUBRID 에 있어 이 백업이 담지 못한다(ADR 0022).
+**모든 상태**를 하나의 파일로 받고, 그 파일을 검증한 뒤에만 통째로 되돌린다. 제거된 CUBRID
+설정이 남아 있으면 다른 모든 명령처럼 셋 모두 거부한다(§6.1).
 
 ```bash
 # 1) 서버를 내린다. SIGTERM 이 실행 중인 빌드를 끝내거나 멈춘다(§7) — 이것이 쓰기를 멈추는 방법이다.
@@ -802,12 +794,12 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 ### 배포 중인 이미지의 정기 재스캔 (#1107)
 
 위 게이트는 이미지를 **빌드할 때** 한 번 본다. 이미지는 아무도 다시 빌드하지 않아도 새
-권고가 붙고, compose 가 다른 곳에서 받아 오는 이미지(Caddy, CUBRID)는 그 게이트가 본 적이
+권고가 붙고, compose 가 다른 곳에서 받아 오는 이미지(Caddy)는 그 게이트가 본 적이
 없다. `image-rescan.yml` 워크플로가 매일(04:41 UTC) `scripts/image_rescan.py` 를 돌린다.
 
 | 항목 | 값 |
 | :--- | :--- |
-| 대상 | `docker-compose.prod.app.yml` 과 `infra/cubrid/docker-compose.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:latest`, `caddy:2.8-alpine`, `cubrid/cubrid:11.3`, `ghcr.io/kpubdata-lab/kpubdata-builder:cubrid` |
+| 대상 | `docker-compose.prod.app.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:latest`, `caddy:2.8-alpine` |
 | severity | `CRITICAL,HIGH`. **수정본이 없는 것도 포함한다** — 빌드 게이트(`ignore-unfixed: true`)와 다르다 |
 | 결과 | 이미지마다 열린 이슈 하나(`fix(security): <이미지> has HIGH or CRITICAL vulnerabilities`, 라벨 `epic:distribution`·`security`). 스캔한 digest 와, 취약점마다 수정본이 나온 버전 또는 `no fix published` 를 적는다 |
 | 중복 | 목록이 지난번과 같으면 아무것도 쓰지 않는다. 달라지면 같은 이슈의 목록을 고쳐 쓰고 무엇이 달라졌는지 댓글을 단다. 새 이슈를 또 열지 않는다 |
@@ -910,8 +902,6 @@ docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio u
 - **`STUDIO_REF` 는 위 기능이 들어간 Studio 커밋 이상이어야 한다.** 그보다 앞선 커밋(예: 이전 기본값
   `023f0c3`)으로 빌드한 Studio 는 `ASSISTANT_*` 를 읽지 못해 사용자가 적은 아무 https 주소로 보낸다.
   `tests/unit/test_compose_profiles_smoke.py` 가 기본값이 그 아래로 내려가면 실패시킨다.
-- **CUBRID 스택(`infra/cubrid/`)은 이 묶음에 들어오지 않는다.** CUBRID 백엔드는 퇴역이 제안돼 있다(ADR 0022,
-  #1094). 그 compose 는 그대로 두고, 아래 게시 확인에서 그 이미지가 받아지는지만 본다.
 - **Keycloak 은 이 묶음에 없다.** 인증 서버를 직접 운영할지 관리형 서비스를 쓸지는 아직 정하지 않았다
   (#1124). 직접 운영하기로 하면 realm 설정, 영속 데이터베이스, SMTP, TLS 를 갖춘 프로필로 더한다.
 
@@ -923,7 +913,7 @@ docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio u
   `/config.js` 에 적힌 Builder 주소, 그리고 그 주소로 페이지의 오리진을 실어 보낸 호출이 200 이고 CORS 가
   그 오리진을 허용하는지. 같은 체인의 위조 헤더·보안 헤더·로그는 `proxy_chain_smoke.py` 가, `/data` 의
   보존은 `data_volume_smoke.py` 가, 종료는 `shutdown_drain_smoke.py` 가 본다 — 여기서 되풀이하지 않는다.
-- **이미지 게시** — 두 compose 파일(`docker-compose.prod.app.yml`, `infra/cubrid/docker-compose.yml`)의 기본
+- **이미지 게시** — compose 파일(`docker-compose.prod.app.yml`)의 기본
   이미지가 레지스트리에 있는지 묻는다. #675 처럼 아무 워크플로도 올리지 않는 태그를 기본값으로 두면 여기서
   실패한다. Builder 의 패키지는 비공개라서 이 작업은 패키지 읽기 권한만 가진 토큰으로 로그인한다 — 로그인
   없는 VM 에서 `ghcr.io/kpubdata-lab/kpubdata-builder` 를 받으려면 그 VM 도 로그인해야 한다.
@@ -956,7 +946,7 @@ python3 scripts/compose_profiles_smoke.py --published                           
 나머지는 지금 넘기지 않는다. 기본값이 있는 설정은 그 값으로 돈다.
 
 - **기본값이 없는 것**(`HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY`, `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`,
-  `KPUBDATA_BUILDER_CUBRID_URL`, `OIDC_JWKS_URL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지 않은
+  `OIDC_JWKS_URL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지 않은
   것으로 돈다. `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` 가 없으므로 이 스택에서 `prune-cancelled --apply` 는
   `--ttl-hours` 를 직접 주지 않는 한 아무것도 지우지 않는다.
 - **켜고 끄는 넷**(`ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
@@ -964,8 +954,8 @@ python3 scripts/compose_profiles_smoke.py --published                           
   있다. `OIDC_ISSUER` 가 없는 단일 사용자 스택에서는 꺼져 있고, `OIDC_ISSUER` 를 설정한 다중 사용자 스택에서는
   `.env` 에 무엇을 적든 켜져 있다 — 다중 사용자 모드가 넷을 모두 강제한다(ADR 0012, #1113). 그래서 넘기지
   않아서 달라지는 것은 단일 사용자 스택에서 이 넷을 켤 수 없다는 점이다.
-- **이 스택은 SQLite 로만 돈다.** `KPUBDATA_BUILDER_STORAGE_BACKEND` 와 `KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는
-  뜻으로 아래 목록에 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
+- **이 스택은 SQLite 로만 돈다.** `KPUBDATA_BUILDER_STORAGE_BACKEND` 와 `KPUBDATA_BUILDER_CUBRID_URL` 은 설정이
+  아니라 제거된 설정이어서 이 목록에 없다(§6.1, #1094). 남아 있으면 Builder 가 시작하지 않는다.
 
 넘기지 않는 설정 전체는 다음과 같다(`KPUBDATA_BUILDER_DEV_MODE` 는 위에 적었다).
 
@@ -983,8 +973,6 @@ python3 scripts/compose_profiles_smoke.py --published                           
 - `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
 - `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`
 - `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
-- `KPUBDATA_BUILDER_STORAGE_BACKEND`
-- `KPUBDATA_BUILDER_CUBRID_URL`
 - `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`
 - `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH`
 - `HF_TOKEN`

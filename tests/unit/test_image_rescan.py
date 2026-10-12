@@ -115,12 +115,10 @@ def test_every_image_of_the_deployment_files_is_scanned() -> None:
         services = yaml.safe_load((_ROOT / name).read_text(encoding="utf-8"))["services"]
         named += [service["image"] for service in services.values() if "image" in service]
 
-    assert len(named) == 4
+    assert len(named) == 2
     assert rescan.deployed_images() == [
         "ghcr.io/kpubdata-lab/kpubdata-builder:latest",
         "caddy:2.8-alpine",
-        "cubrid/cubrid:11.4",
-        "ghcr.io/kpubdata-lab/kpubdata-builder:cubrid",
     ]
 
 
@@ -318,13 +316,13 @@ def test_a_failed_scan_fails_the_run_and_the_other_images_are_still_recorded(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tools = _Tools(_report(_vulnerability("CVE-2026-0001")))
-    tools.fail = "cubrid/cubrid:11.4"
+    tools.fail = "caddy:2.8-alpine"
 
     status = rescan.main(["--work-dir", str(tmp_path)], run=tools)
 
     assert status == 1
-    assert len(tools.gh("issue", "create")) == 3
-    assert "::error::trivy could not scan cubrid/cubrid:11.4" in capsys.readouterr().out
+    assert len(tools.gh("issue", "create")) == 1
+    assert "::error::trivy could not scan caddy:2.8-alpine" in capsys.readouterr().out
 
 
 def test_a_refused_issue_write_fails_the_run(tmp_path: Path) -> None:

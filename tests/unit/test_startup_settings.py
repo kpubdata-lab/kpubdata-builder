@@ -103,7 +103,6 @@ def test_nothing_set_is_nothing_to_report() -> None:
         ("KPUBDATA_QUERY_MAX_CONCURRENCY", ""),
         ("KPUBDATA_QUERY_MAX_MEMORY_MB", "1GB"),
         ("KPUBDATA_QUERY_MEMORY_BUDGET_MB", "-1"),
-        ("KPUBDATA_BUILDER_STORAGE_BACKEND", "postgres"),
         ("KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS", "inf"),
         ("KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT", "0"),
         ("KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT", "nan"),
@@ -135,7 +134,6 @@ def test_unusable_value_is_a_problem_that_names_the_variable(
         ("KPUBDATA_QUERY_MAX_CONCURRENCY", "1"),
         ("KPUBDATA_QUERY_MAX_MEMORY_MB", "512"),
         ("KPUBDATA_QUERY_MEMORY_BUDGET_MB", "2048"),
-        ("KPUBDATA_BUILDER_STORAGE_BACKEND", "SQLite"),
         ("KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS", "0"),
         ("KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT", "2.5"),
         ("OIDC_JWKS_TTL", "300"),
@@ -154,12 +152,6 @@ def test_usable_value_is_not_reported(
     assert report.warnings == []
 
 
-def test_cubrid_backend_without_a_url_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KPUBDATA_BUILDER_STORAGE_BACKEND", "cubrid")
-
-    assert any("KPUBDATA_BUILDER_CUBRID_URL" in problem for problem in check_settings().problems)
-
-
 @pytest.mark.parametrize("value", ["not base64!", "c2hvcnQ="])
 def test_master_key_problem_does_not_repeat_the_key(
     monkeypatch: pytest.MonkeyPatch, value: str
@@ -170,33 +162,6 @@ def test_master_key_problem_does_not_repeat_the_key(
 
     assert "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY" in problem
     assert value not in problem
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        # The scheme left out, and mistyped: the whole value is then user:pass@host.
-        "dba:fake-password-123@db.internal:33000/builder",
-        "cubrid+pycubrid:/dba:fake-password-123@db.internal:33000/builder",
-        # "://" later in the value does not make what is before it a scheme.
-        "dba:fake-password-123@db.internal:33000/builder?next=http://x",
-        # A scheme that is refused, with the password after it.
-        "postgresql://dba:fake-password-123@db.internal:5432/builder",
-        "cubrid+cubriddb://dba:fake-password-123@db.internal:33000/builder",
-        "cubrid+aiopycubrid://dba:fake-password-123@db.internal:33000/builder",
-    ],
-)
-def test_cubrid_url_problem_does_not_repeat_the_password(
-    monkeypatch: pytest.MonkeyPatch, url: str
-) -> None:
-    monkeypatch.setenv("KPUBDATA_BUILDER_STORAGE_BACKEND", "cubrid")
-    monkeypatch.setenv("KPUBDATA_BUILDER_CUBRID_URL", url)
-
-    (problem,) = check_settings().problems
-
-    assert "KPUBDATA_BUILDER_CUBRID_URL" in problem
-    assert "fake-password-123" not in problem
-    assert "db.internal" not in problem
 
 
 def test_every_problem_is_reported_at_once(monkeypatch: pytest.MonkeyPatch) -> None:

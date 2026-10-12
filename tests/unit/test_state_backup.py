@@ -325,7 +325,7 @@ def test_a_damaged_store_refuses_the_backup(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("command", ["backup", "restore"])
-def test_a_cubrid_deployment_is_refused(
+def test_a_cubrid_setting_left_behind_is_refused(
     command: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

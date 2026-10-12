@@ -334,9 +334,8 @@ def _now() -> str:
 class TableCatalog:
     """Single-file SQLite table catalog.
 
-    The CUBRID backend (ADR 0016) is an **additional** backend under the same
-    protocol, not a replacement. SQLite is enough for the first catalog: one node,
-    short transactions, ``BEGIN IMMEDIATE``, a busy timeout and a CAS revision.
+    SQLite is enough for the catalog: one node, short transactions,
+    ``BEGIN IMMEDIATE``, a busy timeout and a CAS revision.
     """
 
     def __init__(self, root: Path, *, catalog_path: Path | None = None) -> None:

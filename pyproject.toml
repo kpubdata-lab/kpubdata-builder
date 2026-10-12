@@ -71,13 +71,6 @@ huggingface = ["huggingface-hub>=0.23,<3"]
 # list(=여러 issuer)를 jwt.decode(issuer=...)로 넘기므로, 하한을 되돌리면
 # 2.8.x 환경에서 모든 토큰이 InvalidIssuerError 로 거부된다.
 auth = ["pyjwt[crypto]>=2.9,<3"]
-# CUBRID 상태 백엔드(선택, ADR 0016). `[pycubrid]` extra 가 핵심이다 — sqlalchemy-cubrid
-# 자체는 드라이버를 유입하지 않고, extra 없이 설치하면 dialect 만 생기고 연결 시점에
-# `ImportError: Could not import CUBRIDdb`(legacy C-extension)로 죽는다.
-# 하한은 1.7.1 — sqlalchemy-cubrid 와 pycubrid 가 같은 1.7.1 로 맞춰 배포된 조합이다.
-# 기본 백엔드(sqlite/local FS)는 이 extra 없이 동작하므로 코어 dependencies 에는
-# 넣지 않는다 — 무외부의존 기본값 유지. 배포 이미지는 3.12-slim.
-cubrid = ["sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.10"]
 publish = ["huggingface-hub>=0.23,<3", "xmltodict>=0.13,<2", "kaggle>=1.6,<2"]
 # The legacy dataset publish scripts (scripts/pipeline, scripts/publish_to_hf.py, ADR 0018;
 # run by publish-dataset.yml) still read and write frames with Polars. Builder itself has
@@ -100,10 +93,6 @@ dev = [
   "tzdata>=2024.1",
   # auth extra를 dev에 포함해 CI(mypy/ruff/pytest)에서 항상 타입 체크 가능 (#385).
   "pyjwt[crypto]>=2.9,<3",
-  # CUBRID 백엔드 타입체크/스모크용. sqlalchemy-cubrid 1.7 과 pycubrid 1.x 는 둘 다
-  # Python >=3.10 을 지원하므로(각 배포판 requires_python 확인), 이 프로젝트의
-  # requires-python 전 구간에서 설치된다 — 환경 마커로 게이팅하지 않는다.
-  "sqlalchemy-cubrid[pycubrid]>=1.7.1,<1.10",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -122,13 +111,6 @@ strict = true
 warn_unused_configs = true
 mypy_path = ["src"]
 
-# CUBRID 백엔드 의존성은 optional extra 라 기본 설치에는 없다. 미설치 환경에서
-# "cannot find module" 로 실패하지 않도록 missing import 를 무시한다 — 설치된
-# 환경에서는 각 패키지의 실제 타입(py.typed)을 그대로 사용하므로 정확도는 유지된다.
-[[tool.mypy.overrides]]
-module = ["sqlalchemy.*", "sqlalchemy_cubrid.*", "pycubrid.*"]
-ignore_missing_imports = true
-
 # Publishing SDKs come with the optional `publish`/`huggingface` extras; where they are
 # absent, their imports are unchecked rather than annotated line by line (#688).
 [[tool.mypy.overrides]]
@@ -146,19 +128,11 @@ source = ["src/kpubdata_builder"]
 [tool.coverage.report]
 fail_under = 88
 show_missing = true
-# cubrid 백엔드 구현체(store/build_index_cubrid.py, store/artifacts/cubrid.py,
-# credentials/store_cubrid.py)는 기본 마커 `-m 'not cubrid'` 가 걷어내므로 이
-# 잡에서는 0% 로 잡힌다. 일부러 omit 하지 않는다 — 실제로 이 레인이 실행하지 않는
-# 코드이고, 검증은 별도 워크플로(.github/workflows/cubrid.yml, `pytest -m cubrid`)가
-# 맡는다. 숨기면 총계만 좋아 보이고 사실이 가려진다.
 
 [tool.pytest.ini_options]
-# cubrid marker 테스트는 기본 제외(sqlalchemy·CUBRID 필요, optional extra).
-# 실행: `pytest -m cubrid` (명령행 -m 이 이 기본값을 override 한다).
-addopts = "-ra -m 'not cubrid and not network'"
+addopts = "-ra -m 'not network'"
 testpaths = ["tests"]
 markers = [
-  "cubrid: CUBRID 백엔드 계약/통합 테스트 (기본 제외; sqlalchemy 필요, ADR 0016).",
   "real_catalog_terms: reads redistribution terms from the installed kpubdata catalog instead of the suite's pinned 'declares nothing' (#688).",
   "network: 외부 인터넷 호출이 필요한 테스트 (기본 제외). 제3자 서비스의 가용성에 결과가 달려 있어 CI 를 그 서비스의 상태에 묶는다. 실행: pytest -m network.",
 ]

@@ -33,7 +33,7 @@ esac
 _api_key="${KPUBDATA_BUILDER_API_KEY:-}"
 
 if [ -n "$_api_key" ]; then
-  # 문서·예시 파일에 실린 값(.env.app.example, docs/deployment.md, infra/cubrid/.env.example)은
+  # 문서·예시 파일에 실린 값(.env.app.example, docs/deployment.md)은
   # 공개된 값이다. 바꾸지 않고 배포하면 누구나 서비스 키를 안다.
   case "$_api_key" in
     replace-with-strong-random-api-key | change-me-strong-secret | your-secret-key | "<secret>")
