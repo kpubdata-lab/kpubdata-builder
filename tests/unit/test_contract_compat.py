@@ -282,6 +282,44 @@ def test_a_response_may_move_to_a_schema_that_extends_the_old_one() -> None:
     assert gate.check(_BASE, head) == []
 
 
+def test_a_response_may_add_a_branch_to_anyof_without_losing_the_old_schema() -> None:
+    head = _head("1.5.0")
+    _get(head)["responses"]["200"]["content"]["application/json"]["schema"] = {
+        "anyOf": [
+            {"$ref": "#/components/schemas/Run"},
+            {"$ref": "#/components/schemas/Other"},
+        ]
+    }
+
+    assert gate.check(_BASE, head) == []
+
+
+@pytest.mark.parametrize("keyword", ["anyOf", "oneOf"])
+def test_a_response_union_without_a_safe_old_branch_still_breaks(keyword: str) -> None:
+    head = _head("1.5.0")
+    _get(head)["responses"]["200"]["content"]["application/json"]["schema"] = {
+        keyword: [{"$ref": "#/components/schemas/Other"}]
+    }
+
+    (problem,) = gate.check(_BASE, head)
+    assert "MAJOR version raise" in problem
+
+
+def test_a_request_anyof_still_gets_checked_as_a_request() -> None:
+    base = copy.deepcopy(_BASE)
+    _get(base)["requestBody"] = {
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Run"}}}
+    }
+    head = copy.deepcopy(base)
+    head["info"]["version"] = "1.5.0"
+    _get(head)["requestBody"]["content"]["application/json"]["schema"] = {
+        "anyOf": [{"$ref": "#/components/schemas/Run"}, {"type": "string"}]
+    }
+
+    (problem,) = gate.check(base, head)
+    assert "request: $ref" in problem
+
+
 def test_a_response_moved_to_an_unrelated_schema_still_breaks() -> None:
     """Negative: an allOf that does not include the old target is a retype."""
     head = _head("1.5.0")

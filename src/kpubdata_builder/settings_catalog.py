@@ -282,7 +282,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         name="KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES",
         group="builds",
-        description="다중 사용자 배포에서 사용자 한 명의 끝난 run 작업 공간이 차지할 수 있는 합계 크기(바이트, #1099). 그 합계와 대기·실행 중인 그 사용자의 build 마다의 예약(`KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES`)이 이 값을 넘으면 `POST /builds` 가 409 `run_storage_quota_exceeded` 로 답한다. 업로드(#1045)와 warehouse snapshot 은 세지 않는다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔. 단일 사용자 배포와 동기 `POST /build` 에는 적용하지 않는다",
+        description="다중 사용자 배포에서 사용자 한 명의 끝난 run 작업 공간이 차지할 수 있는 합계 크기(바이트, #1099). 그 합계와 대기·실행 중인 그 사용자의 build 마다의 예약(`KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES`)이 이 값을 넘으면 `POST /build` 와 `POST /builds` 가 409 `run_storage_quota_exceeded` 로 답한다. 업로드(#1045)와 warehouse snapshot 은 세지 않는다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다",
         default="미설정 (끔)",
         required="선택",
         kind="integer",
@@ -298,7 +298,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         name="KPUBDATA_BUILDER_BUILD_MIN_FREE_MB",
         group="builds",
-        description="출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `POST /builds` 가 build 를 받지 않고 503 `disk_space_low` 로 답한다(#1099). 여유 공간은 `/readyz` 와 같은 방식으로 잰다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔. 동기 `POST /build` 에는 적용하지 않는다",
+        description="출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `POST /build` 와 `POST /builds` 가 build 를 받지 않고 503 `disk_space_low` 로 답한다(#1099). 여유 공간은 `/readyz` 와 같은 방식으로 잰다. 값은 메인테이너가 정한다(kpubdata#812) — 기본은 끔. `0` 이면 끔",
         default="미설정 (끔)",
         required="선택",
         kind="integer",

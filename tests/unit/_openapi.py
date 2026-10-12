@@ -20,7 +20,7 @@ Supported keywords (subset used by this contract):
     - ``additionalProperties`` (``true`` | ``false`` | schema)
     - ``items`` (array)
     - ``enum``
-    - ``oneOf`` (valid if at least one branch passes — lenient interpretation for
+    - ``oneOf`` and ``anyOf`` (valid if at least one branch passes — lenient interpretation for
       conformance gate to catch actual drift; prioritizes avoiding false positives
       even if multiple branches match)
     - ``not``, ``allOf``
@@ -113,18 +113,19 @@ def validate(
 
     errors: list[str] = []
 
-    # oneOf: valid if at least one branch passes (lenient interpretation —
+    # oneOf/anyOf: valid if at least one branch passes (lenient interpretation —
     # see module docstring for intent).
-    one_of = schema.get("oneOf")
-    if isinstance(one_of, list):
+    union = schema.get("oneOf", schema.get("anyOf"))
+    if isinstance(union, list):
         passing = [
             branch
-            for branch in one_of
+            for branch in union
             if isinstance(branch, dict)
             and not validate(value, branch, contract, path, allow_additional=allow_additional)
         ]
         if not passing:
-            errors.append(f"{path}: value matched no oneOf branch")
+            keyword = "oneOf" if "oneOf" in schema else "anyOf"
+            errors.append(f"{path}: value matched no {keyword} branch")
         return errors
 
     all_of = schema.get("allOf")

@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.122.0",
+  "contract_version": "1.123.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5418,6 +5418,36 @@
       "operation_id": "createBuild",
       "method": "POST",
       "path": "/build",
+      "status": 409,
+      "example": "RunStorageQuotaExceeded",
+      "current": {
+        "error": "your runs use the storage one user may keep; submit this build when older runs have expired",
+        "code": "run_storage_quota_exceeded",
+        "limit_bytes": 10737418240,
+        "used_bytes": 10737418240
+      },
+      "with_additive_fields": {
+        "error": "your runs use the storage one user may keep; submit this build when older runs have expired",
+        "code": "run_storage_quota_exceeded",
+        "limit_bytes": 10737418240,
+        "used_bytes": 10737418240,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "run_storage_quota_exceeded",
+        "limit_bytes": 10737418240,
+        "used_bytes": 10737418240
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
       "status": 502,
       "example": "ProviderFetchFailed",
       "current": {
@@ -5472,6 +5502,30 @@
         "error": "provider request failed"
       },
       "broken_path": "$.status"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
+      "status": 503,
+      "example": "DiskSpaceLow",
+      "current": {
+        "error": "the server is low on disk space and is not accepting builds; submit the build again later",
+        "code": "disk_space_low"
+      },
+      "with_additive_fields": {
+        "error": "the server is low on disk space and is not accepting builds; submit the build again later",
+        "code": "disk_space_low",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "disk_space_low"
+      },
+      "broken_path": "$.error"
     },
     {
       "operation_id": "listBuildArtifacts",

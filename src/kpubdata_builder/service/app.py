@@ -20,6 +20,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -518,6 +519,9 @@ _BuildListEntry = dict[str, str | None]
 # 1.116.0 -> 1.117.0: GET /readyz, readiness apart from liveness, without
 #   authentication; GET /metrics, the Prometheus text page, for administrators (#1101,
 #   additive).
+# 1.122.0 -> 1.123.0: POST /build shares configured disk and owner storage admission
+#   with POST /builds; may answer 503 disk_space_low or 409 run_storage_quota_exceeded
+#   before execution (#1099, additive).
 # 1.117.0 -> 1.118.0: POST /builds may answer 503 disk_space_low and, in a multi-user
 #   deployment, 409 run_storage_quota_exceeded; both are off until configured (#1099,
 #   additive).
@@ -532,7 +536,7 @@ _BuildListEntry = dict[str, str | None]
 #   KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH), readiness and publish report the
 #   pii_scan_* blockers and a refused publish is audited as refused:<code> (#1113,
 #   additive).
-API_CONTRACT_VERSION = "1.122.0"
+API_CONTRACT_VERSION = "1.123.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1259,24 +1263,36 @@ class BuilderService:
         A synchronous build of a user is given a probe that stops it once the user is
         deleted (#1102): one that began before the deletion must not write a run after it.
         """
+        # The presence of a cancellation probe does not make a direct call an
+        # asynchronous job. Only a job already admitted in the registry owns a
+        # reservation; every other call must take one here.
+        synchronous = run_id is None or self._async_builds.registry.get(run_id) is None
         owner = manifest_owner_id if manifest_owner_id is not None else owner_id
         if cancellation is None and owner is not None:
             latch = RunCancellation()
             cancellation = OwnerDeletionProbe(
                 latch, lambda: self.owner_deleted(owner), latch.request
             )
-        return self._build_runs.build(
-            spec_yaml,
-            run_id=run_id,
-            created_by=created_by,
-            owner_id=owner_id,
-            manifest_owner_id=manifest_owner_id,
-            credential_owner_id=credential_owner_id,
-            retry_of=retry_of,
-            principal=principal,
-            cancellation=cancellation,
-            if_absent=if_absent,
+        reservation = (
+            self._build_runs.reserve_sync_storage(owner or created_by)
+            if synchronous
+            else nullcontext(None)
         )
+        with reservation as refusal:
+            if refusal is not None:
+                return refusal
+            return self._build_runs.build(
+                spec_yaml,
+                run_id=run_id,
+                created_by=created_by,
+                owner_id=owner_id,
+                manifest_owner_id=manifest_owner_id,
+                credential_owner_id=credential_owner_id,
+                retry_of=retry_of,
+                principal=principal,
+                cancellation=cancellation,
+                if_absent=if_absent,
+            )
 
     def submit_build(
         self,

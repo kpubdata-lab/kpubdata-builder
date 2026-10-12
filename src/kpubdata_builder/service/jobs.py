@@ -250,6 +250,8 @@ class AsyncBuildJobRegistry:
     def __init__(self, *, max_terminal_jobs: int = _DEFAULT_MAX_TERMINAL_JOBS) -> None:
         self._lock = Lock()
         self._jobs: dict[str, BuildJobSnapshot] = {}
+        # Synchronous builds share the same owner reservation lock as queued jobs.
+        self._sync_active_by_owner: dict[str, int] = {}
         # Set once, by ``close_and_fail_queued``: the process is shutting down (#1118).
         self._closed = False
         # run_id -> cooperative cancellation state (#481). Same lifecycle as snapshot,
@@ -335,7 +337,7 @@ class AsyncBuildJobRegistry:
             if self._closed:
                 return "closed", None
             owner = owner_id or created_by
-            active = (
+            async_active = (
                 sum(
                     1
                     for job in self._jobs.values()
@@ -348,13 +350,14 @@ class AsyncBuildJobRegistry:
             if (
                 max_active_per_owner is not None
                 and owner is not None
-                and active >= max_active_per_owner
+                and async_active >= max_active_per_owner
             ):
                 return "owner_limit", None
             if storage is not None:
                 if storage.disk_low:
                     return "disk_low", None
-                if owner is not None and storage.over_quota(active):
+                sync_active = self._sync_active_by_owner.get(owner, 0) if owner else 0
+                if owner is not None and storage.over_quota(async_active + sync_active):
                     return "storage_quota", None
             queued = sum(1 for job in self._jobs.values() if job.status == "queued")
             if queued >= max_queued:
@@ -373,6 +376,37 @@ class AsyncBuildJobRegistry:
             self._jobs[run_id] = snapshot
             self._cancellations[run_id] = RunCancellation()
             return "created", snapshot
+
+    def reserve_sync(self, owner: str | None, storage: StorageAdmission | None) -> str:
+        """Admit one synchronous build under the async jobs' reservation lock."""
+        with self._lock:
+            active = self._sync_active_by_owner.get(owner, 0) if owner is not None else 0
+            if owner is not None:
+                active += sum(
+                    1
+                    for job in self._jobs.values()
+                    if job.status in ("queued", "running", "cancelling")
+                    and (job.owner_id or job.created_by) == owner
+                )
+            if storage is not None:
+                if storage.disk_low:
+                    return "disk_low"
+                if owner is not None and storage.over_quota(active):
+                    return "storage_quota"
+            if owner is not None:
+                self._sync_active_by_owner[owner] = self._sync_active_by_owner.get(owner, 0) + 1
+            return "accepted"
+
+    def release_sync(self, owner: str | None) -> None:
+        """Release one synchronous reservation after its index is written."""
+        if owner is None:
+            return
+        with self._lock:
+            active = self._sync_active_by_owner[owner]
+            if active == 1:
+                del self._sync_active_by_owner[owner]
+            else:
+                self._sync_active_by_owner[owner] = active - 1
 
     def cancellation(self, run_id: str) -> RunCancellation | None:
         """Return this run's cooperative cancellation state (#481). None if not found."""
