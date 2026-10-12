@@ -541,7 +541,10 @@ _BuildListEntry = dict[str, str | None]
 #   KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH), readiness and publish report the
 #   pii_scan_* blockers and a refused publish is audited as refused:<code> (#1113,
 #   additive).
-API_CONTRACT_VERSION = "1.123.0"
+# 1.123.0 -> 1.124.0: GET /builds/{run_id} carries a failed run's error after the
+#   registry has let the job go — a restart, an eviction, a synchronous build — as the
+#   line GET /admin/runs gives (#1120, additive; no schema changes).
+API_CONTRACT_VERSION = "1.124.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
