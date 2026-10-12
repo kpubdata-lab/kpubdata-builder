@@ -98,6 +98,21 @@ _POST_NOT_READS = frozenset(
 )
 _POST_FOLLOWED = frozenset({"createAnalysis", "runAnalysis"})
 
+#: These GETs cannot return this run's rows with the fixture's client or absent ID.
+#: Pin their refusals so a new route cannot pass the sweep by returning an error.
+_GET_REFUSALS = {
+    "readyz": 503,  # The fixture has no live provider configuration.
+    "getCatalog": 502,
+    "listProviders": 502,
+    "getProviderStatus": 502,
+    "getProviderCredential": 502,
+    "getUpload": 404,  # This run was built without an upload.
+    "getPublishReceipt": 404,  # No remote publish is attempted by this test.
+    "getWarehouseExport": 404,  # The placeholder precedes the real export below.
+    "downloadWarehouseExport": 404,
+    "getAnalysis": 404,  # The placeholder precedes the saved analysis below.
+}
+
 
 def _text(response: object) -> str:
     """Everything a client would receive, as text."""
@@ -116,6 +131,7 @@ class _Sweep:
     """Every read of one built run, with what each answered."""
 
     def __init__(self, root: Path, gold: str = "") -> None:
+        self.publish_unmasked = bool(gold)
         (root / "out").mkdir()
         (root / "wh").mkdir()
         self.root = root
@@ -126,6 +142,13 @@ class _Sweep:
         )
         built = self.service.build(_SPEC.format(gold=gold), run_id=_RUN)
         assert built.status_code == 200, built.body
+        revision = dispatch(
+            self.service,
+            "PUT",
+            "/revisions/spec/pii-sweep",
+            {"content": {"yaml": _SPEC.format(gold=gold)}, "expected_revision": 0},
+        )
+        assert isinstance(revision, ServiceResponse) and revision.status_code == 200, revision
         tables = cast(
             list[dict[str, JsonValue]],
             self._json("GET", "/warehouse/tables")["tables"],
@@ -143,8 +166,8 @@ class _Sweep:
             "upload_id": ["none"],
             "export_id": ["none"],
             "analysis_id": ["none"],
-            "kind": ["none"],
-            "doc_id": ["none"],
+            "kind": ["spec"],
+            "doc_id": ["pii-sweep"],
         }
         self.answers: dict[str, tuple[int, str]] = {}
 
@@ -174,8 +197,25 @@ class _Sweep:
         for method, template, operation, *_ in OPERATIONS:
             if method == "GET":
                 for path in self._paths(template):
-                    query = f"source={_SOURCE}" if operation == "getBuildStageDetail" else ""
-                    self._record(f"GET {path}", dispatch(self.service, "GET", path, None, query))
+                    query = (
+                        f"source={_SOURCE}"
+                        if operation == "getBuildStageDetail"
+                        else "target=huggingface&destination=pii-sweep"
+                        if operation in {"getPublishReadiness", "getPublishReceipt"}
+                        else ""
+                    )
+                    response = self._record(
+                        f"GET {path}", dispatch(self.service, "GET", path, None, query)
+                    )
+                    assert isinstance(response, (FileResponse, ServiceResponse, TextResponse))
+                    expected = _GET_REFUSALS.get(operation, 200)
+                    if (
+                        not self.publish_unmasked
+                        and operation == "getBuildArtifactFile"
+                        and ("/bronze/" in path or "/silver/" in path)
+                    ):
+                        expected = 403
+                    assert response.status_code == expected, (operation, path, response)
             elif method == "POST" and operation in _POST_READS:
                 for index, body in enumerate(_POST_READS[operation]):
                     sent = cast(
