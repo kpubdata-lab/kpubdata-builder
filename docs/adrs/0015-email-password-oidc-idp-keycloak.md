@@ -109,3 +109,17 @@
 Keycloak realm의 account/signup 정책은 공개 사용자 접근의 1차 경계다. Builder OIDC
 allowlist는 필요한 제한 배포에서 활성화하는 선택적 2차 제한이며, allowlist를 비워도
 OIDC 검증(issuer, audience, JWKS 서명, exp, RS256 fail-closed)을 우회하지 않는다.
+
+> **2026-10-12 보충 — 호스팅형 베타의 IdP 와 가입 승인 (#1124, 소유자 결정 @yeongseon).**
+>
+> - **IdP: 직접 운영하는 Keycloak 을 유지한다.** 호스팅형 베타(프로젝트가 운영하는 서버에서 여러 사용자에게
+>   제공하는 베타)도 이 ADR 의 결정 2(self-hosted Keycloak)를 따른다. 관리형 OIDC 서비스로 옮기지 않으므로,
+>   owner 가 묶인 issuer·`sub` 를 옮기는 이전 계획은 지금 필요 없다.
+> - **가입 승인: 초대 또는 관리자의 수동 승인.** 사용자는 Builder 의 가입 원장(`service/user_ledger.py`)에서
+>   `pending` 으로 시작하고, 운영자가 미리 넣은 목록(`OIDC_ALLOWED_SUBJECTS`·`OIDC_ALLOWED_EMAILS`, 곧 초대)에 있거나 관리자(`KPUBDATA_BUILDER_ADMIN_SUBJECTS`)가
+>   승인해야 `approved` 가 된다. `rejected` 는 목록보다 앞선다. 모두 지금 있는 장치다.
+> - **trust-issuer 자동 승인은 쓰지 않는다.** 검증된 issuer 라는 이유만으로 사용자를 승인하는 모드는 만들지 않는다.
+> - **보류한 것.** 호스팅형 베타용 Keycloak 배포 프로파일(Compose 묶음·realm 설정 등)을 새로 더하는 일은 안정화
+>   전용 개발 모드(kpubdata `docs/governance/POLICY.md` 1.3)가 보류하는 "새 배포 프로파일" 이라 이 결정에 포함하지
+>   않는다. 동결이 풀리거나 작성자가 아닌 사람이 승인한 범위 예외가 있을 때 다룬다. 위 "미해결 질문" 의
+>   Keycloak 고가용성·백업 정책도 그때 함께 정한다.
