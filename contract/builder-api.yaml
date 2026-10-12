@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.122.0"
+  version: "1.123.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.123.0 applies configured disk and per-owner run storage admission to synchronous `POST /build` as well as async `POST /builds` (#1099, additive). A refused synchronous request answers 503 `disk_space_low` or 409 `run_storage_quota_exceeded` without creating a run. Defaults remain off.
     v1.122.0 records accepted builds that fail before a manifest as `failed_without_manifest` in the durable run ending and `GET /admin/runs` (#1120, additive). The owner can read the fixed reason after a restart. No exception, spec text or provider response reaches the administrator's summary.
     v1.121.0 adds the hosted personal-data publish gate (#1113, additive). In a multi-user deployment, or a single-user one with `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH=true`, readiness and publish report a `PublishIssue` blocker unless the run succeeded under a BuildSpec whose `pii.mode` is `block` with no `allow_columns`: `pii_scan_missing`, `pii_scan_pending`, `pii_scan_failed` or `pii_scan_unverified`. A publish refused for one of them is recorded in `GET /builds/{run_id}/publish/audit` as action `refused:<code>`, actor `gate`. Passing means the scan found nothing it looks for, not that the data holds no personal information.
     v1.120.0 adds `query_parameters` to `CatalogDataset`, the dataset's query definition for form generation (#1281, additive). Each item has `name` (the provider's own), `alias` (the name a kpubdata caller uses, or null), `type`, `required`, `enum`, `description` and `example`. It is read from kpubdata's public `DatasetRef.to_dict()`, and is null when kpubdata gives the dataset no definition (unknown, not "no parameters"). `type` is null for a catalogue entry, which declares none, and for a type Builder has not mapped. `request_parameters` is unchanged.
@@ -1223,11 +1224,25 @@ paths:
             and the reason. The run's outputs and manifest exist; only the table did
             not move. Since 1.110.0 a build that found no rows for a table that has a
             snapshot is refused here too (`empty_result`, #1186), unless the source
-            declares `allow_empty`.
+            declares `allow_empty`. Since 1.123.0, `run_storage_quota_exceeded` may
+            refuse a synchronous build before it runs when the configured per-owner
+            run storage is full; the body gives `limit_bytes` and `used_bytes`.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BuildSuccessResponse"
+                anyOf:
+                  - $ref: "#/components/schemas/BuildSuccessResponse"
+                  - $ref: "#/components/schemas/Error"
+              examples:
+                RunStorageQuotaExceeded:
+                  summary: The requester's runs would pass their storage limit
+                  value:
+                    error: >-
+                      your runs use the storage one user may keep; submit this build
+                      when older runs have expired
+                    code: run_storage_quota_exceeded
+                    limit_bytes: 10737418240
+                    used_bytes: 10737418240
         "502":
           description: >-
             하나 이상의 소스 fetch/stage 실패. upstream 소스 의존 실패이며 매니페스트는
@@ -1250,6 +1265,23 @@ paths:
                     manifest: build/air-quality-20260815/manifest.json
                     api_version: "1.8.0"
                     error: provider request failed
+        "503":
+          description: >-
+            Since 1.123.0, `disk_space_low` refuses a synchronous build before it
+            runs when configured minimum free space is unavailable. The response
+            names no path or measured size, and no run is recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                DiskSpaceLow:
+                  summary: The server is low on disk space
+                  value:
+                    error: >-
+                      the server is low on disk space and is not accepting builds;
+                      submit the build again later
+                    code: disk_space_low
 
   /artifacts/{run_id}:
     get:
@@ -5300,9 +5332,9 @@ components:
             is full; try again later. `build_owner_limit`(#1189, 429) — `POST /builds`
             when the requester already has `limit` builds queued or running in a
             multi-user deployment; submit again when one ends.
-            `run_storage_quota_exceeded`(#1099, 409) — `POST /builds` when the
+            `run_storage_quota_exceeded`(#1099, 409) — `POST /build` or `POST /builds` when the
             requester's runs would pass the storage one user may keep; the body gives
-            `limit_bytes` and `used_bytes`. `disk_space_low`(#1099, 503) — `POST /builds`
+            `limit_bytes` and `used_bytes`. `disk_space_low`(#1099, 503) — `POST /build` or `POST /builds`
             when the server's disk has less free space than a build needs. `unauthorized` / `token_expired`(#1000, 401) — any
             operation: the credentials were refused, or the bearer token's `exp` has
             passed and a new token is needed. `auth_unavailable`(#1000, 503) — the

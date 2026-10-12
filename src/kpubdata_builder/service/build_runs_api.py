@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -500,6 +501,44 @@ class BuildRunsApiService:
             )
 
         return ServiceResponse(status_code, body)
+
+    @contextmanager
+    def reserve_sync_storage(self, owner: str | None) -> Iterator[ServiceResponse | None]:
+        """Hold a synchronous reservation through build result and index handling."""
+        storage = storage_admission(self._output_root, self._build_index, owner)
+        outcome = self._async_builds.registry.reserve_sync(owner, storage)
+        if outcome == "disk_low":
+            yield ServiceResponse(
+                503,
+                {
+                    "error": (
+                        "the server is low on disk space and is not accepting builds; "
+                        "submit the build again later"
+                    ),
+                    "code": "disk_space_low",
+                },
+            )
+            return
+        if outcome == "storage_quota":
+            if storage is None or storage.limit_bytes is None:
+                raise RuntimeError("storage_quota refusal is missing its measurement")
+            yield ServiceResponse(
+                409,
+                {
+                    "error": (
+                        "your runs use the storage one user may keep; submit this "
+                        "build when older runs have expired"
+                    ),
+                    "code": "run_storage_quota_exceeded",
+                    "limit_bytes": storage.limit_bytes,
+                    "used_bytes": storage.used_bytes,
+                },
+            )
+            return
+        try:
+            yield None
+        finally:
+            self._async_builds.registry.release_sync(owner)
 
     def submit_build(
         self,

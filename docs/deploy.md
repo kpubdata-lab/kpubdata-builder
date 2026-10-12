@@ -369,20 +369,19 @@ run 은 그것을 "would finish deleting" 으로 알린다). 인덱스 행이 �
 지우지 않는다. 사용자와 그 데이터의 삭제는 §6.4 의 `delete-user` 가 한다.
 
 **2) 사용자별 저장량 — 예약하고 받는다.** 다중 사용자 배포에서 `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`
-를 정하면 `POST /builds` 가 job 을 큐에 넣기 전에 그 사용자의 끝난 run 작업 공간 합계를 잰다. 빌드의
+를 정하면 `POST /build` 와 `POST /builds` 가 실행하거나 큐에 넣기 전에 그 사용자의 끝난 run 작업 공간 합계를 잰다. 빌드의
 크기는 끝나야 알 수 있으므로 대기·실행 중인 그 사용자의 build 마다
 `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` 를 예약한 것으로 치고, 합계와 예약(이번 것 포함)이 상한을
 넘거나 합계가 이미 상한에 닿았으면 409 `run_storage_quota_exceeded`(`limit_bytes`, `used_bytes`)로
-거절한다. 예약은 job registry 의 잠금 안에서 세므로 동시에 들어온 두 제출이 마지막 자리를 함께
+거절한다. 동기 실행도 끝날 때까지 같은 잠금 아래 예약에 포함되므로 동시에 들어온 두 요청이 마지막 자리를 함께
 가져가지 못한다. 업로드는 따로 한도가 있고(#1045) run 작업 공간 밖에 있어 두 번 세지 않는다.
 warehouse snapshot 도 세지 않는다. 실행 중인 build 가 예약보다 크게 자랄 수는 있다 — 예약은 상한을
 넘는 제출을 막는 장치이지 정확한 회계가 아니다. 거절된 run 은 아무것도 기록되지 않는다.
 
 **3) 디스크가 부족하면 받지 않는다.** `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` 를 정하면, 출력 디렉터리의
-파일시스템 여유 공간이 그보다 작을 때 `POST /builds` 가 503 `disk_space_low` 로 답한다. 여유 공간은
+파일시스템 여유 공간이 그보다 작을 때 `POST /build` 와 `POST /builds` 가 503 `disk_space_low` 로 답한다. 여유 공간은
 `/readyz`(§7.1)와 같은 방식으로 잰다. 응답은 경로도 크기도 말하지 않는다. 두 거절 모두 `/metrics` 의
-응답 수(상태·코드별)에 나타난다. 동기 `POST /build` 는 사용자별 build 상한(#1189)처럼 이 검사를 하지
-않는다 — Studio 는 `POST /builds` 로 제출한다.
+응답 수(상태·코드별)에 나타난다. 사용자별 동시 build 개수 상한(#1189)은 계속 비동기 접수에만 적용된다.
 
 **하지 않는 것.** `VACUUM`, export·spill·staging 디렉터리의 정리, 기한이 지난 업로드의 일괄 정리,
 디스크가 가득 찼을 때의 aggressive 모드는 이 명령에 없다 — 이슈의 `maintain` 명령 범위다(#1099).

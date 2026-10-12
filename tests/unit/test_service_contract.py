@@ -435,7 +435,7 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "validateSpec": {200, 400},
     "previewBuild": {200, 400, 403, 429, 502, 503},
     # 429: no build slot within the wait bound (#1040).
-    "createBuild": {200, 400, 403, 409, 429, 502},
+    "createBuild": {200, 400, 403, 409, 429, 502, 503},
     # 503: the server is shutting down (#1118).
     "submitBuild": {200, 202, 400, 403, 409, 429, 500, 503},
     "getBuildJob": {200, 400, 403, 404},

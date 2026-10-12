@@ -3,8 +3,8 @@
 ``prune-runs`` removes the workspace of a succeeded or failed run past its retention,
 and never one that is running, retried, published, or kept by the warehouse — held,
 leased or merely committed. Each guarantee has a test here, and so does a pass that
-dies midway. ``POST /builds`` refuses a build when the disk is low or the owner's runs,
-with their reservations, would pass the owner's limit.
+dies midway. ``POST /build`` and ``POST /builds`` refuse a build when the disk is low
+or the owner's runs, with their reservations, would pass the owner's limit.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from kpubdata_builder.pipeline import CancellationProbe
 from kpubdata_builder.retention import RUN_GC_DIRNAME, RUN_RETENTION_DAYS_ENV, collect_expired_runs
 from kpubdata_builder.service import BuilderService, ServiceResponse, run_storage
 from kpubdata_builder.service.build_limits import MAX_ACTIVE_BUILDS_PER_OWNER_ENV
+from kpubdata_builder.service.jobs import RunCancellation
 from kpubdata_builder.service.ownership import _OWNERSHIP_ENV
 from kpubdata_builder.service.publish import PublishReceiptStore
 from kpubdata_builder.service.readiness import DiskUsage
@@ -495,9 +496,9 @@ def _submit(service: BuilderService, run_id: str, owner: str) -> ServiceResponse
     return service.submit_build(_SPEC, run_id=run_id, created_by=f"oidc:{owner}", owner_id=owner)
 
 
-def _validates(response: ServiceResponse, status: int) -> None:
+def _validates(response: ServiceResponse, status: int, path: str = "/builds") -> None:
     contract = yaml.safe_load(_CONTRACT.read_text(encoding="utf-8"))
-    schema = response_schema(contract, "/builds", "post", status)
+    schema = response_schema(contract, path, "post", status)
     assert schema is not None
     assert validate(response.body, schema, contract) == []
 
@@ -601,6 +602,205 @@ def test_a_low_disk_refuses_a_build_without_naming_a_path_or_a_size(
             lambda _path: DiskUsage(free_bytes=200 * 1024 * 1024, total_bytes=10**12),
         )
         assert _submit(service, "a-1", "alice").status_code == 202
+    finally:
+        service.release.set()
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_synchronous_build_is_refused_before_execution_when_disk_is_low(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(BUILD_MIN_FREE_MB_ENV, "100")
+    monkeypatch.setattr(
+        run_storage,
+        "measure_disk_usage",
+        lambda _path: DiskUsage(free_bytes=50 * 1024 * 1024, total_bytes=10**12),
+    )
+    service = _HeldBuilds(tmp_path)
+    try:
+        called = False
+
+        def run_sync(*_args: object, **_kwargs: object) -> ServiceResponse:
+            nonlocal called
+            called = True
+            return ServiceResponse(200, {"status": "ok"})
+
+        monkeypatch.setattr(service._build_runs, "build", run_sync)
+        response = service.build(_SPEC, run_id="sync-low", owner_id="alice")
+
+        assert response.status_code == 503
+        assert cast(dict[str, Any], response.body)["code"] == "disk_space_low"
+        _validates(response, 503, "/build")
+        assert not called
+        assert not (tmp_path / "sync-low").exists()
+    finally:
+        service.release.set()
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_synchronous_reservation_blocks_async_submission_and_is_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUN_STORAGE_MAX_BYTES_ENV, "1000")
+    monkeypatch.setenv(RUN_STORAGE_RESERVE_BYTES_ENV, "1000")
+    service = _HeldBuilds(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+    outcomes: list[ServiceResponse] = []
+
+    def run_sync(*_args: object, **_kwargs: object) -> ServiceResponse:
+        entered.set()
+        assert release.wait(timeout=10)
+        return ServiceResponse(200, {"status": "ok"})
+
+    monkeypatch.setattr(service._build_runs, "build", run_sync)
+    thread = threading.Thread(
+        target=lambda: outcomes.append(service.build(_SPEC, run_id="sync", owner_id="alice"))
+    )
+    thread.start()
+    try:
+        assert entered.wait(timeout=10)
+        refused = _submit(service, "async-alice", "alice")
+        assert refused.status_code == 409
+        assert cast(dict[str, Any], refused.body)["code"] == "run_storage_quota_exceeded"
+        _validates(refused, 409, "/build")
+        assert _submit(service, "async-bob", "bob").status_code == 202
+    finally:
+        release.set()
+        thread.join(timeout=10)
+        service.release.set()
+    assert not thread.is_alive()
+    assert outcomes[0].status_code == 200
+    assert _submit(service, "async-alice-later", "alice").status_code == 202
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_sync_storage_reservation_does_not_consume_async_owner_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUN_STORAGE_MAX_BYTES_ENV, "2000")
+    monkeypatch.setenv(RUN_STORAGE_RESERVE_BYTES_ENV, "1000")
+    monkeypatch.setenv(MAX_ACTIVE_BUILDS_PER_OWNER_ENV, "1")
+    service = _HeldBuilds(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def run_sync(*_args: object, **_kwargs: object) -> ServiceResponse:
+        entered.set()
+        assert release.wait(timeout=10)
+        return ServiceResponse(200, {"status": "ok"})
+
+    monkeypatch.setattr(service._build_runs, "build", run_sync)
+    thread = threading.Thread(target=service.build, args=(_SPEC,), kwargs={"owner_id": "alice"})
+    thread.start()
+    try:
+        assert entered.wait(timeout=10)
+        assert _submit(service, "async-alice", "alice").status_code == 202
+        refused = _submit(service, "async-alice-2", "alice")
+        assert refused.status_code == 429
+        assert cast(dict[str, Any], refused.body)["code"] == "build_owner_limit"
+    finally:
+        release.set()
+        thread.join(timeout=10)
+        service.release.set()
+    assert not thread.is_alive()
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_async_reservation_blocks_synchronous_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUN_STORAGE_MAX_BYTES_ENV, "1000")
+    monkeypatch.setenv(RUN_STORAGE_RESERVE_BYTES_ENV, "1000")
+    service = _HeldBuilds(tmp_path)
+    try:
+        assert _submit(service, "async-alice", "alice").status_code == 202
+        response = service.build(_SPEC, run_id="sync-alice", owner_id="alice")
+        assert response.status_code == 409
+        assert cast(dict[str, Any], response.body)["code"] == "run_storage_quota_exceeded"
+        assert not (tmp_path / "sync-alice").exists()
+    finally:
+        service.release.set()
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_direct_build_with_cancellation_still_checks_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUN_STORAGE_MAX_BYTES_ENV, "1000")
+    monkeypatch.setenv(RUN_STORAGE_RESERVE_BYTES_ENV, "1000")
+    service = _HeldBuilds(tmp_path)
+    try:
+        assert _submit(service, "async-alice", "alice").status_code == 202
+        response = service.build(
+            _SPEC,
+            run_id="direct-alice",
+            owner_id="alice",
+            cancellation=RunCancellation(),
+        )
+        assert response.status_code == 409
+        assert cast(dict[str, Any], response.body)["code"] == "run_storage_quota_exceeded"
+    finally:
+        service.release.set()
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_two_synchronous_builds_cannot_take_the_same_last_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUN_STORAGE_MAX_BYTES_ENV, "1000")
+    monkeypatch.setenv(RUN_STORAGE_RESERVE_BYTES_ENV, "1000")
+    service = _HeldBuilds(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+    outcomes: list[ServiceResponse] = []
+
+    def run_sync(*_args: object, **_kwargs: object) -> ServiceResponse:
+        entered.set()
+        assert release.wait(timeout=10)
+        return ServiceResponse(200, {"status": "ok"})
+
+    monkeypatch.setattr(service._build_runs, "build", run_sync)
+    thread = threading.Thread(
+        target=lambda: outcomes.append(service.build(_SPEC, run_id="sync-1", owner_id="alice"))
+    )
+    thread.start()
+    try:
+        assert entered.wait(timeout=10)
+        refused = service.build(_SPEC, run_id="sync-2", owner_id="alice")
+        assert refused.status_code == 409
+        assert cast(dict[str, Any], refused.body)["code"] == "run_storage_quota_exceeded"
+    finally:
+        release.set()
+        thread.join(timeout=10)
+        service.release.set()
+    assert not thread.is_alive()
+    assert outcomes[0].status_code == 200
+
+
+@pytest.mark.usefixtures("multi_user")
+def test_synchronous_reservation_is_released_after_execution_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUN_STORAGE_MAX_BYTES_ENV, "1000")
+    monkeypatch.setenv(RUN_STORAGE_RESERVE_BYTES_ENV, "1000")
+    service = _HeldBuilds(tmp_path)
+    calls = 0
+
+    def run_sync(*_args: object, **_kwargs: object) -> ServiceResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("execution failed")
+        return ServiceResponse(200, {"status": "ok"})
+
+    monkeypatch.setattr(service._build_runs, "build", run_sync)
+    try:
+        with pytest.raises(RuntimeError, match="execution failed"):
+            service.build(_SPEC, run_id="sync-first", owner_id="alice")
+        response = service.build(_SPEC, run_id="sync-second", owner_id="alice")
+        assert response.status_code == 200
+        assert calls == 2
     finally:
         service.release.set()
 

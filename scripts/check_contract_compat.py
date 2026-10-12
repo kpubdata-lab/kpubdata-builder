@@ -29,9 +29,12 @@ one: ``$ref: Error`` -> ``$ref: RevisionConflictError`` where ``RevisionConflict
 ``allOf: [{$ref: Error}, ...]`` (#947). Every body it describes is still the old schema's,
 so a client reading the old one reads it unchanged. A request schema gets no such pass:
 narrowing what may be sent breaks a sender.
+An ``anyOf`` response may also add a branch while retaining the old response
+``$ref``: every old body still matches that branch.
 
 Known limits, stated rather than hidden: ``allOf``/``oneOf``/``anyOf`` branches are not
-compared member by member, and a property newly added to ``required`` is not flagged,
+compared member by member (except retaining a response ``$ref`` in ``anyOf``), and a
+property newly added to ``required`` is not flagged,
 because it breaks a request but not a response and the schema does not say which it is.
 
 Usage:
@@ -110,6 +113,13 @@ def _compare_schema(
     """
     if not isinstance(base, Mapping) or not isinstance(head, Mapping):
         return
+    if response_of is not None and isinstance(base.get("$ref"), str):
+        branches = head.get("anyOf")
+        if isinstance(branches, list) and any(
+            isinstance(branch, Mapping) and branch.get("$ref") == base["$ref"]
+            for branch in branches
+        ):
+            return
     if "$ref" in base or "$ref" in head:
         if base.get("$ref") != head.get("$ref") and not (
             response_of is not None and _extends(response_of, head.get("$ref"), base.get("$ref"))

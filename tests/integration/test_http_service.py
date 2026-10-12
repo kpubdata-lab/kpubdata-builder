@@ -43,8 +43,9 @@ from urllib.parse import quote
 
 import pytest
 
-from kpubdata_builder.service import API_CONTRACT_VERSION, BuilderService
+from kpubdata_builder.service import API_CONTRACT_VERSION, BuilderService, run_storage
 from kpubdata_builder.service.http import _MAX_BODY_BYTES, make_handler
+from kpubdata_builder.service.readiness import DiskUsage
 from kpubdata_builder.spec import JsonValue
 
 #: How long a test client waits for the in-process server. No test here is about the
@@ -174,6 +175,27 @@ class TestBuildRoundTrip:
         assert body["status"] == "ok"
         assert body["run_id"] == "http-run"
         assert (tmp_path / "http-run" / "manifest.json").exists()
+
+    def test_post_build_refuses_low_disk_before_writing_run(
+        self,
+        http_server: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(run_storage.BUILD_MIN_FREE_MB_ENV, "100")
+        monkeypatch.setattr(
+            run_storage,
+            "measure_disk_usage",
+            lambda _path: DiskUsage(free_bytes=50 * 1024 * 1024, total_bytes=10**12),
+        )
+
+        status, body = _post(
+            http_server, "/build", {"spec": VALID_SPEC_YAML, "run_id": "http-low-disk"}
+        )
+
+        assert status == 503
+        assert body["code"] == "disk_space_low"
+        assert not (tmp_path / "http-low-disk").exists()
 
     def test_get_build_manifest_returns_json_after_build(self, http_server: str) -> None:
         _post(http_server, "/build", {"spec": VALID_SPEC_YAML, "run_id": "http-manifest"})

@@ -123,7 +123,8 @@ def test_ref_raises_on_unresolved_target() -> None:
         resolve_ref({"components": {"schemas": {}}}, "#/components/schemas/Missing")
 
 
-def test_oneof_accepts_when_at_least_one_branch_matches() -> None:
+@pytest.mark.parametrize("keyword", ["oneOf", "anyOf"])
+def test_union_accepts_when_at_least_one_branch_matches(keyword: str) -> None:
     contract: dict[str, Any] = {
         "components": {
             "schemas": {
@@ -133,7 +134,7 @@ def test_oneof_accepts_when_at_least_one_branch_matches() -> None:
         }
     }
     schema: dict[str, Any] = {
-        "oneOf": [
+        keyword: [
             {"$ref": "#/components/schemas/Error"},
             {"$ref": "#/components/schemas/ValidationError"},
         ]

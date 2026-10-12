@@ -2,7 +2,7 @@
 
 A build writes its workspace as it runs, and nothing bounded how much one user's runs
 could hold or stopped a build from starting on a full disk. ``POST /builds`` now asks
-two things before it queues a job:
+two things before it queues a job or starts a synchronous build:
 
 - **Is the disk low?** When the filesystem under the output directory has less free
   space than ``KPUBDATA_BUILDER_BUILD_MIN_FREE_MB``, the build is refused with 503
@@ -22,8 +22,9 @@ a run workspace, so nothing is counted twice; warehouse snapshots are not counte
 **Every value is off by default.** How much a user may keep and how much free space a
 build needs are the maintainer's to decide (kpubdata#812); until then nothing here
 refuses a build. A malformed or negative value is read as off and warned about at
-start-up (``startup_settings``). The synchronous ``POST /build`` is not checked, as it
-is not by the per-owner build limit (#1189).
+start-up (``startup_settings``). Synchronous ``POST /build`` shares the storage
+reservation with ``POST /builds``; the separate per-owner active-build count (#1189)
+still applies only to the async route.
 """
 
 from __future__ import annotations

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Configured disk and per-owner run storage admission now applies to synchronous `POST /build` as well as async `POST /builds` (#1099, API contract 1.123.0). Both paths count their reservations under the same registry lock, and a synchronous reservation remains until its result and index handling finish. Defaults remain off; a refused sync request writes no run.
+
 - Accepted asynchronous builds that fail before writing a manifest now retain a safe terminal reason in the event store and build index (#1120, API contract 1.122.0). Administrators see `failed_without_manifest` and the reached stage; owners can still read the fixed reason after a restart. Exception and spec text do not enter the shared summary.
 
 - **Breaking: the CUBRID state backend is removed (#1094, ADR 0022).** State is kept in SQLite and local files only; the `manifest.json` file is canonical again, without exception (ADR 0003). The `BuildIndex`, `CredentialRepository` and `ArtifactStore` protocols stay, and existing SQLite state is read unchanged.
