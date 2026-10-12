@@ -116,6 +116,9 @@ _EXPECTED_REFUSALS: dict[str, tuple[int, str]] = {
     "listProviders": (502, "catalog_unavailable"),
     "getProviderStatus": (502, "catalog_unavailable"),
     "getProviderCredential": (502, "catalog_unavailable"),
+    # An operator probe with no rows. It answers 200, or 503 when the machine running
+    # the tests is short of disk or has no provider configuration; either is its answer.
+    "readyz": (503, ""),
     # The run was not published — its spec declares no licence, so it cannot be — and a
     # receipt exists only for a publish. What a receipt records is the destination and
     # the files' digests (``test_publish_receipt*.py``), no rows.
@@ -280,6 +283,8 @@ class _Sweep:
                 "/bronze/" in label or "/silver/" in label
             ):
                 expected, code = _RAW_STAGE_REFUSAL
+            elif operation == "readyz" and status == 200:
+                expected, code = 200, ""
             else:
                 expected, code = _EXPECTED_REFUSALS.get(operation, (200, ""))
             if status != expected or code not in text:
@@ -335,7 +340,7 @@ def test_every_read_answers_or_is_a_listed_refusal(tmp_path: Path) -> None:
         for label, (status, _) in sweep.answers.items()
         if status != 200 and label in sweep.operations
     }
-    assert met == {*_EXPECTED_REFUSALS, "getBuildArtifactFile"}
+    assert met - {"readyz"} == {*_EXPECTED_REFUSALS, "getBuildArtifactFile"} - {"readyz"}
     # The made-up ids are gone: what was created is what was read.
     assert not any("/none" in label for label in sweep.answers)
     status = {label: answer[0] for label, answer in sweep.answers.items()}
