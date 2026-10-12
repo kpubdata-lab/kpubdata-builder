@@ -105,12 +105,10 @@ class StabilizationGateTests(unittest.TestCase):
 
     def test_new_issue_writer_in_an_existing_workflow_requires_review(self) -> None:
         patch = '+++ b/.github/workflows/report.yml\n+        run: gh issue create --title "new"\n'
-        self.assertTrue(
-            check_scope(BUILDER, "fix(ci): alert", "", set(), "", patch)
-        )
+        self.assertTrue(check_scope(BUILDER, "fix(ci): alert", "", set(), "", patch))
 
     def test_new_python_issue_creator_requires_review(self) -> None:
-        patch = "+++ b/scripts/alerts.py\n+    _gh(run, \"issue\", \"create\", title)\n"
+        patch = '+++ b/scripts/alerts.py\n+    _gh(run, "issue", "create", title)\n'
         self.assertTrue(check_scope(SDK, "fix: alerts", "", set(), "", patch))
 
     def test_literal_in_a_test_fixture_does_not_trigger_issue_gate(self) -> None:
