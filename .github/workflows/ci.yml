@@ -73,6 +73,9 @@ jobs:
       - name: Action pin gate
         run: python3 scripts/check_action_pins.py
 
+      - name: License inventory and notice gate
+        run: uv run --no-sources python scripts/license_inventory.py --check
+
       # kpubdata POLICY 0.1: a review or verification level is written meaning first,
       # code in parentheses -- "unit tests (V1)", never a bare V2 (kpubdata#878, #894).
       - name: Plain review and verification codes
