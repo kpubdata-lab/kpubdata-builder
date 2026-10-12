@@ -10,20 +10,25 @@
 # OIDC_ISSUER, #1122)이 없으면 기동하지 않는다 (docker-entrypoint.sh에서 강제). 베이스는 pragmatic한 python-slim
 # (ADR-0006 미해결 질문: distroless 대안은 후속).
 
-# Debian 12(bookworm)로 고정한다 (#581). `python:3.12-slim` 이 최근 Debian 13(trixie)로
-# 이동하면서 아직 mirror 에 배포되지 않은 OS 패키지 CVE(perl/gzip/pcre2 등)가 Trivy 스캔에
-# HIGH/CRITICAL 로 잡혔다 — 성숙한 stable 인 bookworm 은 해당 보안 패치가 이미 반영돼 있다.
-FROM python:3.12-slim-bookworm
+# Debian 13 (trixie). #581 pinned bookworm while trixie was new and its mirror lagged
+# behind the CVE fixes; by 2026-10 the order had reversed: the same Trivy scan found
+# 57 HIGH/CRITICAL (2 CRITICAL) on bookworm and 44 HIGH (no CRITICAL) on trixie, none of
+# them with a fixed version published (#1313). Python stays 3.12 — polars breaks on 3.14.
+FROM python:3.12-slim-trixie
 
-# 베이스 이미지에 포함된 Debian 패키지의 보안 패치를 적용한다.
+# Apply the Debian security patches published for the base image's packages, and drop
+# `mount`: nothing in this image mounts a filesystem, it ships the setuid mount and
+# umount binaries, and it carries four of the scan's findings. (`login` would be the
+# next candidate, but apt protects it as essential.)
 #
 # OS_PATCH_DATE 는 이 레이어의 캐시 키다 (#1006). RUN 문자열이 같으면 buildx 캐시
 # (docker.yml 의 type=gha)가 패치 이전 레이어를 계속 재사용해, 수정 버전이 mirror 에 있어도
 # Trivy 가 같은 CVE 를 잡는다. 새 OS 패치로 스캔이 실패하면 이 날짜를 올린다.
-ARG OS_PATCH_DATE=2026-10-06
+ARG OS_PATCH_DATE=2026-10-13
 RUN echo "os patches as of ${OS_PATCH_DATE}" \
     && apt-get update \
     && apt-get upgrade -y \
+    && apt-get purge -y mount \
     && rm -rf /var/lib/apt/lists/*
 
 # uv 바이너리를 Astral 공식 이미지에서 복사한다 (pip 설치 불필요).

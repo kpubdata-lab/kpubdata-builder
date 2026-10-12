@@ -148,7 +148,7 @@ ASSETS: list[dict[str, Any]] = [
 CONTAINER_INPUTS = [
     {
         "name": "Python/Debian base image",
-        "version": "python:3.12-slim-bookworm",
+        "version": "python:3.12-slim-trixie",
         "source": "https://github.com/docker-library/python",
         "license": "mixed Debian packages; exact installed versions and terms unverified",
         "status": "needs review",
@@ -447,7 +447,7 @@ def check(inventory: dict[str, Any] | None, files: list[str]) -> list[str]:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     for needle in (
-        "FROM python:3.12-slim-bookworm",
+        "FROM python:3.12-slim-trixie",
         "ghcr.io/astral-sh/uv:0.11.8",
         "apt-get upgrade -y",
     ):

@@ -708,7 +708,7 @@
   "container_inputs": [
     {
       "name": "Python/Debian base image",
-      "version": "python:3.12-slim-bookworm",
+      "version": "python:3.12-slim-trixie",
       "source": "https://github.com/docker-library/python",
       "license": "mixed Debian packages; exact installed versions and terms unverified",
       "status": "needs review"
