@@ -34,6 +34,7 @@ from ..credentials import (
 )
 from ..events import BuildEventStore
 from ..events.store import events_store_path
+from ..manifest.endings import CancellationCode
 from ..pipeline import (
     DEFAULT_PREVIEW_SEED,
     CancellationProbe,
@@ -753,9 +754,10 @@ class BuilderService:
         )
         self._async_builds = AsyncBuildExecutor(
             build_slots=self._build_slots,
-            # A synchronous ``POST /build`` runs on a worker too (#1242), so there is a
-            # worker for every slot; the slots, not the workers, bound how many run.
-            max_workers=max(async_max_workers, self.max_concurrent_builds),
+            # A synchronous ``POST /build`` runs on a worker too (#1242), so there is one
+            # worker per slot: fewer would leave a slot no build can use, and more would
+            # only wait on a slot with a job taken from the queue.
+            max_workers=self.max_concurrent_builds,
             # The queue's size is the deployment's (#1108): what the caller gives, else
             # KPUBDATA_BUILDER_MAX_QUEUED_BUILDS, else the 10 that used to be written here.
             max_queue_size=(
@@ -1367,16 +1369,22 @@ class BuilderService:
         (#1189) and the shutdown drain (#1118). It is now submitted as ``POST /builds``
         submits and waited for here; the request and the answers stay the route's.
 
-        The wait for a free slot keeps its bound (#1040): none free in time is the same
-        429, before anything is recorded. The slot is handed straight back, for the job
-        takes its own on a worker — holding it across the hand-over could leave every
-        worker waiting for a slot that a job still in the queue holds. A job that ends
+        What the build would refuse before it runs — the spec, a ``url`` source, the
+        provider key — is answered first, with nothing recorded, as before. The wait for
+        a free slot keeps its bound (#1040): none free in time is the same 429, before
+        anything is recorded. The slot is handed straight back, for the job takes its
+        own on a worker; holding it across the hand-over could leave every worker
+        waiting for a slot that a job still in the queue holds. A job that ends
         cancelled answers 409 with why.
         """
+        refusal = self._build_runs.refusal_before_run(spec_yaml, owner_id)
+        if refusal is not None:
+            return refusal
         if not self._build_slots.acquire(timeout=self._slot_wait_seconds):
             return ServiceResponse(429, dict(BUILD_SLOTS_FULL_BODY))
         self._build_slots.release()
         answers: list[ServiceResponse] = []
+        reasons: list[CancellationCode] = []
 
         def runner(
             spec_yaml: str,
@@ -1385,7 +1393,9 @@ class BuilderService:
             cancellation: RunCancellation,
         ) -> ServiceResponse:
             response = self._run_build_job(spec_yaml, run_id, created_by, cancellation)
-            answers.append(self._build_runs.sync_answer(run_id, response))
+            answers.append(response)
+            # Read while the worker still holds the run: once it ends, the reason goes.
+            reasons.append(self._build_runs.cancellation_code(run_id))
             return response
 
         # ``submit_build``'s two reads of the owner's deletion, around this runner.
@@ -1407,7 +1417,14 @@ class BuilderService:
         if submitted.status_code == 200 or code == "run_id_completed":
             # The id was taken between the route's check and the submission. This
             # route's 409 is a build's answer, so a taken id is its 400 (#1065).
-            taken = "run_id_completed" if code == "run_id_completed" else "run_id_in_progress"
+            status = submitted.body.get("status")
+            taken = (
+                "run_id_completed"
+                if code == "run_id_completed"
+                else "run_id_ended"
+                if status in ("succeeded", "failed", "cancelled")
+                else "run_id_in_progress"
+            )
             return ServiceResponse(
                 400,
                 {
@@ -1427,11 +1444,16 @@ class BuilderService:
             if snapshot is None or snapshot.status in ("succeeded", "failed", "cancelled"):
                 break
             pause.wait(_SYNC_BUILD_POLL_SECONDS)
+        # The registry decides how a job ended, as ``GET /builds/{run_id}`` reads it.
+        cancelled = (
+            snapshot.status == "cancelled"
+            if snapshot is not None
+            else bool(answers) and answers[0].body.get("status") == "cancelled"
+        )
+        if cancelled:
+            return self._build_runs.sync_cancelled(accepted, reasons[0] if reasons else "cancelled")
         if answers:
             return answers[0]
-        if snapshot is not None and snapshot.status == "cancelled":
-            # Cancelled while it waited in the queue: it fetched nothing.
-            return self._build_runs.sync_cancelled(accepted)
         if snapshot is not None and snapshot.error == SHUTDOWN_QUEUED_ERROR:
             return ServiceResponse(
                 503,

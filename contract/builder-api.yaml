@@ -1252,16 +1252,6 @@ paths:
                     code: run_storage_quota_exceeded
                     limit_bytes: 10737418240
                     used_bytes: 10737418240
-                BuildCancelledByTimeLimit:
-                  summary: The build ran past the time limit and was cancelled
-                  value:
-                    error: >-
-                      build cancelled at a safe stage boundary: it ran longer than
-                      this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS);
-                      narrow the request or ask the operator about the limit
-                    code: time_limit_exceeded
-                    run_id: air-quality-20260815
-                    status: cancelled
         "502":
           description: >-
             하나 이상의 소스 fetch/stage 실패. upstream 소스 의존 실패이며 매니페스트는

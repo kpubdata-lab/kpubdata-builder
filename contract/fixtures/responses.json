@@ -5448,36 +5448,6 @@
       "operation_id": "createBuild",
       "method": "POST",
       "path": "/build",
-      "status": 409,
-      "example": "BuildCancelledByTimeLimit",
-      "current": {
-        "error": "build cancelled at a safe stage boundary: it ran longer than this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS); narrow the request or ask the operator about the limit",
-        "code": "time_limit_exceeded",
-        "run_id": "air-quality-20260815",
-        "status": "cancelled"
-      },
-      "with_additive_fields": {
-        "error": "build cancelled at a safe stage boundary: it ran longer than this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS); narrow the request or ask the operator about the limit",
-        "code": "time_limit_exceeded",
-        "run_id": "air-quality-20260815",
-        "status": "cancelled",
-        "future_optional_field": "added by a later minor contract version"
-      },
-      "additive_paths": [
-        "$"
-      ],
-      "required_type_broken": {
-        "error": 12345,
-        "code": "time_limit_exceeded",
-        "run_id": "air-quality-20260815",
-        "status": "cancelled"
-      },
-      "broken_path": "$.error"
-    },
-    {
-      "operation_id": "createBuild",
-      "method": "POST",
-      "path": "/build",
       "status": 502,
       "example": "ProviderFetchFailed",
       "current": {

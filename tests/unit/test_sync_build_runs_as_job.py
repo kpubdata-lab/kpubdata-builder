@@ -217,3 +217,48 @@ def test_a_synchronous_build_counts_toward_the_owners_active_builds(
     finally:
         service.release.set()
         service._async_builds.shutdown()
+
+
+def test_a_refused_spec_records_nothing_and_leaves_the_run_id_free(tmp_path: Path) -> None:
+    """What the build refuses before it runs is answered before any job is made, as the
+    request thread answered it: the corrected request can use the same run id."""
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: _SlowSource(0))
+    try:
+        refused = dispatch(service, "POST", "/build", {"spec": "not: [a spec", "run_id": "fix-me"})
+
+        assert isinstance(refused, ServiceResponse)
+        assert refused.status_code == 400, refused.body
+        assert service._async_builds.get("fix-me") is None
+        assert service._event_store.submission("fix-me") is None
+
+        fixed = dispatch(service, "POST", "/build", {"spec": _spec(1), "run_id": "fix-me"})
+
+        assert isinstance(fixed, ServiceResponse)
+        assert fixed.status_code == 200, fixed.body
+    finally:
+        service._async_builds.shutdown()
+
+
+def test_a_job_cancelled_before_it_ran_answers_with_a_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The job is cancelled while the request waits for it; the answer says so as the
+    contract's 409 error does, with ``status`` and ``code``."""
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: _SlowSource(0))
+    original = service._run_build_job
+
+    def cancelled_first(spec_yaml: str, run_id: str, *args: Any) -> ServiceResponse:
+        service._async_builds.request_cancel(run_id)
+        return original(spec_yaml, run_id, *args)
+
+    monkeypatch.setattr(service, "_run_build_job", cancelled_first)
+    try:
+        answer = dispatch(service, "POST", "/build", {"spec": _spec(1), "run_id": "gone"})
+
+        assert isinstance(answer, ServiceResponse)
+        assert answer.status_code == 409
+        assert answer.body["status"] == "cancelled"
+        assert answer.body["code"] == "cancelled"
+        _assert_declared(answer)
+    finally:
+        service._async_builds.shutdown()
