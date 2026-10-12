@@ -1,4 +1,4 @@
-"""Deployed images are scanned again, and a finding set is one issue (#1107).
+"""Deployed images are scanned again, with one incident per image component (#1107).
 
 ``docker.yml`` scans Builder's image when it is built; nothing scanned it afterwards,
 or the images the compose files pull from elsewhere. ``scripts/image_rescan.py`` does,
