@@ -801,7 +801,7 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 
 | 항목 | 값 |
 | :--- | :--- |
-| 대상 | `docker-compose.prod.app.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:latest`, `caddy:2.8-alpine` |
+| 대상 | `docker-compose.prod.app.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:latest`, `caddy:2.11.6-alpine` |
 | severity | `CRITICAL,HIGH`. **수정본이 없는 것도 포함한다** — 빌드 게이트(`ignore-unfixed: true`)와 다르다 |
 | 결과 | 이미지마다 열린 이슈 하나(`fix(security): <이미지> has HIGH or CRITICAL vulnerabilities`, 라벨 `epic:distribution`·`security`). 스캔한 digest 와, 취약점마다 수정본이 나온 버전 또는 `no fix published` 를 적는다 |
 | 중복 | 목록이 지난번과 같으면 아무것도 쓰지 않는다. 달라지면 같은 이슈의 목록을 고쳐 쓰고 무엇이 달라졌는지 댓글을 단다. 새 이슈를 또 열지 않는다 |
@@ -885,7 +885,7 @@ docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio u
 | 프로필 | 올라오는 것 | 이미지 |
 | :--- | :--- | :--- |
 | (없음) | Builder | `BUILDER_IMAGE`, 기본 `ghcr.io/kpubdata-lab/kpubdata-builder:latest` |
-| `caddy` | + Caddy (Cloudflare → Caddy → Builder, 80/443) | `caddy:2.8-alpine` |
+| `caddy` | + Caddy (Cloudflare → Caddy → Builder, 80/443) | `caddy:2.11.6-alpine` |
 | `studio` | + Studio (nginx, `STUDIO_BIND` 기본 `127.0.0.1:8080`) | Studio 저장소의 고정된 커밋(`STUDIO_REF`)에서 빌드 |
 
 - **Studio 는 pull 하지 않고 빌드한다.** Studio 는 아직 이미지를 게시하지 않고, 태그 `v0.4.0` 은 Studio 의
