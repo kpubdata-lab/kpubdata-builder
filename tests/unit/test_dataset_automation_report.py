@@ -403,28 +403,24 @@ def _workflow() -> dict[Any, Any]:
     return cast(dict[Any, Any], yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8")))
 
 
-def test_the_workflow_runs_on_a_schedule_and_by_hand() -> None:
+def test_the_workflow_is_manual_only_while_new_dataset_work_is_frozen() -> None:
     triggers = _workflow()[True]  # PyYAML reads the key `on` as a boolean
 
-    assert len(triggers["schedule"]) == 1
-    assert set(triggers["workflow_dispatch"]["inputs"]) == {"dry_run"}
-    assert ".github/workflows/dataset-automation.yml" in triggers["pull_request"]["paths"]
-    assert "scripts/dataset_automation_report.py" in triggers["pull_request"]["paths"]
+    assert set(triggers) == {"workflow_dispatch"}
+    assert triggers["workflow_dispatch"] is None
 
 
-def test_a_pull_request_run_writes_no_issue() -> None:
-    step = _workflow()["jobs"]["report"]["steps"][-1]
+def test_the_manual_workflow_is_always_a_dry_run_without_issue_writes() -> None:
+    job = _workflow()["jobs"]["report"]
+    step = job["steps"][-1]
 
-    assert step["env"]["DRY_RUN"] == "${{ github.event_name == 'pull_request' || inputs.dry_run }}"
-    assert 'if [ "${DRY_RUN}" = "true" ]; then\n  args+=(--dry-run)' in step["run"]
     assert "scripts/dataset_automation_report.py" in step["run"]
-
-
-def test_the_workflow_may_read_the_repository_and_write_issues_and_nothing_more() -> None:
-    workflow = _workflow()
-
-    assert workflow["permissions"] == {"contents": "read"}
-    assert workflow["jobs"]["report"]["permissions"] == {"contents": "read", "issues": "write"}
+    assert "--dry-run" in step["run"]
+    assert "DRY_RUN" not in step["env"]
+    assert "GH_TOKEN" not in step["env"]
+    assert "GH_REPO" not in step["env"]
+    assert job["permissions"] == {"contents": "read"}
+    assert _workflow()["permissions"] == {"contents": "read"}
 
 
 def test_every_action_is_pinned_and_only_the_data_go_kr_key_is_a_secret() -> None:
