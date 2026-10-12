@@ -6,6 +6,10 @@ body:
     attributes:
       value: |
         버그를 신고해 주셔서 감사합니다. 재현에 필요한 정보를 최대한 채워주세요.
+        안정화 기간에는 먼저 해당 저장소와 연결된 Builder·Studio·SDK 저장소에서
+        기존 Issue/PR을 검색하고, 같은 문제라면 그곳에 재현 증거를 추가해 주세요.
+        새로 확인된 독립 버그나 보안 위험은 계속 신고할 수 있습니다.
+        긴급 보안 문제를 보고하는 데 검색이나 서식이 장애물이 되어서는 안 됩니다.
   - type: textarea
     id: summary
     attributes:
@@ -13,6 +17,14 @@ body:
       description: 무엇이 잘못되었나요?
     validations:
       required: true
+  - type: input
+    id: related_issue
+    attributes:
+      label: 연관된 Issue/PR (선택)
+      description: 같은 문제의 기존 이슈가 있다면 URL을, 독립 결함이면 그 차이를 요약해 주세요.
+      placeholder: "예) #123 또는 다른 저장소의 Issue URL"
+    validations:
+      required: false
   - type: textarea
     id: reproduction
     attributes:
