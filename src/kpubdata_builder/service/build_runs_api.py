@@ -790,6 +790,10 @@ class BuildRunsApiService:
             body["error"] = message
             if message.startswith(f"{INTERRUPTED_CODE}:"):
                 body["code"] = INTERRUPTED_CODE
+            elif (
+                ending := store.ending(run_id)
+            ) is not None and ending.code == "failed_without_manifest":
+                body["code"] = ending.code
         return body
 
     def _build_status_from_manifest(self, run_id: str) -> dict[str, JsonValue] | None:
@@ -1013,7 +1017,44 @@ class BuildRunsApiService:
             return "time_limit_exceeded"
         return "cancelled"
 
-    def _record_ending(self, run_id: str, *, status: RunEndingStatus, code: RunEndingCode) -> None:
+    def record_failed_without_manifest(self, run_id: str) -> None:
+        """Keep an accepted worker failure visible after its registry entry expires."""
+        try:
+            if self._store.get_manifest(run_id) is not None:
+                return
+            store = self._event_store()
+            if store.ending(run_id) is not None:
+                return
+            self._record_ending(
+                run_id, status="failed", code="failed_without_manifest", started=True
+            )
+            if store.terminal_event(run_id) is None:
+                ending = store.ending(run_id)
+                store.append(
+                    BuildEvent(
+                        seq=0,
+                        timestamp=datetime.now(tz=timezone.utc),
+                        run_id=run_id,
+                        event="run_failed",
+                        status="fail",
+                        message=(
+                            ending.summary
+                            if ending is not None
+                            else run_ending_summary("failed_without_manifest", "started")
+                        ),
+                    )
+                )
+        except Exception:
+            logger.exception("could not record pre-manifest failure (run_id=%s)", run_id)
+
+    def _record_ending(
+        self,
+        run_id: str,
+        *,
+        status: RunEndingStatus,
+        code: RunEndingCode,
+        started: bool = False,
+    ) -> None:
         """Record how a run that left no manifest ended, and index it (#1120).
 
         Such a run was in the event store only, as a terminal event whose message is
@@ -1031,6 +1072,8 @@ class BuildRunsApiService:
                 return
             store = self._event_store()
             stage = _stage_reached(store.list_for_run(run_id, limit=_STAGE_EVENTS, tail=True))
+            if started and stage == "queued":
+                stage = "started"
             store.record_ending(
                 run_id,
                 status=status,

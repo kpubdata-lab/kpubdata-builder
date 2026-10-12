@@ -6,8 +6,9 @@ fail. Two endings were left out and are covered here:
 - a **cancelled** run. Its partial manifest said ``cancelled`` and no more; it now has
   a ``failures`` entry with the stage it stopped at and why it was cancelled;
 - a run that **left no manifest**: cancelled while queued, interrupted by a restart,
-  still queued at a shutdown. It was in the event store only and in no list. Its ending
-  is now recorded with the events and copied into the build index.
+  still queued at a shutdown, or failed before writing a manifest. It was in the
+  event store only and in no list. Its ending is now recorded with the events and
+  copied into the build index.
 
 Both reach ``GET /admin/runs`` as one line of fixed phrases, and both survive a rebuild
 of the index. A canary placed in the provider key, the spec and a provider's error is
@@ -404,6 +405,64 @@ def test_a_job_that_could_not_be_queued_is_recorded_without_the_error(
     assert _indexed(service)["r1"] == ("failed", summary)
     assert _admin_rows(service)["r1"]["error"] == summary
     assert _CANARY not in str(_admin_rows(service))
+
+
+def test_an_accepted_invalid_spec_has_a_durable_safe_ending(tmp_path: Path) -> None:
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: _Source())
+    invalid_spec = f"dataset_id: bad\ntitle: {_CANARY}\nsources: []\n"
+
+    assert (
+        service.submit_build(
+            invalid_spec, run_id="invalid", owner_id=_ALICE.owner_id, created_by=_ALICE.label
+        ).status_code
+        == 202
+    )
+    _until(lambda: service.build_status("invalid").body.get("status") == "failed")
+
+    summary = "the run failed without a manifest before its first stage was recorded"
+    assert _ending_rows(tmp_path) == [
+        ("invalid", "failed", "started", "failed_without_manifest", summary)
+    ]
+    row = _admin_rows(service)["invalid"]
+    assert (row["error"], row["error_code"], row["error_stage"]) == (
+        summary,
+        "failed_without_manifest",
+        "started",
+    )
+    assert _CANARY not in str(row)
+    assert not (tmp_path / "invalid" / "manifest.json").exists()
+
+    service._build_index.close()
+    (tmp_path / "_builds.sqlite").unlink()
+    assert rebuild_index(tmp_path) == 1
+    restarted = BuilderService(output_root=tmp_path, client_factory=lambda **_: _Source())
+    try:
+        assert _indexed(restarted)["invalid"] == ("failed", summary)
+        assert restarted.build_status("invalid").body["code"] == "failed_without_manifest"
+    finally:
+        _stop(service, restarted)
+
+
+def test_an_unhandled_pre_manifest_error_records_only_a_safe_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: _Source())
+
+    def fail(*_args: object, **_kwargs: object) -> ServiceResponse:
+        raise RuntimeError(f"https://provider.example/?key={_CANARY}")
+
+    monkeypatch.setattr(service, "build", fail)
+    caplog.set_level(logging.DEBUG)
+    assert service.submit_build(_spec(), run_id="raised").status_code == 202
+    _until(lambda: service.build_status("raised").body.get("status") == "failed")
+
+    summary = "the run failed without a manifest before its first stage was recorded"
+    assert _ending_rows(tmp_path) == [
+        ("raised", "failed", "started", "failed_without_manifest", summary)
+    ]
+    assert _admin_rows(service)["raised"]["error"] == summary
+    _nowhere(_CANARY, tmp_path, service, caplog.text)
+    _stop(service)
 
 
 @pytest.fixture()

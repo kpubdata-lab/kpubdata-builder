@@ -532,7 +532,7 @@ _BuildListEntry = dict[str, str | None]
 #   KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH), readiness and publish report the
 #   pii_scan_* blockers and a refused publish is audited as refused:<code> (#1113,
 #   additive).
-API_CONTRACT_VERSION = "1.121.0"
+API_CONTRACT_VERSION = "1.122.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -1530,18 +1530,25 @@ class BuilderService:
                 missing = self.providers_missing_a_key(spec_yaml)
                 if missing:
                     return self._build_runs.fail_for_missing_keys(run_id, missing)
-                return build(
-                    spec_yaml,
-                    run_id=run_id,
-                    created_by=created_by,
-                    owner_id=manifest_owner_id,
-                    manifest_owner_id=manifest_owner_id,
-                    credential_owner_id=manifest_owner_id,
-                    # Pass cooperative cancel probe (#481) down to pipeline — don't carry
-                    # service concepts (registry/HTTP/Principal) across pipeline domain
-                    # boundary.
-                    cancellation=cancellation,
-                )
+                try:
+                    response = build(
+                        spec_yaml,
+                        run_id=run_id,
+                        created_by=created_by,
+                        owner_id=manifest_owner_id,
+                        manifest_owner_id=manifest_owner_id,
+                        credential_owner_id=manifest_owner_id,
+                        # Pass cooperative cancel probe (#481) down to pipeline — don't carry
+                        # service concepts (registry/HTTP/Principal) across pipeline domain
+                        # boundary.
+                        cancellation=cancellation,
+                    )
+                except Exception:
+                    self._build_runs.record_failed_without_manifest(run_id)
+                    raise
+                if response.status_code >= 400:
+                    self._build_runs.record_failed_without_manifest(run_id)
+                return response
         finally:
             keys = None
             self._job_credentials.discard(run_id)
