@@ -129,6 +129,13 @@ TIME_LIMIT_CANCELLED_MESSAGE = (
 )
 
 
+#: A synchronous ``POST /build`` that found no build slot in time (#1040).
+BUILD_SLOTS_FULL_BODY: dict[str, JsonValue] = {
+    "error": "every build slot is in use; try again shortly",
+    "code": "build_queue_full",
+}
+
+
 #: What a cancelled run's ``run_cancelled`` event says, by why it was cancelled.
 _CANCELLED_MESSAGES: dict[CancellationCode, str] = {
     "cancelled": "build cancelled at a safe stage boundary",
@@ -246,39 +253,10 @@ class BuildRunsApiService:
         response, not in job snapshot or HTTP wire — partial artifacts' canonical
         source is partial manifest.
         """
-        spec_or_error = self._load_validated(spec_yaml)
-        if isinstance(spec_or_error, ServiceResponse):
-            return spec_or_error
-        refusal = url_source_refusal(spec_or_error)
-        if refusal is not None:
-            return refusal
-
-        # Provider credential meaningful only for kind="public_api" sources (#498) —
-        # file/url sources' provider always empty string.
-        provider_names = tuple(
-            source.provider for source in spec_or_error.sources if source.kind == "public_api"
-        )
-        try:
-            client, provider_keys = self._open_client(
-                principal, credential_owner_id, provider_names
-            )
-        except ProviderCredentialRequired as exc:
-            # The requester has no key of their own and the operator's may not be used
-            # (#786): an answer, before any client exists.
-            return ServiceResponse(
-                403,
-                {
-                    "error": str(exc),
-                    "code": "provider_credential_required",
-                    "providers": list(exc.providers),
-                },
-            )
-        except (ProviderCredentialConflictError, ValueError) as exc:
-            return ServiceResponse(400, {"error": str(exc)})
-        except Exception:
-            return ServiceResponse(
-                502, {"error": "provider client unavailable", "code": "provider_client_unavailable"}
-            )
+        prepared = self._prepare(spec_yaml, principal, credential_owner_id)
+        if isinstance(prepared, ServiceResponse):
+            return prepared
+        spec_or_error, client, provider_keys = prepared
         # Every build passes here — the synchronous route on a request thread, an async
         # job on a worker — so this is the one place that bounds how many run at once
         # (#1028). The memory budget multiplies by that number; without the shared slot
@@ -291,13 +269,7 @@ class BuildRunsApiService:
         takes_slot = not self._build_slots.held_by_current_thread()
         if takes_slot and not self._build_slots.acquire(timeout=self._build_wait_seconds):
             self._close_client(client)
-            return ServiceResponse(
-                429,
-                {
-                    "error": "every build slot is in use; try again shortly",
-                    "code": "build_queue_full",
-                },
-            )
+            return ServiceResponse(429, dict(BUILD_SLOTS_FULL_BODY))
         # The build's two log lines (#1100). An async job's are written by its worker,
         # which is what holds the slot here; a synchronous build's are written here,
         # under the id the run is about to get.
@@ -502,6 +474,61 @@ class BuildRunsApiService:
 
         return ServiceResponse(status_code, body)
 
+    def _prepare(
+        self,
+        spec_yaml: str,
+        principal: Principal | None,
+        credential_owner_id: str | None,
+    ) -> tuple[BuildSpec, SourceClient, Mapping[str, str]] | ServiceResponse:
+        """The spec and an open client, or what ``build`` refuses before anything runs."""
+        spec_or_error = self._load_validated(spec_yaml)
+        if isinstance(spec_or_error, ServiceResponse):
+            return spec_or_error
+        refusal = url_source_refusal(spec_or_error)
+        if refusal is not None:
+            return refusal
+
+        # Provider credential meaningful only for kind="public_api" sources (#498) —
+        # file/url sources' provider always empty string.
+        provider_names = tuple(
+            source.provider for source in spec_or_error.sources if source.kind == "public_api"
+        )
+        try:
+            client, provider_keys = self._open_client(
+                principal, credential_owner_id, provider_names
+            )
+        except ProviderCredentialRequired as exc:
+            # The requester has no key of their own and the operator's may not be used
+            # (#786): an answer, before any client exists.
+            return ServiceResponse(
+                403,
+                {
+                    "error": str(exc),
+                    "code": "provider_credential_required",
+                    "providers": list(exc.providers),
+                },
+            )
+        except (ProviderCredentialConflictError, ValueError) as exc:
+            return ServiceResponse(400, {"error": str(exc)})
+        except Exception:
+            return ServiceResponse(
+                502, {"error": "provider client unavailable", "code": "provider_client_unavailable"}
+            )
+        return spec_or_error, client, provider_keys
+
+    def refusal_before_run(self, spec_yaml: str, owner_id: str | None) -> ServiceResponse | None:
+        """What ``build`` would refuse before it runs, asked before a job is made (#1242).
+
+        A synchronous ``POST /build`` answered these from its request with nothing
+        recorded, so its run id stayed free for the corrected request. It asks them
+        here, on the request, before it submits its job.
+        """
+        prepared = self._prepare(spec_yaml, None, owner_id)
+        if isinstance(prepared, ServiceResponse):
+            return prepared
+        self._close_client(prepared[1])
+        return None
+
     @contextmanager
     def reserve_sync_storage(self, owner: str | None) -> Iterator[ServiceResponse | None]:
         """Hold a synchronous reservation through build result and index handling."""
@@ -552,16 +579,22 @@ class BuildRunsApiService:
         job_keys: Mapping[str, str] | None = None,
         retry_of: str | None = None,
         if_absent: bool = False,
+        mode: build_log.BuildMode = "async",
+        run_inline: bool = False,
     ) -> ServiceResponse:
-        """Queue async build job and return initial state (#482).
+        """Register a build job and return its admission state (#482, #1242).
+
+        ``mode`` names the job in the build log: ``sync`` when a synchronous
+        ``POST /build`` runs it on the request thread. ``run_inline`` requires the
+        caller to hold its build slot until execution ends.
 
         ``job_credentials`` (#683, multi-user mode): the request's provider keys are bound
         to the run id in memory as the job is accepted — before it can start — and
         dropped if it is never queued. ``job_keys`` are the ones to bind — the keys this
         spec uses (#1070); without it, every key the request carries.
 
-        ``runner`` is what the worker calls — ``BuilderService._run_build_job``, passed
-        at submit time so a subclass override is the one that runs.
+        ``runner`` is what executes the build — ``BuilderService._run_build_job``,
+        passed at submit time so a subclass override is the one that runs.
 
         A spec whose ``url`` source a multi-user deployment refuses (#685) is refused
         here, before it is queued, with the same 403 ``build`` would give; any other
@@ -609,7 +642,11 @@ class BuildRunsApiService:
                     run_id=resolved_run_id,
                     event="run_submitted",
                     status="ok",
-                    message="build accepted for async execution",
+                    message=(
+                        "build accepted for synchronous execution"
+                        if run_inline
+                        else "build accepted for async execution"
+                    ),
                 )
             )
             # Whose run this is, kept where it survives a restart (#996): the registry
@@ -683,6 +720,8 @@ class BuildRunsApiService:
                 max_active_per_owner=resolve_owner_build_limit(),
                 storage=storage,
                 runner=runner,
+                mode=mode,
+                run_inline=run_inline,
                 on_accept=_record_run_submitted,
                 on_enqueue_failure=_record_enqueue_failure,
             )
@@ -841,6 +880,7 @@ class BuildRunsApiService:
         Matches registry snapshot shape — callers need not distinguish paths.
         Does not carry ``response`` — that was build response body memory cache,
         not restorable from manifest. Omit rather than invent missing values.
+        A failed run carries ``error``, its recorded reason in one line.
         """
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
@@ -867,9 +907,17 @@ class BuildRunsApiService:
         retry_of = manifest.get("retry_of")
         if isinstance(retry_of, str):
             body["retry_of"] = retry_of
-        # error not carried. manifest error strings may contain paths (#664 same
-        # reason), detail already provided by ``GET /builds/{run_id}/manifest`` —
-        # no reason to re-expose here.
+        # The reason the registry's job gave while it held the run (#1120): without it
+        # the owner of a failed run read ``error: null`` once the job was evicted or
+        # the server restarted — and always for a synchronous build, which is never in
+        # the registry — while an administrator still read the reason in the list.
+        # It is the line the index and ``GET /admin/runs`` hold, made of the manifest's
+        # ``failures`` only. The manifest's own ``errors`` are not carried: they may
+        # hold paths (#664), and ``GET /builds/{run_id}/manifest`` serves them.
+        if status == "failed":
+            reason = run_failure_summary(manifest)
+            if reason is not None:
+                body["error"] = reason
         return body
 
     def cancel_build(self, run_id: str) -> ServiceResponse:
@@ -1047,6 +1095,23 @@ class BuildRunsApiService:
             )
         except Exception:
             logger.error("failed to record run_cancelled event (run_id=%s)", run_id, exc_info=True)
+
+    def cancellation_code(self, run_id: str) -> CancellationCode:
+        """Why ``run_id`` would be cancelled now: read while its job still runs (#1242)."""
+        return self._cancellation_code(run_id)
+
+    @staticmethod
+    def sync_cancelled(run_id: str, code: CancellationCode = "cancelled") -> ServiceResponse:
+        """The 409 of a ``POST /build`` whose job was cancelled (#1242)."""
+        return ServiceResponse(
+            409,
+            {
+                "error": _CANCELLED_MESSAGES[code],
+                "code": code,
+                "run_id": run_id,
+                "status": "cancelled",
+            },
+        )
 
     def _cancellation_code(self, run_id: str) -> CancellationCode:
         """Why ``run_id`` was cancelled: a shutdown, the time limit, or a request."""

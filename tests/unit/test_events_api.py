@@ -191,7 +191,9 @@ class TestGetBuildEventsRouting:
         assert resp.status_code == 200
         assert resp.body["run_id"] == "r1"
         events = cast(list[dict[str, object]], resp.body["events"])
-        assert events[0]["event"] == "run_started"
+        # ``POST /build`` runs as a job (#1242): its submission comes first.
+        assert [e["event"] for e in events[:2]] == ["run_submitted", "run_started"]
+        assert events[0]["message"] == "build accepted for synchronous execution"
         assert events[-1]["event"] == "run_finished"
         seqs = [cast(int, e["seq"]) for e in events]
         assert seqs == sorted(seqs)
@@ -286,7 +288,7 @@ class TestLimitAndTail:
         assert resp.status_code == 200
         events = cast(list[dict[str, object]], resp.body["events"])
         assert len(events) == 1
-        assert events[0]["event"] == "run_started"
+        assert events[0]["event"] == "run_submitted"
 
     def test_tail_true_returns_most_recent_ascending(self, tmp_path: Path) -> None:
         service = _service(tmp_path)

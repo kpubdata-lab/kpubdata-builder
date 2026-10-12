@@ -10,7 +10,9 @@ A build takes a slot for as long as its pipeline runs. Two callers take one:
 
 ``BuildRunsApiService.build`` is where the pipeline is called from both, so it is the
 one place that requires a slot. A worker that already took one for the job it is running
-is recognised by thread, and takes no second.
+is recognised by thread, and takes no second. The synchronous build holds its slot on
+its request thread and runs its job inline on that thread (#1242), so it too takes no
+second one.
 """
 
 from __future__ import annotations

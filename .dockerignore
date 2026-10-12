@@ -27,3 +27,4 @@ contract/
 # README/LICENSE는 이미지에 포함(아래 예외). 나머지 루트 문서는 제외.
 *.md
 !README.md
+!THIRD_PARTY_NOTICES.md

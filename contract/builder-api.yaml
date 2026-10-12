@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.123.0"
+  version: "1.124.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,7 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.124.0 carries a failed run's reason in `GET /builds/{run_id}` after the job registry has let the job go — after a restart or an eviction, and for a synchronous `POST /build` (#1120, additive; no schema changes). `error` is then the first entry of the manifest's `failures` in one line, the same line `GET /admin/runs` gives; it was absent before. The manifest's `errors` are not copied.
     v1.123.0 applies configured disk and per-owner run storage admission to synchronous `POST /build` as well as async `POST /builds` (#1099, additive). A refused synchronous request answers 503 `disk_space_low` or 409 `run_storage_quota_exceeded` without creating a run. Defaults remain off.
     v1.122.0 records accepted builds that fail before a manifest as `failed_without_manifest` in the durable run ending and `GET /admin/runs` (#1120, additive). The owner can read the fixed reason after a restart. No exception, spec text or provider response reaches the administrator's summary.
     v1.121.0 adds the hosted personal-data publish gate (#1113, additive). In a multi-user deployment, or a single-user one with `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH=true`, readiness and publish report a `PublishIssue` blocker unless the run succeeded under a BuildSpec whose `pii.mode` is `block` with no `allow_columns`: `pii_scan_missing`, `pii_scan_pending`, `pii_scan_failed` or `pii_scan_unverified`. A publish refused for one of them is recorded in `GET /builds/{run_id}/publish/audit` as action `refused:<code>`, actor `gate`. Passing means the scan found nothing it looks for, not that the data holds no personal information.
@@ -1205,7 +1206,11 @@ paths:
             Every build slot is in use (`build_queue_full`, #1040). A synchronous build
             waits for a slot for a bounded time (`KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`)
             and is then turned away without having fetched anything; the same request
-            can be sent again. `POST /builds` queues instead of waiting.
+            can be sent again. `POST /builds` queues instead of waiting. Since the
+            synchronous build runs as a job that the request waits for (#1242), a
+            multi-user deployment also answers `build_owner_limit` here when the
+            requester already has `limit` builds queued or running, as `POST /builds`
+            does (#1189).
           content:
             application/json:
               schema:
@@ -1226,7 +1231,12 @@ paths:
             snapshot is refused here too (`empty_result`, #1186), unless the source
             declares `allow_empty`. Since 1.123.0, `run_storage_quota_exceeded` may
             refuse a synchronous build before it runs when the configured per-owner
-            run storage is full; the body gives `limit_bytes` and `used_bytes`.
+            run storage is full; the body gives `limit_bytes` and `used_bytes`. Since
+            the synchronous build runs as a job that the request waits for (#1242), a
+            build that is cancelled — through `POST /builds/{run_id}/cancel` (#481),
+            by the running-time limit (#1119) or by a server shutdown (#1118) — ends
+            here as an error with `status: cancelled`, its `run_id`, and `code`
+            `cancelled`, `time_limit_exceeded` or `server_shutdown`.
           content:
             application/json:
               schema:
@@ -1243,6 +1253,16 @@ paths:
                     code: run_storage_quota_exceeded
                     limit_bytes: 10737418240
                     used_bytes: 10737418240
+                BuildCancelledByTimeLimit:
+                  summary: The build ran past the time limit and was cancelled
+                  value:
+                    error: >-
+                      build cancelled at a safe stage boundary: it ran longer than
+                      this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS);
+                      narrow the request or ask the operator about the limit
+                    code: time_limit_exceeded
+                    run_id: air-quality-20260815
+                    status: cancelled
         "502":
           description: >-
             하나 이상의 소스 fetch/stage 실패. upstream 소스 의존 실패이며 매니페스트는
@@ -1269,7 +1289,9 @@ paths:
           description: >-
             Since 1.123.0, `disk_space_low` refuses a synchronous build before it
             runs when configured minimum free space is unavailable. The response
-            names no path or measured size, and no run is recorded.
+            names no path or measured size, and no run is recorded. `shutting_down`
+            (#1118, #1242): the server began to stop before the build started; nothing
+            was fetched, and the build can be sent again under a new `run_id`.
           content:
             application/json:
               schema:
@@ -8821,7 +8843,11 @@ components:
             사유는 `error`를 읽는다.
         error:
           type: [string, "null"]
-          description: 실패 사유 (실패 시에만)
+          description: >-
+            실패 사유 (실패 시에만). Since 1.124.0 a failed run keeps it after the job
+            registry has let the job go (#1120): it is then the first entry of the
+            manifest's `failures` in one line, as `GET /admin/runs` gives it. The
+            wording may differ from what the job said while the registry held it.
         code:
           type: string
           enum: [credentials_required]

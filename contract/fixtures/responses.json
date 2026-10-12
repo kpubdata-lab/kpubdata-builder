@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.123.0",
+  "contract_version": "1.124.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5441,6 +5441,36 @@
         "code": "run_storage_quota_exceeded",
         "limit_bytes": 10737418240,
         "used_bytes": 10737418240
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "createBuild",
+      "method": "POST",
+      "path": "/build",
+      "status": 409,
+      "example": "BuildCancelledByTimeLimit",
+      "current": {
+        "error": "build cancelled at a safe stage boundary: it ran longer than this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS); narrow the request or ask the operator about the limit",
+        "code": "time_limit_exceeded",
+        "run_id": "air-quality-20260815",
+        "status": "cancelled"
+      },
+      "with_additive_fields": {
+        "error": "build cancelled at a safe stage boundary: it ran longer than this server allows (KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS); narrow the request or ask the operator about the limit",
+        "code": "time_limit_exceeded",
+        "run_id": "air-quality-20260815",
+        "status": "cancelled",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "time_limit_exceeded",
+        "run_id": "air-quality-20260815",
+        "status": "cancelled"
       },
       "broken_path": "$.error"
     },

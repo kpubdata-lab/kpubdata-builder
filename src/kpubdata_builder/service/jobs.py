@@ -730,19 +730,31 @@ class AsyncBuildExecutor:
         max_active_per_owner: int | None = None,
         if_absent: bool = False,
         storage: StorageAdmission | None = None,
+        mode: build_log.BuildMode = "async",
+        run_inline: bool = False,
     ) -> BuildJobSubmitResult:
-        """Queue job. If "existing"/"queue_full"/"owner_limit", new submission not
-        counted, so ``on_accept`` not called.
+        """Admit a job for inline execution or the worker pool.
+
+        An existing job, a full queue, or an owner limit does not count as a new
+        submission, so ``on_accept`` is not called.
 
         ``max_active_per_owner`` (#1189) is the most jobs one owner may have queued or
         running; None is no limit.
+
+        ``mode`` is what the build log and the duration histogram call the job (#1100):
+        ``sync`` for the job a synchronous ``POST /build`` waits for (#1242).
+        ``run_inline`` executes after admission on the caller's thread, which must
+        already hold the build slot; this preserves the synchronous slot wait bound.
+        The job counts as ``queued`` until it starts, so it is held to ``max_queued``
+        like any other. An error raised by the inline run itself is logged, not raised:
+        the job is already accepted, and the caller reads how it ended from the registry.
 
         ``owner_id`` passes only to ``registry.create()`` — persisted in snapshot (#496
         follow-up, active run ownership check) — NOT passed to ``runner`` invocation
         (below: ``self._executor.submit(self._run, spec_yaml, run_id, created_by, runner)``).
         The runner reads the owner back from the registry snapshot when it starts (#998).
 
-        ``on_accept`` called before job queued to worker pool (``self._executor.submit``)
+        ``on_accept`` is called before the job executes or reaches the worker pool
         (#496). Caller (``BuilderService.submit_build``) appends "run_submitted" event via
         hook — if append fails and raises, job neither created in registry nor queued to
         worker. This order prevents "event lost but job running" contradiction — job
@@ -750,7 +762,8 @@ class AsyncBuildExecutor:
         (legacy monitoring tests) queue normally without gating.
 
         Reverse (#496 self-review): If ``on_accept`` succeeds (event recorded) but
-        ``self._executor.submit()`` (actual worker pool queueing) fails, ``registry.create()``
+        ``self._executor.submit()`` (actual worker pool queueing, or the check that an
+        inline caller holds its slot) fails, ``registry.create()``
         made "queued" item phantom forever — event (``run_submitted``) append-only so
         can't delete (#496 principle). Replace with ``registry.mark_failed()`` (same
         terminal mechanism already used for job execution failure) then re-raise —
@@ -799,12 +812,24 @@ class AsyncBuildExecutor:
                 self.registry.discard(run_id)
                 raise
         try:
-            self._executor.submit(self._run, spec_yaml, run_id, created_by, runner)
+            if run_inline:
+                if self._build_slots is None or not self._build_slots.held_by_current_thread():
+                    raise RuntimeError("inline build requires a slot held by its caller")
+            else:
+                self._executor.submit(self._run, spec_yaml, run_id, created_by, runner, mode)
         except Exception:
             self.registry.mark_failed(run_id, error="failed to queue build job")
             if on_enqueue_failure is not None:
                 on_enqueue_failure()
             raise
+        if run_inline:
+            # Dispatch is over: whatever fails from here on is not an enqueue failure, so
+            # the job's status and events stay as the run left them. The caller reads
+            # the registry for how the job ended.
+            try:
+                self._run_with_slot(spec_yaml, run_id, created_by, runner, mode)
+            except Exception:
+                _logger.exception("inline build job %s raised after it was dispatched", run_id)
         return BuildJobSubmitResult(status="accepted", snapshot=snapshot)
 
     def list_all(self) -> list[BuildJobSnapshot]:
@@ -874,6 +899,7 @@ class AsyncBuildExecutor:
         run_id: str,
         created_by: str | None,
         runner: BuildJobRunner,
+        mode: build_log.BuildMode = "async",
     ) -> None:
         """Worker thread entry point. Execute runner without holding any lock.
 
@@ -887,7 +913,7 @@ class AsyncBuildExecutor:
             # ``queued``; ``begin_run`` below refuses it and the slot goes straight back.
             self._build_slots.acquire()
         try:
-            self._run_with_slot(spec_yaml, run_id, created_by, runner)
+            self._run_with_slot(spec_yaml, run_id, created_by, runner, mode)
         finally:
             if self._build_slots is not None:
                 self._build_slots.release()
@@ -898,6 +924,7 @@ class AsyncBuildExecutor:
         run_id: str,
         created_by: str | None,
         runner: BuildJobRunner,
+        mode: build_log.BuildMode = "async",
     ) -> None:
         if not self.registry.begin_run(run_id):
             return
@@ -907,7 +934,7 @@ class AsyncBuildExecutor:
         owner_id = snapshot.owner_id if snapshot is not None else None
         if snapshot is not None:
             metrics.observe_queue_wait(snapshot.created_at)
-        started_at = build_log.started(run_id, mode="async", owner_id=owner_id)
+        started_at = build_log.started(run_id, mode=mode, owner_id=owner_id)
         cancellation = self.registry.cancellation(run_id)
         if cancellation is None:  # pragma: no cover - create() always makes one together
             cancellation = RunCancellation()
@@ -935,6 +962,7 @@ class AsyncBuildExecutor:
                 error=f"internal error: {type(exc).__name__}",
                 started_at=started_at,
                 error_type=type(exc).__name__,
+                mode=mode,
             )
             return
         finally:
@@ -943,7 +971,9 @@ class AsyncBuildExecutor:
             if timer is not None:
                 timer.cancel()
         if response.status_code < 400:
-            self._finish(run_id, failed=False, response=response.body, started_at=started_at)
+            self._finish(
+                run_id, failed=False, response=response.body, started_at=started_at, mode=mode
+            )
             return
         # Don't distinguish failure/cancellation by status_code alone here (#481). Cancelled
         # run's build() also returns 4xx (409 summary), but terminal state decided only by
@@ -957,6 +987,7 @@ class AsyncBuildExecutor:
             response=response.body,
             error=error if isinstance(error, str) else "build failed",
             started_at=started_at,
+            mode=mode,
         )
 
     def _time_limit(self) -> float | None:
@@ -995,6 +1026,7 @@ class AsyncBuildExecutor:
         error: str | None = None,
         started_at: float | None = None,
         error_type: str | None = None,
+        mode: build_log.BuildMode = "async",
     ) -> None:
         """Confirm terminal state and call cancelled hook if ended as cancelled.
 
@@ -1009,7 +1041,7 @@ class AsyncBuildExecutor:
             if status in ("succeeded", "failed", "cancelled"):
                 build_log.ended(
                     run_id,
-                    mode="async",
+                    mode=mode,
                     status=status,
                     started_at=started_at,
                     owner_id=snapshot.owner_id,

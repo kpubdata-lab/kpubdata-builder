@@ -34,6 +34,7 @@ from ..credentials import (
 )
 from ..events import BuildEventStore
 from ..events.store import events_store_path
+from ..manifest.endings import CancellationCode
 from ..pipeline import (
     DEFAULT_PREVIEW_SEED,
     CancellationProbe,
@@ -69,12 +70,16 @@ from .analyses_api import AnalysesApiService, AnalysisStore
 from .auth import AuthError, Principal, authenticate
 from .auth_throttle import AuthFailureThrottle
 from .build_limits import resolve_max_queued_builds
-from .build_runs_api import BuildRunsApiService
+from .build_runs_api import (
+    BUILD_SLOTS_FULL_BODY,
+    SHUTDOWN_QUEUED_ERROR,
+    BuildRunsApiService,
+)
 from .build_slots import BuildSlots
 from .builds_api import BuildArtifactsApiService
 from .datasets_api import DatasetsApiService
 from .exports_api import ExportsApiService
-from .jobs import AsyncBuildExecutor, RunCancellation
+from .jobs import AsyncBuildExecutor, BuildJobRunner, RunCancellation
 from .monitoring_api import MonitoringApiService
 from .pii_reads import PiiLookup, client_pii_lookup
 from .probe_limit import ProbeLimiter
@@ -536,14 +541,15 @@ _BuildListEntry = dict[str, str | None]
 #   KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH), readiness and publish report the
 #   pii_scan_* blockers and a refused publish is audited as refused:<code> (#1113,
 #   additive).
-API_CONTRACT_VERSION = "1.123.0"
+# 1.123.0 -> 1.124.0: GET /builds/{run_id} carries a failed run's error after the
+#   registry has let the job go — a restart, an eviction, a synchronous build — as the
+#   line GET /admin/runs gives (#1120, additive; no schema changes).
+API_CONTRACT_VERSION = "1.124.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
 #: enough that a burst does not park the request pool behind the build limit.
 DEFAULT_BUILD_WAIT_SECONDS = 30.0
-
-
 #: manifest status vocabulary (ok/failed/cancelled) → publish status vocabulary
 #: (#481, #491). Single mapping to avoid publish path deriving separate state,
 #: preventing divergence from canonical.
@@ -1324,6 +1330,12 @@ class BuilderService:
             retry_of=retry_of,
             if_absent=if_absent,
         )
+        return self._refuse_if_deleted_meanwhile(response, owner_id)
+
+    def _refuse_if_deleted_meanwhile(
+        self, response: ServiceResponse, owner_id: str | None
+    ) -> ServiceResponse:
+        """A job accepted just before its owner's deletion began is cancelled (#1102)."""
         accepted = response.body.get("run_id")
         if (
             response.status_code == 202
@@ -1334,6 +1346,119 @@ class BuilderService:
             self.cancel_build(accepted)
             return ServiceResponse(403, dict(REJECTED_BODY))
         return response
+
+    def build_and_wait(
+        self,
+        spec_yaml: str,
+        *,
+        run_id: str | None = None,
+        created_by: str | None = None,
+        owner_id: str | None = None,
+        retry_of: str | None = None,
+        if_absent: bool = False,
+    ) -> ServiceResponse:
+        """Run a synchronous ``POST /build`` as a job and answer when it ends (#1242).
+
+        The pipeline used to run on the request thread, outside the job registry, so
+        none of the limits that work through the registry reached it: a user's cancel
+        (#481), the running-time limit (#1119), the owner's limit on active builds
+        (#1189) and the shutdown drain (#1118). It is now registered as a job and
+        executed on the request thread with its acquired slot. The request and answer
+        stay the route's.
+
+        What the build would refuse before it runs — the spec, a ``url`` source, the
+        provider key — is answered first, with nothing recorded, as before. The wait for
+        a free slot keeps its bound (#1040): none free in time is the same 429, before
+        anything is recorded. Holding the slot until this job ends prevents another
+        job from taking it between admission and execution. Cancellation answers 409.
+        """
+        refusal = self._build_runs.refusal_before_run(spec_yaml, owner_id)
+        if refusal is not None:
+            return refusal
+        if not self._build_slots.acquire(timeout=self._slot_wait_seconds):
+            return ServiceResponse(429, dict(BUILD_SLOTS_FULL_BODY))
+        answers: list[ServiceResponse] = []
+        reasons: list[CancellationCode] = []
+
+        def runner(
+            spec_yaml: str,
+            run_id: str,
+            created_by: str | None,
+            cancellation: RunCancellation,
+        ) -> ServiceResponse:
+            response = self._run_build_job(spec_yaml, run_id, created_by, cancellation)
+            answers.append(response)
+            # Read while the job still holds the run: once it ends, the reason goes.
+            reasons.append(self._build_runs.cancellation_code(run_id))
+            return response
+
+        try:
+            # ``submit_build``'s two reads of the owner's deletion, around this runner.
+            if owner_id is not None and self.owner_deleted(owner_id):
+                return ServiceResponse(403, dict(REJECTED_BODY))
+            submitted = self._refuse_if_deleted_meanwhile(
+                self._submit_build(
+                    spec_yaml,
+                    run_id=run_id,
+                    created_by=created_by,
+                    owner_id=owner_id,
+                    retry_of=retry_of,
+                    if_absent=if_absent,
+                    runner=runner,
+                    run_inline=True,
+                ),
+                owner_id,
+            )
+        finally:
+            self._build_slots.release()
+        code = submitted.body.get("code")
+        if submitted.status_code == 200 or code == "run_id_completed":
+            # The id was taken between the route's check and the submission. This
+            # route's 409 is a build's answer, so a taken id is its 400 (#1065).
+            status = submitted.body.get("status")
+            taken = (
+                "run_id_completed"
+                if code == "run_id_completed"
+                else "run_id_ended"
+                if status in ("succeeded", "failed", "cancelled")
+                else "run_id_in_progress"
+            )
+            return ServiceResponse(
+                400,
+                {
+                    "error": "run_id is already in use; build under a new run_id",
+                    "code": taken,
+                    "run_id": submitted.body.get("run_id"),
+                },
+            )
+        if submitted.status_code == 429 and code == "build_queue_full":
+            return ServiceResponse(429, dict(BUILD_SLOTS_FULL_BODY))
+        if submitted.status_code != 202:
+            return submitted
+        accepted = str(submitted.body["run_id"])
+        snapshot = self._async_builds.get(accepted)
+        if snapshot is not None and snapshot.status not in ("succeeded", "failed", "cancelled"):
+            return ServiceResponse(500, {"error": "internal server error"})
+        # The registry decides how a job ended, as ``GET /builds/{run_id}`` reads it.
+        cancelled = (
+            snapshot.status == "cancelled"
+            if snapshot is not None
+            else bool(answers) and answers[0].body.get("status") == "cancelled"
+        )
+        if cancelled:
+            return self._build_runs.sync_cancelled(accepted, reasons[0] if reasons else "cancelled")
+        if answers:
+            return answers[0]
+        if snapshot is not None and snapshot.error == SHUTDOWN_QUEUED_ERROR:
+            return ServiceResponse(
+                503,
+                {
+                    "error": "the server is shutting down; submit the build again shortly",
+                    "code": "shutting_down",
+                },
+            )
+        # The job raised: the answer the HTTP layer gives an unhandled error.
+        return ServiceResponse(500, {"error": "internal server error"})
 
     def owner_deleted(self, owner_id: str) -> bool:
         """Whether ``owner_id``'s deletion has begun (#1102): read from disk each time."""
@@ -1348,10 +1473,14 @@ class BuilderService:
         owner_id: str | None,
         retry_of: str | None,
         if_absent: bool,
+        runner: BuildJobRunner | None = None,
+        run_inline: bool = False,
     ) -> ServiceResponse:
         return self._build_runs.submit_build(
             spec_yaml,
-            runner=self._run_build_job,
+            runner=self._run_build_job if runner is None else runner,
+            mode="async" if runner is None else "sync",
+            run_inline=run_inline,
             run_id=run_id,
             created_by=created_by,
             owner_id=owner_id,
