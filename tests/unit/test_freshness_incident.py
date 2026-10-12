@@ -77,8 +77,6 @@ def test_reports_for_the_same_workflow_are_serialized_without_canceling() -> Non
     }
 
 
-
-
 # ----------------------------------------------------------------- the script, run
 
 
