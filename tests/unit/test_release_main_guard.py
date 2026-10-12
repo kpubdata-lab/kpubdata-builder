@@ -23,19 +23,47 @@ def _release_job() -> Any:
     return doc["jobs"]["release"]
 
 
+def _alternatives() -> list[str]:
+    """The condition's top-level ``||`` alternatives.
+
+    Only top-level: the pull request clause holds its own ``||`` between the two
+    release branch prefixes (``release/`` and release-please's, kpubdata#895), and that
+    is one alternative, not two.
+    """
+    parts: list[str] = []
+    depth = 0
+    current = ""
+    condition = str(_release_job()["if"])
+    index = 0
+    while index < len(condition):
+        char = condition[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if depth == 0 and condition.startswith("||", index):
+            parts.append(current)
+            current = ""
+            index += 2
+            continue
+        current += char
+        index += 1
+    parts.append(current)
+    return parts
+
+
 def _clause(event: str) -> str:
     """The one alternative of the job's condition that is about ``event``.
 
     Found by the event it names, not by its position, so reordering the
     alternatives cannot make a test read the wrong one.
     """
-    alternatives = str(_release_job()["if"]).split("||")
-    (clause,) = [part for part in alternatives if f"github.event_name == '{event}'" in part]
+    (clause,) = [part for part in _alternatives() if f"github.event_name == '{event}'" in part]
     return clause
 
 
 def test_the_job_starts_from_a_dispatch_or_a_merged_pull_request_only() -> None:
-    assert len(str(_release_job()["if"]).split("||")) == 2
+    assert len(_alternatives()) == 2
 
 
 def test_a_manual_release_must_stand_on_main() -> None:

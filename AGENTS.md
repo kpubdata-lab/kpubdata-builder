@@ -185,19 +185,36 @@ agent.
 - **kpubdata is not on this train.** It releases on demand, at most once every seven
   days. Never recommend a release outside these rules to unblock work: build against
   kpubdata `main` in the early-warning job, and raise the pin when kpubdata releases.
+- **The release pull request comes from release-please** (kpubdata#895, as kpubdata
+  did in kpubdata#819). A person dispatches `release.yml` with `mode=release-please`
+  (the default) in the release week; it refuses outside the week. release-please
+  works the version out from the commit titles on `main` since the last tag and opens
+  the pull request; the job then writes `uv.lock` and dates the CHANGELOG section on
+  that branch. Merging it starts the gated release job. `mode=prepare`, where a
+  person picks `bump`, stays for a critical patch outside the week, and writes the
+  `Critical-Patch: #N` line.
+- **The release App.** The release pull request's checks start only when it is
+  opened with the release GitHub App's token (Contents and Pull requests write, no
+  more), minted from the `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY`
+  secrets. Without them the job warns and uses `GITHUB_TOKEN`, and a person closes and
+  reopens the pull request to start the checks; with only one of them it fails.
 - **Prepare, do not release.** An agent may tidy the CHANGELOG's Unreleased section
-  and draft the version and pin pull requests. `release.yml` has no dry run: its
-  dispatch inputs are `mode`, `bump`, `critical_patch` and `critical_issue`, and
-  `mode=prepare` (the default) opens a release pull request — a real one, which a
-  person merges to release or closes. Check a release locally with
+  and draft the pin pull requests. `release.yml` has no dry run: its dispatch inputs
+  are `mode`, `bump`, `critical_patch` and `critical_issue`, and both
+  `mode=release-please` and `mode=prepare` open a release pull request — a real one,
+  which a person merges to release or closes. Check a release locally with
   `scripts/check_version_consistency.py` instead.
   Pushing a tag, creating a GitHub Release, approving the PyPI environment and
   changing what a release contains are a person's (POLICY 14).
-- **Propose the bump from the CHANGELOG, with the reason.** In 0.x, a breaking change
-  or a new feature is minor; fixes alone are patch.
+- **The bump comes from the commit titles.** In 0.x, a breaking change or a new
+  feature is minor; fixes alone are patch (`bump-minor-pre-major`). A wrong type in a
+  pull request title is a wrong version — fix the title before merging.
+- **A version is written with kpubdata's `scripts/set_version.py --root` (in kpubdata),
+  never by hand.** It moves `pyproject.toml`, `uv.lock` and `.release-please-manifest.json`
+  together, and `scripts/check_version_consistency.py` refuses a manifest left behind.
 - **Write what a release changes under `## [Unreleased]` in `CHANGELOG.md`, as you
-  merge it.** The prepare job dates that section and the release job publishes it as
-  the notes. An empty `[Unreleased]` stops the release — Studio included, when it only
+  merge it.** The release pull request dates that section and the release job
+  publishes it as the notes; release-please does not write it (`skip-changelog`). An empty `[Unreleased]` stops the release — Studio included, when it only
   follows Builder's version: say so in a line.
 - **Builder and Studio share one version** (ADR 0004). They ship as one application,
   so a release that only changed one of them still raises both, and neither skips a

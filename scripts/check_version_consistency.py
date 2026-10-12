@@ -11,6 +11,9 @@ containing `0.4.0.dev0`. A user reporting a bug then cannot say what they ran.
 against it:
 
 - ``CHANGELOG.md``'s top ``## vX.Y`` heading (major.minor)
+- ``.release-please-manifest.json``'s root package (``"."``), the exact version —
+  release-please raises the next version from it, so a release that left it behind
+  would have the next release pull request computed from the wrong one (kpubdata#895)
 - a git tag, when one is given — it must be ``v`` plus the exact version
 
 It also refuses to tag a development version at all. `0.4.0.dev0` is a statement
@@ -25,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -71,13 +75,34 @@ def changelog_version() -> str:
     return match.group(1)
 
 
+def manifest_version() -> str | None:
+    """The root package's version in ``.release-please-manifest.json``, if the file exists.
+
+    Raises:
+        VersionMismatch: The file exists but holds no root package version.
+    """
+    path = REPO_ROOT / ".release-please-manifest.json"
+    if not path.exists():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise VersionMismatch(f".release-please-manifest.json is not JSON: {exc}") from exc
+    version = manifest.get(".") if isinstance(manifest, dict) else None
+    if not isinstance(version, str):
+        raise VersionMismatch('.release-please-manifest.json has no "." version')
+    return version
+
+
 def is_prerelease(version: str) -> bool:
     """Whether the version carries a development or pre-release segment."""
     return _PRERELEASE.search(version) is not None
 
 
 def check_sources() -> str:
-    """Compare CHANGELOG against pyproject. Returns the canonical version.
+    """Compare CHANGELOG and the release-please manifest against pyproject.
+
+    Returns the canonical version.
 
     Raises:
         VersionMismatch: They disagree.
@@ -90,6 +115,13 @@ def check_sources() -> str:
             f"pyproject.toml declares {version} (line {major_minor}) but CHANGELOG.md's "
             f"newest section is v{changelog}. The declaration is canonical — either "
             "bump the changelog heading or correct the version."
+        )
+    manifest = manifest_version()
+    if manifest is not None and manifest != version:
+        raise VersionMismatch(
+            f"pyproject.toml declares {version} but .release-please-manifest.json says "
+            f"{manifest}. release-please raises the next version from the manifest, so "
+            "write the version with kpubdata's scripts/set_version.py, which moves both."
         )
     return version
 

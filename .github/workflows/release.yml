@@ -1,10 +1,20 @@
 # Release under branch protection (kpubdata#586, #718).
 #
-# Three ways in, none of which writes to `main`.
+# Four ways in, none of which writes to `main`.
 #
-#   workflow_dispatch, mode=prepare         opens a release pull request
+#   workflow_dispatch, mode=release-please  release-please opens the release pull request
+#   workflow_dispatch, mode=prepare         opens a release pull request by hand
 #   workflow_dispatch, mode=release         gates what is declared now, then tags
-#   pull_request closed on `release/*`      the same, for the pull request path
+#   pull_request closed on `release/*` or   the same, for the pull request path
+#     `release-please--branches--main*`
+#
+# The release pull request is normally the one release-please opens (kpubdata#895, as
+# kpubdata did in kpubdata#819): the version comes from the commit titles on `main`
+# since the last tag, not from a person picking `bump`. It runs only inside the monthly
+# release week, so it cannot open a release pull request the release job would refuse
+# or one that lands outside the freeze. `mode=prepare` stays for what release-please
+# does not do: a critical patch outside the window, which carries its
+# `Critical-Patch: #N` line in the body it writes.
 #
 # `mode=release` exists because a first release is not a bump. This repository and
 # Studio already declare the version their CHANGELOGs say they are preparing, so
@@ -24,15 +34,16 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "prepare = open a release pull request; release = tag what is declared now"
+        description: "release-please = open or update the release pull request (release week only); prepare = open one by hand (critical patch); release = tag what is declared now"
         required: true
         type: choice
         options:
+          - release-please
           - prepare
           - release
-        default: prepare
+        default: release-please
       bump:
-        description: "Which part of the version to raise (mode=prepare only)"
+        description: "Which part of the version to raise (mode=prepare only; release-please reads the commit titles)"
         required: false
         type: choice
         options:
@@ -96,11 +107,29 @@ jobs:
 
       # Not just pyproject.toml. `uv.lock` repeats the project's own version and
       # `uv lock --check` in CI compares them — writing one without the other turns
-      # nine checks red, which is how #744 first went.
-      - name: Write the version
-        uses: kpubdata-lab/kpubdata/.github/actions/set-version@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
+      # nine checks red, which is how #744 first went. `.release-please-manifest.json`
+      # is what release-please raises from, so a release prepared by hand moves it too.
+      #
+      # kpubdata's script, run against this checkout. kpubdata's `set-version` action
+      # is not used: it runs the script without `--root`, and the script's default
+      # root is the action's own download of kpubdata, so here it rewrote kpubdata's
+      # files and left Builder's alone (kpubdata#895). The ref is the same commit as
+      # the kpubdata actions above; tests/unit/test_release_please.py holds that.
+      - name: Fetch kpubdata's release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          version: ${{ steps.bump.outputs.new_version }}
+          repository: kpubdata-lab/kpubdata
+          ref: 807c21f6a78f22b6ed64e19b38585225ec95e1f7
+          path: .kpubdata-release
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Write the version
+        env:
+          VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          python3 .kpubdata-release/scripts/set_version.py "${VERSION}" --root "${GITHUB_WORKSPACE}"
+          rm -rf .kpubdata-release
 
       # The release pull request carries its own CHANGELOG change: `[Unreleased]` becomes
       # this version, dated. An empty `[Unreleased]` stops here, before a branch exists.
@@ -144,6 +173,178 @@ jobs:
           gh pr create --base main --head "release/${TAG}" \
             --title "chore: release ${TAG}" --body-file /tmp/release-body.md
 
+  # release-please opens the release pull request, and only that (kpubdata#895). It
+  # works out the version from the commit titles on `main` since the last tag — in 0.x
+  # a breaking change or a `feat` raises the minor and fixes alone the patch
+  # (`bump-minor-pre-major`) — and opens, then keeps up to date, the pull request that
+  # raises it. Everything else stays where it was:
+  #
+  #   - The CHANGELOG is written by people under `[Unreleased]` (`skip-changelog`);
+  #     this job dates that section on the release branch, as prepare does.
+  #   - `uv.lock` repeats the project's own version and release-please does not know
+  #     it; kpubdata's set_version.py writes it, against this checkout.
+  #   - Nothing is tagged here (`skip-github-release`). Merging the pull request starts
+  #     the release job below, which checks the window, runs the gates and then tags.
+  #   - No labels (`skip-labeling`).
+  #
+  # Only in the release week, and only by hand. Builder releases once a month and the
+  # week is a freeze; a release pull request opened outside it could not be released
+  # and would sit open for weeks. No schedule: the week starts with a person, as it did
+  # with prepare. A critical patch outside the week goes through `mode=prepare`.
+  #
+  # The token. A pull request opened with GITHUB_TOKEN starts no `pull_request`
+  # workflows, so its required checks never report. The owner chose a least-privilege
+  # GitHub App (kpubdata#895, 2026-10-12): this job mints a short-lived installation
+  # token from two secrets and gives it to release-please and to the push below, so the
+  # pull request and its later pushes start CI like anyone else's.
+  #
+  #   RELEASE_APP_CLIENT_ID     the App's Client ID
+  #   RELEASE_APP_PRIVATE_KEY   a private key generated for the App (the whole .pem)
+  #
+  # The token is minted with Contents write and Pull requests write and nothing else,
+  # and is never used to merge or approve. Without the two secrets the job warns and
+  # falls back to GITHUB_TOKEN: the pull request still opens, and a person closes and
+  # reopens it to start the checks. With only one of the two the job fails — that is a
+  # broken setup, not a missing one. tests/unit/test_release_please.py holds all this.
+  release-please:
+    name: Open or update the release pull request
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.mode == 'release-please' &&
+      github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HAS_CLIENT_ID: ${{ secrets.RELEASE_APP_CLIENT_ID != '' }}
+      HAS_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
+    steps:
+      # First, before anything is written. No critical patch here: that is prepare's.
+      - name: Release window
+        uses: kpubdata-lab/kpubdata/.github/actions/release-window@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
+        with:
+          policy: monthly
+
+      - name: Check the release App secrets
+        id: app-secrets
+        run: |
+          if [ "${HAS_CLIENT_ID}" = "true" ] && [ "${HAS_PRIVATE_KEY}" = "true" ]; then
+            echo "use=true" >> "$GITHUB_OUTPUT"
+            echo "minting a release App token"
+          elif [ "${HAS_CLIENT_ID}" = "true" ] || [ "${HAS_PRIVATE_KEY}" = "true" ]; then
+            echo "::error title=Release App half configured::Set both RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY, or neither."
+            exit 1
+          else
+            echo "use=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No release App token::RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY are not set. Falling back to GITHUB_TOKEN: the release pull request opens, but its required checks do not start until a person closes and reopens it."
+          fi
+
+      - name: Mint the release App token
+        id: app
+        if: steps.app-secrets.outputs.use == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - id: please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+          skip-labeling: true
+
+      # Only when release-please wrote the branch in this run. It rebuilds the branch
+      # from `main` each time it does, so the commit below is made again rather than
+      # carried over.
+      - name: Read the release branch
+        id: branch
+        if: steps.please.outputs.pr
+        env:
+          PR: ${{ steps.please.outputs.pr }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          pr = json.loads(os.environ["PR"])
+          print(f"name={pr['headBranchName']}")
+          PY
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: steps.please.outputs.pr
+        with:
+          ref: ${{ steps.branch.outputs.name }}
+          token: ${{ steps.app.outputs.token || github.token }}
+
+      - name: Read the version release-please chose
+        id: version
+        if: steps.please.outputs.pr
+        run: |
+          version=$(python3 -c "
+          import pathlib, re
+          text = pathlib.Path('pyproject.toml').read_text(encoding='utf-8')
+          print(re.search(r'^version = \"([^\"]+)\"', text, re.MULTILINE).group(1))
+          ")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release-please chose ${version}"
+
+      # The same script and commit as prepare's, for the same reason.
+      - name: Fetch kpubdata's release scripts
+        if: steps.please.outputs.pr
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: kpubdata-lab/kpubdata
+          ref: 807c21f6a78f22b6ed64e19b38585225ec95e1f7
+          path: .kpubdata-release
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Write the version into the lock file
+        if: steps.please.outputs.pr
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 .kpubdata-release/scripts/set_version.py "${VERSION}" --root "${GITHUB_WORKSPACE}"
+          rm -rf .kpubdata-release
+
+      # An empty `[Unreleased]` fails here: something releasable merged without saying
+      # what it changes. The release job would refuse the same thing later, at the tag.
+      - name: Date the CHANGELOG section
+        if: steps.please.outputs.pr
+        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
+        with:
+          command: promote
+          version: ${{ steps.version.outputs.version }}
+
+      - name: Check the version sources agree
+        if: steps.please.outputs.pr
+        run: python3 scripts/check_version_consistency.py --tag "v${{ steps.version.outputs.version }}"
+
+      - name: Push what release-please does not write
+        if: steps.please.outputs.pr
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git diff --quiet; then
+            echo "nothing to add: the lock file and the CHANGELOG already say ${VERSION}"
+            exit 0
+          fi
+          git --no-pager diff --stat
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: write the lock file and date the CHANGELOG for v${VERSION}"
+          git push origin "HEAD:${BRANCH}"
+
   release:
     name: Gate, tag and release
     runs-on: ubuntu-latest
@@ -153,7 +354,8 @@ jobs:
       (github.event_name == 'pull_request' &&
        github.event.pull_request.merged == true &&
        github.event.pull_request.base.ref == 'main' &&
-       startsWith(github.event.pull_request.head.ref, 'release/'))
+       (startsWith(github.event.pull_request.head.ref, 'release/') ||
+        startsWith(github.event.pull_request.head.ref, 'release-please--branches--main')))
     timeout-minutes: 30
     permissions:
       contents: write
@@ -236,9 +438,20 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BRANCH: ${{ github.event.pull_request.head.ref }}
+          TITLE: ${{ github.event.pull_request.title }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          if [ "${BRANCH}" != "release/${TAG}" ]; then
+          # release-please's branch has one name for every release, so there the
+          # version is in the title it wrote (`pull-request-title-pattern`). The name
+          # is a prefix: release-please may append `--components--<package>`, which
+          # kpubdata's first release-please pull request showed (kpubdata#830).
+          case "${BRANCH}" in release-please--branches--main*) from_release_please=true ;; *) from_release_please=false ;; esac
+          if [ "${from_release_please}" = "true" ]; then
+            if [ "${TITLE}" != "chore: release ${TAG}" ]; then
+              echo "::error::the pull request is titled '${TITLE}' but pyproject.toml says ${TAG}"
+              exit 1
+            fi
+          elif [ "${BRANCH}" != "release/${TAG}" ]; then
             echo "::error::branch is ${BRANCH} but pyproject.toml says release/${TAG}"
             exit 1
           fi
