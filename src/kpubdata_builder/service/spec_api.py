@@ -25,6 +25,7 @@ from ..errors import SpecLoadError, ValidationError
 from ..pipeline import DEFAULT_PREVIEW_SEED, SampleMode, preview_build
 from ..pipeline.preview import SourcePreview
 from ..quality import QualityCheckResult
+from ..rate_limit import RateLimited
 from ..spec import BuildSpec, JsonValue, parse_spec
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
@@ -114,6 +115,60 @@ def _catalog_request_parameters(dataset: DatasetRef) -> list[JsonValue]:
     return result
 
 
+def _catalog_query_parameters(dataset: DatasetRef) -> list[JsonValue] | None:
+    """The dataset's query parameters for form generation, from kpubdata's public API (#1281).
+
+    Read only through ``DatasetRef.to_dict()["request_parameters"]`` (ADR 0007), never
+    ``raw_metadata``. kpubdata's ``name`` is the name a caller uses (the alias when
+    there is one) and ``api_name`` is the provider's own, present only when aliased;
+    the wire says it the other way round, so ``name`` here is the provider's and
+    ``alias`` the caller's.
+
+    ``None`` when kpubdata gives no definition (unknown, never "no parameters"). An
+    entry without a ``type`` (a catalogue entry) or with one Builder has not mapped
+    gets ``type`` null; ``enum`` is kept only as a non-empty list of strings. Secret
+    like names are dropped under either spelling, as for ``request_parameters``.
+    """
+    raw = dataset.to_dict().get("request_parameters")
+    if not isinstance(raw, (list, tuple)):
+        return None
+    service_key_param = str(dataset.raw_metadata.get("service_key_param", "")).strip().lower()
+    secret_names = _SECRET_LIKE_PARAM_NAMES | ({service_key_param} if service_key_param else set())
+    result: list[JsonValue] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        called_raw = item.get("name")
+        if not isinstance(called_raw, str) or not called_raw.strip():
+            continue
+        called = called_raw.strip()
+        api_raw = item.get("api_name")
+        api_name = api_raw.strip() if isinstance(api_raw, str) and api_raw.strip() else None
+        if called.lower() in secret_names or (api_name and api_name.lower() in secret_names):
+            continue
+        enum = item.get("enum")
+        description = item.get("description")
+        example = item.get("example")
+        result.append(
+            {
+                "name": api_name or called,
+                "alias": called if api_name else None,
+                "type": vocabulary.query_parameter_type(item.get("type")),
+                "required": bool(item.get("required", False)),
+                "enum": cast(JsonValue, list(enum))
+                if isinstance(enum, (list, tuple))
+                and enum
+                and all(isinstance(value, str) for value in enum)
+                else None,
+                "description": description
+                if isinstance(description, str) and description
+                else None,
+                "example": example if isinstance(example, str) and example else None,
+            }
+        )
+    return result
+
+
 def _catalog_application(dataset: DatasetRef) -> JsonValue:
     """Serialize ``raw_metadata.application`` as a secret-free allowlist.
 
@@ -189,6 +244,7 @@ def _catalog_dataset_body(dataset: DatasetRef, requires_service_key: bool) -> di
         "query_support": query_support,
         "requires_service_key": requires_service_key,
         "request_parameters": cast(JsonValue, _catalog_request_parameters(dataset)),
+        "query_parameters": _catalog_query_parameters(dataset),
         "application": _catalog_application(dataset),
         "quota": _catalog_quota(dataset),
     }
@@ -385,6 +441,17 @@ class SpecApiService:
         except PiiDeclarationUnavailable as exc:
             # Fail closed (#900): which columns are personal is not known.
             return unavailable_response(exc, what="a preview")
+        except RateLimited as limited:
+            # A provider's egress limit (#1245): the calls already made stay counted.
+            return ServiceResponse(
+                429,
+                {
+                    "error": "this provider has been called as often as the server allows "
+                    "for now; try again shortly",
+                    "code": "provider_egress_limited",
+                    "retry_after_seconds": limited.retry_after_seconds,
+                },
+            )
         finally:
             self._close_client(client)
         previews: list[JsonValue] = [

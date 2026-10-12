@@ -287,6 +287,12 @@ class UserLedger:
             row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         return LedgerEntry(*row)
 
+    def forget(self, user_id: str) -> bool:
+        """Remove the user's row (#1102): their deletion. True when there was one."""
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        return cursor.rowcount > 0
+
     def list(self, *, status: SignupStatus | None = None) -> list[LedgerEntry]:
         with self._connect() as conn:
             if status is None:
@@ -301,12 +307,20 @@ class UserLedger:
         return [LedgerEntry(*row) for row in rows]
 
 
+#: The 403 body of a rejected sign-up — and of a deleted user (#1102), who is shut out
+#: the same way.
+REJECTED_BODY: dict[str, JsonValue] = {
+    "error": "this account's sign-up was rejected",
+    "code": "signup_rejected",
+}
+
+
 def admission_refusal(entry: LedgerEntry, principal: Principal) -> dict[str, JsonValue] | None:
     """The 403 body for a principal the ledger does not let in, or None to let them in."""
     if principal.is_admin:
         return None
     if entry.status == "rejected":
-        return {"error": "this account's sign-up was rejected", "code": "signup_rejected"}
+        return dict(REJECTED_BODY)
     if entry.status == "approved":
         return None
     return {
@@ -320,6 +334,7 @@ __all__ = [
     "SCHEMA",
     "LedgerEntry",
     "LedgerUnavailableError",
+    "REJECTED_BODY",
     "SignupStatus",
     "UserLedger",
     "admission_refusal",

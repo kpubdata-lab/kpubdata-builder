@@ -6,6 +6,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Sequence
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -172,11 +173,46 @@ class SQLiteCredentialRepository:
         return cursor.rowcount > 0
 
 
+def stored_owners(path: Path) -> frozenset[str]:
+    """Every owner with a saved key in the store at ``path`` (#1102).
+
+    Reads owner ids only, so it needs no cipher: a deletion runs without the master key.
+    """
+    with closing(sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)) as connection:
+        rows = connection.execute("SELECT DISTINCT owner_id FROM provider_credentials").fetchall()
+    return frozenset(str(row[0]) for row in rows)
+
+
+def owner_key_count(path: Path, owner_id: str) -> int:
+    """How many keys ``owner_id`` saved in the store at ``path`` (#1102)."""
+    with closing(sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) FROM provider_credentials WHERE owner_id = ?", (owner_id,)
+        ).fetchone()
+    return int(row[0])
+
+
+def forget_owner(path: Path, owner_id: str) -> int:
+    """Remove every key ``owner_id`` saved in the store at ``path`` (#1102).
+
+    Returns how many went. Needs no cipher: nothing is decrypted.
+    """
+    validate_owner_id(owner_id)
+    with closing(sqlite3.connect(path, timeout=BUSY_TIMEOUT_SECONDS)) as connection, connection:
+        cursor = connection.execute(
+            "DELETE FROM provider_credentials WHERE owner_id = ?", (owner_id,)
+        )
+    return max(cursor.rowcount, 0)
+
+
 __all__ = [
     "SCHEMA",
     "CredentialRepository",
     "SQLiteCredentialRepository",
     "associated_data",
+    "forget_owner",
     "normalize_provider",
+    "owner_key_count",
+    "stored_owners",
     "validate_owner_id",
 ]

@@ -13,6 +13,7 @@ from kpubdata_builder.service.app import BuilderService, dispatch
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.auth_throttle import AuthFailureThrottle
 from kpubdata_builder.service.monitoring import LatencyRecorder
+from kpubdata_builder.service.query_rate import QueryRateLimiter
 from kpubdata_builder.service.responses import (
     FileResponse as ResponseModuleFileResponse,
 )
@@ -28,6 +29,7 @@ class _RoutingStub:
 
     _latency_recorder = LatencyRecorder()
     _auth_throttle = AuthFailureThrottle()
+    _query_rate = QueryRateLimiter()
 
 
 def _unused_service() -> BuilderService:

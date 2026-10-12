@@ -17,6 +17,8 @@ ways:
 kpubdata makes one call per dataset with a fast-fail transport (15 s, no retry, no cache).
 A provider that is down would hold the request for that long per dataset, so the probe
 stops starting new calls after ``PROBE_BUDGET_SECONDS`` and names what it did not reach.
+It also stops when the provider's egress limit is reached (``egress``, #1245): each
+dataset is one call to the provider, counted with the calls of builds and previews.
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
 
-from .. import logging_redaction
+from .. import egress, logging_redaction
+from ..rate_limit import RateLimited
 from ..spec import JsonValue
 from .redaction import redact_secret_text
 
@@ -137,10 +140,19 @@ def run_probe(
     results: list[JsonValue] = []
     not_probed: list[JsonValue] = []
     started = clock()
+    limited = False
     with open_probe(provider, key) as probe_one:
         for dataset_id in dataset_ids:
             name = dataset_id.removeprefix(prefix)
-            if clock() - started >= budget_seconds:
+            if limited or clock() - started >= budget_seconds:
+                not_probed.append(name)
+                continue
+            try:
+                # The provider's egress limit (#1245), shared with builds and previews:
+                # a probe holds a request, so it does not wait for a turn.
+                egress.admit_call(provider)
+            except RateLimited:
+                limited = True
                 not_probed.append(name)
                 continue
             outcome = probe_one(dataset_id)

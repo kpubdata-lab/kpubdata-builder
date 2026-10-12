@@ -1261,6 +1261,77 @@ class TableCatalog:
             raise SnapshotHeld(f"snapshot {snapshot_id!r} is held and cannot be deleted")
         return snapshot
 
+    def snapshot_owners(self) -> frozenset[str]:
+        """Every owner a snapshot names (#1102)."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT owner_id FROM table_snapshots WHERE owner_id IS NOT NULL"
+        ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    def snapshots_owned_by(self, owner_id: str) -> list[SnapshotRow]:
+        """Every snapshot ``owner_id`` produced, whatever its state (#1102)."""
+        rows = self._conn.execute(
+            f"SELECT {_SNAPSHOT_COLUMNS} FROM table_snapshots WHERE owner_id = ? ORDER BY id",
+            (owner_id,),
+        ).fetchall()
+        return [SnapshotRow(*row) for row in rows]
+
+    def detach_current(self, table_id: str, *, now: str | None = None) -> None:
+        """Leave a table with no current snapshot, so that it can be deleted (#1102).
+
+        The lease and hold checks and the change are one transaction, as in
+        ``begin_retiring``: once this returns, no query can resolve the table to the
+        snapshot that was current, so none can start reading it.
+
+        Raises:
+            SnapshotInUse: A query holds a live lease on the current snapshot.
+            SnapshotHeld: The current snapshot has a live hold.
+            TableNotFound: No such table.
+        """
+        moment = now or _now()
+        with self._immediate() as conn:
+            row = conn.execute(
+                "SELECT current_snapshot_id FROM tables WHERE id = ?", (table_id,)
+            ).fetchone()
+            if row is None:
+                raise TableNotFound(f"no such table: {table_id!r}")
+            current = row[0]
+            if current is None:
+                return
+            live = conn.execute(
+                f"SELECT COUNT(*) FROM snapshot_leases WHERE {_LIVE_LEASE}", (current, moment)
+            ).fetchone()[0]
+            if live:
+                raise SnapshotInUse(
+                    f"snapshot {current!r} has {live} live lease(s); a query is reading it"
+                )
+            held = conn.execute(
+                f"SELECT kind FROM snapshot_holds WHERE {_LIVE_HOLD}", (current, moment)
+            ).fetchall()
+            if held:
+                raise SnapshotHeld(
+                    f"snapshot {current!r} is held: " + ", ".join(kind for (kind,) in held)
+                )
+            conn.execute(
+                "UPDATE tables SET current_snapshot_id = NULL, revision = revision + 1"
+                " WHERE id = ?",
+                (table_id,),
+            )
+
+    def forget_table(self, table_id: str) -> None:
+        """Remove a table row that has no snapshot left (#1102); nothing when it is gone.
+
+        Raises:
+            SnapshotStateError: The table still has snapshots; delete them first.
+        """
+        with self._immediate() as conn:
+            left = conn.execute(
+                "SELECT COUNT(*) FROM table_snapshots WHERE table_id = ?", (table_id,)
+            ).fetchone()[0]
+            if left:
+                raise SnapshotStateError(f"table {table_id!r} still has {left} snapshot(s)")
+            conn.execute("DELETE FROM tables WHERE id = ?", (table_id,))
+
     def forget_snapshot(self, snapshot_id: str) -> None:
         """Remove a snapshot row from the catalog.
 

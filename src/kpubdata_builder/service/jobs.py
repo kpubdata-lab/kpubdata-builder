@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import uuid4
 
 from ..spec import JsonValue
-from . import build_log
+from . import build_log, metrics
 from .build_limits import resolve_build_time_limit
 from .build_slots import BuildSlots
 
@@ -39,6 +39,7 @@ BuildJobStatus = Literal["queued", "running", "cancelling", "succeeded", "failed
 
 if TYPE_CHECKING:
     from .app import ServiceResponse as BuildJobResponse
+    from .run_storage import StorageAdmission
 else:
 
     class BuildJobResponse(Protocol):
@@ -68,7 +69,15 @@ class BuildJobRunner(Protocol):
 #: How often ``wait_until_idle`` looks at the registry.
 _IDLE_POLL_SECONDS = 0.05
 
-SubmitStatus = Literal["accepted", "existing", "queue_full", "owner_limit", "shutting_down"]
+SubmitStatus = Literal[
+    "accepted",
+    "existing",
+    "queue_full",
+    "owner_limit",
+    "disk_low",
+    "storage_quota",
+    "shutting_down",
+]
 
 # Result of ``AsyncBuildJobRegistry.request_cancel``. Each value maps to exactly one HTTP
 # response (``BuilderService.cancel_build``) — deterministic regardless of races.
@@ -211,6 +220,8 @@ class BuildJobSubmitResult:
     snapshot: BuildJobSnapshot | None = None
     #: The owner limit that refused it (#1189), for ``owner_limit``.
     owner_limit: int | None = None
+    #: What the submission measured (#1099), for ``disk_low`` and ``storage_quota``.
+    storage: StorageAdmission | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +262,12 @@ class AsyncBuildJobRegistry:
         self._terminal_order: deque[str] = deque()
         self._max_terminal_jobs = max(0, max_terminal_jobs)
 
+    @property
+    def closed(self) -> bool:
+        """Whether ``close_and_fail_queued`` has run: the process is shutting down."""
+        with self._lock:
+            return self._closed
+
     def create(
         self,
         *,
@@ -287,6 +304,7 @@ class AsyncBuildJobRegistry:
         retry_of: str | None = None,
         max_active_per_owner: int | None = None,
         if_absent: bool = False,
+        storage: StorageAdmission | None = None,
     ) -> tuple[str, BuildJobSnapshot | None]:
         """Check existence/queue capacity/create in **single lock scope** (#482 follow-up).
 
@@ -303,6 +321,11 @@ class AsyncBuildJobRegistry:
         — may have that many jobs queued, running or cancelling; one more is
         ``"owner_limit"``. Counted under the same lock, so two submissions arriving
         together cannot both take the last place. A job with no owner is not counted.
+
+        ``storage`` (#1099): ``"disk_low"`` when the disk had too little free space, and
+        ``"storage_quota"`` when the owner's runs and one reservation per queued or
+        running job of theirs, this one included, would pass the owner's limit. The
+        reservations are counted under the same lock.
         """
         now = _utc_now_text()
         with self._lock:
@@ -312,15 +335,27 @@ class AsyncBuildJobRegistry:
             if self._closed:
                 return "closed", None
             owner = owner_id or created_by
-            if max_active_per_owner is not None and owner is not None:
-                active = sum(
+            active = (
+                sum(
                     1
                     for job in self._jobs.values()
                     if job.status in ("queued", "running", "cancelling")
                     and (job.owner_id or job.created_by) == owner
                 )
-                if active >= max_active_per_owner:
-                    return "owner_limit", None
+                if owner is not None
+                else 0
+            )
+            if (
+                max_active_per_owner is not None
+                and owner is not None
+                and active >= max_active_per_owner
+            ):
+                return "owner_limit", None
+            if storage is not None:
+                if storage.disk_low:
+                    return "disk_low", None
+                if owner is not None and storage.over_quota(active):
+                    return "storage_quota", None
             queued = sum(1 for job in self._jobs.values() if job.status == "queued")
             if queued >= max_queued:
                 return "queue_full", None
@@ -621,6 +656,8 @@ class AsyncBuildExecutor:
         # doesn't read private ``ThreadPoolExecutor._max_workers`` (#516).
         self._max_workers = max_workers
         self._max_queue_size = max_queue_size
+        # Set by ``shutdown``/``begin_shutdown``: the pool takes no more work (#1101).
+        self._stopped = False
         # Jobs cancelled for running past the time limit (#1119), so their cancellation
         # event can say why.
         self._expired: set[str] = set()
@@ -658,6 +695,7 @@ class AsyncBuildExecutor:
         retry_of: str | None = None,
         max_active_per_owner: int | None = None,
         if_absent: bool = False,
+        storage: StorageAdmission | None = None,
     ) -> BuildJobSubmitResult:
         """Queue job. If "existing"/"queue_full"/"owner_limit", new submission not
         counted, so ``on_accept`` not called.
@@ -703,11 +741,16 @@ class AsyncBuildExecutor:
             retry_of=retry_of,
             max_active_per_owner=max_active_per_owner,
             if_absent=if_absent,
+            storage=storage,
         )
         if outcome == "existing":
             return BuildJobSubmitResult(status="existing", snapshot=snapshot)
         if outcome == "owner_limit":
             return BuildJobSubmitResult(status="owner_limit", owner_limit=max_active_per_owner)
+        if outcome in ("disk_low", "storage_quota"):
+            return BuildJobSubmitResult(
+                status="disk_low" if outcome == "disk_low" else "storage_quota", storage=storage
+            )
         if outcome == "queue_full":
             return BuildJobSubmitResult(status="queue_full")
         if outcome == "closed":
@@ -740,7 +783,23 @@ class AsyncBuildExecutor:
         """Request cancellation for this run (#481). Delegate to registry's atomic transition."""
         return self.registry.request_cancel(run_id)
 
+    @property
+    def max_queue_size(self) -> int:
+        """How many jobs may wait; a queue holding this many refuses the next (#1101)."""
+        return self._max_queue_size
+
+    @property
+    def draining(self) -> bool:
+        """The process is shutting down: no job is accepted, running ones finish (#1101)."""
+        return self.registry.closed
+
+    @property
+    def stopped(self) -> bool:
+        """The worker pool was shut down and runs nothing new (#1101)."""
+        return self._stopped
+
     def shutdown(self) -> None:
+        self._stopped = True
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def begin_shutdown(self, error: str) -> tuple[BuildJobSnapshot, ...]:
@@ -752,6 +811,7 @@ class AsyncBuildExecutor:
         ``begin_run`` and returns the slot at once.
         """
         ended = self.registry.close_and_fail_queued(error)
+        self._stopped = True
         self._executor.shutdown(wait=False, cancel_futures=True)
         return ended
 
@@ -811,6 +871,8 @@ class AsyncBuildExecutor:
         # ended in the queue never comes here and leaves neither.
         snapshot = self.registry.get(run_id)
         owner_id = snapshot.owner_id if snapshot is not None else None
+        if snapshot is not None:
+            metrics.observe_queue_wait(snapshot.created_at)
         started_at = build_log.started(run_id, mode="async", owner_id=owner_id)
         cancellation = self.registry.cancellation(run_id)
         if cancellation is None:  # pragma: no cover - create() always makes one together

@@ -398,6 +398,10 @@ _OPERATION_STATUS_CODES: dict[str, set[int]] = {
     "adminApproveUser": {200, 403, 404},
     "adminRejectUser": {200, 403, 404},
     "healthz": {200},
+    # Not ready is 503 with the same body (#1101).
+    "readyz": {200, 503},
+    # No 503: a check that fails is a gauge of 0, not a failed page (#1101).
+    "getMetrics": {200, 403},
     "getVersion": {200},
     "getCatalog": {200, 502},
     "listProviders": {200, 403, 502},

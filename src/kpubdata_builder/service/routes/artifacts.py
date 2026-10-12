@@ -10,6 +10,7 @@ from ...stages._path_safety import validate_path_segment
 from ..auth import Principal
 from ..responses import ServiceResponse
 from ._guards import check_ownership
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ def route(
     if method != "GET" or not path.startswith("/artifacts/"):
         return None
     parts = path[len("/artifacts/") :].split("/", 1)
-    run_id = parts[0]
+    run_id = decode_segment(parts[0])
     try:
         validate_path_segment(run_id, field_name="run_id")
     except ValueError as exc:

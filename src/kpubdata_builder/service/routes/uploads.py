@@ -15,6 +15,7 @@ from urllib.parse import parse_qs
 from ...stages._path_safety import validate_path_segment
 from ..auth import Principal
 from ..responses import ServiceResponse
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ def handle(
         return service.list_uploads(principal=principal)
 
     if path.startswith(_PREFIX) and "/" not in path[len(_PREFIX) :]:
-        upload_id = path[len(_PREFIX) :]
+        upload_id = decode_segment(path[len(_PREFIX) :])
         try:
             validate_path_segment(upload_id, field_name="upload_id")
         except ValueError as exc:

@@ -23,3 +23,12 @@ class FileResponse:
     status_code: int
     file_path: Path
     filename: str
+
+
+@dataclass(frozen=True)
+class TextResponse:
+    """A text body that is not JSON: the Prometheus page of ``GET /metrics`` (#1101)."""
+
+    status_code: int
+    text: str
+    content_type: str

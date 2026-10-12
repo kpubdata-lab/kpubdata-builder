@@ -46,6 +46,12 @@ positional arguments:
     verify           Verify dataset specs against live APIs.
     prune-cancelled  List (and optionally delete) cancelled partial-run
                      artifacts past a TTL (#549).
+    prune-runs       List (and optionally delete) succeeded and failed runs
+                     past their retention, keeping any run something still
+                     refers to (#1099).
+    delete-user      Delete one user and their data step by step, and shut
+                     them out first (#1102). Without --apply, only says what
+                     would go.
     warehouse-gc     Reclaim snapshots and staging directories nothing needs
                      any more (#738).
     warehouse-backup
@@ -55,6 +61,15 @@ positional arguments:
                      Restore a warehouse backup into an empty directory, after
                      checking the catalog and the snapshot files against each
                      other (#705).
+    backup           Write all of Builder's state — every SQLite store, the
+                     runs, the uploads, the warehouse — into one archive, while
+                     nothing writes it (#1095).
+    verify-backup    Check a state archive as a restore would — checksums,
+                     SQLite integrity, schema versions, the warehouse and the
+                     uploads — and change nothing (#1095).
+    restore          Replace the output directory's state with a verified state
+                     archive, by staging and then swapping it; the earlier state
+                     is kept aside (#1095).
     warehouse-hold   Place, release or list holds that keep a snapshot past
                      garbage collection (#705, #797).
 
@@ -319,6 +334,53 @@ warehouse warehouse: reclaimed 2 directories
 
 ---
 
+### prune-runs — 기한이 지난 run 정리
+
+성공·실패한 run 의 작업 공간은 아무것도 지우지 않으면 디스크에 계속 쌓인다. `prune-runs` 는
+manifest 의 `finished_at` 이 보관기한(`--retention-days`, 없으면
+`KPUBDATA_BUILDER_RUN_RETENTION_DAYS`)보다 오래된 run 을 찾는다. 기본은 dry run 이라 지울 run 과
+크기, 남길 run 과 이유만 적고, `--apply` 를 줘야 지운다. 실행 중이거나 재시도가 이어받는 run, 게시한
+run, warehouse snapshot(hold·lease 포함)이 있는 run 은 지우지 않는다. 보관기한의 기본은 끔이다 —
+값은 메인테이너가 정한다. 자세한 동작과 중단 뒤의 복구는 [배포 가이드 §6.3](../deploy.md) 에 있다.
+
+```console
+$ kpubdata-builder prune-runs --output-dir /data --warehouse /data/warehouse --retention-days 30
+pruning expired runs under /data, retention 30 day(s) — dry run (nothing will be deleted)
+would delete: 20260801T000000Z (ok, finished 2026-08-01T00:10:00+00:00, 12.3 MB)
+kept: 20260802T000000Z (published)
+1 run(s) to delete, would free 12.3 MB; 1 expired run(s) kept, 4 within the retention
+```
+
+---
+
+### delete-user — 사용자와 그 데이터의 삭제
+
+삭제 요청을 받은 사용자 한 명과 그 데이터를 지운다. `USER_ID` 는 `GET /admin/users` 가 주는
+`user_id`(`oidc:...`)다. 기본은 dry run 이라 단계마다 지울 개수만 적고 아무것도 쓰지 않는다.
+`--apply` 를 주면 먼저 삭제 기록(tombstone)을 남겨 서버가 그 사용자를 거부하게 하고, 그다음
+단계별로 지운다. 무엇이 막으면(끝나지 않은 빌드, hold·lease 가 있는 snapshot) 그것을 적고 종료
+코드 1 로 멈추며, 다시 돌리면 이어서 끝낸다. 자세한 동작은 [배포 가이드 §6.4](../deploy.md) 에 있다.
+
+```console
+$ kpubdata-builder delete-user oidc:3f9a… --output-dir /data --warehouse /data/warehouse
+deletion 5c1e… — dry run (nothing will be changed)
+would delete: analyses (1)
+would delete: exports (0)
+would delete: warehouse (2)
+would delete: runs (3)
+would delete: uploads (1)
+would delete: provider_keys (1)
+would delete: provider_tests (1)
+would delete: ledger (1)
+$ kpubdata-builder delete-user oidc:3f9a… --output-dir /data --warehouse /data/warehouse --apply --wait 60
+…
+deletion 5c1e… is complete
+$ kpubdata-builder delete-user --resume --output-dir /data --warehouse /data/warehouse
+no unfinished deletion in /data
+```
+
+---
+
 ### publish — 아티팩트 게시
 
 `publish` 명령은 이미 생성된 아티팩트를 로컬 디렉터리, Hugging Face, 또는 Kaggle에 게시합니다.
@@ -356,6 +418,64 @@ $ kpubdata-builder publish apt_trade_spec.yaml \
 publish: dataset.seoul_apt_trade -> local
   target: <path>/dist/apt_trade
   artifacts: 2
+```
+
+### discover · monitor · pipeline — 정기 보고
+
+`dataset-automation.yml` 워크플로가 매일(02:43 UTC) `scripts/dataset_automation_report.py`
+를 돌린다 (kpubdata#448). 읽기 전용이고 보고만 한다.
+
+- `monitor --check`: kpubdata 카탈로그가 `application_required` 로 표시한 데이터셋 전부를,
+  작업 디렉터리(`RUNNER_TEMP`)의 상태 파일로 확인한다. `HEALTHY` 가 나오면 활용신청이
+  승인된 것이다.
+- `discover`: 그 데이터셋들이 가리키는 data.go.kr API 페이지마다 한 번씩 돌려, spec 초안에
+  엔드포인트가 잡히는지만 본다. 초안은 파일로 쓰지 않는다.
+- `pipeline`: 돌리지 않는다. `--skip-pr` 로도 실 API 로 fixture 를 기록하므로 읽기 전용이
+  아니다. 승인된 데이터셋에 대해 보고서가 다음 단계로 안내만 한다. 자동 신청(apply)과
+  실 API 기록·PR 생성은 신뢰된 러너와 secret 이 준비될 때까지 하지 않는다.
+
+결과는 이슈 **하나**("scheduled report of dataset application approvals and spec drafts",
+`epic:datasets`)에 남는다. 승인이나 초안이 있으면 열고, 지난 실행과 같으면 쓰지 않고, 달라지면
+두 표지(`dataset-automation:begin/end`) 사이만 고쳐 쓰고 댓글을 단다. 닫지는 않는다.
+rate limit 같은 그 밖의 상태는 지문(fingerprint)에 넣지 않아 밤마다의 잡음으로 이슈가
+바뀌지 않는다.
+
+data.go.kr 키(`KPUBDATA_DATAGO_API_KEY` secret)가 없으면 monitor 가 승인과 거절을 가를 수
+없으므로, "secret not configured" notice 를 남기고 아무것도 돌리거나 쓰지 않은 채 0 으로
+끝난다 (secret 등록은 kpubdata#900). pull request 와 `dry_run` 은 출력만 한다. 권한은
+`contents: read`, `issues: write` 이고, action 은 커밋 SHA 로 고정한다.
+
+`monitor --check` 는 데이터셋마다 이렇게 판정한다 (#1288).
+
+- **spec 이 있는 데이터셋**: 지금처럼 `verify_dataset` 으로 확인한다.
+- **spec 이 없는 데이터셋**(`application_required` 데이터셋은 모두 어댑터 카탈로그
+  데이터셋이다): 먼저 kpubdata 공개 API `Client.probe` 에 묻고, probe 가 답하지 않으면
+  (kpubdata 0.10 의 probe 는 spec 데이터셋만 판정한다) `list(page_size=1)` 로 한 건만
+  요청해 kpubdata 의 표준 예외로 판정한다. 키는 `KPUBDATA_DATAGO_API_KEY` 하나를
+  `datago` 이름으로만 넘기고(`localdata`·`semas` 도 이 키를 쓴다), 출력이나 상태 파일에
+  쓰지 않으며, 클라이언트가 열려 있는 동안 로그 마스킹에 등록한다.
+
+| 결과 | monitor 상태 |
+|---|---|
+| probe `available`, `list` 성공 | `HEALTHY` (승인됨) |
+| probe `application_required`, 403 (`AuthError` 또는 403 을 담은 `TransportError`) | `NEEDS_APPLICATION` (아직 대기) |
+| 401 | `INVALID_KEY` (아직 대기) |
+| probe `retired` | `BROKEN_ENDPOINT` |
+| kpubdata 가 모르는 데이터셋 | `SPEC_NOT_FOUND` |
+| rate limit, timeout, 5xx, 키 없음, 파라미터 오류, 그 밖의 probe 상태 | 판정 없음 — 상태를 바꾸지 않는다 |
+
+호출은 데이터셋마다 한 번이고, provider 별 egress 한도(`KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE`,
+#1245)에 차례를 기다린 뒤 나간다. 데이터셋 사이에는 1초(`CHECK_INTERVAL_SECONDS`)를 쉬고,
+응답은 15초까지만 기다린다(재시도 없음). 정기 보고는 열린 이슈가 승인됨으로 적어 둔 데이터셋을
+`HEALTHY` 로 시작하므로, 판정이 없는 밤에는 승인 목록이 그대로이고 실제 거절이 나와야
+빠진다. dry run 은 이슈를 읽지 않는다.
+
+data.go.kr 은 등록되지 않은 키와 활용신청하지 않은 서비스를 모두 403 으로 답하므로, 가짜 키로
+돌린 dry run 은 94개 모두 `NEEDS_APPLICATION` 이 된다.
+
+```bash
+KPUBDATA_DATAGO_API_KEY=... uv run --no-sources \
+  python scripts/dataset_automation_report.py --dry-run --work-dir /tmp/report
 ```
 
 ---

@@ -38,6 +38,7 @@ nav:
       - 빌드 상태 머신: BUILD_STATE.md
       - 빌드 알고리즘 명세: ALGORITHM.md
       - 기능 처리 흐름: FEATURE_FLOWS.md
+      - 한국어 이름·주소 후보 탐지 평가: pii-korean-ner-evaluation.md
   - 퍼블리싱:
       - 퍼블리싱 가이드: publishing.md
       - HuggingFace 퍼블리싱 표준: hf-publishing-standards.md
@@ -71,7 +72,9 @@ nav:
       - 컬럼 메타 의미 분리(제안): adrs/0019-column-metadata-semantics.md
       - 자격 증명의 수명(제안): adrs/0020-credential-lifetime-by-deployment.md
       - DuckDB 단일 tabular 엔진(제안): adrs/0021-duckdb-tabular-engine.md
+      - SQLite 단일 상태·CUBRID 퇴역(제안): adrs/0022-sqlite-only-state-and-cubrid-retirement.md
       - 공개 엔드포인트와 그 경계: adrs/0023-public-endpoint-with-auth-and-cors.md
+      - 파생 snapshot 과 계보(제안): adrs/0024-derived-snapshots-and-lineage.md
 
 markdown_extensions:
   - admonition

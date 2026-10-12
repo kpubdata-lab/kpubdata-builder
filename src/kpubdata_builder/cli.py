@@ -18,10 +18,11 @@ import os
 import sqlite3
 import sys
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from . import __version__, logging_redaction
 from .errors import PublishError, SpecLoadError, ValidationError
@@ -53,6 +54,9 @@ from .warehouse import (
 )
 from .warehouse import backup as warehouse_backup
 from .warehouse import gc as warehouse_gc
+
+if TYPE_CHECKING:
+    from .service.user_deletion import DeletionReport
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -208,7 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Max builds running at once, async jobs and synchronous POST /build together "
-            "(default: KPUBDATA_BUILDER_MAX_BUILDS, else the request thread count)."
+            "(default: KPUBDATA_BUILDER_MAX_BUILDS, else 2, or the request thread count "
+            "when that is smaller)."
         ),
     )
     serve_cmd.add_argument(
@@ -400,6 +405,89 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually delete matching run workspaces. Without this flag the command is a dry run.",
     )
 
+    prune_runs_cmd = subparsers.add_parser(
+        "prune-runs",
+        help=(
+            "List (and optionally delete) succeeded and failed runs past their retention, "
+            "keeping any run something still refers to (#1099)."
+        ),
+    )
+    prune_runs_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    prune_runs_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Table catalog root, whose snapshots keep the runs that made them "
+            "(default: KPUBDATA_BUILDER_WAREHOUSE, or none)."
+        ),
+    )
+    prune_runs_cmd.add_argument(
+        "--retention-days",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help=(
+            "Days a run is kept after it finished. Defaults to "
+            "KPUBDATA_BUILDER_RUN_RETENTION_DAYS; when that is unset or 0, no run expires."
+        ),
+    )
+    prune_runs_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete the expired runs. Without this flag the command is a dry run.",
+    )
+
+    delete_user_cmd = subparsers.add_parser(
+        "delete-user",
+        help=(
+            "Delete one user and their data step by step, and shut them out first (#1102). "
+            "Without --apply, only says what would go."
+        ),
+    )
+    delete_user_cmd.add_argument(
+        "user_id",
+        metavar="USER_ID",
+        nargs="?",
+        default=None,
+        help="The user's id as `GET /admin/users` gives it (oidc:...). Not with --resume.",
+    )
+    delete_user_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    delete_user_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help="Table catalog root (default: KPUBDATA_BUILDER_WAREHOUSE, or none).",
+    )
+    delete_user_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete. Without this flag the command is a dry run and writes nothing.",
+    )
+    delete_user_cmd.add_argument(
+        "--wait",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "How long to wait for the user's builds to end before refusing (default: 0). "
+            "The server cancels them once the deletion has begun."
+        ),
+    )
+    delete_user_cmd.add_argument(
+        "--resume",
+        action="store_true",
+        help="Finish every deletion that began and did not complete; give no USER_ID.",
+    )
+
     gc_cmd = subparsers.add_parser(
         "warehouse-gc",
         help="Reclaim snapshots and staging directories nothing needs any more (#738).",
@@ -457,6 +545,71 @@ def build_parser() -> argparse.ArgumentParser:
         "warehouse",
         metavar="DIR",
         help="Where to restore. Must not exist or be empty; nothing is overwritten.",
+    )
+
+    state_backup_cmd = subparsers.add_parser(
+        "backup",
+        help=(
+            "Write all of Builder's state — every SQLite store, the runs, the uploads, "
+            "the warehouse — into one archive, while nothing writes it (#1095)."
+        ),
+    )
+    state_backup_cmd.add_argument(
+        "archive", metavar="ARCHIVE", help="The archive to write. Must not exist."
+    )
+    state_backup_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    state_backup_cmd.add_argument(
+        "--warehouse",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Table catalog root, a directory of the output directory "
+            "(default: KPUBDATA_BUILDER_WAREHOUSE, or none)."
+        ),
+    )
+    state_backup_cmd.add_argument(
+        "--work-dir",
+        default=None,
+        metavar="DIR",
+        help="Where the working copies go (default: beside ARCHIVE). Not in the output.",
+    )
+
+    verify_backup_cmd = subparsers.add_parser(
+        "verify-backup",
+        help=(
+            "Check a state archive as a restore would — checksums, SQLite integrity, "
+            "schema versions, the warehouse and the uploads — and change nothing (#1095)."
+        ),
+    )
+    verify_backup_cmd.add_argument("archive", metavar="ARCHIVE")
+    verify_backup_cmd.add_argument(
+        "--work-dir",
+        default=None,
+        metavar="DIR",
+        help="Where the archive is unpacked to be checked (default: beside ARCHIVE).",
+    )
+
+    state_restore_cmd = subparsers.add_parser(
+        "restore",
+        help=(
+            "Replace the output directory's state with a verified state archive, by "
+            "staging and then swapping it; the earlier state is kept aside (#1095)."
+        ),
+    )
+    state_restore_cmd.add_argument("archive", metavar="ARCHIVE", nargs="?", default=None)
+    state_restore_cmd.add_argument(
+        "--output-dir",
+        default="build",
+        help="Run workspace root directory (default: build).",
+    )
+    state_restore_cmd.add_argument(
+        "--recover",
+        action="store_true",
+        help="Only undo (or finish) a restore that was interrupted; give no ARCHIVE.",
     )
 
     hold_cmd = subparsers.add_parser(
@@ -859,7 +1012,8 @@ def _run_serve(
         max_workers: Max concurrent request threads. If None, use KPUBDATA_BUILDER_MAX_WORKERS env,
             else default (10) (#374).
         max_builds: Max builds running at once, on either path (#1028). If None, use
-            KPUBDATA_BUILDER_MAX_BUILDS env, else ``max_workers``.
+            KPUBDATA_BUILDER_MAX_BUILDS env, else ``DEFAULT_MAX_BUILDS`` or
+            ``max_workers``, whichever is smaller (#1245).
         max_previews: Max previews running at once (#1028). If None, use
             KPUBDATA_BUILDER_MAX_PREVIEWS env, else no limit.
         warehouse: Table catalog root (#703). If None, use KPUBDATA_BUILDER_WAREHOUSE env,
@@ -879,6 +1033,7 @@ def _run_serve(
     """
     from .service import BuilderService
     from .service.app import DEFAULT_BUILD_WAIT_SECONDS
+    from .service.build_limits import DEFAULT_MAX_BUILDS
     from .service.effective_settings import effective_settings
     from .service.http import _DEFAULT_MAX_WORKERS, serve
 
@@ -921,11 +1076,13 @@ def _run_serve(
     # both the request threads and the async build workers, so lowering it to bound
     # builds starved every other request, and synchronous builds on the request
     # threads ran on top of the async ones. Priority: --max-builds flag >
-    # KPUBDATA_BUILDER_MAX_BUILDS env > the request thread count (what a deployment that
-    # only set MAX_WORKERS had as its async worker count).
+    # KPUBDATA_BUILDER_MAX_BUILDS env > DEFAULT_MAX_BUILDS, or the request thread count
+    # when that is smaller (#1245). The default was the request thread count, 10: ten
+    # builds against a memory budget the deployment guide computes for two, and ten
+    # synchronous builds could hold every request thread.
     if max_builds is None:
         env_builds = _count_from_env("KPUBDATA_BUILDER_MAX_BUILDS")
-        max_builds = env_builds if env_builds is not None else max_workers
+        max_builds = env_builds if env_builds is not None else min(max_workers, DEFAULT_MAX_BUILDS)
     if max_builds < 1:
         raise SystemExit(f"max_builds must be >= 1, got {max_builds}")
     # Priority: --max-previews flag > KPUBDATA_BUILDER_MAX_PREVIEWS env > no limit.
@@ -980,61 +1137,73 @@ def _run_serve(
         print(f"error: {ENV_KEYS_UNSUPPORTED}", file=sys.stderr)
         return 1
 
-    from .store import bring_index_up_to_date
-    from .store.schema_version import UnsupportedSchemaVersionError, says_unreachable
+    # The state lock is taken here, after every check that writes nothing, so a server
+    # that refuses to start leaves no lock file behind; it is held until the server
+    # stops, so no backup or restore runs beside it (#1095).
+    from .store.state_lock import StateInUse, state_lock
 
-    try:
-        # Before the service opens the index: an older one would be emptied there, and
-        # the server would answer as healthy with every earlier run missing (#1096).
-        indexed = bring_index_up_to_date(Path(output_dir))
-        if indexed:
-            print(f"rebuilt the build index from the manifests: {indexed} run(s)", flush=True)
-        service = BuilderService(
-            output_root=Path(output_dir),
-            client_factory=_create_client,
-            async_max_workers=max_builds,
-            max_concurrent_builds=max_builds,
-            max_concurrent_previews=max_previews,
-            build_wait_seconds=build_wait_seconds,
-            warehouse_root=Path(warehouse) if warehouse is not None else None,
+    roots = [Path(output_dir)] + ([Path(warehouse)] if warehouse else [])
+    with ExitStack() as held:
+        try:
+            held.enter_context(state_lock(roots, exclusive=False, purpose="`serve`"))
+        except StateInUse as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        from .store import bring_index_up_to_date
+        from .store.schema_version import UnsupportedSchemaVersionError, says_unreachable
+
+        try:
+            # Before the service opens the index: an older one would be emptied there, and
+            # the server would answer as healthy with every earlier run missing (#1096).
+            indexed = bring_index_up_to_date(Path(output_dir))
+            if indexed:
+                print(f"rebuilt the build index from the manifests: {indexed} run(s)", flush=True)
+            service = BuilderService(
+                output_root=Path(output_dir),
+                client_factory=_create_client,
+                async_max_workers=max_builds,
+                max_concurrent_builds=max_builds,
+                max_concurrent_previews=max_previews,
+                build_wait_seconds=build_wait_seconds,
+                warehouse_root=Path(warehouse) if warehouse is not None else None,
+            )
+        except (UnsupportedSchemaVersionError, SnapshotStateError) as exc:
+            # A state store a newer release wrote: said in one line, and left as it is
+            # (#1096). This is what a rolled-back deployment meets. The catalog says it
+            # with its own error, as it did before it was opened at start.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except sqlite3.OperationalError as exc:
+            # A state store that could not be reached to begin with — locked by another
+            # process, on a disk that cannot be written. Said in one line as the refusals
+            # above are; the store is as it was (#1157). Any other database error is not
+            # this — a migration that failed, a statement this release got wrong — and
+            # keeps its traceback: "could not be opened" would be a wrong answer to it.
+            if not says_unreachable(exc):
+                raise
+            print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
+            return 1
+        # What this process was given, so that a log answers "which values is it running
+        # with" without anyone comparing .env to the compose file (#1108). Only what is not
+        # at its default: `kpubdata-builder settings` prints all of them. A secret is shown
+        # as set, never as its value.
+        in_effect = effective_settings(flags=flags, earlier=earlier_names).lines(only_set=True)
+        print("settings in effect (the rest are at their defaults):", flush=True)
+        for line in in_effect:
+            print(f"  {line}", flush=True)
+        # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
+        print(
+            f"serving kpubdata-builder on http://{host}:{port} "
+            f"(output: {output_dir}, max_workers: {max_workers}, max_builds: {max_builds}, "
+            f"max_previews: {max_previews if max_previews is not None else 'unlimited'}, "
+            f"warehouse: {warehouse or 'none'})",
+            flush=True,
         )
-    except (UnsupportedSchemaVersionError, SnapshotStateError) as exc:
-        # A state store a newer release wrote: said in one line, and left as it is
-        # (#1096). This is what a rolled-back deployment meets. The catalog says it
-        # with its own error, as it did before it was opened at start.
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except sqlite3.OperationalError as exc:
-        # A state store that could not be reached to begin with — locked by another
-        # process, on a disk that cannot be written. Said in one line as the refusals
-        # above are; the store is as it was (#1157). Any other database error is not
-        # this — a migration that failed, a statement this release got wrong — and
-        # keeps its traceback: "could not be opened" would be a wrong answer to it.
-        if not says_unreachable(exc):
-            raise
-        print(f"error: a state store could not be opened: {exc}", file=sys.stderr)
-        return 1
-    # What this process was given, so that a log answers "which values is it running
-    # with" without anyone comparing .env to the compose file (#1108). Only what is not
-    # at its default: `kpubdata-builder settings` prints all of them. A secret is shown
-    # as set, never as its value.
-    in_effect = effective_settings(flags=flags, earlier=earlier_names).lines(only_set=True)
-    print("settings in effect (the rest are at their defaults):", flush=True)
-    for line in in_effect:
-        print(f"  {line}", flush=True)
-    # Long-running command, so flush immediately to avoid startup logs lost in pipe buffering.
-    print(
-        f"serving kpubdata-builder on http://{host}:{port} "
-        f"(output: {output_dir}, max_workers: {max_workers}, max_builds: {max_builds}, "
-        f"max_previews: {max_previews if max_previews is not None else 'unlimited'}, "
-        f"warehouse: {warehouse or 'none'})",
-        flush=True,
-    )
-    try:
-        serve(service, host=host, port=port, max_workers=max_workers)
-    except KeyboardInterrupt:
-        print("\nshutting down", file=sys.stderr)
-    return 0
+        try:
+            serve(service, host=host, port=port, max_workers=max_workers)
+        except KeyboardInterrupt:
+            print("\nshutting down", file=sys.stderr)
+        return 0
 
 
 def _run_settings(*, as_json: bool, earlier_names: Sequence[EarlierNameUse] = ()) -> int:
@@ -1149,6 +1318,103 @@ def _run_warehouse_restore(*, backup: str, warehouse: str) -> int:
         return 1
     tables = catalog.list_tables()
     print(f"restored {len(tables)} table(s) into {warehouse}")
+    return 0
+
+
+def _run_state_backup(
+    *, archive: str, output_dir: str, warehouse: str | None, work_dir: str | None
+) -> int:
+    """Back up all of the state; exit 1 with every reason when the archive would not be whole."""
+    from .store import state_backup
+    from .store.state_lock import StateInUse
+
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+    try:
+        result = state_backup.backup(
+            Path(output_dir),
+            Path(archive),
+            warehouse=Path(warehouse) if warehouse else None,
+            work_dir=Path(work_dir) if work_dir else None,
+        )
+    except state_backup.StateBackupRefused as exc:
+        print("error: backup refused — no archive was written:", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    except StateInUse as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    snapshots = "no warehouse" if result.snapshots is None else f"{result.snapshots} snapshot(s)"
+    print(
+        f"backed up {result.stores} store(s), {result.files} file(s) and {snapshots} "
+        f"to {result.path}"
+    )
+    if result.left_out:
+        print(f"left out {len(result.left_out)} path(s) the inventory says are not state:")
+        for path in result.left_out:
+            print(f"  - {path}")
+    print(
+        f"not in the archive: {state_backup.MASTER_KEY_VARIABLE} (the provider keys in it are "
+        "encrypted under it), the identity provider's database, and the settings"
+    )
+    return 0
+
+
+def _run_verify_backup(*, archive: str, work_dir: str | None) -> int:
+    """Check an archive as a restore would; exit 1 with every problem."""
+    from .store import state_backup
+
+    problems = state_backup.verify(Path(archive), work_dir=Path(work_dir) if work_dir else None)
+    if problems:
+        print(f"error: {archive} would not restore:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    print(f"{archive} is whole: every checksum, store and reference checks out")
+    return 0
+
+
+def _run_state_restore(*, archive: str | None, output_dir: str, recover: bool) -> int:
+    """Restore an archive, or undo an interrupted restore; exit 1 rather than restore part."""
+    from .store import state_backup
+    from .store.state_lock import StateInUse
+
+    if recover == (archive is not None):
+        print("error: give either ARCHIVE or --recover", file=sys.stderr)
+        return 2
+    try:
+        if archive is None:
+            done = state_backup.recover(Path(output_dir))
+            print(done or f"no interrupted restore in {output_dir}")
+            return 0
+        result = state_backup.restore(Path(archive), Path(output_dir))
+    except state_backup.StateBackupRefused as exc:
+        print("error: restore refused — nothing was changed:", file=sys.stderr)
+        for problem in exc.problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    except StateInUse as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if result.recovered:
+        print(f"first {result.recovered}")
+    print(f"restored {archive} into {result.output_root}")
+    if result.previous is not None:
+        print(f"the state it replaced is in {result.previous}; delete it once satisfied")
+    print(f"rebuilt the build index from the manifests: {result.indexed} run(s)")
+    for subject in result.deletions_reapplied:
+        state = "still blocked" if subject in result.deletions_pending else "complete"
+        print(f"deleted again the user of deletion {subject}, whose data the archive held: {state}")
+    if result.deletions_pending:
+        print(
+            "the user of a blocked deletion stays shut out; run `kpubdata-builder delete-user "
+            "--resume` once what blocks it is resolved"
+        )
+    print(
+        f"set {state_backup.MASTER_KEY_VARIABLE} to the key the backup was taken with, or the "
+        "restored provider keys cannot be read"
+    )
     return 0
 
 
@@ -1305,6 +1571,159 @@ def _run_prune_cancelled(*, output_dir: str, ttl_hours: float | None, apply: boo
     return 0
 
 
+def _megabytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _run_prune_runs(
+    *, output_dir: str, warehouse: str | None, retention_days: int | None, apply: bool
+) -> int:
+    """List, or with ``--apply`` delete, the runs past their retention (#1099).
+
+    The retention comes from ``--retention-days``, else
+    ``KPUBDATA_BUILDER_RUN_RETENTION_DAYS``; unset or ``0`` is off, and then only what an
+    interrupted pass left is finished. Each kept run is printed with the reason, and
+    the last line says how much space went or would go.
+    """
+    from .retention import RUN_RETENTION_DAYS_ENV, collect_expired_runs
+
+    days = retention_days
+    if days is None:
+        raw_env = os.environ.get(RUN_RETENTION_DAYS_ENV, "").strip()
+        if raw_env:
+            try:
+                days = int(raw_env)
+            except ValueError:
+                days = -1
+            if days < 0:
+                print(
+                    f"error: {RUN_RETENTION_DAYS_ENV}={raw_env!r} is not a whole number of "
+                    "days >= 0",
+                    file=sys.stderr,
+                )
+                return 1
+    elif days < 0:
+        print("error: --retention-days must be >= 0", file=sys.stderr)
+        return 1
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+
+    output_root = Path(output_dir)
+    mode = "APPLY (deleting)" if apply else "dry run (nothing will be deleted)"
+    retention = f"{days} day(s)" if days else "off"
+    print(f"pruning expired runs under {output_root}, retention {retention} — {mode}", flush=True)
+
+    report = collect_expired_runs(
+        output_root,
+        retention_days=days,
+        apply=apply,
+        warehouse_root=Path(warehouse) if warehouse else None,
+    )
+
+    for run_id in report.interrupted:
+        verb = "finished deleting" if report.applied else "would finish deleting"
+        print(f"{verb}: {run_id} (an earlier pass was interrupted)", flush=True)
+    deleted = set(report.deleted)
+    for run in report.expired:
+        if report.applied and run.run_id not in deleted:
+            continue
+        verb = "deleted" if report.applied else "would delete"
+        print(
+            f"{verb}: {run.run_id} ({run.status}, finished {run.finished_at.isoformat()}, "
+            f"{_megabytes(run.size_bytes)})",
+            flush=True,
+        )
+    for kept in report.kept:
+        print(f"kept: {kept.run_id} ({kept.reason})", flush=True)
+    if report.index_rebuilt:
+        print("rebuilt the build index from the manifests", flush=True)
+    count = len(report.deleted) if report.applied else len(report.expired)
+    freed = "freed" if report.applied else "would free"
+    print(
+        f"{count} run(s) {'deleted' if report.applied else 'to delete'}, {freed} "
+        f"{_megabytes(report.freed_bytes)}; {len(report.kept)} expired run(s) kept, "
+        f"{report.retained} within the retention",
+        flush=True,
+    )
+    return 0
+
+
+def _print_deletion(report: DeletionReport) -> None:
+    mode = "deleted" if report.applied else "would delete"
+    for step in report.steps:
+        if step.step in ("tombstone", "verify") and not step.blocked:
+            continue
+        if step.step != "jobs" and not step.blocked:
+            print(f"{mode}: {step.step} ({step.removed})", flush=True)
+        for reason in step.blocked:
+            print(f"blocked: {step.step}: {reason}", flush=True)
+
+
+def _run_delete_user(
+    *,
+    user_id: str | None,
+    output_dir: str,
+    warehouse: str | None,
+    apply: bool,
+    wait_seconds: float,
+    resume: bool,
+) -> int:
+    """Delete a user and their data, or say what would go (#1102).
+
+    Exit 0 when the deletion is complete (or, as a dry run, when nothing blocks it), 1
+    when something blocks it — what does is printed — and 2 for a wrong invocation.
+    The deletion's subject, not the user's id, is what the output and the audit name.
+    """
+    from .service import user_deletion
+
+    if resume == (user_id is not None):
+        print("error: give either USER_ID or --resume", file=sys.stderr)
+        return 2
+    if wait_seconds < 0:
+        print("error: --wait must be >= 0", file=sys.stderr)
+        return 2
+    if warehouse is None:
+        warehouse = os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+    output_root = Path(output_dir)
+    warehouse_root = Path(warehouse) if warehouse else None
+    try:
+        if resume:
+            reports = user_deletion.resume_pending(
+                output_root, warehouse_root=warehouse_root, wait_seconds=wait_seconds
+            )
+            if not reports:
+                print(f"no unfinished deletion in {output_root}")
+        else:
+            assert user_id is not None  # noqa: S101 - checked above
+            reports = (
+                user_deletion.delete_user(
+                    output_root,
+                    user_id,
+                    warehouse_root=warehouse_root,
+                    apply=apply,
+                    wait_seconds=wait_seconds,
+                ),
+            )
+    except user_deletion.DeletionRefused as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    blocked = False
+    for report in reports:
+        mode = "APPLY (deleting)" if report.applied else "dry run (nothing will be changed)"
+        print(f"deletion {report.subject} — {mode}", flush=True)
+        _print_deletion(report)
+        blocked = blocked or bool(report.blocked)
+        if report.applied and report.complete:
+            print(f"deletion {report.subject} is complete", flush=True)
+        elif report.applied:
+            print(
+                f"deletion {report.subject} is not complete; the user stays shut out. "
+                "Resolve what is blocked and run this again (or `delete-user --resume`).",
+                flush=True,
+            )
+    return 1 if blocked else 0
+
+
 def _run_discover(url: str, *, dataset_id: str | None, output: str | None) -> int:
     """Discover API metadata from a data.go.kr URL.
 
@@ -1348,7 +1767,14 @@ def _run_discover(url: str, *, dataset_id: str | None, output: str | None) -> in
 
 def _run_monitor(*, state_file: str, add: str | None, check: bool) -> int:
     """Manage and check pending dataset applications."""
-    from .agent.monitor import MonitorState, check_approval
+    import time
+
+    from .agent.monitor import (
+        CHECK_INTERVAL_SECONDS,
+        MonitorState,
+        check_approval,
+        open_catalogue_client,
+    )
 
     state_path = Path(state_file)
     state = MonitorState.load(state_path)
@@ -1366,20 +1792,26 @@ def _run_monitor(*, state_file: str, add: str | None, check: bool) -> int:
 
         print(f"Checking {len(state.pending)} pending dataset(s)...\n")
         changed = False
-        for p in list(state.pending):
-            status = check_approval(p.dataset_id)
-            old_status = p.status
-            p.status = status
-            p.last_checked = (
-                __import__("datetime")
-                .datetime.now(__import__("datetime").timezone.utc)
-                .strftime("%Y-%m-%dT%H:%M:%SZ")
-            )
-
-            icon = "APPROVED" if status == "HEALTHY" else status
-            print(f"  {p.dataset_id:40s} {old_status} -> {icon}")
-            if status != old_status:
-                changed = True
+        with open_catalogue_client() as client:
+            for index, p in enumerate(list(state.pending)):
+                if index:
+                    time.sleep(CHECK_INTERVAL_SECONDS)
+                status = check_approval(p.dataset_id, client=client)
+                old_status = p.status
+                p.last_checked = (
+                    __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+                if status is None:
+                    # No verdict (a rate limit, a timeout): the status stays as it was.
+                    print(f"  {p.dataset_id:40s} {old_status} (no verdict, unchanged)")
+                    continue
+                p.status = status
+                icon = "APPROVED" if status == "HEALTHY" else status
+                print(f"  {p.dataset_id:40s} {old_status} -> {icon}")
+                if status != old_status:
+                    changed = True
 
         if changed:
             state.save(state_path)
@@ -1547,7 +1979,49 @@ def _run_verify(
     return 1 if failed else 0
 
 
+def _written_roots(args: argparse.Namespace) -> list[Path]:
+    """The state directories a command writes, which it holds while it runs (#1095)."""
+    command = args.command
+    if command == "build":
+        warehouse = args.warehouse
+        return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
+    if command in ("rebuild-index", "prune-cancelled"):
+        return [Path(args.output_dir)]
+    if command == "prune-runs":
+        # The warehouse is read, not written, but a restore must not swap it midway.
+        warehouse = args.warehouse or os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+        return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
+    if command == "delete-user":
+        warehouse = args.warehouse or os.environ.get("KPUBDATA_BUILDER_WAREHOUSE") or None
+        return [Path(args.output_dir)] + ([Path(warehouse)] if warehouse else [])
+    if command in ("warehouse-gc", "warehouse-hold"):
+        return [Path(args.warehouse)]
+    return []
+
+
 def dispatch(args: argparse.Namespace) -> int:
+    """Run the command, holding the state it writes against a backup or a restore (#1095).
+
+    A command that writes state holds a shared lock on each directory it writes for as
+    long as it runs (``store/state_lock.py``). One that cannot — a backup or a restore
+    holds the directory, or a restore into it was interrupted — refuses to start.
+    ``serve`` takes its lock itself, once its settings have been checked.
+    """
+    from .store.state_lock import StateInUse, state_lock
+
+    roots = _written_roots(args)
+    if not roots:
+        return _dispatch(args)
+    with ExitStack() as held:
+        try:
+            held.enter_context(state_lock(roots, exclusive=False, purpose=f"`{args.command}`"))
+        except StateInUse as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return _dispatch(args)
+
+
+def _dispatch(args: argparse.Namespace) -> int:
     """Pass parsed argparse result to actual command execution function.
 
     Args:
@@ -1622,6 +2096,19 @@ def dispatch(args: argparse.Namespace) -> int:
         return _run_warehouse_backup(warehouse=args.warehouse, destination=args.destination)
     if command == "warehouse-restore":
         return _run_warehouse_restore(backup=args.backup, warehouse=args.warehouse)
+    if command == "backup":
+        return _run_state_backup(
+            archive=args.archive,
+            output_dir=args.output_dir,
+            warehouse=args.warehouse,
+            work_dir=args.work_dir,
+        )
+    if command == "verify-backup":
+        return _run_verify_backup(archive=args.archive, work_dir=args.work_dir)
+    if command == "restore":
+        return _run_state_restore(
+            archive=args.archive, output_dir=args.output_dir, recover=args.recover
+        )
     if command == "warehouse-hold":
         return _run_warehouse_hold(
             warehouse=args.warehouse,
@@ -1636,6 +2123,22 @@ def dispatch(args: argparse.Namespace) -> int:
         return _run_prune_cancelled(
             output_dir=args.output_dir,
             ttl_hours=args.ttl_hours,
+            apply=args.apply,
+        )
+    if command == "delete-user":
+        return _run_delete_user(
+            user_id=args.user_id,
+            output_dir=args.output_dir,
+            warehouse=args.warehouse,
+            apply=args.apply,
+            wait_seconds=args.wait,
+            resume=args.resume,
+        )
+    if command == "prune-runs":
+        return _run_prune_runs(
+            output_dir=args.output_dir,
+            warehouse=args.warehouse,
+            retention_days=args.retention_days,
             apply=args.apply,
         )
     if command == "discover":

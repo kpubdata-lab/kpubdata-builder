@@ -20,7 +20,7 @@ import threading
 
 from .auth import Principal
 
-__all__ = ["record_admin_action"]
+__all__ = ["record_admin_action", "record_user_deletion"]
 
 #: Audit-only logger. Deployment can collect/retain this separately by isolating
 #: its name.
@@ -100,4 +100,21 @@ def record_admin_action(
         action,
         target if target is not None else "-",
         outcome,
+    )
+
+
+def record_user_deletion(subject: str, step: str, *, outcome: str, removed: int) -> None:
+    """Log one step of a user's deletion (#1102), on the same audit logger.
+
+    ``subject`` is the deletion's pseudonym (``user_deletion.deletion_subject``), never
+    the user's id: the record outlives the user, and nothing in it names them. ``step``
+    and ``outcome`` are fixed words; ``removed`` is a count.
+    """
+    _ensure_audit_output()
+    _audit_logger.info(
+        "user deletion: subject=%s step=%s outcome=%s removed=%d",
+        subject,
+        step,
+        outcome,
+        removed,
     )

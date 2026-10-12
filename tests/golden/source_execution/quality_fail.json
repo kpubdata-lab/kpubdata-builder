@@ -1,0 +1,259 @@
+{
+  "endings": [],
+  "events": {
+    "<run>": [
+      [
+        "run_started",
+        "ok",
+        null,
+        "pipeline execution started",
+        null
+      ],
+      [
+        "run_failed",
+        "fail",
+        null,
+        "1 source(s) failed",
+        null
+      ]
+    ],
+    "m": [
+      [
+        "stage_started",
+        "ok",
+        "bronze",
+        null,
+        null
+      ],
+      [
+        "source_fetch_started",
+        "ok",
+        null,
+        null,
+        null
+      ],
+      [
+        "source_fetch_completed",
+        "ok",
+        null,
+        "source fetched",
+        {
+          "records": 3
+        }
+      ],
+      [
+        "stage_completed",
+        "ok",
+        "bronze",
+        "Bronze written",
+        {
+          "records": 3
+        }
+      ],
+      [
+        "stage_started",
+        "ok",
+        "silver",
+        null,
+        null
+      ],
+      [
+        "quality_evaluated",
+        "fail",
+        null,
+        null,
+        {
+          "check_count": 2,
+          "fail_count": 1,
+          "pass_count": 1,
+          "warn_count": 0
+        }
+      ],
+      [
+        "stage_failed",
+        "fail",
+        "silver",
+        "Dataset validation failed: quality check failed: min_rows (actual=3, threshold=100)",
+        null
+      ]
+    ]
+  },
+  "files": {
+    "bronze/m/7e2bc4d4b52e/metadata.json": {
+      "artifact_paths": {
+        "metadata": "metadata.json",
+        "records": "raw_records.jsonl"
+      },
+      "fetch_params": {},
+      "provenance": {
+        "fetch_params": {},
+        "operation": "fetch",
+        "source_key": "datago.air_station"
+      },
+      "record_count": 3,
+      "source_key": "m"
+    },
+    "bronze/m/7e2bc4d4b52e/raw_records.jsonl": [
+      {
+        "id": "1",
+        "name": "shop 1",
+        "tel": "010-0000-0000",
+        "v": 10
+      },
+      {
+        "id": "2",
+        "name": "shop 2",
+        "tel": "02-000-0000",
+        "v": 20
+      },
+      {
+        "id": "3",
+        "name": "shop 3",
+        "tel": null,
+        "v": 30
+      }
+    ],
+    "buildspec.yaml": [
+      "dataset_id: permits.table",
+      "title: Permits",
+      "description: d",
+      "sources:",
+      "- kind: public_api",
+      "  alias: m",
+      "  schema:",
+      "    required:",
+      "    - id",
+      "    dtypes: {}",
+      "    casts: {}",
+      "  provider: datago",
+      "  dataset: air_station",
+      "  params: {}",
+      "exports:",
+      "- kind: jsonl",
+      "  output_path: data.jsonl",
+      "  options: {}",
+      "- kind: csv",
+      "  output_path: data.csv",
+      "  options: {}",
+      "metadata: {}",
+      "publish: false",
+      "splits: null",
+      "pii: null",
+      "license: null",
+      "quality:",
+      "  max_duplicate_rate: null",
+      "  max_duplicate_rate_severity: warn",
+      "  max_null_ratio: {}",
+      "  max_null_ratio_severity: {}",
+      "  min_rows: 100",
+      "  min_rows_severity: fail",
+      "  range: []",
+      "  compare_columns: []",
+      "composition: null"
+    ]
+  },
+  "index": {
+    "dataset_id": "permits.table",
+    "error": "m: the source failed at the silver stage",
+    "error_code": "pipeline_failed",
+    "error_stage": "silver",
+    "status": "failed"
+  },
+  "manifest": {
+    "build_id": "r1",
+    "composition": null,
+    "created_by": null,
+    "drift_evaluation": {},
+    "errors": [
+      "m: Dataset validation failed: quality check failed: min_rows (actual=3, threshold=100)"
+    ],
+    "failures": [
+      {
+        "code": "pipeline_failed",
+        "source_key": "m",
+        "stage": "silver",
+        "summary": "the source failed at the silver stage"
+      }
+    ],
+    "inputs": [
+      "m"
+    ],
+    "inputs_fingerprint": "sha256:bac53c219873f04093758f1db42e453decbdf0b84a087f6a06de677da4f5c64c",
+    "inputs_fingerprint_algorithm": "sources-sha256-v2",
+    "outputs": [
+      "<root>/r1/bronze/m/7e2bc4d4b52e/raw_records.jsonl",
+      "<root>/r1/bronze/m/7e2bc4d4b52e/metadata.json"
+    ],
+    "owner_id": null,
+    "partial": false,
+    "provenance": [
+      {
+        "api_version": "unknown",
+        "coverage": {
+          "reasons": [
+            "call 0: the provider reported no total"
+          ],
+          "status": "unknown"
+        },
+        "data_checksum": "sha256:f36732d2e9e09b4f5c49d0a4497df234e3928cddf58a5b37206bbc9d70607a30",
+        "data_checksum_algorithm": "canonical-multiset-v2",
+        "dataset": "air_station",
+        "fetched_row_count": 3,
+        "params": {},
+        "provider": "datago",
+        "record_count": 3,
+        "source_reported_total": {
+          "calls": [
+            {
+              "fetched_row_count": 3,
+              "index": 0,
+              "pages": 1,
+              "status": "unknown",
+              "value": null
+            }
+          ],
+          "observed_at": "<time>",
+          "status": "unknown",
+          "value": null
+        }
+      }
+    ],
+    "quality_results": {
+      "m": [
+        {
+          "actual": true,
+          "affected_rows": null,
+          "category": "schema",
+          "column": "id",
+          "detail": null,
+          "evaluated_rows": null,
+          "rule": "required_column",
+          "source_key": "m",
+          "status": "pass",
+          "threshold": true
+        },
+        {
+          "actual": 3,
+          "affected_rows": null,
+          "category": "row_count",
+          "column": null,
+          "detail": null,
+          "evaluated_rows": null,
+          "rule": "min_rows",
+          "source_key": "m",
+          "status": "fail",
+          "threshold": 100
+        }
+      ]
+    },
+    "row_counts": {
+      "m": 3
+    },
+    "schema_drift": {},
+    "schema_summaries": {},
+    "schema_version": "1.0.0",
+    "status": "failed",
+    "warnings": []
+  },
+  "response_status": 502
+}

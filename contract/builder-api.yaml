@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KPubData Builder Service API
-  version: "1.115.0"
+  version: "1.121.0"
   description: >-
     KPubData Builder(패키지 `kpubdata-builder`) 서비스 계약. BuildSpec 검증, preview, build 실행, artifact 조회,
     계약 버전 조회를 제공한다. CLI와 HTTP service mode(#36)가 동일한 도메인 계약을
@@ -20,6 +20,12 @@ info:
     추가한다(#504, additive). v1.8.0은 stable principal별 encrypted Provider
     credential CRUD와 Provider status/test API를 추가한다(#492, additive). v1.9.0은
     `/query` 응답에 child startup과 Polars engine 실행 시간을 추가한다(#523, additive).
+    v1.121.0 adds the hosted personal-data publish gate (#1113, additive). In a multi-user deployment, or a single-user one with `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH=true`, readiness and publish report a `PublishIssue` blocker unless the run succeeded under a BuildSpec whose `pii.mode` is `block` with no `allow_columns`: `pii_scan_missing`, `pii_scan_pending`, `pii_scan_failed` or `pii_scan_unverified`. A publish refused for one of them is recorded in `GET /builds/{run_id}/publish/audit` as action `refused:<code>`, actor `gate`. Passing means the scan found nothing it looks for, not that the data holds no personal information.
+    v1.120.0 adds `query_parameters` to `CatalogDataset`, the dataset's query definition for form generation (#1281, additive). Each item has `name` (the provider's own), `alias` (the name a kpubdata caller uses, or null), `type`, `required`, `enum`, `description` and `example`. It is read from kpubdata's public `DatasetRef.to_dict()`, and is null when kpubdata gives the dataset no definition (unknown, not "no parameters"). `type` is null for a catalogue entry, which declares none, and for a type Builder has not mapped. `request_parameters` is unchanged.
+    v1.119.0 adds a per-user query rate and a per-provider egress limit, and every 429 that says how long to wait sends `Retry-After` (#1245, additive). In a multi-user deployment each user may start `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in any 60 seconds; one more of `POST /query`, `POST /warehouse/query`, `POST /warehouse/rows`, `POST /warehouse/aggregate` or `POST /warehouse/exports` is answered 429 `query_rate_limited` with `retry_after_seconds`, before anything is resolved or run. `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` bounds the calls Builder makes to one provider in any 60 seconds, for all users together: a build waits for its turn, `POST /preview` answers 429 `provider_egress_limited` with `retry_after_seconds`, and `POST /providers/{provider}/probe` lists the datasets it did not reach in `not_probed`. Both are off (`0`) by default. A 429 whose body carries `retry_after_seconds` — `auth_throttled` and `probe_rate_limited` included — now also carries the `Retry-After` header with the same number (`components.headers.RetryAfter`). A query whose client closes the connection while it runs is stopped and gets no response.
+    v1.118.0 lets a deployment refuse a build there is no room for (#1099, additive). Before `POST /builds` queues a job it may now answer 503 `disk_space_low`, when the filesystem under the output directory has less free space than `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB`, or — in a multi-user deployment — 409 `run_storage_quota_exceeded`, when the requester's finished runs and one reservation of `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` per queued or running build of theirs, this one included, would pass `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`; the body gives `limit_bytes` and `used_bytes`. Nothing is recorded for a refused run. Every one of these settings is off until the maintainer sets it, so a deployment that sets none answers as before. The synchronous `POST /build` is unchanged.
+    v1.117.0 tells readiness apart from liveness and adds metrics (#1101, additive). `GET /readyz` answers without authentication, as `GET /healthz` does: 200 `ready` when the build index can be read, the output directory can be written, its filesystem has the free space the deployment asks for, and the build workers run; 503 `not_ready` otherwise, with the same body naming the check that failed. A full build queue is not a failure: it is `accepting_builds: false` and the status stays `ready`. The body names checks and states only, never a path, a size or an error text, and the answer is reused for a few seconds whoever asks. `GET /metrics` gives an administrator the Prometheus text page: queue depth, running builds, workers, build durations and queue waits, responses by status and stable code (429 and 5xx among them), free disk and the readiness checks. Anyone else gets 403. `GET /healthz` is unchanged and stays the liveness probe.
+    v1.116.0 gives each run of `GET /admin/runs` the stable code and the stage of the failure its `error` states (#1120, additive): `error_code` and `error_stage`, null when the run did not fail or the cause is not one of Builder's codes and stages. Both are Builder's vocabulary only — a provider refusal reason, `pipeline_failed`, a composition rule, a refused commit's reason, or why a run was cancelled or ended without a manifest — so a client chooses what to tell an administrator without parsing the sentence. The build index keeps them beside `error` and a rebuild of the index restores them. A single-user deployment now also fails, at its next start, the runs a restart interrupted: before, they were left unfinished for good.
     v1.115.0 records why a cancelled run was cancelled and how a run that left no manifest ended (#1120, additive; no schema changes). A cancelled run's manifest gains `failures` entries: each source the cancellation stopped, with the first stage it had not completed, or — when every source had finished — the composition or the commit of each source's results that did not run (`stage` `composition` or `warehouse`). Their `code` is why the run was cancelled: `cancelled` (on request), `time_limit_exceeded` or `server_shutdown`. A run that ended without a manifest — cancelled while queued, interrupted by a restart, still queued when the server shut down, without its provider keys when it could start — is now in the build index, so `GET /builds` lists it to its owner as `failed` or `cancelled` with a null `started_at`, and `GET /admin/runs` shows it with a one-line reason after the job registry has let it go and after `rebuild-index`. That line and every `summary` are made of fixed phrases only. `GET /builds/{run_id}`, the events and the id's `run_id_ended` refusal answer as before.
     v1.114.0 lets a build ask for new tables only (#1223, additive). `POST /build` and `POST /builds` take `if_absent`; with it, a table that already has a snapshot is not committed over, and its source is a `warehouse_failures` entry with the new reason `table_exists` (409). The check is the commit's compare-and-swap against revision 0, so a table made by another build while this one ran is refused too. Studio sends it for a "new table" choice; a refresh leaves it out.
     v1.113.0 records why a run failed (#1120, additive). A manifest of a run in which something failed gains `failures`: one entry per failure — each failed source, a failed composition, each refused table commit — with `source_key`, `stage` (`bronze`, `silver`, `gold`, `export`, `composition` or `warehouse`), a stable `code` (a provider refusal's `SourceFailureReason`, `pipeline_failed`, a failed join's `join_key_missing`/`join_key_type_mismatch`/`join_null_key`/`join_cardinality_mismatch`/`join_duplicate_key`/`join_output_column_conflict`, `composition_failed`, or the table commit's `conflict`/`empty_result`/`commit_failed`) and a `summary` that is a fixed sentence chosen by the code and the stage. An error's own message is not copied into `summary`: it stays in the run's `errors`, which only the run's owner reads, because it can name the data's columns and a join key's value. The build index projects the first failure into its `error`, which nothing wrote before, so `GET /admin/runs` showed every failed run's `error` as null; a rebuild of the index from the manifests keeps it. A failed run whose manifest was written before this version gets a fixed line there, not its `errors`. A manifest of a successful run has no `failures`.
@@ -232,6 +238,88 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
 
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Unauthenticated readiness probe, apart from liveness (#1101)
+      description: >-
+        Whether this process can do its work now. Checks the build index can be read
+        (`state_store`), the output directory can be written (`output_dir`), the free
+        space of its filesystem is above `KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT` and
+        `KPUBDATA_BUILDER_READY_MIN_FREE_MB` (`disk`), and the build workers run and are
+        not draining for a shutdown (`workers`). A full build queue is
+        `accepting_builds: false` and does not make the status `not_ready`. The identity
+        provider's signing keys are not fetched here. The answer is computed at most once
+        every few seconds and a filesystem check that does not return in time is
+        `timeout`. Nothing in the body names a path, a size or an error text.
+      security: []
+      responses:
+        "200":
+          description: Every check is ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              examples:
+                Ready:
+                  summary: Ready, queue open
+                  value:
+                    status: ready
+                    checks:
+                      state_store: ok
+                      output_dir: ok
+                      disk: ok
+                      workers: ok
+                    accepting_builds: true
+        "503":
+          description: At least one check is not ok; the body says which
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              examples:
+                DiskLow:
+                  summary: The disk is below the threshold
+                  value:
+                    status: not_ready
+                    checks:
+                      state_store: ok
+                      output_dir: ok
+                      disk: low
+                      workers: ok
+                    accepting_builds: true
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus text metrics, for administrators (#1101)
+      description: >-
+        The Prometheus text exposition format (version 0.0.4). Gauges are read when the
+        page is served: `kpubdata_builder_builds_queued`, `_builds_running`,
+        `_build_workers`, `_build_queue_limit`, `_accepting_builds`, `_ready`,
+        `_readiness_check{check}`, `_disk_free_bytes`, `_disk_total_bytes`. Counters and
+        histograms count since the process started:
+        `kpubdata_builder_http_responses_total{status,code}`,
+        `_build_duration_seconds{mode,status}` and `_build_queue_wait_seconds`. Every label
+        value comes from a closed set; no path, run id, owner or error text is a label.
+        An API key and an administrator's bearer token are accepted; any other principal
+        gets 403.
+      responses:
+        "200":
+          description: The metrics page
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not an administrator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /version:
     get:
       operationId: getVersion
@@ -291,6 +379,14 @@ paths:
                                 required: true
                                 description: 조회할 시·도
                                 example: 서울
+                            query_parameters:
+                              - name: sidoName
+                                alias: null
+                                type: string
+                                required: true
+                                enum: [서울, 부산, 대구]
+                                description: 조회할 시·도
+                                example: 서울
                             application:
                               required: true
                               url: https://www.data.go.kr/data/15073861/openapi.do
@@ -304,6 +400,7 @@ paths:
                             query_support: null
                             requires_service_key: true
                             request_parameters: []
+                            query_parameters: null
                             application: null
                       - name: ecos
                         datasets:
@@ -317,6 +414,7 @@ paths:
                             query_support: null
                             requires_service_key: false
                             request_parameters: []
+                            query_parameters: null
                             application: null
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -499,7 +597,12 @@ paths:
           description: >-
             `probe_rate_limited` (#1059) — 같은 사용자의 probe 가 아직 실행 중이거나, 같은
             provider 를 방금 probe 했다. provider 는 호출되지 않았다. `retry_after_seconds`
-            뒤에 다시 시도한다(실행 중인 probe 가 있으면 그보다 길어질 수 있다).
+            뒤에 다시 시도한다(실행 중인 probe 가 있으면 그보다 길어질 수 있다). 같은 수가
+            `Retry-After` 헤더로도 온다(#1245). provider 의 egress 한도(#1245)에 닿으면 429 가
+            아니라 200 이고, 닿지 못한 dataset 이 `not_probed` 에 온다.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -971,6 +1074,13 @@ paths:
             `KPUBDATA_BUILDER_MAX_PREVIEWS` set, a preview waits for a slot up to
             `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` — the bound a synchronous build waits
             for its slot — and is then turned away having fetched nothing.
+            `provider_egress_limited` (#1245): Builder has called one of the spec's
+            providers `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` times in the last 60
+            seconds, for all users together; `retry_after_seconds` and `Retry-After` say
+            when the next call is allowed. Pages the preview fetched before stay counted.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -1697,6 +1807,11 @@ paths:
             `retry_of` 가 가리키는 요청자 자신의 run 이 아직 끝나지 않았으면(`queued`,
             `running`, `cancelling`) `retry_of_in_progress` 이고 body 에 `retry_of` 와 그
             run 의 `status` 가 온다(#1103) — 끝나기를 기다리거나 먼저 취소한다.
+            Since 1.118.0, in a multi-user deployment, also `run_storage_quota_exceeded`
+            (#1099): the requester's finished runs, with one reservation per queued or
+            running build of theirs and this one, would pass the bytes one user may keep
+            (`KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`, off unless set). The body gives
+            `limit_bytes` and `used_bytes`. Nothing is recorded for the run.
           content:
             application/json:
               schema:
@@ -1708,6 +1823,15 @@ paths:
                     error: run_id already ended; submit the retry under a new run_id
                     code: run_id_ended
                     run_id: air-quality-20260815
+                RunStorageQuotaExceeded:
+                  summary: The requester's runs would pass the storage one user may keep
+                  value:
+                    error: >-
+                      your runs use the storage one user may keep; submit this build
+                      when older runs have expired
+                    code: run_storage_quota_exceeded
+                    limit_bytes: 10737418240
+                    used_bytes: 10737418240
         "429":
           description: >-
             async build queue가 가득 참 (`build_queue_full`, #1000). Since 1.111.0, in a
@@ -1742,11 +1866,23 @@ paths:
         "503":
           description: >-
             서버가 종료 중이다(`shutting_down`, #1118). job 도 제출 기록도 만들어지지
-            않았으므로 같은 `run_id` 로 잠시 뒤 다시 보낸다.
+            않았으므로 같은 `run_id` 로 잠시 뒤 다시 보낸다. Since 1.118.0 also
+            `disk_space_low` (#1099): the filesystem under the output directory has less
+            free space than the deployment asks a build to have
+            (`KPUBDATA_BUILDER_BUILD_MIN_FREE_MB`, off unless set). Nothing is recorded
+            for the run; the body names no path and no size.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+              examples:
+                DiskSpaceLow:
+                  summary: The server is low on disk space
+                  value:
+                    error: >-
+                      the server is low on disk space and is not accepting builds;
+                      submit the build again later
+                    code: disk_space_low
     get:
       operationId: listBuilds
       summary: "빌드 이력 목록 조회 (최신 수정 시각 기준 내림차순)"
@@ -3166,7 +3302,12 @@ paths:
                     error: query artifact unavailable
                     code: artifact_unavailable
         "429":
-          description: query 전용 capacity 포화. child process는 생성되지 않는다.
+          description: >-
+            query 전용 capacity 포화(`query_busy`). child process는 생성되지 않는다.
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3177,6 +3318,12 @@ paths:
                   value:
                     error: query is busy
                     code: query_busy
+                QueryRateLimited:
+                  summary: 이 사용자가 60초 안에 시작할 수 있는 질의를 다 썼다
+                  value:
+                    error: you have run as many queries as the server allows for now; try again shortly
+                    code: query_rate_limited
+                    retry_after_seconds: 12
         "504":
           description: query process timeout 및 강제 종료
           content:
@@ -3406,7 +3553,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Query capacity is exhausted (`query_busy`).
+          description: >-
+            Query capacity is exhausted (`query_busy`).
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3513,7 +3665,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "429":
-          description: Query capacity is exhausted (`query_busy`); a page takes a query slot.
+          description: >-
+            Query capacity is exhausted (`query_busy`); a page takes a query slot.
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3645,7 +3802,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/WarehouseAggregateRefusal"
         "429":
-          description: Query capacity is exhausted (`query_busy`); an aggregate takes a query slot.
+          description: >-
+            Query capacity is exhausted (`query_busy`); an aggregate takes a query slot.
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -3829,6 +3991,10 @@ paths:
           description: >-
             Query capacity is exhausted (`query_busy`), or the workspace already keeps
             the most exports it may (`export_quota_exceeded`).
+            `query_rate_limited` (#1245): in a multi-user deployment the requester has started `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` queries in the last 60 seconds; `retry_after_seconds` and `Retry-After` say when the next is allowed.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
           content:
             application/json:
               schema:
@@ -4737,6 +4903,13 @@ components:
         trying again shortly is right. Administrators and API-key callers never get it.
 
   headers:
+    RetryAfter:
+      description: >-
+        Seconds to wait before sending the request again (#1245). Sent on a 429 whose
+        body carries `retry_after_seconds`, with the same number. Readable from a
+        cross-origin page (`Access-Control-Expose-Headers`, #995).
+      schema:
+        type: string
     RequestId:
       description: >-
         The id this request is logged under (#994). Sent on every response a handler
@@ -4752,8 +4925,12 @@ components:
       description: >-
         Too many failed authentication attempts from this client address (#994) — any
         operation can answer this before it runs. `retry_after_seconds` says how long
-        the window has left. `x-status` names the status code, since no single
-        operation references this response.
+        the window has left; the `Retry-After` header says the same (#1245).
+        `x-status` names the status code, since no single operation references this
+        response.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
           schema:
@@ -5062,6 +5239,31 @@ components:
                   Since 1.115.0 a cancelled run has one too, and so does a run that ended
                   without a manifest (cancelled while queued, interrupted by a restart):
                   a sentence of fixed phrases saying why and at which stage (#1120).
+              error_code:
+                type: [string, "null"]
+                description: >-
+                  The stable code of the failure `error` states (#1120, since 1.116.0);
+                  null when the run did not fail, when the run's record predates failure
+                  codes, or when the recorded value is not one of these. A provider's
+                  refusal (`application_required`, `auth_unknown`, `params_invalid`,
+                  `rate_limited`, `temporarily_unavailable`, `network_error`, `retired`),
+                  `pipeline_failed` for any other source failure, a composition's rule
+                  (`join_key_missing`, `join_key_type_mismatch`, `join_null_key`,
+                  `join_cardinality_mismatch`, `join_duplicate_key`,
+                  `join_output_column_conflict`, `composition_failed`), a refused table
+                  commit (`conflict`, `empty_result`, `table_exists`, `commit_failed`), or
+                  why a run was cancelled or ended without a manifest (`cancelled`,
+                  `time_limit_exceeded`, `server_shutdown`, `interrupted`,
+                  `credentials_required`, `enqueue_failed`). A client should treat a code
+                  it does not know like null.
+              error_stage:
+                type: [string, "null"]
+                description: >-
+                  Where that failure stopped the run (#1120, since 1.116.0): `bronze`,
+                  `silver`, `gold`, `export`, `composition` or `warehouse` as a manifest's
+                  `failures[].stage`; for a run that left no manifest, `queued` (it never
+                  started), `started` (no stage was recorded yet) or the stage of its last
+                  event. Null whenever `error_code` could not be given a stage.
     AdminConfigResponse:
       type: object
       additionalProperties: false
@@ -5096,7 +5298,11 @@ components:
             `build_queue_full`(#1000, 429) — `POST /builds` when the async build queue
             is full; try again later. `build_owner_limit`(#1189, 429) — `POST /builds`
             when the requester already has `limit` builds queued or running in a
-            multi-user deployment; submit again when one ends. `unauthorized` / `token_expired`(#1000, 401) — any
+            multi-user deployment; submit again when one ends.
+            `run_storage_quota_exceeded`(#1099, 409) — `POST /builds` when the
+            requester's runs would pass the storage one user may keep; the body gives
+            `limit_bytes` and `used_bytes`. `disk_space_low`(#1099, 503) — `POST /builds`
+            when the server's disk has less free space than a build needs. `unauthorized` / `token_expired`(#1000, 401) — any
             operation: the credentials were refused, or the bearer token's `exp` has
             passed and a new token is needed. `auth_unavailable`(#1000, 503) — the
             JWKS could not be fetched, so the credentials were not judged
@@ -5106,6 +5312,12 @@ components:
             `retry_of_in_progress`(#1103, 409 on `POST /builds`, 400 on `POST /build`) —
             the run named in `retry_of` has not ended; the body carries `retry_of` and
             that run's `status`.
+            `query_rate_limited`(#1245, 429) — a query operation in a multi-user
+            deployment when the requester has started as many queries in the last 60
+            seconds as the deployment allows. `provider_egress_limited`(#1245, 429) —
+            `POST /preview` when Builder has called one of the spec's providers as often
+            in the last 60 seconds as the deployment allows, for all users together.
+            Both carry `retry_after_seconds` and the `Retry-After` header.
         redistribution:
           description: >-
             `code: redistribution_forbidden`일 때만 온다(#688): 판정과 source별 이유.
@@ -7007,6 +7219,38 @@ components:
           type: string
           const: "ok"
 
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks, accepting_builds]
+      description: >-
+        Readiness probe answer (#1101). `status` is `ready` only when every check is
+        `ok`. `accepting_builds` is whether `POST /builds` would queue a build now; it
+        does not affect `status`.
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties: false
+          required: [state_store, output_dir, disk, workers]
+          properties:
+            state_store:
+              type: string
+              enum: [ok, failed, timeout]
+            output_dir:
+              type: string
+              enum: [ok, failed, timeout]
+            disk:
+              type: string
+              enum: [ok, low, failed, timeout]
+            workers:
+              type: string
+              enum: [ok, draining, stopped]
+        accepting_builds:
+          type: boolean
+
     CatalogResponse:
       type: object
       required: [providers]
@@ -7042,6 +7286,7 @@ components:
           query_support,
           requires_service_key,
           request_parameters,
+          query_parameters,
           application,
         ]
       description: >
@@ -7097,6 +7342,18 @@ components:
             선택한 Dataset에 전달하는 요청 파라미터의 secret-free 설명 (#490 후속,
             additive). raw_metadata에서 allowlist로 추린 것으로 serviceKey 등 시크릿
             파라미터는 포함되지 않는다. metadata가 없으면 빈 배열.
+        query_parameters:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/CatalogQueryParameter"
+          description: >-
+            The dataset's query definition, for generating an input form (#1281,
+            additive). Read from kpubdata's public `DatasetRef.to_dict()`, with the
+            provider's values passed through unparsed. null when kpubdata gives the
+            dataset no definition: unknown, never "no parameters", and never an empty
+            array. Authentication, paging and format parameters are not in the
+            definition, and a secret-like name is dropped. `request_parameters` is
+            unchanged.
         application:
           oneOf:
             - type: "null"
@@ -7132,6 +7389,36 @@ components:
         example:
           type: [string, "null"]
           description: 근거 있는 예시 값 (없으면 null)
+
+    CatalogQueryParameter:
+      type: object
+      required: [name, alias, type, required, enum, description, example]
+      properties:
+        name:
+          type: string
+          description: The provider's own name for the parameter.
+        alias:
+          type: [string, "null"]
+          description: >-
+            The name a kpubdata caller uses, when it differs from `name`; null when
+            the parameter is not aliased.
+        type:
+          type: [string, "null"]
+          enum: [string, integer, number, date_yyyymmdd, date_yyyymm, null]
+          description: >-
+            How the value is written, in kpubdata's words. null when kpubdata declares
+            none (a catalogue entry) or declares one Builder has not mapped. Not guessed.
+        required:
+          type: boolean
+        enum:
+          type: [array, "null"]
+          items:
+            type: string
+          description: The values the provider accepts, when the definition lists them; null otherwise.
+        description:
+          type: [string, "null"]
+        example:
+          type: [string, "null"]
 
     CatalogApplication:
       type: object
@@ -8459,7 +8746,9 @@ components:
         비동기 build job 스냅샷 (#482, #480). 프로세스 메모리 상주 registry 가
         먼저 답하고, 거기서 밀려나거나 서버가 재시작한 뒤에는 매니페스트로,
         매니페스트도 없이 재시작으로 중단된 run 은 이벤트 저장소의 기록으로
-        답한다(`failed`, `code: credentials_required`, #996).
+        답한다(`failed`, `code: credentials_required`, #996). 단일 사용자 배포는
+        1.116.0 부터 재시작으로 중단된 run 을 같은 방식으로 `failed` 로 표시하되,
+        키가 보관되어 있으므로 `code` 없이 `error` 만 준다(#1120).
         `response`는 잡이 만든 응답 본문이다 — 성공한 잡은 최종 build 응답,
         실패한 잡은 오류 본문일 수 있다(빌드 본문이 생기기 전에 실패하면
         `{"error": ...}` 뿐이다, #921). 형태는 `object | null` 만 보장하며, 실패
@@ -8763,7 +9052,8 @@ components:
             `non_commercial_unconfirmed`, `non_commercial_marker_missing`;
             목적지 공개 여부(POST만) `destination_public`,
             `destination_visibility_unknown`; 데이터셋 카드 `card_missing`,
-            `card_incomplete`. 이 목록은 구현의
+            `card_incomplete`; 호스팅 개인정보 gate `pii_scan_missing`,
+            `pii_scan_pending`, `pii_scan_failed`, `pii_scan_unverified`. 이 목록은 구현의
             `PUBLISH_ISSUE_CODES`와 테스트로 맞춰진다. 예외로, 저장된 BuildSpec이
             현재 검증 규칙을 통과하지 못하면 그 검증 문제 코드(`ValidationProblem.code`,
             예 `source_key_path_collision`)가 그대로 blocker로 나올 수 있다 —
@@ -8808,6 +9098,17 @@ components:
             card_incomplete: >-
               카드의 필수 절(provenance의 제공 기관·출처 URL·라이선스·수집 일시,
               processing, personal_information)이 비었다. message가 빈 절의 이름을 알려 준다 (#694)
+            pii_scan_missing: >-
+              개인정보 gate가 켜져 있는데(다중 사용자 배포, 또는
+              `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH=true`) BuildSpec에 `pii` 정책이 없어
+              아무것도 scan하지 않았다 (#1113)
+            pii_scan_pending: 개인정보 gate가 켜져 있는데 run이 아직 끝나지 않아 scan도 끝나지 않았다 (#1113)
+            pii_scan_failed: >-
+              개인정보 gate가 켜져 있는데 run이 실패했거나 취소됐거나, scan 결과를 읽지 못했다 —
+              fail-closed (#1113)
+            pii_scan_unverified: >-
+              개인정보 gate가 켜져 있는데 scan이 발견을 막지 않았다 — `pii.mode`가 `block`이
+              아니거나 `allow_columns`가 있다 (#1113)
         message:
           type: string
 
@@ -10045,8 +10346,10 @@ components:
           description: >-
             What was done to the receipt: `manual_reset` (`DELETE .../publish/receipt`),
             `reconcile_succeeded` (a reconcile that found the destination remotely) or
-            `reconcile_absent_reset` (one that found nothing). Read it as text: later
-            versions may record more actions.
+            `reconcile_absent_reset` (one that found nothing), or `refused:<code>`
+            (from v1.121.0, actor `gate`: the hosted personal-data gate refused a publish
+            before anything was claimed; `<code>` is the `pii_scan_*` blocker, #1113).
+            Read it as text: later versions may record more actions.
         actor: {type: string}
         recorded_at:
           type: string

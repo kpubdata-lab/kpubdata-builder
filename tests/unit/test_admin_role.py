@@ -30,6 +30,8 @@ class _Entry:
     created_by: str | None
     owner_id: str | None
     error: str | None = None
+    error_code: str | None = None
+    error_stage: str | None = None
 
 
 class _FakeIndex:
@@ -161,6 +163,8 @@ class TestMetadataOnly:
                 "finished_at",
                 "owner_id",
                 "error",
+                "error_code",
+                "error_stage",
             }
 
     @pytest.mark.parametrize("path", ["/admin/runs", "/admin/config"])

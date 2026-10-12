@@ -43,6 +43,12 @@ from ..stages._stage_reader import gold_source_dir
 from ..stages.gold.card import missing_sections
 from . import stages as stages_service
 from .publish_credentials import PublishCredentialResolution
+from .publish_pii_gate import (
+    PiiScanCheck,
+    default_pii_scan_check,
+    pii_gate_required,
+    pii_scan_state,
+)
 from .redistribution import (
     BuildVerdict,
     TermsLookup,
@@ -121,6 +127,11 @@ PUBLISH_ISSUE_CODES: tuple[str, ...] = (
     # Dataset cards (#694)
     "card_missing",
     "card_incomplete",
+    # Personal-data scan, when the hosted publish gate is on (#1113)
+    "pii_scan_missing",
+    "pii_scan_pending",
+    "pii_scan_failed",
+    "pii_scan_unverified",
 )
 
 _DEFAULT_OPTIONS: dict[str, dict[str, object]] = {
@@ -378,6 +389,21 @@ class PublishReceiptStore:
             return "state_unknown", receipt
         return "in_progress", receipt
 
+    def has_receipt(self, run_id: str) -> bool:
+        """Whether any receipt names ``run_id``, in any state and for any owner (#1099).
+
+        Run retention keeps such a run: its artifacts are what was published.
+        """
+        self._initialize()
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM publish_receipts WHERE run_id = ? LIMIT 1", (run_id,)
+            ).fetchone()
+        finally:
+            connection.close()
+        return row is not None
+
     def mark_succeeded(self, fingerprint: str, result: dict[str, object]) -> None:
         self._set_terminal(fingerprint, state="succeeded", result=result)
 
@@ -453,6 +479,34 @@ class PublishReceiptStore:
             raise
         finally:
             connection.close()
+
+    def record_refusal(
+        self,
+        *,
+        owner_key: str,
+        run_id: str,
+        target: str,
+        destination: str,
+        options: dict[str, object],
+        code: str,
+    ) -> None:
+        """Record that a publish was refused before anything was claimed (#1113).
+
+        The row holds the request's fingerprint (a hash of owner, run, target,
+        destination and options), the refusal's ``code`` in ``refused:<code>`` and
+        nothing else: no destination, no value from the data, no credential.
+        """
+        self._initialize()
+        fingerprint = self.fingerprint(
+            owner_key=owner_key,
+            run_id=run_id,
+            target=target,
+            destination=destination,
+            options=options,
+        )
+        self._append_audit(
+            fingerprint, f"refused:{code}", owner_key=owner_key, run_id=run_id, actor="gate"
+        )
 
     def _receipt_owner_run(self, fingerprint: str) -> tuple[str | None, str | None]:
         """Read receipt (owner_key, run_id) from fingerprint (#563)."""
@@ -647,6 +701,40 @@ def license_blocker(spec: BuildSpec | None) -> PublishIssue | None:
             "BuildSpec.license must be declared before this dataset can be published (#443)",
         )
     return None
+
+
+def pii_scan_blocker(
+    status: RunStatus, spec: BuildSpec | None, check: PiiScanCheck = default_pii_scan_check
+) -> PublishIssue | None:
+    """The hosted personal-data gate's refusal, or None when the scan passed (#1113).
+
+    Asked only when ``pii_gate_required()``; see ``publish_pii_gate`` for the states.
+    """
+    state = pii_scan_state(check, status, spec)
+    if state == "passed":
+        return None
+    if state == "pending":
+        return PublishIssue(
+            "pii_scan_pending",
+            "the personal-data scan has not finished: this run is still in progress",
+        )
+    if state == "missing":
+        return PublishIssue(
+            "pii_scan_missing",
+            "this deployment publishes only runs scanned for personal data; the BuildSpec "
+            "declares no pii policy, so nothing was scanned",
+        )
+    if state == "unverified":
+        return PublishIssue(
+            "pii_scan_unverified",
+            "this deployment publishes only runs whose personal-data scan stops the build "
+            "on a finding: pii.mode must be 'block', with no allow_columns",
+        )
+    return PublishIssue(
+        "pii_scan_failed",
+        "the personal-data scan did not pass: the run failed, was cancelled, or its "
+        "scan could not be read",
+    )
 
 
 def effective_publish_policy_blockers(spec: BuildSpec | None) -> tuple[PublishIssue, ...]:
@@ -1011,6 +1099,7 @@ def build_readiness(
     credentials: PublishCredentialResolution | None = None,
     options: dict[str, object] | None = None,
     terms_lookup: TermsLookup = kpubdata_terms,
+    pii_scan_check: PiiScanCheck = default_pii_scan_check,
 ) -> ReadinessResult:
     """Single deterministic decision shared by readiness/POST.
 
@@ -1024,6 +1113,12 @@ def build_readiness(
     status_issue = run_status_blocker(status)
     if status_issue is not None:
         blockers.append(status_issue)
+
+    # A hosted deployment publishes only what its personal-data scan passed (#1113).
+    if pii_gate_required():
+        pii_issue = pii_scan_blocker(status, spec, pii_scan_check)
+        if pii_issue is not None:
+            blockers.append(pii_issue)
 
     artifacts: ResolvedArtifacts | None = None
     if manifest is None:
@@ -1123,6 +1218,7 @@ __all__ = [
     "credential_blocker",
     "effective_publish_policy_blockers",
     "license_blocker",
+    "pii_scan_blocker",
     "resolve_gold_artifacts",
     "resolve_target",
     "run_status_blocker",

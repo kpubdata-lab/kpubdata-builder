@@ -1,0 +1,70 @@
+name: Cloudflare ranges
+
+# Compare Caddy's trusted proxies with the ranges Cloudflare publishes, on a schedule
+# (#1236).
+#
+# ops/caddy/trusted_proxies.caddy must be Cloudflare's edge ranges and nothing else
+# (scripts/check_cloudflare_ranges.py). Cloudflare can change them; nobody was
+# watching. scripts/cloudflare_ranges_watch.py keeps one open issue while the file
+# differs: opened when there is a difference, rewritten when it changes, left alone
+# when it is the same as the last run's.
+#
+#   schedule            compares, then files or updates the issue
+#   workflow_dispatch   the same; `dry_run` prints instead
+#   pull_request        a change to this file or the scripts: compares and prints only
+#
+# Nothing here changes the file, opens a pull request or closes an issue. It uses
+# only the run's GITHUB_TOKEN.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"  # daily, 05:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compare and print; write no issue."
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - ".github/workflows/cloudflare-ranges.yml"
+      - "scripts/cloudflare_ranges_watch.py"
+      - "scripts/check_cloudflare_ranges.py"
+      - "ops/caddy/trusted_proxies.caddy"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run at a time writes the issue; a pull request's run is superseded by its
+  # next push.
+  group: cloudflare-ranges-${{ github.event_name == 'pull_request' && github.ref || 'issue' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  compare:
+    name: Compare with Cloudflare's published ranges
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write  # the difference is recorded as an issue
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Compare, then file or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # A pull request only prints: its run must not write issues about a branch.
+          DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          args=(--run-url "${RUN_URL}" --work-dir "${RUNNER_TEMP}")
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python3 scripts/cloudflare_ranges_watch.py "${args[@]}"

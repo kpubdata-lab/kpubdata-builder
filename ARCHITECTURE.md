@@ -214,7 +214,7 @@ scripts/publish_to_hf.py  →  scripts/pipeline/{fetch,transform,package,publish
 - 해당 모듈에는 `DEPRECATED` 표시가 붙어 있으며, 프로덕션 호환을 위해서만 유지한다.
 - 이 경로는 **레거시로서** 마지막 config 가 옮겨질 때까지 Polars 를 쓴다(`legacy-publish` extra)
   ([ADR 0021](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/adrs/0021-duckdb-tabular-engine.md) D1). 대기오염정보 게시는 멈춰 있다
-  (`scheduled-air-quality.yml` disabled, #759).
+  (`scheduled-air-quality.yml` 비활성, cron 줄도 제거, #759, #1244).
 
 ### 9.3 통합 계획
 
@@ -243,7 +243,7 @@ Gold 에서 선언한다(#659 선택지 a) — Silver 는 컬럼을 모두 보�
 | | 지금 | 근거 |
 |---|---|---|
 | 프로세스 | **하나.** `serve` 가 스레드 풀로 HTTP 요청을 받고, 비동기 build 는 같은 프로세스의 워커 스레드에서 돈다. job 레지스트리·큐·job 에 묶인 키·동시 실행 상한이 프로세스 메모리에 있어 replica 를 늘릴 수 없다 | ADR 0008, [deploy.md §6](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/deploy.md) |
-| 재시작·종료 | 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호에는 대기 job 을 시작하지 않고 끝내고 실행 중인 것은 기다린다(#1118). 다중 사용자 배포는 중단된 run 을 다음 기동 때 `credentials_required` 로 표시한다(#683) | [deploy.md §7](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/deploy.md) |
+| 재시작·종료 | 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호에는 대기 job 을 시작하지 않고 끝내고 실행 중인 것은 기다린다(#1118). 중단된 run 은 다음 기동 때 `failed` 로 표시된다 — 다중 사용자 배포는 `credentials_required` 로(#683), 단일 사용자 배포는 그 code 없이(#1120) | [deploy.md §7](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/deploy.md) |
 | 인증 | 두 경로. 사람은 **OIDC access token**(`Authorization: Bearer`, Keycloak 등), 서비스 계정은 `X-API-Key`. `OIDC_ISSUER` 가 있으면 다중 사용자 배포다: 소유권이 강제되고 가입은 허용 목록이나 승인 원장으로만 열린다 | ADR 0006, 0015 (0009 를 대체), 0012 개정 |
 | provider 키 | 다중 사용자 배포는 저장하지 않는다 — 요청마다 헤더로 받고 요청·작업 동안만 메모리에 둔다. 단일 사용자 배포는 암호화해 저장한다 | ADR 0020, [REQUEST_CREDENTIALS.md](https://github.com/kpubdata-lab/kpubdata-builder/blob/main/docs/REQUEST_CREDENTIALS.md) |
 | build 경로 | 동기 `POST /build` 와 비동기 `POST /builds` 둘 다 있다. **업로드한 파일을 쓰는 build 도 비동기로 돈다**(#998) — ADR 0014 가 적은 "동기 경로만" 은 그때의 한계였다 | ADR 0002, 0008, 0014 보충 |

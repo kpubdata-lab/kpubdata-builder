@@ -15,13 +15,15 @@ import logging
 import math
 import mimetypes
 import os
+import select
+import socket
 import sys
 import threading
 import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
+from functools import lru_cache, partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socket import socket as _socket
@@ -29,11 +31,12 @@ from threading import Lock
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+from ..query import cancellation
 from ..spec import JsonValue
 from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
-from . import request_log
-from .app import BuilderService, FileResponse, dispatch, refuse_before_body
+from . import metrics, request_log
+from .app import BuilderService, FileResponse, TextResponse, dispatch, refuse_before_body
 from .auth import validate_dev_mode, validate_oidc_config
 from .publish_credentials import PUBLISH_CREDENTIAL_HEADER
 from .request_credentials import PROVIDER_KEY_HEADER
@@ -155,6 +158,31 @@ _TEXTUAL_MIME_SUFFIXES = ("json", "xml", "yaml", "javascript")
 
 _logger = logging.getLogger(__name__)
 
+#: The status the request log and the metrics give a request whose client left while
+#: its query ran (#1245). Nothing is sent with it.
+CLIENT_CLOSED_STATUS = 499
+
+
+def _never() -> bool:
+    return False
+
+
+def _peer_closed(connection: _socket) -> bool:
+    """Whether the client closed its end of ``connection``, without reading from it.
+
+    A request's body has been read by the time this is asked, so a readable socket
+    either holds the client's next request or has reached its end. Peeking tells the two
+    apart and leaves the next request where it is.
+    """
+    try:
+        readable, _, _ = select.select([connection], [], [], 0)
+        if not readable:
+            return False
+        return connection.recv(1, socket.MSG_PEEK) == b""
+    except (OSError, ValueError):
+        return True
+
+
 #: What a write raises when the client has already closed its end (#1132).
 _CLIENT_GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
@@ -248,6 +276,9 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             finally:
                 if self._answered is not None:
                     status, code = self._answered
+                    # GET /metrics counts every answer here, the ones made before
+                    # dispatch (400, 413, a refusal before the body) included (#1101).
+                    metrics.observe_response(status, code)
                     request_log.record(
                         request_id=self._request_id,
                         method=method,
@@ -336,28 +367,32 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             # If dispatch() raises unexpected exception, return JSON 500 instead of dropping
             # connection. Log detailed info only to server log, do not expose to client (#218).
             try:
-                response = dispatch(
-                    service,
-                    method,
-                    path,
-                    body,
-                    query=split.query,
-                    api_key=self.headers.get("X-API-Key"),
-                    bearer_token=self.headers.get("Authorization"),
-                    raw_body=raw_body,
-                    # Provider keys for this request only (#683) — a header, never a
-                    # URL query that proxies and access logs would keep.
-                    provider_key_headers=self.headers.get_all(PROVIDER_KEY_HEADER) or [],
-                    # Publish credentials for this request only (#925), on the same terms.
-                    publish_credential_headers=(
-                        self.headers.get_all(PUBLISH_CREDENTIAL_HEADER) or []
-                    ),
-                    # Client ID for auth failure throttling. The TCP peer address,
-                    # unless that peer is a proxy the deployment names: only then is
-                    # X-Forwarded-For read, and only the part that proxy wrote — a
-                    # header from anyone else can be forged (#1031).
-                    client_id=client_id,
-                )
+                # A query run for this request stops if the client leaves (#1245).
+                connection = getattr(self, "connection", None)
+                gone = _never if connection is None else partial(_peer_closed, connection)
+                with cancellation.watching(gone) as watch:
+                    response = dispatch(
+                        service,
+                        method,
+                        path,
+                        body,
+                        query=split.query,
+                        api_key=self.headers.get("X-API-Key"),
+                        bearer_token=self.headers.get("Authorization"),
+                        raw_body=raw_body,
+                        # Provider keys for this request only (#683) — a header, never a
+                        # URL query that proxies and access logs would keep.
+                        provider_key_headers=self.headers.get_all(PROVIDER_KEY_HEADER) or [],
+                        # Publish credentials for this request only (#925), on the same terms.
+                        publish_credential_headers=(
+                            self.headers.get_all(PUBLISH_CREDENTIAL_HEADER) or []
+                        ),
+                        # Client ID for auth failure throttling. The TCP peer address,
+                        # unless that peer is a proxy the deployment names: only then is
+                        # X-Forwarded-For read, and only the part that proxy wrote — a
+                        # header from anyone else can be forged (#1031).
+                        client_id=client_id,
+                    )
             except Exception:
                 _logger.error(
                     "Unhandled exception in dispatch: %s %s\n%s",
@@ -368,9 +403,17 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                 )
                 self._write(500, {"error": "internal server error"})
                 return
+            if watch.fired:
+                # The client has gone and its query was stopped: there is no one to answer.
+                # 499 is the log's word for it, as proxies use it; nothing is sent.
+                self.close_connection = True
+                self._answered = (CLIENT_CLOSED_STATUS, None)
+                return
             # Branch on FileResponse vs ServiceResponse (#323)
             if isinstance(response, FileResponse):
                 self._write_file(response)
+            elif isinstance(response, TextResponse):
+                self._write_text(response)
             else:
                 self._write(response.status_code, response.body)
 
@@ -404,6 +447,28 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             self._answered = (status_code, body.get("code"))
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            if hasattr(self, "_request_id"):
+                self.send_header("X-Request-ID", self._request_id)
+            # Every 429 that says how long to wait says it in the header too (#1245), the
+            # place an HTTP client looks for it.
+            retry_after = body.get("retry_after_seconds")
+            if (
+                status_code == 429
+                and isinstance(retry_after, int)
+                and not isinstance(retry_after, bool)
+            ):
+                self.send_header("Retry-After", str(max(1, retry_after)))
+            self._send_cors_headers(origin=self.headers.get("Origin"))
+            self.end_headers()
+            _ = self.wfile.write(payload)
+
+        def _write_text(self, response: TextResponse) -> None:
+            """Write a text body that is not JSON (#1101)."""
+            payload = response.text.encode("utf-8")
+            self._answered = (response.status_code, None)
+            self.send_response(response.status_code)
+            self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(payload)))
             if hasattr(self, "_request_id"):
                 self.send_header("X-Request-ID", self._request_id)
@@ -690,14 +755,12 @@ def serve(
     validate_storage_config()
     # Read now, so a value that cannot be used stops the start rather than the stop.
     grace_seconds = shutdown_grace_seconds()
-    # A multi-user deployment keeps job keys in memory only (#683): runs a previous
-    # process left unfinished can never resume, so they are failed now, as
-    # credentials_required, rather than left looking in progress.
+    # Jobs are held in memory only (#683, #1120): runs a previous process left
+    # unfinished never resume, so they are failed now rather than left looking in
+    # progress — in a multi-user deployment as credentials_required, its keys being gone.
     interrupted = service.mark_interrupted_runs()
     if interrupted:
-        _logger.warning(
-            "marked %d interrupted run(s) failed as credentials_required", len(interrupted)
-        )
+        _logger.warning("marked %d interrupted run(s) failed", len(interrupted))
     # Uploads past the retention period go now (#1045); an owner's are also dropped
     # whenever they upload. Only a multi-user deployment keeps a retention period.
     expired = service.purge_expired_uploads()

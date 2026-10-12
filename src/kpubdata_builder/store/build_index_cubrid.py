@@ -87,6 +87,8 @@ class CubridBuildIndex:
             Column("created_by", String(255)),
             Column("dataset_id", String(255)),
             Column("owner_id", String(255)),
+            Column("error_code", Text),
+            Column("error_stage", Text),
         )
         self._schema_version = Table(
             _SCHEMA_VERSION_TABLE,
@@ -141,6 +143,8 @@ class CubridBuildIndex:
             created_by=m["created_by"],
             dataset_id=m["dataset_id"],
             owner_id=m["owner_id"],
+            error_code=m["error_code"],
+            error_stage=m["error_stage"],
         )
 
     def insert_or_replace(
@@ -154,6 +158,8 @@ class CubridBuildIndex:
         created_by: str | None = None,
         dataset_id: str | None = None,
         owner_id: str | None = None,
+        error_code: str | None = None,
+        error_stage: str | None = None,
     ) -> None:
         values = {
             "run_id": run_id,
@@ -165,6 +171,8 @@ class CubridBuildIndex:
             "created_by": created_by,
             "dataset_id": dataset_id,
             "owner_id": owner_id,
+            "error_code": error_code,
+            "error_stage": error_stage,
         }
         try:
             # delete+insert within single transaction — doesn't depend on dialect upsert.
@@ -300,6 +308,8 @@ class CubridBuildIndex:
                         created_by=entry.created_by,
                         dataset_id=entry.dataset_id,
                         owner_id=entry.owner_id,
+                        error_code=entry.error_code,
+                        error_stage=entry.error_stage,
                     )
                 )
                 count += 1

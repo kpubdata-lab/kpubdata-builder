@@ -83,7 +83,7 @@ replica 를 늘릴 수 없는 이유는 저장소만이 아니다. ADR 0010 의 
 | 인증 실패 스로틀, probe 간격 | 클라이언트가 replica 를 바꿔 가며 한도를 피한다 |
 
 그래서 재시작하면 대기·실행 중이던 job 은 이어지지 않는다. 종료 신호를 받았을 때의 처리는
-§7, 다중 사용자 배포에서 중단된 run 의 표시는 #683 을 본다.
+§7, 중단된 run 의 표시는 #683·#1120 을 본다.
 
 ### 6.0 이전 릴리스로 되돌렸을 때 (#1096)
 
@@ -120,8 +120,8 @@ provider 자격 증명 저장소는 실제로 쓸 때만 확인한다 — 마스
 이전 릴리스로 운영) → 재업그레이드를 거치면, 사본은 롤백 뒤 이전 릴리스가 쓴 내용까지 담는다.
 예전에는 처음 뜬 사본을 그대로 두어서, 두 번째로 되돌릴 때 그 사이의 쓰기를 잃었다. 되돌릴 때는
 사본을 옮기지 말고 복사해 두는 편이 낫다. **사본은 카탈로그뿐이다** — 스냅샷 파일은 들어 있지 않으므로,
-그 뒤에 쓰인 것이 있는 웨어하우스에 사본만 되돌려 놓으면 그만큼을 잃는다. 전체 복구는 `warehouse
-backup` 으로 받은 백업으로 한다. 인덱스는 `serve` 가 요청을 받기 전에
+그 뒤에 쓰인 것이 있는 웨어하우스에 사본만 되돌려 놓으면 그만큼을 잃는다. 전체 복구는 `backup`
+으로 받은 백업으로 한다(§6.2). 인덱스는 `serve` 가 요청을 받기 전에
 manifest 에서 다시 만든다 — 인덱스 파일이 아예 없을 때도 같다. 예전에는 비운 채로 떠서
 `rebuild-index` 를 따로 돌리기 전까지 이전 run 이 목록에 보이지 않았다. run 이 많으면 그만큼
 기동이 늦어진다(run 마다 manifest 하나를 읽는다). 그 밖의 일곱 저장소는 아직 첫 버전뿐이라 올릴
@@ -203,6 +203,280 @@ docker run --rm -p 8000:8000 \
 - 마이그레이션(FS→CUBRID)·정본 이전·리스크는 [ADR 0016](./adrs/0016-cubrid-state-backend.md) 참조.
 - CUBRID 는 같은 VM 에 컨테이너로 함께 띄운다(docker-compose, `infra/cubrid/` 참조).
 
+### 6.2 전체 상태의 백업과 복구 (#1095)
+
+`warehouse-backup` 은 카탈로그와 스냅샷만 담는다. 아래 세 명령은 출력 디렉터리(`/data`)의
+**모든 상태**를 하나의 파일로 받고, 그 파일을 검증한 뒤에만 통째로 되돌린다. 상태 백엔드가
+CUBRID 이면(`KPUBDATA_BUILDER_STORAGE_BACKEND=cubrid`) 셋 모두 거부한다 — 인덱스와 키가
+CUBRID 에 있어 이 백업이 담지 못한다(ADR 0022).
+
+```bash
+# 1) 서버를 내린다. SIGTERM 이 실행 중인 빌드를 끝내거나 멈춘다(§7) — 이것이 쓰기를 멈추는 방법이다.
+docker compose -f docker-compose.prod.app.yml stop builder
+
+# 2) 백업. ARCHIVE 는 /data 밖이어야 한다(안이면 거부한다 — 자기 자신을 복사하게 된다).
+docker compose -f docker-compose.prod.app.yml run --rm --no-deps \
+  -v /srv/backups:/backups --entrypoint kpubdata-builder builder \
+  backup /backups/state-$(date -u +%Y%m%dT%H%M%SZ).tar --output-dir /data
+
+# 3) 서버를 다시 올린다.
+docker compose -f docker-compose.prod.app.yml start builder
+
+# 백업 파일 검증 — 복구가 하는 검사를 그대로 하고 아무것도 바꾸지 않는다
+kpubdata-builder verify-backup ARCHIVE [--work-dir DIR]
+
+# 복구 (서버를 내린 상태에서). 지금의 상태는 지우지 않고 옆으로 옮겨 둔다
+kpubdata-builder restore ARCHIVE --output-dir /data
+# 복구가 도중에 죽었을 때 — 그 전 상태를 되돌려 놓는다
+kpubdata-builder restore --recover --output-dir /data
+```
+
+웨어하우스는 `--warehouse`(없으면 `KPUBDATA_BUILDER_WAREHOUSE`)로 주며, compose 처럼 출력
+디렉터리 바로 아래(`/data/warehouse`)여야 한다. 출력 디렉터리 밖의 웨어하우스는 한 번의 교체로
+함께 되돌릴 수 없어서 거부하고 `warehouse-backup` 을 안내한다. 카탈로그가 든 디렉터리를
+`--warehouse` 로 알려 주지 않으면 그것도 거부한다(카탈로그의 규칙대로 복사하기 위해).
+
+**같은 시점이라는 것의 범위.** 저장소마다 SQLite 온라인 백업을 하는 것만으로는 전체가 같은
+시점이 되지 않는다 — 두 저장소를 복사하는 사이에 끝난 빌드는 한쪽에서만 끝나 있다. 그래서
+백업은 **아무것도 쓰지 않을 때만** 돈다. 상태를 쓰는 명령(`serve` 는 떠 있는 내내, `build`,
+`rebuild-index`, `prune-cancelled`, `prune-runs`, `delete-user`, `warehouse-gc`, `warehouse-hold`)은 출력 디렉터리와 웨어하우스의
+`.state.lock` 을 공유 잠금으로 쥐고, `backup`·`restore` 는 배타 잠금을 기다리지 않고 잡는다. 하나라도
+쥐고 있으면 백업은 거부하고("in use"), 백업·복구 중에는 쓰는 명령이 시작하지 않는다. 잠금은
+`flock` 이라 프로세스가 어떻게 끝나든 커널이 푼다. 그러므로 백업 파일은 **출력 디렉터리의 한
+시점**이다. 인증 서버(Keycloak)의 데이터베이스, 환경 변수와 compose 설정, 출력 디렉터리 밖의
+것은 들어 있지 않다.
+
+**비밀은 저장된 그대로.** provider 키 저장소는 SQLite 가 가진 그대로(키마다
+`KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY` 로 암호화된 채) 들어간다. master key 는 백업에 넣지 않고,
+읽지도 출력하지도 않는다. 백업 파일의 `backup.json` 이 그 변수 이름만 적어 둔다 — 복구한 곳에서
+같은 키를 설정해야 키를 읽을 수 있다. master key 는 백업 파일과 다른 곳에 보관한다.
+
+**백업 파일.** 압축하지 않은 tar 하나다(산출물이 Parquet 이라 더 줄지 않는다).
+
+| 경로 | 내용 |
+|---|---|
+| `output/<경로>` | 저장소마다 SQLite 온라인 백업으로 뜬 사본(저널 모드 DELETE), 그리고 아래 표의 파일 |
+| `warehouse/` | 웨어하우스 백업(`warehouse-backup` 과 같은 형식) — 카탈로그와 읽을 수 있는 스냅샷 |
+| `backup.json` | 형식, 릴리스, 시각, 멤버마다 SHA-256·크기, 저장소마다 스키마 버전, 빠진 것 |
+
+파일은 대상 옆에 쓰다가 마지막에 이름을 바꾸고, 작업 사본도 대상 옆(또는 `--work-dir`)에 둔다.
+실패하면 끝난 것처럼 보이는 파일이 남지 않는다.
+
+**무엇이 들어가는지 — 목록.** 저장소는 §6.0.1 의 열 개, 그 밖의 경로는 아래 표다. 목록의 정본은
+`src/kpubdata_builder/store/inventory.py` 의 `OUTPUT_PATHS` 이고, 출력 디렉터리에 **두 목록 어디에도
+없는 것이 있으면 백업은 그 경로를 적고 거부한다** — 아무도 상태인지 아닌지 정하지 않은 것을 빼고
+받은 백업은 불완전한 백업이기 때문이다. `tests/unit/test_state_backup.py` 가 코드가 실제로 만드는
+경로와 `.service/` 아래에 붙이는 이름을 이 목록에 대조하고, 이 표에 모든 항목이 있는지 확인한다.
+
+| 경로 | 백업 | 무엇인가 |
+|---|---|---|
+| `[!._]*` (디렉터리) | 담는다 | run 작업 공간 — run 마다 하나. manifest(정본), BuildSpec 사본, Bronze·Silver·Gold 산출물 |
+| `.service/uploads.sqlite3.blobs` | 담는다 | 큰 업로드의 내용. 업로드 저장소의 행이 `blob_path` 와 SHA-256 으로 가리킨다 |
+| `.service/exports` | 담는다 | 내보내기 기록과 묶음 |
+| `.service/deleted-users` (디렉터리) | 담는다 | 사용자 삭제 기록(tombstone)과 그 journal(§6.4). 복구는 지금의 것을 복원하는 상태로 옮긴다 |
+| `.state.lock` | 뺀다 | 백업·복구 중 쓰기를 막는 잠금 파일 |
+| `.readyz-*` | 뺀다 | `/readyz` 가 잠깐 만드는 파일 |
+| `_builds.sqlite.bak*` | 뺀다 | `rebuild-index` 가 바꾸기 전의 인덱스 |
+| `_builds.sqlite.tmp*` | 뺀다 | `rebuild-index` 가 쓰는 도중의 인덱스 |
+| `.before-restore-*` (디렉터리) | 뺀다 | `restore` 가 옮겨 둔 그 전 상태 |
+| `.run-gc` (디렉터리) | 뺀다 | `prune-runs --apply` 가 지우려고 옮겨 둔 run(§6.3). 중단됐으면 다음 `prune-runs --apply` 가 마저 지운다 |
+
+저장소 옆의 `-wal`·`-shm`·`-journal` 은 복사하지 않는다 — 온라인 백업이 그 내용을 담는다. 웨어하우스
+안에서는 카탈로그가 정한다: 읽을 수 있는 스냅샷(committed, quarantined)만 담고 lease 와 staging 은
+뺀다(`warehouse/backup.py`).
+
+**복구 — 검증, staging, 교체.** 복구는 먼저 모든 멤버의 checksum, 저장소마다 SQLite
+`integrity_check` 와 기록된 스키마 버전, 웨어하우스의 카탈로그와 스냅샷 대조, 업로드 행과 파일의
+대조를 한다. 하나라도 실패하면 아무것도 옮기지 않고 모든 이유를 적어 거부한다. **이 릴리스보다 새로운
+버전의 저장소가 있으면 거부한다**(§6.0 — 그 저장소를 쓴 릴리스로 복구한다). 오래된 버전은 받아들이고,
+저장소가 열릴 때 앞으로 마이그레이션된다. 검증을 통과하면 출력 디렉터리 안의 `.restoring/` 에 풀고
+(`/data` 는 마운트 지점이라 통째로 이름을 바꿀 수 없어서 같은 파일시스템 안에 둔다), 이름 바꾸기만으로
+교체한다: 지금의 내용을 `.restoring/previous/` 로, 새 내용을 제자리로. 각 단계 전에 journal 을 쓴다.
+끝나면 그 전 내용은 `.before-restore-<시각>/` 에 남는다 — **덮어쓰거나 지우는 것은 없다.** 확인한 뒤
+운영자가 지운다(그동안 디스크를 두 배 쓴다). 마지막으로 빌드 인덱스를 manifest 에서 다시 만든다
+(`rebuild-index` 와 같다).
+
+**복구가 도중에 죽으면.** 풀던 중이면 출력 디렉터리는 그대로이고 `.restoring/` 만 남는다(다음
+`backup` 이 그것을 보고 거부한다). 교체하던 중이면 journal 이 남고, `serve` 와 다른 쓰는 명령은
+"interrupted" 를 말하며 시작하지 않는다 — 두 상태가 섞인 디렉터리로 뜨지 않게. `restore --recover`
+가 journal 을 읽어 그 전 상태를 그대로 되돌리고, 다시 `restore` 를 해도 먼저 그렇게 한다.
+테스트는 복구를 별도 프로세스에서 돌리다 교체 도중(옮겨 내던 중, 옮겨 넣던 중)과 풀던 중에 죽이고,
+`--recover` 뒤의 출력 디렉터리가 바이트 단위로 그 전과 같은지 확인한다.
+
+**정하지 않은 것.** 백업 주기, 보존 기간, 외부의 암호화된 보관소(예: restic)로 올리기와 그 뒤의
+정리(prune), RPO·RTO 는 메인테이너가 정한다. 이 명령은 요청받을 때 받고, 받으라는 곳에 둘 뿐이다.
+깨끗한 환경에서의 복구 리허설 기록, 인증 서버 데이터베이스의 백업과 복구도 아직 없다(#1095).
+
+**복구는 삭제된 사용자를 되살리지 않는다(#1102).** 백업을 받은 뒤에 `delete-user` 로 지운 사용자는
+그 백업 안에 아직 있다. 그래서 복구는 교체하기 전에 **지금의** 삭제 기록(`.service/deleted-users/`)을
+복원하는 상태에 덮어 옮기고, 교체한 뒤 같은 배타 잠금 안에서 그 기록과 복원된 저장소들을 대조한다 —
+기록의 subject 는 사용자 id 의 해시이므로, 저장소에 남은 owner id 를 같은 방식으로 해시해 맞춘다.
+맞는 사용자가 있으면 그 삭제를 다시 열고 그 자리에서 다시 실행한다. 서버가 뜨기 전에 끝나므로
+복원된 상태로 그 사용자가 다시 보이는 순간이 없다. 무엇이 막아 끝내지 못한 삭제는 출력에 적히고,
+서버는 여전히 그 사용자를 거부하며, `delete-user --resume` 이 끝낸다. 백업 파일 자체의 보존 기간 —
+삭제 전에 받은 백업을 언제 지우는가 — 은 정해지지 않았다(아래 §6.4).
+
+### 6.3 run 보관기한과 저장량 (#1099)
+
+빌드는 run 마다 작업 공간(`/data/<run_id>/`)을 남기고, 지금까지는 아무것도 그것을 지우지 않았다 —
+취소된 partial run 만 `prune-cancelled` 가 정리한다. 성공·실패한 run 은 디스크에 계속 쌓이고,
+디스크가 차면 모든 사용자의 빌드와 조회가 함께 실패한다. 여기서는 세 가지를 둔다.
+
+**정하지 않은 것 — 모든 수치는 기본이 끔이다.** 보관기한, 사용자별 저장량 상한, 예약 크기,
+빌드에 필요한 여유 공간은 사용자 약관·삭제 정책·백업 보존 정책과 맞춰 메인테이너가 정한다
+(kpubdata#812). 그 결정 전까지 이 릴리스는 아무 run 도 지우지 않고 아무 빌드도 거절하지 않는다.
+이슈에 나온 30일은 예시이지 정책이 아니다. 설정은 `docs/deployment.md` 의 설정 표에 있다.
+
+| 설정 | 하는 일 | 기본 |
+|---|---|---|
+| `KPUBDATA_BUILDER_RUN_RETENTION_DAYS` | `prune-runs` 가 지우는 run 의 나이(일) | 끔 |
+| `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES` | 다중 사용자 배포에서 사용자 한 명의 끝난 run 합계 상한 | 끔 |
+| `KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` | 대기·실행 중인 build 하나가 미리 차지하는 크기 | `0` |
+| `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` | build 를 받는 데 필요한 여유 공간 | 끔 |
+
+**1) 기한이 지난 run 정리 — `prune-runs`.** 기본은 dry run 이라 아무것도 지우지 않고, 지울 run
+마다 상태·끝난 시각·크기를, 남길 run 마다 이유를 적고, 마지막 줄에 지우면 비는 크기를 말한다.
+`--apply` 를 줄 때에만 지운다. 같은 명령을 다시 돌려도 안전하다 — 이미 지운 run 은 더 없다.
+
+```bash
+# 무엇이 지워질지 본다 (아무것도 바꾸지 않는다)
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder prune-runs --output-dir /data --warehouse /data/warehouse --retention-days 30
+# 지운다
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder prune-runs --output-dir /data --warehouse /data/warehouse --apply
+```
+
+`serve` 가 떠 있어도 돌릴 수 있다. 정기 GC 는 이 명령을 호스트의 cron 이나 systemd timer 로
+돌리는 것이다(주기도 메인테이너가 정한다). 다른 쓰는 명령처럼 상태 잠금(§6.2)을 공유로 쥐므로
+백업·복구 중에는 시작하지 않고, 이 명령이 도는 동안 백업은 거부된다.
+
+지우는 run 은 manifest 의 `finished_at` 이 기한보다 오래된 **성공·실패** run 이다. 파일의 수정
+시각으로는 판단하지 않고, `finished_at` 이 없는 run 은 남긴다(`no_finish_time`). 취소된 run 은
+`prune-cancelled` 의 정책을 따른다. 기한이 지났어도 다음 run 은 지우지 않고 이유를 적는다.
+
+| 이유 | 무엇인가 |
+|---|---|
+| `running` | run 이벤트에 제출·시작이 있고 끝이 없다 |
+| `retry_source` | 아직 끝나지 않은 run 이 이 run 을 재시도한다(checkpoint 를 이어받을 수 있다, #1103) |
+| `published` | 게시 영수증이 이 run 을 가리킨다(상태와 무관하게) |
+| `held` | 이 run 의 warehouse snapshot 에 hold 가 있다(`warehouse-hold`) |
+| `leased` | 이 run 의 warehouse snapshot 을 지금 질의가 읽고 있다 |
+| `snapshot` | 이 run 이 만든 committed warehouse snapshot 이 있다 — 내보내기가 그 run 의 BuildSpec 을 읽는다 |
+
+warehouse snapshot 은 `warehouse-gc` 가 정리한다. 그 run 의 snapshot 이 회수된 뒤의 `prune-runs` 가
+run 을 지운다. 그래서 `--warehouse`(또는 `KPUBDATA_BUILDER_WAREHOUSE`)를 반드시 준다 — 주지 않으면
+snapshot 의 참조를 볼 수 없다. 참조는 run 마다 지우기 직전에 다시 읽으므로, 명령이 도는 사이에
+들어온 게시나 재시도는 그 run 을 지킨다.
+
+**삭제의 순서와 중단.** run 하나를 지우는 것은 세 단계다: 작업 공간을 `/data/.run-gc/` 로 이름을
+바꾸고(한 번에 출력 디렉터리에서 빠진다), 빌드 인덱스의 행을 지우고, 파일을 지운다. 어느 단계에서
+죽든 다음 `prune-runs --apply` 가 `.run-gc/` 에 남은 것의 인덱스 행과 파일을 먼저 마저 지운다(dry
+run 은 그것을 "would finish deleting" 으로 알린다). 인덱스 행이 지워지지 않았으면 manifest 에서
+인덱스를 다시 만든다(`rebuild-index` 와 같다). run 의 이벤트 타임라인(`_build_events.sqlite`)은
+지우지 않는다. 사용자와 그 데이터의 삭제는 §6.4 의 `delete-user` 가 한다.
+
+**2) 사용자별 저장량 — 예약하고 받는다.** 다중 사용자 배포에서 `KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES`
+를 정하면 `POST /builds` 가 job 을 큐에 넣기 전에 그 사용자의 끝난 run 작업 공간 합계를 잰다. 빌드의
+크기는 끝나야 알 수 있으므로 대기·실행 중인 그 사용자의 build 마다
+`KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES` 를 예약한 것으로 치고, 합계와 예약(이번 것 포함)이 상한을
+넘거나 합계가 이미 상한에 닿았으면 409 `run_storage_quota_exceeded`(`limit_bytes`, `used_bytes`)로
+거절한다. 예약은 job registry 의 잠금 안에서 세므로 동시에 들어온 두 제출이 마지막 자리를 함께
+가져가지 못한다. 업로드는 따로 한도가 있고(#1045) run 작업 공간 밖에 있어 두 번 세지 않는다.
+warehouse snapshot 도 세지 않는다. 실행 중인 build 가 예약보다 크게 자랄 수는 있다 — 예약은 상한을
+넘는 제출을 막는 장치이지 정확한 회계가 아니다. 거절된 run 은 아무것도 기록되지 않는다.
+
+**3) 디스크가 부족하면 받지 않는다.** `KPUBDATA_BUILDER_BUILD_MIN_FREE_MB` 를 정하면, 출력 디렉터리의
+파일시스템 여유 공간이 그보다 작을 때 `POST /builds` 가 503 `disk_space_low` 로 답한다. 여유 공간은
+`/readyz`(§7.1)와 같은 방식으로 잰다. 응답은 경로도 크기도 말하지 않는다. 두 거절 모두 `/metrics` 의
+응답 수(상태·코드별)에 나타난다. 동기 `POST /build` 는 사용자별 build 상한(#1189)처럼 이 검사를 하지
+않는다 — Studio 는 `POST /builds` 로 제출한다.
+
+**하지 않는 것.** `VACUUM`, export·spill·staging 디렉터리의 정리, 기한이 지난 업로드의 일괄 정리,
+디스크가 가득 찼을 때의 aggressive 모드는 이 명령에 없다 — 이슈의 `maintain` 명령 범위다(#1099).
+
+### 6.4 사용자와 그 데이터의 삭제 (#1102)
+
+삭제 요청을 받은 사용자 한 명과 그 데이터를 운영자가 지운다. 사용자가 직접 탈퇴하는 화면과 API 는
+아직 없고, 이 명령이 실제 요청을 처리하는 절차다.
+
+```bash
+# 무엇이 지워질지 본다 — 아무것도 쓰지 않는다(삭제 기록도)
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder delete-user oidc:... --output-dir /data --warehouse /data/warehouse
+# 지운다. 그 사용자의 빌드가 끝나기를 최대 60초 기다린다
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder delete-user oidc:... --output-dir /data --warehouse /data/warehouse --apply --wait 60
+# 중단되었거나 막혔던 삭제를 모두 이어서 끝낸다(사용자 id 없이)
+docker compose -f docker-compose.prod.app.yml exec builder \
+  kpubdata-builder delete-user --resume --output-dir /data --warehouse /data/warehouse
+```
+
+`USER_ID` 는 `GET /admin/users` 의 `user_id` 다. `oidc:` 로 시작하지 않는 id, 관리자
+(`KPUBDATA_BUILDER_ADMIN_SUBJECTS`), 이 출력 디렉터리에 아무것도 없는 id 는 거부한다 — 오타가 영구한
+차단이 되지 않게. 다른 쓰는 명령처럼 상태 잠금(§6.2)을 공유로 쥐므로 `serve` 가 떠 있어도 돌릴 수
+있고, 백업·복구 중에는 시작하지 않는다. 같은 출력 디렉터리에서 삭제는 한 번에 하나만 돈다.
+
+**먼저 막는다.** `--apply` 가 처음 쓰는 것은 삭제 기록(tombstone)이다:
+`.service/deleted-users/<subject>.json`. 그 순간부터 서버는 그 사용자의 모든 요청을 403
+`signup_rejected` 로 거부한다 — 가입 원장을 읽기 전에 거부하므로, 다시 로그인해도 원장에 새로 기록되지
+않는다(trust-issuer 재등록으로 되살아나지 않는다). 그 사용자의 빌드도 막는다:
+
+| 빌드의 상태 | 서버가 하는 일 |
+|---|---|
+| 새로 제출 | 아무것도 기록하지 않고 거부한다 |
+| 삭제가 시작되는 순간에 제출되던 중 | 제출을 기록한 뒤 다시 확인해 바로 취소한다 — 삭제가 그 run 을 보거나, 그 확인이 삭제를 본다 |
+| 대기 중 | worker 가 꺼낼 때 시작하지 않고 취소한다 |
+| 실행 중 | 다음 단계 경계에서 취소한다. 삭제된 사용자의 빌드는 정상 종료로 확정(commit)할 수 없다 |
+
+삭제는 그 사용자의 끝나지 않은 run 이, 그리고 끝나야 주인을 알 수 있는 run(동기 `POST /build`)이 모두
+끝나기를 `--wait` 초까지 기다리고, 그래도 남으면 run id 를 적고 거부한다. 서버를 내리는 것도 방법이다 —
+종료 drain 이 대기 중인 job 을 끝내고 실행 중인 것을 취소한다(§7).
+
+**그다음 단계별로 지운다.** 순서대로, 각 단계는 여러 번 실행해도 결과가 같다.
+
+| 단계 | 지우는 것 |
+|---|---|
+| `analyses` | 저장한 분석. 그 분석의 snapshot hold 를 먼저 푼다 |
+| `exports` | warehouse 내보내기 기록과 묶음 |
+| `warehouse` | 그 사용자 workspace 의 테이블과 모든 snapshot(파일, 카탈로그 행), 그리고 다른 workspace 에 그 사용자가 만든 snapshot |
+| `runs` | run 작업 공간(`.run-gc/` 로 옮긴 뒤 지운다, §6.3), 빌드 인덱스 행, run 이벤트·제출 기록·종료 기록 |
+| `uploads` | 업로드한 파일과 그 행 |
+| `provider_keys` | 저장한 provider 키(복호화하지 않으므로 master key 가 필요 없다) |
+| `provider_tests` | provider 연결 테스트의 마지막 결과 |
+| `ledger` | 가입 원장의 행(검증된 이메일) |
+| `verify` | 모든 저장소에서 그 사용자를 다시 찾는다. 없어야 삭제가 완료된다 |
+
+다음은 지우지 않고 멈추며, 무엇이 막는지 적는다: hold(`audit`, `retention` — `warehouse-hold release`
+로 풀거나 기한이 지나야 한다)나 lease(지금 읽는 질의)가 있는 snapshot, 다른 사용자와 함께 쓰는
+workspace 에서 현재 snapshot 인 것. 한 단계가 막히면 그 뒤 단계는 하지 않는다. 지워진 데이터는 그대로
+지워져 있고, 삭제 기록은 미완료로 남아 서버는 계속 그 사용자를 거부한다. 원인을 해결하고 같은 명령을
+다시 돌리면 모든 단계를 처음부터 다시 실행해 남은 것만 지운다. 마지막 확인 뒤에 들어온 것을 잡으려고
+데이터 단계는 한 번 더 돈다.
+
+**중단되면.** 각 단계는 끝날 때마다 journal 에 기록된다. 어느 단계에서 죽든 `delete-user --resume` 이
+미완료 삭제를 모두 다시 실행한다. journal 에는 사용자 id 가 없으므로, 저장소에 남은 owner id 를 해시해
+subject 와 맞춰 찾는다. 남은 것이 하나도 없으면 그대로 완료로 기록한다.
+
+**감사 기록에는 사람이 없다.** journal 과, 단계마다 관리자 감사 로거(`kpubdata_builder.admin_audit`)에
+남는 한 줄(`user deletion: subject=… step=… outcome=… removed=…`)은 사용자 id 가 아니라 **subject**
+— 사용자 id 를 고정 라벨과 함께 SHA-256 한 값 — 만 담는다. subject 로 id 나 이메일을 되찾을 수 없고,
+id 를 이미 가진 사람만 맞춰 볼 수 있다(복구가 그렇게 대조한다). 단계가 지운 개수와 막은 이유(run id,
+snapshot id, 테이블 id)는 담지만 키, 파일 내용, 이메일은 담지 않는다. 이 기록을 얼마나 보관할지는
+삭제 정책과 함께 메인테이너가 정한다.
+
+**지우지 않는 것, 정해지지 않은 것.**
+
+- **인증 서버(Keycloak)의 계정.** 이 명령은 Builder 의 데이터만 지운다. IdP 계정을 지우는 절차는
+  어떤 IdP 를 쓸지(#1124)와 함께 정한다. 그 전까지 운영자가 Keycloak 관리 화면에서 따로 지운다. 지우지
+  않아도 삭제 기록이 그 계정의 로그인을 거부한다.
+- **삭제 전에 받은 백업.** 복구는 삭제를 다시 적용하지만(§6.2), 백업 파일 안에는 그 사용자가 남아 있다.
+  백업 보존 기간은 메인테이너가 정한다(#1095).
+- **외부에 게시한 것.** Hugging Face·Kaggle 등에 게시한 데이터셋은 지우지 않는다. 게시 영수증
+  (`_publish_receipts.sqlite`)은 무엇이 어디로 나갔는지의 기록이라 남긴다.
+- **문서 revision 의 작성자 표시와 브라우저에 저장된 데이터.** revision 이력(`author`)은 지우지 않는다.
+  Studio 가 브라우저에 둔 것은 사용자가 브라우저에서 지운다.
+
 ## 7. 헬스체크·종료
 
 - `GET /healthz` — 무인증 liveness probe (#372). 프로브가 API 키를 못 실을 때 사용.
@@ -216,13 +490,69 @@ docker run --rm -p 8000:8000 \
   빌드에는 사용자의 취소와 같은 방식으로 멈추라고 한 뒤 10초를 더 준다(다음 단계 경계에서
   `cancelled` 로 끝나고 이벤트가 이유를 적는다). **컨테이너의 종료 대기 시간은 그 합보다 길게**
   둔다 — compose 의 `stop_grace_period: 120s`. Docker 의 기본값 10초로는 실행 중인 빌드가
-  SIGKILL 로 끊긴다. 그렇게 끊긴 run 은 manifest 없이 남고, 다중 사용자 배포는 다음 기동 때
-  `credentials_required` 로 표시한다(#683).
+  SIGKILL 로 끊긴다. 그렇게 끊긴 run 은 manifest 없이 남고, 다음 기동 때 `failed` 로
+  표시된다 — 다중 사용자 배포는 `credentials_required` 로(#683), 단일 사용자 배포는 키가
+  남아 있으므로 `interrupted: …` 오류만으로(#1120). 둘 다 종료 기록의 code 는 `interrupted` 다.
   이 동작은 `scripts/shutdown_drain_smoke.py` 가 `Docker` 워크플로에서 실제 compose 와
   이미지로 확인한다: 빌드 하나가 실행 중이고 둘이 대기 중일 때 `docker compose stop` 으로
   내리고(유예 시간이 기본값일 때와 1초일 때), SIGKILL 로도 끊은 뒤, 같은 `/data` 로 다시 올려
   각 run 의 상태를 읽는다. 확인하지 않는 것: provider 에서 가져오는 빌드, 빌드 둘이 동시에
   실행 중인 경우, 작업의 키가 메모리에서 지워졌는지.
+
+### 7.1 liveness 와 readiness 의 분리, 메트릭 (#1101)
+
+세 가지를 따로 본다.
+
+| 질문 | 어디서 | 인증 | 실패의 뜻 |
+| :--- | :--- | :--- | :--- |
+| 프로세스가 살아 있나 (liveness) | `GET /healthz` | 없음 | 응답이 없다. 파일을 건드리지 않는다 |
+| 지금 일을 할 수 있나 (readiness) | `GET /readyz` | 없음 | 503 `not_ready`, 본문의 `checks` 가 어느 검사인지 말한다 |
+| build 를 더 받을 수 있나 | `GET /readyz` 의 `accepting_builds` | 없음 | `false` 여도 `status` 는 `ready` 로 남는다 |
+
+`/readyz` 가 보는 것: `state_store`(build index 를 읽을 수 있나, 쓰지는 않는다), `output_dir`(출력
+디렉터리에 파일을 만들고 지울 수 있나 — SQLite 저장소와 그 저널이 쓰이는 곳),
+`disk`(그 파일시스템의 여유 공간이 `KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT`(기본 15%)와
+`KPUBDATA_BUILDER_READY_MIN_FREE_MB`(기본 1024MB) 이상인가, 하나라도 못 미치면 `low`),
+`workers`(build worker 가 멈추지 않았나, 종료 중이면 `draining`). 값은 `ok` 이외에
+`failed`·`timeout`·`low`·`draining`·`stopped` 다. 두 임계값은 이슈가 제안한 출발값이며 측정해서
+정한 값이 아니다.
+
+정책:
+
+- **큐가 가득 찬 것은 장애가 아니다.** 로그인·취소·조회는 그대로 되므로 `status` 는 `ready` 이고
+  `accepting_builds` 만 `false` 다.
+- **JWKS(토큰 서명 검증용 공개키)는 readiness 에서 보지 않는다.** 검사마다 IdP 를 부르게 되기
+  때문이다. 키를 얻지 못해 판정할 수 없는 요청은 그 요청이 503 `auth_unavailable` 로 답한다.
+  캐시가 유효한 동안의 IdP 장애, 처음 기동, 모르는 `kid`, 캐시 만료를 구분해 알리는 일은 아직
+  남아 있다.
+- **schema migration** 은 기동 시점의 일이다. 이 릴리스가 읽지 못하는 저장소는 기동을 막는다(§6.0).
+  떠 있는 프로세스는 그것을 이미 통과했다.
+- **부하 제한.** 검사 결과는 5초 동안 재사용되고, 그 사이에 온 요청은 하나의 계산을 함께 기다린다.
+  파일시스템 검사는 2초 안에 끝나지 않으면 `timeout` 이고, 그 검사가 아직 멈춰 있으면 새로 시작하지
+  않는다. 응답에는 경로·크기·오류 문구를 넣지 않는다.
+
+compose 의 healthcheck 와 Caddy 의 `health_uri` 는 **계속 `/healthz`** 를 본다. 디스크가 찼다고
+Caddy 가 upstream 을 빼면 취소와 조회까지 모든 요청이 실패한다. 또 Docker 는 컨테이너가 `unhealthy` 가
+되어도 `restart: unless-stopped` 만으로는 재시작하지 않고, `depends_on: service_healthy` 는 시작
+순서만 정할 뿐 실행 중 장애를 복구하지 않는다. `/readyz` 는 외부 감시가 부르는 주소다:
+`https://<APP_DOMAIN>/readyz`.
+
+`GET /metrics` 는 Prometheus 텍스트 형식(0.0.4)이고 **관리자만** 읽는다 — 서비스 API 키 또는
+관리자의 Bearer 토큰. 다른 사용자는 403 이다. 내용: `kpubdata_builder_builds_queued`,
+`_builds_running`, `_build_workers`, `_build_queue_limit`, `_accepting_builds`, `_ready`,
+`_readiness_check{check}`, `_disk_free_bytes`, `_disk_total_bytes`(게이지),
+`_http_responses_total{status,code}`(429 와 5xx 포함, `code` 는 Builder 의 고정 어휘 또는 `other`),
+`_build_duration_seconds{mode,status}`, `_build_queue_wait_seconds`(히스토그램). 라벨에 경로·run id·
+소유자·오류 문구는 들어가지 않는다. 카운터는 프로세스가 다시 뜨면 0 부터 센다.
+
+```bash
+curl -s https://<APP_DOMAIN>/readyz
+curl -s -H "X-API-Key: $KPUBDATA_BUILDER_API_KEY" https://<APP_DOMAIN>/metrics
+```
+
+**아직 하지 않은 것(#1101):** 외부 감시 서비스의 계정, 알림 수신자와 당직 절차, 알림 임계값,
+장애 주입 리허설, Studio·Keycloak 의 합성 검사와 로그인 여정 검사, nightly·restore-test 의
+deadman 은 메인테이너의 결정과 운영 계정이 필요해 이 저장소의 변경만으로는 끝나지 않는다.
 
 ## 8. 동시성·풀·백프레셔
 
@@ -232,7 +562,7 @@ docker run --rm -p 8000:8000 \
 | 계층 | 구현 | 기본값 | 포화 시 동작 |
 | :--- | :--- | :--- | :--- |
 | HTTP 요청 | 별도 `ThreadPoolExecutor` (`kpubdata-http`) | service 기본 10, ACA template 4 | executor의 무제한 내부 queue에서 대기. 명시적 `429`가 아니므로 앞단 ingress timeout/connection limit가 필요 |
-| 비동기 build | 별도 in-process `ThreadPoolExecutor` (`kpubdata-build`) | CLI가 HTTP와 같은 worker 설정 사용(service 기본 10, ACA 4), queued job 10 | queued 상태가 10건이면 제출을 `429`로 거절. 실행 중 job은 queue 수에 포함하지 않음 |
+| 비동기 build | 별도 in-process `ThreadPoolExecutor` (`kpubdata-build`) | `KPUBDATA_BUILDER_MAX_BUILDS`, 기본 2(HTTP worker 수가 더 작으면 그 수, #1245), queued job 10 | queued 상태가 10건이면 제출을 `429`로 거절. 실행 중 job은 queue 수에 포함하지 않음 |
 | query | `BoundedSemaphore` + 요청마다 `spawn` child process | service 기본 2, ACA template 1 | permit을 기다리지 않고 즉시 `429 query_busy`; 성공·실패 후 permit 반환 |
 
 `POST /build`는 동기식이므로 전체 pipeline이 끝날 때까지 HTTP worker 하나를 점유한다.
@@ -249,6 +579,49 @@ timeout을 제한하고, 장시간 동기 호출의 클라이언트 timeout을 �
 ADR 0008은 여전히 **제안됨(Proposed)** 상태다. 현재 비동기 build pool과 active registry는
 그 ADR의 일부 방향만 선행 구현한 것이며, 취소, persistent queue, crash recovery, partial
 manifest 정책까지 승인·완료됐다는 뜻이 아니다.
+
+### 8.1 사용자별 질의 빈도와 provider 별 호출 한도 (#1245)
+
+위 상한은 모두 **서비스 전체**의 것이다. 다중 사용자 배포에서는 한 사용자가 질의를 연달아 보내면 자리가
+날 때마다 그 사용자가 가져가 다른 사용자가 `429 query_busy` 를 받고, 한 사용자의 build 가 provider 를
+많이 부르면 provider 가 서버 주소를 막아 모두가 막힌다. 두 한도가 이를 나눈다. 둘 다 **기본은 끔**이고,
+같은 방식으로 센다: 60초 안의 어느 구간에도 한도보다 많은 일이 시작되지 않는다(sliding window). 상태는
+프로세스 메모리에만 있어 재시작하면 잊는다.
+
+| 한도 | 세는 단위 | 넘으면 |
+| :--- | :--- | :--- |
+| `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` | 사용자(owner) 한 명. `POST /query`, `/warehouse/query`, `/warehouse/rows`, `/warehouse/aggregate`, `/warehouse/exports` 를 합쳐서. 단일 사용자 배포에는 적용하지 않는다 | 질의를 해석·실행하기 전에 `429 query_rate_limited` 와 `retry_after_seconds`, 같은 수의 `Retry-After` 헤더 |
+| `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` | provider 하나. 모든 사용자·build·preview·probe 를 합쳐서. kpubdata 에서 받는 page 하나 또는 probe 의 dataset 하나가 한 번 | build 는 차례를 기다린다. preview 는 `429 provider_egress_limited` + `Retry-After`, probe 는 닿지 못한 dataset 을 `not_probed` 로 |
+
+provider 호출은 kpubdata 가 하므로 Builder 는 HTTP 요청 하나하나를 보지 못한다. 첫 page 를 넘기기 전에
+모든 page 를 요청하는 kpubdata dataset(#481)은 한 호출 안에서 한꺼번에 나가고, 그 몫은 뒤의 호출들이
+기다린다 — 분 단위로는 한도가 지켜지지만 그런 dataset 의 한 호출 안에서는 지켜지지 않는다. provider 연결
+테스트(`POST /providers/{provider}/test`)는 요청 하나에 한 번이고 세지 않는다.
+
+429 를 돌려주는 다른 한도(`auth_throttled`, `probe_rate_limited`)도 이제 `Retry-After` 헤더를 함께
+보낸다. 거절은 다른 응답처럼 요청 로그의 `code` 와 `/metrics` 의 `http_responses_total{status,code}`
+에 나타난다(#1272).
+
+**측정.** `scripts/measure_query_load.py` 가 질의 경로에 부하를 걸고, 본 것을 그 기계의 정보와 함께 JSON
+으로 출력한다. 아래는 **로컬 한 번의 실행이고 배포를 대표하지 않는다** — 다른 작업이 함께 돌던 개발용
+데스크톱(load average 약 1.6)에서, HTTP·프록시 없이 프로세스 안에서 쟀다. 배포에 맞는 수는 배포할
+하드웨어와 설정에서 같은 스크립트를 돌려 정한다.
+
+```text
+$ uv run python scripts/measure_query_load.py --seconds 10
+machine: Intel Core i5-9400F (6 cores), 31.3 GiB, Linux 5.15, Python 3.12.13, DuckDB 1.5.6
+table: 200,000 rows, query: GROUP BY over 200 groups, KPUBDATA_QUERY_MAX_CONCURRENCY=2
+clients  completed  query_busy  queries/min  p50 ms  p95 ms
+1        33         0           193.1        310.7   313.9
+2        62         0           369.3        324.9   327.3
+4        62         400         369.5        324.6   327.1
+8        62         1200        368.0        326.6   328.5
+rate limiter: 3.76 µs per admission
+```
+
+질의 하나는 이 기계에서 약 0.31초이고 대부분이 child process 를 띄우는 시간이다. 처리량은 query 자리 수에서
+멈추고(자리 2 개에 분당 약 370), 그보다 많은 클라이언트는 `query_busy` 를 받는다. 사용자별 한도를 정할 때는
+배포에서 잰 분당 처리량을 동시에 질의하는 사용자 수로 나눈 값이 출발점이 된다.
 
 ## 9. 리소스 예산과 튜닝
 
@@ -276,10 +649,12 @@ query concurrency 1에서 시작한다. HTTP와 build는 같은 설정값을 받
 | 실행 단위 | 상한 | 설정 |
 | :--- | :--- | :--- |
 | HTTP worker thread | 기본 10 | `KPUBDATA_BUILDER_MAX_WORKERS` / `serve --max-workers` |
-| 동시 build (동기 `POST /build` + 비동기 job **합계**) | 기본은 HTTP worker 수, queued 10 | `KPUBDATA_BUILDER_MAX_BUILDS` / `serve --max-builds` (#1028) |
+| 동시 build (동기 `POST /build` + 비동기 job **합계**) | 기본 2(HTTP worker 수가 더 작으면 그 수), queued 10 | `KPUBDATA_BUILDER_MAX_BUILDS` / `serve --max-builds` (#1028, #1245) |
 | 동시 preview | 기본 무제한(요청 스레드가 상한) | `KPUBDATA_BUILDER_MAX_PREVIEWS` / `serve --max-previews` (#1028) |
 | build 하나 안의 source fetch thread | **build 당** 최대 4 (`_MAX_PARALLEL_SOURCES`) | 코드 상수 |
 | query child process | 기본 2 | `KPUBDATA_QUERY_MAX_CONCURRENCY` |
+| 사용자 한 명이 60초에 시작하는 질의 | **기본 끔**. 다중 사용자 배포에서만 적용. 넘으면 `429 query_rate_limited` + `Retry-After` | `KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE` (#1245) |
+| provider 하나에 60초 동안 하는 호출(모든 사용자 합계) | **기본 끔**. build 는 기다리고, preview 는 `429 provider_egress_limited` + `Retry-After`, probe 는 `not_probed` | `KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE` (#1245) |
 | query child 하나의 메모리 | **기본 무제한**. 설정하면 child 의 address space 를 제한해 초과한 질의만 실패(`400 query_failed`)하고 서버와 다른 요청은 계속된다 | `KPUBDATA_QUERY_MAX_MEMORY_MB` |
 | 동시에 도는 query child 들의 메모리 합 | **기본 없음**(개수 상한만). 설정하면 질의마다 자기 child 메모리 상한만큼 예산에서 예약하고, 예산이 모자라면 기다리지 않고 `429 query_busy` 로 거부한다. 성공·실패·timeout·취소 어느 경로로 끝나도 예약을 돌려준다. SQL·행 읽기·집계·내보내기·프로파일 모두 같은 예산을 쓴다 | `KPUBDATA_QUERY_MEMORY_BUDGET_MB` |
 | DuckDB thread | **연결 하나당** 기본 2. build 는 실행 중인 source 마다 연결 하나 | `KPUBDATA_DUCKDB_THREADS` |
@@ -318,8 +693,11 @@ query 메모리     = KPUBDATA_QUERY_MEMORY_BUDGET_MB                      (질�
 지금은 `KPUBDATA_BUILDER_MAX_BUILDS` 가 두 경로를 합친 상한이다: 한도에 닿으면 동기 build 는 자리를
 `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`(기본 30초)까지 기다리고, 그래도 없으면 요청 스레드를 돌려주며 429
 `build_queue_full` 로 답한다(#1040). 비동기 job 은 자리를 얻을 때까지 `queued` 로 남는다 — 기다리는 job 은 서비스 전체에서 `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS`(기본 10)까지이고, 넘으면 `POST /builds` 가 429 `build_queue_full` 로 답한다(#1108). `KPUBDATA_BUILDER_MAX_PREVIEWS` 를 주면 preview 도 그 수까지만
-함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 `MAX_WORKERS` 값을 따른다 — 그 값만 설정해 둔
-배포의 비동기 worker 수는 그대로이고, 이제 그 수가 두 경로 합계의 상한이다.
+함께 돌고 나머지는 기다린다. `MAX_BUILDS` 를 주지 않으면 2 이고, `MAX_WORKERS` 가 그보다 작으면 그
+값이다(#1245). 그 전에는 `MAX_WORKERS` 값(기본 10)을 따랐다 — 아래 메모리 예산은 build 2 개로 계산돼
+있는데 기본 설정으로는 10 개가 돌 수 있었고, 동기 build 10 개가 요청 스레드를 모두 잡을 수 있었다.
+production compose 는 전부터 `MAX_BUILDS=2` 를 넘기므로 바뀌지 않는다. `MAX_WORKERS` 만 크게 설정해 두고
+build 도 그만큼 돌리던 배포는 `KPUBDATA_BUILDER_MAX_BUILDS` 를 함께 적어야 한다.
 
 **1 vCPU / 2 GiB 예시.** 동시 build 를 둘로 묶고 나머지를 맞춘다.
 
@@ -356,8 +734,12 @@ build 가 실패하지 않고 느려진다. thread 8 + query 1 은 1 vCPU 를 �
 
 query worker 의 종료는 네 경로 모두에서 child process 를 남기지 않는다: 성공, 실패(child 가 스스로
 끝나지 않아도 1초 뒤 terminate), timeout(terminate 를 무시하면 kill), 요청 취소(대기 중인 요청 thread 가
-중단되면 child 도 멈춘다). 클라이언트가 연결을 끊은 것은 서버가 따로 감지하지 않는다 — 그 질의는 timeout
-까지 돌고 같은 정리를 거친다. preview(`/query`)는 SQL 결과를 `limit + 1` 행에서 자르므로 전체 결과를 만들지
+중단되면 child 도 멈춘다), 클라이언트가 떠남(#1245). 요청을 처리하는 동안 HTTP 계층이 그 연결을 지켜보고,
+query engine 은 child 를 기다리는 사이 0.1초마다 클라이언트가 연결을 닫았는지 본다. 닫았으면 child 를 멈추고
+query 자리와 메모리 예약을 돌려주며, 응답은 보내지 않는다(요청 로그와 `/metrics` 에는 상태 499). 연결을 닫은
+것은 소켓이 끝(EOF)에 닿은 것으로 판단하므로, 요청을 보낸 뒤 쓰기 쪽만 닫는(half-close) 클라이언트는 떠난 것으로
+보인다 — 브라우저·Studio·Caddy 는 그렇게 하지 않는다. Caddy 를 거치면 브라우저가 떠날 때 Caddy 가 upstream
+연결을 닫는 것으로 전달된다. preview(`/query`)는 SQL 결과를 `limit + 1` 행에서 자르므로 전체 결과를 만들지
 않고, 전체 결과 export 는 query 와 다른 timeout(`EXPORT_TIMEOUT_SECONDS`, 60초)으로 같은 메모리 예산을 쓴다.
 
 query timing은 다음 경계를 사용한다.
@@ -460,14 +842,15 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 
 | 구성 요소 | 호스팅 | 산출물 |
 | :--- | :--- | :--- |
-| Studio(프론트엔드) | Cloudflare Pages 정적 배포 | studio 저장소 (`VITE_BUILDER_API_URL`=Builder 의 공개 주소) |
+| Studio(프론트엔드) | Cloudflare Pages 정적 배포, 또는 같은 VM 의 `--profile studio` | studio 저장소 (`VITE_BUILDER_API_URL`, 컨테이너에서는 `STUDIO_BUILDER_API_URL`=Builder 의 공개 주소) |
 | Builder(백엔드) | VM 의 Docker + Caddy | `docker-compose.prod.app.yml`, `ops/caddy/Caddyfile` |
 | 상태 | VM 에 붙인 디스크 `/data` | `builder-data` 볼륨 (네트워크 FS 금지, §6) |
 | CI/CD | GitHub Actions → GHCR (이미지까지) | `.github/workflows/docker.yml` — VM 으로의 자동 배포는 없다(아래) |
 
 배포 산출물:
 
-- `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy 스택. migration/ETL/DB 없음.
+- `docker-compose.prod.app.yml` — Builder + (opt-in) Caddy, Studio 스택. migration/ETL/DB 없음. 프로필은 아래
+  "프로필과 기동 smoke" 절.
 - `ops/caddy/Caddyfile` — Cloudflare → Caddy → `builder:8000` 리버스 프록시.
 - `.env.app.example` — VM-local `.env` 템플릿(placeholder secret만). `.env`는 커밋 금지.
 - 자동 배포 워크플로(`deploy.yml`)와 rollout 스크립트는 **제거됐다**(2026-10-05). 그 워크플로가
@@ -479,13 +862,84 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
   - 릴리스: `release.yml` 이 `publish: true` 로 부른다. 릴리스 풀 리퀘스트를 머지한 경우도 같다.
   - 릴리스 태그의 이미지 digest 가 없으면 `release.yml` 의 `Image published` 작업이 실패한다(#1142).
 
-VM 최초 준비:
+VM 최초 준비. compose 파일, `ops/caddy/`, `.env.app.example` 이 필요하므로 저장소를 받아 그 안에서
+실행한다. Builder 이미지 패키지는 비공개라서 먼저 GHCR 에 로그인한다 — 패키지 읽기(`read:packages`)
+권한만 가진 토큰이면 된다.
 
 ```bash
+git clone https://github.com/kpubdata-lab/kpubdata-builder.git && cd kpubdata-builder
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
 cp .env.app.example .env   # 값 채우고 chmod 600
 docker compose -f docker-compose.prod.app.yml up -d            # IP-only
 docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TLS 진입
+docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio up -d  # Studio 도 같은 VM 에
 ```
+
+- **로그인하지 않으면 게시된 이미지가 아니다.** pull 이 `unauthorized` 로 실패하면 compose 는 멈추지 않고
+  받아 둔 저장소에서 Builder 를 빌드해 `BUILDER_IMAGE` 의 이름(`ghcr.io/...:latest`)을 붙인다. 스택은
+  뜨지만 그 이미지는 게시된 것이 아니다. `up` 의 출력에 `Pulling` 다음 `unauthorized` 와 `Building` 이
+  보이면 로그인부터 다시 한다(kpubdata-studio#900 의 리허설에서 그렇게 됐다).
+- `caddy` 프로필은 호스트의 80·443 을 쓴다. 다른 프로세스가 잡고 있으면 Caddy 가 뜨지 않는다.
+- Studio 는 Bearer 토큰만 보낸다. `STUDIO_BUILDER_API_URL` 을 채우면서 `OIDC_ISSUER` 와
+  `STUDIO_OIDC_CLIENT_ID` 를 비우면 Studio 는 로그인 화면에서 "인증 초기화에 실패했습니다" 로 멈춘다.
+  인증 서버(#1124)가 아직 없으면 `STUDIO_BUILDER_API_URL` 도 비워 데모로 띄운다.
+
+### 프로필과 기동 smoke (#692)
+
+배포는 `docker-compose.prod.app.yml` 하나에서 시작한다. 프로필은 셋이고, 함께 켤 수 있다.
+
+| 프로필 | 올라오는 것 | 이미지 |
+| :--- | :--- | :--- |
+| (없음) | Builder | `BUILDER_IMAGE`, 기본 `ghcr.io/kpubdata-lab/kpubdata-builder:latest` |
+| `caddy` | + Caddy (Cloudflare → Caddy → Builder, 80/443) | `caddy:2.8-alpine` |
+| `studio` | + Studio (nginx, `STUDIO_BIND` 기본 `127.0.0.1:8080`) | Studio 저장소의 고정된 커밋(`STUDIO_REF`)에서 빌드 |
+
+- **Studio 는 pull 하지 않고 빌드한다.** Studio 는 아직 이미지를 게시하지 않고, 태그 `v0.4.0` 은 Studio 의
+  Dockerfile 보다 오래됐다. 그래서 compose 는 `image:` 없이 Studio 저장소의 커밋 하나를 빌드한다. 첫 `up` 은
+  Studio 를 빌드하느라 몇 분 걸린다. Studio 가 이미지를 게시하면 고정된 이미지로 바꾼다.
+- **Studio 는 Builder 를 부르지 않는다. 사용자의 브라우저가 부른다**(§1). `STUDIO_BUILDER_API_URL` 은
+  브라우저가 닿는 Builder 주소이고, Studio 페이지의 오리진은 `KPUBDATA_BUILDER_ALLOWED_ORIGINS` 에 있어야 한다.
+  둘 다 비우면 Studio 는 내장 데모 데이터로 뜬다.
+- **Ask KPubData 는 기본이 꺼짐이다**(kpubdata-studio#933). `STUDIO_ASSISTANT_ENABLED` 가 `true` 가 아니면
+  Studio 는 외부 AI 로 질문도 근거도 보내지 않고, 페이지의 Content-Security-Policy `connect-src` 에도 `https:`
+  가 없다. 켜려면 `STUDIO_ASSISTANT_ENABLED=true` 와 함께 `STUDIO_ASSISTANT_ALLOWED_ORIGINS` 에 부를 수 있는
+  https origin 을 공백으로 구분해 적는다(예: `https://api.openai.com`). 켜면서 비우거나 https 가 아닌 값을
+  적으면 컨테이너가 이유를 밝히고 멈춘다. 사용자가 적은 주소는 이 목록 안에 있어야 한다.
+- **`STUDIO_ACCOUNT_URL`** 은 계정 화면(비밀번호 변경·탈퇴)이 여는 로그인 서비스의 주소다. 비우면 Studio 가
+  `<OIDC_ISSUER>/account` 를 쓴다.
+- **`STUDIO_REF` 는 위 기능이 들어간 Studio 커밋 이상이어야 한다.** 그보다 앞선 커밋(예: 이전 기본값
+  `023f0c3`)으로 빌드한 Studio 는 `ASSISTANT_*` 를 읽지 못해 사용자가 적은 아무 https 주소로 보낸다.
+  `tests/unit/test_compose_profiles_smoke.py` 가 기본값이 그 아래로 내려가면 실패시킨다.
+- **CUBRID 스택(`infra/cubrid/`)은 이 묶음에 들어오지 않는다.** CUBRID 백엔드는 퇴역이 제안돼 있다(ADR 0022,
+  #1094). 그 compose 는 그대로 두고, 아래 게시 확인에서 그 이미지가 받아지는지만 본다.
+- **Keycloak 은 이 묶음에 없다.** 인증 서버를 직접 운영할지 관리형 서비스를 쓸지는 아직 정하지 않았다
+  (#1124). 직접 운영하기로 하면 realm 설정, 영속 데이터베이스, SMTP, TLS 를 갖춘 프로필로 더한다.
+
+`Docker` 워크플로가 둘을 확인한다(`scripts/compose_profiles_smoke.py`).
+
+- **프로필별 기동** — 그 실행에서 빌드한 Builder 이미지로 각 프로필을 따로 올리고, 모든 서비스의 헬스체크가
+  통과하기를 기다린 뒤 네트워크 안에서 묻는다. Builder 는 `/healthz` 200, `/version` 이 키와 함께 200, 키 없이
+  401. `caddy` 는 Caddy 의 `/healthz` 와 Caddy 를 거친 `/version`. `studio` 는 페이지와 `/config.js`,
+  `/config.js` 에 적힌 Builder 주소, 그리고 그 주소로 페이지의 오리진을 실어 보낸 호출이 200 이고 CORS 가
+  그 오리진을 허용하는지. 같은 체인의 위조 헤더·보안 헤더·로그는 `proxy_chain_smoke.py` 가, `/data` 의
+  보존은 `data_volume_smoke.py` 가, 종료는 `shutdown_drain_smoke.py` 가 본다 — 여기서 되풀이하지 않는다.
+- **이미지 게시** — 두 compose 파일(`docker-compose.prod.app.yml`, `infra/cubrid/docker-compose.yml`)의 기본
+  이미지가 레지스트리에 있는지 묻는다. #675 처럼 아무 워크플로도 올리지 않는 태그를 기본값으로 두면 여기서
+  실패한다. Builder 의 패키지는 비공개라서 이 작업은 패키지 읽기 권한만 가진 토큰으로 로그인한다 — 로그인
+  없는 VM 에서 `ghcr.io/kpubdata-lab/kpubdata-builder` 를 받으려면 그 VM 도 로그인해야 한다.
+
+로컬에서 같은 것을 돌릴 수 있다. 호스트의 다른 Docker 네트워크가 `172.28.250.0/24` 와 겹치면
+`APP_NET_SUBNET`, `APP_NET_IP_RANGE`, `CADDY_IPV4`, `KPUBDATA_BUILDER_TRUSTED_PROXIES` 를 환경변수로 함께 바꾼다.
+
+```bash
+docker build -t kpubdata-builder:ci .
+python3 scripts/compose_profiles_smoke.py --image kpubdata-builder:ci                    # 세 프로필
+python3 scripts/compose_profiles_smoke.py --image kpubdata-builder:ci --profile studio   # 하나만
+python3 scripts/compose_profiles_smoke.py --published                                    # 게시 확인
+```
+
+이 smoke 가 보지 않는 것: 실제 인증 서버로의 로그인(OIDC), 공개 인증서를 쓰는 TLS, 문서만 보고 깨끗한 VM 에
+올리는 리허설(kpubdata-studio#900), Studio 에서 시작해 빌드 산출물까지 가는 재생 기반 end-to-end 시험.
 
 > fail-closed(§2, ADR 0006): 인증 수단이 하나도 없으면 컨테이너가 기동을 거부한다.
 > `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`는 재기동 사이에 동일 값을 유지해야 한다(ADR 0012).
@@ -505,11 +959,11 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
   `KPUBDATA_BUILDER_CUBRID_URL`, `OIDC_JWKS_URL`, `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS`)은 설정되지 않은
   것으로 돈다. `KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS` 가 없으므로 이 스택에서 `prune-cancelled --apply` 는
   `--ttl-hours` 를 직접 주지 않는 한 아무것도 지우지 않는다.
-- **켜고 끄는 셋**(`ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
-  `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)은 기본값이 있다. `OIDC_ISSUER` 가 없는 단일 사용자
-  스택에서는 꺼져 있고, `OIDC_ISSUER` 를 설정한 다중 사용자 스택에서는 `.env` 에 무엇을 적든 켜져 있다 —
-  다중 사용자 모드가 셋을 모두 강제한다(ADR 0012). 그래서 넘기지 않아서 달라지는 것은 단일 사용자 스택에서
-  이 셋을 켤 수 없다는 점이다.
+- **켜고 끄는 넷**(`ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`,
+  `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH`)은 기본값이
+  있다. `OIDC_ISSUER` 가 없는 단일 사용자 스택에서는 꺼져 있고, `OIDC_ISSUER` 를 설정한 다중 사용자 스택에서는
+  `.env` 에 무엇을 적든 켜져 있다 — 다중 사용자 모드가 넷을 모두 강제한다(ADR 0012, #1113). 그래서 넘기지
+  않아서 달라지는 것은 단일 사용자 스택에서 이 넷을 켤 수 없다는 점이다.
 - **이 스택은 SQLite 로만 돈다.** `KPUBDATA_BUILDER_STORAGE_BACKEND` 와 `KPUBDATA_BUILDER_CUBRID_URL` 은 켜라는
   뜻으로 아래 목록에 있는 것이 아니다 — CUBRID 백엔드는 퇴역 예정이다(#1093).
 
@@ -532,6 +986,7 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 - `KPUBDATA_BUILDER_STORAGE_BACKEND`
 - `KPUBDATA_BUILDER_CUBRID_URL`
 - `KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT`
+- `KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH`
 - `HF_TOKEN`
 - `KAGGLE_USERNAME`
 - `KAGGLE_KEY`
@@ -697,7 +1152,15 @@ python3 scripts/check_cloudflare_ranges.py --write   # 파일의 목록을 다�
 4. **롤백:** 이전 커밋의 `ops/caddy/trusted_proxies.caddy` 로 되돌리고 2를 다시 한다.
    Caddy 가 새 설정을 읽지 못하면 `caddy reload` 가 실패하고 이전 설정으로 계속 동작한다.
 
-이 비교를 정기적으로 돌리는 워크플로는 아직 없다. 지금은 사람이 돌린다.
+이 비교는 `cloudflare-ranges.yml` 워크플로가 매일(05:17 UTC) `scripts/cloudflare_ranges_watch.py`
+로 돌린다(#1236). 파일이 공개 목록과 다르면 `chore(deploy): Cloudflare's published ranges
+differ from the Caddy trusted proxies` 이슈를 **하나** 연다. 차이가 달라지면 같은 이슈의
+목록을 고쳐 쓰고 댓글을 달며, 같으면 아무것도 쓰지 않는다. 차이가 사라져도 이슈를 닫지
+않는다 — 파일을 고친 풀 리퀘스트가 배포되고 방화벽 목록까지 맞춰졌는지는 사람이 확인한다.
+공개 목록을 읽지 못하면(네트워크 오류, 빈 목록) 워크플로가 실패한다. pull request 에서는
+비교해 출력만 하고 이슈를 쓰지 않는다. 권한은 `contents: read`, `issues: write` 이고
+`GITHUB_TOKEN` 외의 secret 은 쓰지 않는다. 이 워크플로는 파일을 고치거나 풀 리퀘스트를
+열지 않는다.
 
 #### 배포 후 확인
 
@@ -708,6 +1171,29 @@ Cloudflare 를 거친 실제 요청으로 한 번 확인한다. 서로 다른 �
 2. 다른 쪽에서 같은 시각에 요청해 `401`(또는 올바른 키로 `200`)을 받는다. 여기서도
    `429` 가 나오면 두 클라이언트가 한 버킷에 있는 것이다 — Caddy 가 Cloudflare 엣지를
    신뢰하지 못하고 있다(대역 목록, `caddy reload` 여부를 본다).
+
+#### 서버 시계 (chrony)
+
+로그인 토큰(Keycloak·Google ID 토큰)의 `exp`·`nbf`·`iat` 는 서버 시계로 검사한다.
+Builder 는 60초의 여유(leeway)만 둔다(`service/auth.py`). 서버 시계가 그보다 어긋나면
+올바른 토큰이 `401` 로 거절되고, 그 거절은 인증 실패로 세어져 `429 auth_throttled` 까지
+이어질 수 있다. 증상은 "일부 또는 전체 사용자가 갑자기 로그인되지 않는다" 이며 키·대역
+문제와 구별되지 않으므로 시계를 먼저 본다.
+
+```bash
+chronyc tracking      # System time 이 NTP 시각과 얼마나 다른가, Leap status 가 Normal 인가
+chronyc sources -v    # 가리키는 서버 중 하나에 '*'(동기화 중)가 있는가
+timedatectl           # 'System clock synchronized: yes', 'NTP service: active'
+```
+
+- **경보 기준(제안).** `chronyc tracking` 의 `System time` 이 **0.5초** 를 넘거나 `Leap status`
+  가 `Normal` 이 아니거나 `chronyc sources` 에 `*` 가 없는 상태가 5분 이상 가면 알린다. 60초
+  여유의 한참 앞에서 잡으려는 값이다. 이 숫자는 측정 없이 정한 것이다.
+- **고치기.** `sudo systemctl restart chrony` 뒤 `sudo chronyc makestep` 으로 한 번에 맞춘다.
+  VM 이 일시 정지됐다 깨어난 경우 시계가 크게 뛰므로 그때도 같다.
+- 컨테이너는 호스트 시계를 쓴다. 시계는 컨테이너 안이 아니라 VM 에서 맞춘다.
+- 경보를 어디에서 받을지(메트릭 수집기, 메일)는 배포 대상이 정해져야 고를 수 있다
+  (kpubdata-lab/kpubdata#812). 위 기준을 실제 배포에서 적용하고 이슈 #1236 에 결과를 남긴다.
 
 #### 응답 보안 헤더 (#1107)
 

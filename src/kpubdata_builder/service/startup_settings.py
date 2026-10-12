@@ -39,6 +39,7 @@ from .auth import oidc_enabled
 from .build_limits import resolve_max_queued_builds
 from .http import shutdown_grace_seconds
 from .ownership import multi_user_mode
+from .readiness import disk_thresholds
 
 #: Settings ``serve`` reads itself, each with a flag that takes precedence. A value the
 #: flag overrides is never read, so the caller says which those are.
@@ -125,6 +126,14 @@ FALLS_BACK: dict[str, tuple[Callable[[str], bool], str]] = {
     "KPUBDATA_BUILDER_MAX_UPLOAD_BYTES": (_is_positive_integer, "an integer > 0"),
     "KPUBDATA_BUILDER_UPLOAD_MAX_FILES": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER": (_is_non_negative_integer, "an integer >= 0"),
+    "KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE": (_is_non_negative_integer, "an integer >= 0"),
+    "KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE": (
+        _is_non_negative_integer,
+        "an integer >= 0",
+    ),
+    "KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES": (_is_non_negative_integer, "an integer >= 0"),
+    "KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES": (_is_non_negative_integer, "an integer >= 0"),
+    "KPUBDATA_BUILDER_BUILD_MIN_FREE_MB": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS": (
         _is_non_negative_number,
         "a finite number >= 0",
@@ -145,6 +154,7 @@ FLAGS: dict[str, tuple[bool, frozenset[str]]] = {
         frozenset({"true", "1", "yes", "on"}),
     ),
     "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": (False, frozenset({"true", "1"})),
+    "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH": (False, frozenset({"true", "1"})),
 }
 #: The words that say off on purpose. Any other word is off too, and gets a warning.
 _OFF_WORDS = frozenset({"false", "0"})
@@ -165,6 +175,8 @@ REFUSED: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY",
         "KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT",
         "OIDC_JWKS_TTL",
+        "KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT",
+        "KPUBDATA_BUILDER_READY_MIN_FREE_MB",
     }
 )
 
@@ -213,6 +225,7 @@ _READERS: tuple[Callable[[], object], ...] = (
     _master_key,
     _provider_test_timeout,
     _jwks_ttl,
+    disk_thresholds,
 )
 
 
@@ -252,13 +265,15 @@ def forced_on(name: str) -> bool:
 
     Sign-in through OIDC makes a deployment multi-user, and so does
     ``ENFORCE_OWNERSHIP``; a multi-user deployment keeps each user's runs apart and
-    uses nobody's credentials but the requester's (ADR 0012).
+    uses nobody's credentials but the requester's (ADR 0012), and publishes only what its
+    personal-data scan passed (#1113).
     """
     if name == "ENFORCE_OWNERSHIP":
         return oidc_enabled()
     if name in (
         "KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL",
         "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL",
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH",
     ):
         return multi_user_mode()
     return False

@@ -175,8 +175,112 @@ STORES: tuple[StateStore, ...] = (
 #: Modules that open SQLite without owning a store, and why.
 NOT_STORES: dict[str, str] = {
     "store/schema_version.py": "reads a store's version on a read-only connection",
+    "store/state_backup.py": "copies every store and checks the copies (#1095)",
     "warehouse/backup.py": "copies the catalog and reads the copy",
 }
+
+
+#: What a path under the output directory is to a backup (#1095). ``files``: copied into
+#: the archive byte for byte. ``left_out``: not copied, for the reason given — a lock, a
+#: file the moment made, or something rebuilt from what is copied.
+PathKind = Literal["files", "left_out"]
+
+
+@dataclass(frozen=True)
+class OutputPath:
+    """Something other than a SQLite store that Builder keeps under the output directory."""
+
+    #: What it holds, as the deployment guide says it.
+    name: str
+    #: The path relative to the output directory, as ``fnmatch`` reads it; one entry
+    #: directly under the output directory or under ``.service/``.
+    pattern: str
+    is_dir: bool
+    kind: PathKind
+    #: What it is to a backup, as the deployment guide says it.
+    why: str
+
+
+#: Every file and directory beside the SQLite stores, as the code writes them. A backup
+#: refuses an output directory holding anything that is on neither list
+#: (``store/state_backup.py``): a backup that leaves out what nobody listed is the
+#: incomplete backup it exists to prevent. The warehouse, when it is a directory of the
+#: output directory, is backed up with the catalog's own rules (``warehouse/backup.py``).
+OUTPUT_PATHS: tuple[OutputPath, ...] = (
+    OutputPath(
+        name="run 작업 공간",
+        pattern="[!._]*",
+        is_dir=True,
+        kind="files",
+        why="run 마다 하나. manifest(정본), BuildSpec 사본, Bronze·Silver·Gold 산출물",
+    ),
+    OutputPath(
+        name="큰 업로드의 내용",
+        pattern=".service/uploads.sqlite3.blobs",
+        is_dir=True,
+        kind="files",
+        why="업로드 저장소의 행이 `blob_path` 와 SHA-256 으로 가리킨다",
+    ),
+    OutputPath(
+        name="내보내기 기록과 묶음",
+        pattern=".service/exports",
+        is_dir=True,
+        kind="files",
+        why="내보내기마다 디렉터리 하나",
+    ),
+    OutputPath(
+        name="사용자 삭제 기록(tombstone)",
+        pattern=".service/deleted-users",
+        is_dir=True,
+        kind="files",
+        why="`delete-user` 가 사용자마다 남기는 삭제 journal. 서버는 이것이 있는 사용자를 거부하고, `restore` 는 지금의 기록을 복원하는 상태로 옮긴 뒤 그 사용자의 데이터를 다시 지운다(#1102)",
+    ),
+    OutputPath(
+        name="상태 잠금",
+        pattern=".state.lock",
+        is_dir=False,
+        kind="left_out",
+        why="백업·복구 중에 쓰기를 막는 잠금 파일. 내용이 없다",
+    ),
+    OutputPath(
+        name="readiness 확인 파일",
+        pattern=".readyz-*",
+        is_dir=False,
+        kind="left_out",
+        why="`/readyz` 가 디스크에 쓸 수 있는지 볼 때 잠깐 만드는 파일",
+    ),
+    OutputPath(
+        name="이전 빌드 인덱스",
+        pattern="_builds.sqlite.bak*",
+        is_dir=False,
+        kind="left_out",
+        why="`rebuild-index` 가 바꾸기 전의 인덱스. 인덱스는 manifest 에서 다시 만든다",
+    ),
+    OutputPath(
+        name="만들던 빌드 인덱스",
+        pattern="_builds.sqlite.tmp*",
+        is_dir=False,
+        kind="left_out",
+        why="`rebuild-index` 가 쓰는 도중의 인덱스",
+    ),
+    OutputPath(
+        name="지우던 run",
+        pattern=".run-gc",
+        is_dir=True,
+        kind="left_out",
+        why="`prune-runs --apply` 가 지우려고 옮겨 둔 run. 중단됐으면 다음 `prune-runs --apply` 가 마저 지운다(#1099)",
+    ),
+    OutputPath(
+        name="복구 전 상태",
+        pattern=".before-restore-*",
+        is_dir=True,
+        kind="left_out",
+        why="`restore` 가 옮겨 둔 그 전의 상태. 확인한 뒤 운영자가 지운다",
+    ),
+)
+
+#: The files SQLite keeps beside a store. The online backup copies what is in them.
+SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 
 
 def unversioned_without_reason(stores: tuple[StateStore, ...] = STORES) -> list[str]:
@@ -191,8 +295,12 @@ def unversioned_without_reason(stores: tuple[StateStore, ...] = STORES) -> list[
 
 __all__ = [
     "NOT_STORES",
+    "OUTPUT_PATHS",
+    "SQLITE_SIDECARS",
     "STORES",
     "JournalMode",
+    "OutputPath",
+    "PathKind",
     "Root",
     "StateStore",
     "Versioning",

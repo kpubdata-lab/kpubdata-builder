@@ -52,6 +52,7 @@ from ..uploads import (
 from ..uploads.store import SCHEMA as uploads_schema
 from ..warehouse import CATALOG_FILENAME, TableCatalog
 from . import datasets as datasets_service
+from . import metrics as metrics_service
 from . import monitoring as monitoring_service
 from . import ownership as ownership_module
 from . import (
@@ -72,7 +73,7 @@ from .build_slots import BuildSlots
 from .builds_api import BuildArtifactsApiService
 from .datasets_api import DatasetsApiService
 from .exports_api import ExportsApiService
-from .jobs import AsyncBuildExecutor
+from .jobs import AsyncBuildExecutor, RunCancellation
 from .monitoring_api import MonitoringApiService
 from .pii_reads import PiiLookup, client_pii_lookup
 from .probe_limit import ProbeLimiter
@@ -89,7 +90,9 @@ from .providers import (
 from .providers_service import ProvidersService
 from .publish_api import PublishApiService, VisibilityProbe
 from .quality_api import ISSUE_STATUSES, QualityApiService
+from .query_rate import QueryRateLimiter
 from .query_service_api import QueryApiService
+from .readiness import ReadinessProbe
 from .redistribution import (
     BuildVerdict,
     TermsLookup,
@@ -97,7 +100,7 @@ from .redistribution import (
     forbidden_response,
     kpubdata_terms,
 )
-from .responses import FileResponse, ServiceResponse
+from .responses import FileResponse, ServiceResponse, TextResponse
 from .revisions import SCHEMA as revisions_schema
 from .revisions import RevisionStore
 from .revisions_api import RevisionsApiService
@@ -109,8 +112,14 @@ from .routes.core import MAX_PREVIEW_LIMIT as MAX_PREVIEW_LIMIT
 from .spec_api import SpecApiService
 from .stages_api import StagesApiService
 from .uploads_service import ExpiringUploads, UploadsService
+from .user_deletion import OwnerDeletionProbe, is_deleted
+from .user_ledger import (
+    REJECTED_BODY,
+    LedgerUnavailableError,
+    UserLedger,
+    admission_refusal,
+)
 from .user_ledger import SCHEMA as user_ledger_schema
-from .user_ledger import LedgerUnavailableError, UserLedger, admission_refusal
 from .warehouse_api import WarehouseApiService
 
 logger = logging.getLogger(__name__)
@@ -508,7 +517,27 @@ _BuildListEntry = dict[str, str | None]
 # 1.114.0 -> 1.115.0: a cancelled run's manifest records where and why it was cancelled,
 #   and a run that ended without a manifest is in the build index — listed by GET /builds
 #   and GET /admin/runs with a fixed one-line reason (#1120, additive; no schema changes).
-API_CONTRACT_VERSION = "1.115.0"
+# 1.115.0 -> 1.116.0: GET /admin/runs gives each run's error_code and error_stage, from
+#   Builder's vocabulary only; a single-user deployment marks the runs a restart
+#   interrupted as failed too (#1120, additive).
+# 1.116.0 -> 1.117.0: GET /readyz, readiness apart from liveness, without
+#   authentication; GET /metrics, the Prometheus text page, for administrators (#1101,
+#   additive).
+# 1.117.0 -> 1.118.0: POST /builds may answer 503 disk_space_low and, in a multi-user
+#   deployment, 409 run_storage_quota_exceeded; both are off until configured (#1099,
+#   additive).
+# 1.118.0 -> 1.119.0: in a multi-user deployment the query operations answer 429
+#   query_rate_limited past KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE; POST /preview answers
+#   429 provider_egress_limited past KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE; a 429
+#   with retry_after_seconds carries Retry-After (#1245, additive).
+# 1.119.0 -> 1.120.0: CatalogDataset gains query_parameters, the dataset's query
+#   definition read from DatasetRef.to_dict(); null when kpubdata gives none (#1281,
+#   additive).
+# 1.120.0 -> 1.121.0: with the hosted personal-data gate on (multi-user, or
+#   KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH), readiness and publish report the
+#   pii_scan_* blockers and a refused publish is audited as refused:<code> (#1113,
+#   additive).
+API_CONTRACT_VERSION = "1.121.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
@@ -600,6 +629,8 @@ class BuilderService:
         self._latency_recorder = monitoring_service.LatencyRecorder()
         # Auth failure throttle. Same isolation reason as latency recorder.
         self._auth_throttle = AuthFailureThrottle()
+        # Per-user query rate (#1245), per instance for the same reason.
+        self._query_rate = QueryRateLimiter()
         # Durable idempotency receipt for external publish side effects. Object
         # creation does not create files; SQLite lazily initialized on first POST claim.
         self._publish_receipts = publish_service.PublishReceiptStore(output_root)
@@ -739,6 +770,13 @@ class BuilderService:
             build_index=self._build_index,
             async_builds=self._async_builds,
             latency_recorder=self._latency_recorder,
+        )
+        # GET /readyz and the gauges of GET /metrics (#1101): reads only, at most once
+        # per few seconds whoever asks.
+        self._readiness = ReadinessProbe(
+            output_root=self._output_root,
+            build_index=self._build_index,
+            async_builds=self._async_builds,
         )
         # Spec authoring (#596). Same credential path as the build: `open_client`.
         self._spec_api = SpecApiService(
@@ -1221,7 +1259,17 @@ class BuilderService:
         cancellation: CancellationProbe | None = None,
         if_absent: bool = False,
     ) -> ServiceResponse:
-        """Execute the pipeline and return the result (see ``BuildRunsApiService.build``)."""
+        """Execute the pipeline and return the result (see ``BuildRunsApiService.build``).
+
+        A synchronous build of a user is given a probe that stops it once the user is
+        deleted (#1102): one that began before the deletion must not write a run after it.
+        """
+        owner = manifest_owner_id if manifest_owner_id is not None else owner_id
+        if cancellation is None and owner is not None:
+            latch = RunCancellation()
+            cancellation = OwnerDeletionProbe(
+                latch, lambda: self.owner_deleted(owner), latch.request
+            )
         return self._build_runs.build(
             spec_yaml,
             run_id=run_id,
@@ -1249,7 +1297,47 @@ class BuilderService:
 
         The runner is ``self._run_build_job``, looked up now, so a subclass override
         is what the worker calls.
+
+        A deleted owner's build is refused before anything is recorded (#1102), and the
+        deletion is read again once the job is accepted: a request let in just before
+        the deletion began is cancelled there. The submission is recorded before that
+        second check, so a deletion either sees the run or the check sees the deletion.
         """
+        if owner_id is not None and self.owner_deleted(owner_id):
+            return ServiceResponse(403, dict(REJECTED_BODY))
+        response = self._submit_build(
+            spec_yaml,
+            run_id=run_id,
+            created_by=created_by,
+            owner_id=owner_id,
+            retry_of=retry_of,
+            if_absent=if_absent,
+        )
+        accepted = response.body.get("run_id")
+        if (
+            response.status_code == 202
+            and owner_id is not None
+            and isinstance(accepted, str)
+            and self.owner_deleted(owner_id)
+        ):
+            self.cancel_build(accepted)
+            return ServiceResponse(403, dict(REJECTED_BODY))
+        return response
+
+    def owner_deleted(self, owner_id: str) -> bool:
+        """Whether ``owner_id``'s deletion has begun (#1102): read from disk each time."""
+        return is_deleted(self._output_root, owner_id)
+
+    def _submit_build(
+        self,
+        spec_yaml: str,
+        *,
+        run_id: str | None,
+        created_by: str | None,
+        owner_id: str | None,
+        retry_of: str | None,
+        if_absent: bool,
+    ) -> ServiceResponse:
         return self._build_runs.submit_build(
             spec_yaml,
             runner=self._run_build_job,
@@ -1300,14 +1388,15 @@ class BuilderService:
         return self._build_runs.drain_for_shutdown(grace_seconds, cancel_seconds)
 
     def mark_interrupted_runs(self) -> tuple[str, ...]:
-        """At startup of a multi-user deployment, fail runs a restart interrupted (#683).
+        """At startup, fail the runs a restart interrupted (#683, #1120).
 
-        A single-user deployment keeps its stored and environment keys, so nothing is
-        lost with a restart and nothing is marked.
+        A multi-user deployment fails them as ``credentials_required``: their keys were
+        held in memory. A single-user deployment keeps its stored and environment keys,
+        but its job registry is in memory too, so an interrupted run is not resumed
+        there either; it used to be left looking unfinished for good, with no record of
+        why it ended. Both record the ending as ``interrupted``.
         """
-        if not ownership_module.multi_user_mode():
-            return ()
-        return self._build_runs.mark_interrupted_runs()
+        return self._build_runs.mark_interrupted_runs(keys_lost=ownership_module.multi_user_mode())
 
     def _record_run_cancelled(self, run_id: str) -> None:
         """Record the cancelled terminal event (#481); never raises."""
@@ -1426,6 +1515,18 @@ class BuilderService:
             # The submission asked for new tables (#1223).
             build = partial(build, if_absent=True)
         try:
+            if manifest_owner_id is not None:
+                owner = manifest_owner_id
+                if self.owner_deleted(owner):
+                    # Deleted while the job waited (#1102): it never starts. The registry
+                    # ends it as cancelled, and the hook records why.
+                    self._async_builds.request_cancel(run_id)
+                    return ServiceResponse(409, {"error": "build cancelled", "run_id": run_id})
+                cancellation = OwnerDeletionProbe(
+                    cancellation,
+                    lambda: self.owner_deleted(owner),
+                    lambda: self._async_builds.request_cancel(run_id),
+                )
             with request_credentials.request_scope(keys):
                 # The keys were there when the job was submitted (#1070) and are not
                 # now: it waited in the queue longer than a job's keys are kept. Without
@@ -1612,6 +1713,30 @@ class BuilderService:
             )
         return response
 
+    def readyz(self) -> ServiceResponse:
+        """GET /readyz (#1101): 200 when every check is ok, else 503, same body shape."""
+        readiness = self._readiness.check()
+        return ServiceResponse(200 if readiness.ready else 503, readiness.body())
+
+    def metrics_page(self) -> TextResponse:
+        """GET /metrics (#1101): the Prometheus text page. The caller checks the role."""
+        readiness = self._readiness.check()
+        stats = self._async_builds.stats()
+        page = metrics_service.render(
+            metrics_service.Gauges(
+                queued=stats.queued,
+                running=stats.running,
+                capacity=stats.capacity,
+                max_queued=self._async_builds.max_queue_size,
+                ready=readiness.ready,
+                checks=readiness.checks,
+                accepting_builds=readiness.accepting_builds,
+                disk_free_bytes=None if readiness.disk is None else readiness.disk.free_bytes,
+                disk_total_bytes=None if readiness.disk is None else readiness.disk.total_bytes,
+            )
+        )
+        return TextResponse(200, page, metrics_service.CONTENT_TYPE)
+
     def monitoring_summary(self) -> ServiceResponse:
         """Query queue/build/latency summary (#516)."""
         return self._monitoring_api.monitoring_summary()
@@ -1704,7 +1829,7 @@ def dispatch(
     client_id: str | None = None,
     provider_key_headers: Sequence[str] = (),
     publish_credential_headers: Sequence[str] = (),
-) -> ServiceResponse | FileResponse:
+) -> ServiceResponse | FileResponse | TextResponse:
     """Call ``_dispatch_impl`` and record processing time as Monitoring latency
     sample (#516).
 
@@ -1847,7 +1972,7 @@ def _dispatch_impl(
     raw_body: bytes | None = None,
     client_id: str | None = None,
     header_refusal: ServiceResponse | None = None,
-) -> ServiceResponse | FileResponse:
+) -> ServiceResponse | FileResponse | TextResponse:
     """Route (method, path) to BuilderService operation.
 
     GET /healthz returns without authentication (#372); all other endpoints must
@@ -1870,10 +1995,19 @@ def _dispatch_impl(
     # /healthz exposed without authentication outside auth gate (#372).
     if method == "GET" and path == "/healthz":
         return ServiceResponse(200, {"status": "ok"})
+    # Readiness is a probe too (#1101): an external check carries no credential. Its
+    # body names checks and states only — no path, size or error text.
+    if method == "GET" and path == "/readyz":
+        return service.readyz()
 
     principal = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
     if isinstance(principal, ServiceResponse):
         return principal
+
+    # A deleted user (#1102) is refused as a rejected sign-up, before the ledger is read:
+    # reading it would record them anew, as a first sign-in.
+    if principal.owner_id is not None and service.owner_deleted(principal.owner_id):
+        return ServiceResponse(403, dict(REJECTED_BODY))
 
     # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
     # administrator; a rejected one is shut out even when a list admits them.
@@ -1902,6 +2036,12 @@ def _dispatch_impl(
     if header_refusal is not None:
         return header_refusal
 
+    # A user's query past their rate (#1245): refused before the body is looked at, so
+    # a refused query costs no resolution, no validation and no query slot.
+    rate_refusal = service._query_rate.refusal(method, path, principal.owner_id)
+    if rate_refusal is not None:
+        return rate_refusal
+
     # /uploads (#498) is the only endpoint needing binary body (raw_body), so it's
     # called directly here rather than added to standard RouteAdapter list (JSON
     # body only) — not restoring past monolithic dispatch, but this endpoint's
@@ -1925,6 +2065,7 @@ __all__ = [
     "BuilderService",
     "FileResponse",
     "ServiceResponse",
+    "TextResponse",
     "dispatch",
     "refuse_before_body",
 ]

@@ -14,6 +14,7 @@ import pytest
 
 from kpubdata_builder import settings_catalog as catalog
 from kpubdata_builder.cli import main
+from kpubdata_builder.egress import provider_calls_per_minute
 from kpubdata_builder.ingestion.url_fetch import default_max_fetch_bytes
 from kpubdata_builder.service import startup_settings
 from kpubdata_builder.service.auth_throttle import AuthFailureThrottle
@@ -22,7 +23,13 @@ from kpubdata_builder.service.build_limits import (
     resolve_owner_build_limit,
 )
 from kpubdata_builder.service.probe_limit import probe_interval_seconds
+from kpubdata_builder.service.query_rate import query_rate_per_minute
 from kpubdata_builder.service.request_credentials import _ttl_seconds
+from kpubdata_builder.service.run_storage import (
+    resolve_build_min_free_bytes,
+    resolve_owner_storage_limit,
+    resolve_storage_reserve,
+)
 from kpubdata_builder.service.startup_settings import check_settings
 from kpubdata_builder.service.upload_limits import resolve_upload_limits
 from kpubdata_builder.stages.bronze.checkpoint import checkpoint_max_age_seconds
@@ -41,6 +48,7 @@ _NOT_CHECKED: dict[str, str] = {
     "OIDC_ALLOWED_SUBJECTS": "validate_oidc_config",
     "OIDC_ALLOWED_EMAILS": "validate_oidc_config",
     "KPUBDATA_BUILDER_CANCELLED_RUN_TTL_HOURS": "read by prune-cancelled, not by serve",
+    "KPUBDATA_BUILDER_RUN_RETENTION_DAYS": "read by prune-runs, not by serve",
     "KPUBDATA_BUILDER_WAREHOUSE": "a path, created on first use",
     "KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT": "a path, resolved on publish",
     "HF_TOKEN": "a secret",
@@ -273,6 +281,36 @@ _FALLBACK_CASES: list[tuple[str, Callable[[], object], list[str], list[str]]] = 
         ["7"],
     ),
     (
+        "KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE",
+        query_rate_per_minute,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE",
+        provider_calls_per_minute,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_RUN_STORAGE_MAX_BYTES",
+        resolve_owner_storage_limit,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_RUN_STORAGE_RESERVE_BYTES",
+        resolve_storage_reserve,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
+        "KPUBDATA_BUILDER_BUILD_MIN_FREE_MB",
+        resolve_build_min_free_bytes,
+        ["many", "-1", "1.5"],
+        ["7"],
+    ),
+    (
         "KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES",
         _upload_limit("max_total_bytes"),
         ["big", "-1"],
@@ -330,6 +368,7 @@ def _flag_readers() -> dict[str, Callable[[], bool]]:
     from kpubdata_builder.service import publish_credentials
     from kpubdata_builder.service.auth import _is_dev_mode, _ownership_enforced
     from kpubdata_builder.service.providers import require_own_provider_credential
+    from kpubdata_builder.service.publish_pii_gate import pii_gate_required
 
     return {
         "KPUBDATA_BUILDER_DEV_MODE": _is_dev_mode,
@@ -339,6 +378,7 @@ def _flag_readers() -> dict[str, Callable[[], bool]]:
         "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": lambda: (
             not publish_credentials.server_fallback_allowed()
         ),
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH": pii_gate_required,
     }
 
 
@@ -556,6 +596,7 @@ def _effective() -> dict[str, Callable[[], bool]]:
     from kpubdata_builder.service.auth import _is_dev_mode
     from kpubdata_builder.service.ownership import enforce_ownership
     from kpubdata_builder.service.providers import require_own_provider_credential
+    from kpubdata_builder.service.publish_pii_gate import pii_gate_required
 
     return {
         "KPUBDATA_BUILDER_DEV_MODE": _is_dev_mode,
@@ -564,6 +605,7 @@ def _effective() -> dict[str, Callable[[], bool]]:
         "KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL": lambda: (
             not publish_credentials.server_fallback_allowed()
         ),
+        "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH": pii_gate_required,
     }
 
 

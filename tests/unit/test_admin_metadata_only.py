@@ -159,9 +159,18 @@ def test_the_admin_view_is_metadata_with_the_reason(
     (row,) = [
         r for r in cast(list[dict[str, JsonValue]], response.body["runs"]) if r["run_id"] == run
     ]
-    assert set(row) == {"run_id", "status", "started_at", "finished_at", "owner_id", "error"}
+    assert set(row) == {
+        "run_id",
+        "status",
+        "started_at",
+        "finished_at",
+        "owner_id",
+        "error",
+        "error_code",
+        "error_stage",
+    }
     assert row["status"] == "ok"
-    assert row["error"] is None
+    assert (row["error"], row["error_code"], row["error_stage"]) == (None, None, None)
     # #948: `count` is this response's runs; `total` the runs before `limit`.
     runs = cast(list[JsonValue], response.body["runs"])
     assert response.body["count"] == len(runs)

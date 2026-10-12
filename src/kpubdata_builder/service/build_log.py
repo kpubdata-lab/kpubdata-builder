@@ -32,7 +32,7 @@ import time
 from datetime import datetime, timezone
 from typing import Literal
 
-from . import request_log
+from . import metrics, request_log
 
 __all__ = ["BuildMode", "BuildOutcome", "ended", "run_reference", "started"]
 
@@ -148,9 +148,13 @@ def ended(
         error_type: The class name of an exception nothing handled. Never its text.
         time_limit: The build was cancelled because it ran past the time limit.
     """
+    seconds = time.monotonic() - started_at
+    # The duration histogram of ``GET /metrics`` (#1101): every build that writes this
+    # line, sync or async, and nothing else.
+    metrics.observe_build(mode, status, seconds)
     fields: dict[str, object] = {
         "status": status if status in _OUTCOMES else None,
-        "duration_ms": round((time.monotonic() - started_at) * 1000, 1),
+        "duration_ms": round(seconds * 1000, 1),
     }
     kept = request_log.code_of(code)
     if kept is not None:

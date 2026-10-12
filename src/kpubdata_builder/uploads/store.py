@@ -474,6 +474,12 @@ class SQLiteUploadRepository:
                 self._remove_blob(str(row[1]))
         return len(rows)
 
+    def owners(self) -> frozenset[str]:
+        """Every owner with an upload (#1102)."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("SELECT DISTINCT owner_id FROM uploads").fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
     def list_for_owner(self, owner_id: str) -> Sequence[UploadMetadata]:
         self._validate_owner_id(owner_id)
         with self._lock, self._connect() as connection:

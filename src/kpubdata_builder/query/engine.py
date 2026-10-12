@@ -22,6 +22,7 @@ from typing import cast
 
 from ..spec import JsonValue
 from ..tabular.duckdb_runtime import RESOURCE_LIMIT_MESSAGE
+from . import cancellation
 from .models import QueryResult
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,14 @@ class QueryTimeoutError(QueryExecutionError):
     pass
 
 
+class QueryCancelledError(QueryExecutionError):
+    """The client that asked for the query closed the connection (#1245).
+
+    A subclass of ``QueryExecutionError`` so that every route already handles it; the
+    HTTP layer sends nothing, because nobody is there to read it.
+    """
+
+
 class QueryResourceLimitError(QueryExecutionError):
     """The query needed more memory or spill disk than the deployment allows (#961).
 
@@ -45,6 +54,8 @@ class QueryResourceLimitError(QueryExecutionError):
 
 
 MAX_QUERY_RESPONSE_BYTES = 8 * 1024 * 1024
+#: How often a query inside a request looks whether its requester has gone (#1245).
+CANCEL_CHECK_SECONDS = 0.1
 
 WorkerFn = Callable[[Connection, str, str, int, int], None]
 
@@ -213,7 +224,7 @@ class QueryEngine:
             process.start()
             process_started = True
             child.close()
-            if not parent.poll(self._timeout_seconds):
+            if not self._wait_for_answer(parent):
                 self._stop_process(process)
                 raise QueryTimeoutError("query execution timed out")
             try:
@@ -280,6 +291,29 @@ class QueryEngine:
             # The child's spill files go with it, however it ended.
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def _wait_for_answer(self, parent: Connection) -> bool:
+        """Whether the child answered before the timeout.
+
+        Inside a request's watch (#1245) the wait is cut into short ones, and between
+        them the watch is asked whether the requester has gone. Outside one it is one
+        wait, as before.
+
+        Raises:
+            QueryCancelledError: The requester has gone; the caller stops the child.
+        """
+        watch = cancellation.current()
+        if watch is None:
+            return parent.poll(self._timeout_seconds)
+        deadline = time.monotonic() + self._timeout_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if parent.poll(min(remaining, CANCEL_CHECK_SECONDS)):
+                return True
+            if watch.requester_gone():
+                raise QueryCancelledError("the requester closed the connection")
+
     @staticmethod
     def _stop_process(process: BaseProcess) -> None:
         if not process.is_alive():
@@ -295,7 +329,9 @@ class QueryEngine:
 
 
 __all__ = [
+    "CANCEL_CHECK_SECONDS",
     "MAX_QUERY_RESPONSE_BYTES",
+    "QueryCancelledError",
     "QueryEngine",
     "QueryExecutionError",
     "QueryResourceLimitError",

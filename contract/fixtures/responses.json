@@ -1,9 +1,53 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.115.0",
+  "contract_version": "1.121.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
+    {
+      "operation_id": "readyz",
+      "method": "GET",
+      "path": "/readyz",
+      "status": 200,
+      "example": "Ready",
+      "current": {
+        "status": "ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "ok",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "with_additive_fields": {
+        "status": "ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "ok",
+          "workers": "ok",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "accepting_builds": true,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.checks",
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "ok",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "broken_path": "$.status"
+    },
     {
       "operation_id": "getVersion",
       "method": "GET",
@@ -77,6 +121,21 @@
                     "example": "서울"
                   }
                 ],
+                "query_parameters": [
+                  {
+                    "name": "sidoName",
+                    "alias": null,
+                    "type": "string",
+                    "required": true,
+                    "enum": [
+                      "서울",
+                      "부산",
+                      "대구"
+                    ],
+                    "description": "조회할 시·도",
+                    "example": "서울"
+                  }
+                ],
                 "application": {
                   "required": true,
                   "url": "https://www.data.go.kr/data/15073861/openapi.do"
@@ -95,6 +154,7 @@
                 "query_support": null,
                 "requires_service_key": true,
                 "request_parameters": [],
+                "query_parameters": null,
                 "application": null
               }
             ]
@@ -117,6 +177,7 @@
                 "query_support": null,
                 "requires_service_key": false,
                 "request_parameters": [],
+                "query_parameters": null,
                 "application": null
               }
             ]
@@ -162,6 +223,22 @@
                     "future_optional_field": "added by a later minor contract version"
                   }
                 ],
+                "query_parameters": [
+                  {
+                    "name": "sidoName",
+                    "alias": null,
+                    "type": "string",
+                    "required": true,
+                    "enum": [
+                      "서울",
+                      "부산",
+                      "대구"
+                    ],
+                    "description": "조회할 시·도",
+                    "example": "서울",
+                    "future_optional_field": "added by a later minor contract version"
+                  }
+                ],
                 "application": {
                   "required": true,
                   "url": "https://www.data.go.kr/data/15073861/openapi.do",
@@ -182,6 +259,7 @@
                 "query_support": null,
                 "requires_service_key": true,
                 "request_parameters": [],
+                "query_parameters": null,
                 "application": null,
                 "future_optional_field": "added by a later minor contract version"
               }
@@ -206,6 +284,7 @@
                 "query_support": null,
                 "requires_service_key": false,
                 "request_parameters": [],
+                "query_parameters": null,
                 "application": null,
                 "future_optional_field": "added by a later minor contract version"
               }
@@ -218,6 +297,7 @@
       "additive_paths": [
         "$.providers[0].datasets[0].query_support",
         "$.providers[0].datasets[0].request_parameters[0]",
+        "$.providers[0].datasets[0].query_parameters[0]",
         "$.providers[0].datasets[0].application",
         "$.providers[0].datasets[0]",
         "$.providers[0].datasets[1]",
@@ -5117,6 +5197,50 @@
   ],
   "error_fixtures": [
     {
+      "operation_id": "readyz",
+      "method": "GET",
+      "path": "/readyz",
+      "status": 503,
+      "example": "DiskLow",
+      "current": {
+        "status": "not_ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "low",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "with_additive_fields": {
+        "status": "not_ready",
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "low",
+          "workers": "ok",
+          "future_optional_field": "added by a later minor contract version"
+        },
+        "accepting_builds": true,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$.checks",
+        "$"
+      ],
+      "required_type_broken": {
+        "status": 12345,
+        "checks": {
+          "state_store": "ok",
+          "output_dir": "ok",
+          "disk": "low",
+          "workers": "ok"
+        },
+        "accepting_builds": true
+      },
+      "broken_path": "$.status"
+    },
+    {
       "operation_id": "probeProviderKey",
       "method": "POST",
       "path": "/providers/{provider}/probe",
@@ -5476,6 +5600,36 @@
       "operation_id": "submitBuild",
       "method": "POST",
       "path": "/builds",
+      "status": 409,
+      "example": "RunStorageQuotaExceeded",
+      "current": {
+        "error": "your runs use the storage one user may keep; submit this build when older runs have expired",
+        "code": "run_storage_quota_exceeded",
+        "limit_bytes": 10737418240,
+        "used_bytes": 10737418240
+      },
+      "with_additive_fields": {
+        "error": "your runs use the storage one user may keep; submit this build when older runs have expired",
+        "code": "run_storage_quota_exceeded",
+        "limit_bytes": 10737418240,
+        "used_bytes": 10737418240,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "run_storage_quota_exceeded",
+        "limit_bytes": 10737418240,
+        "used_bytes": 10737418240
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
       "status": 429,
       "example": "BuildQueueFull",
       "current": {
@@ -5520,6 +5674,30 @@
         "error": 12345,
         "code": "build_owner_limit",
         "limit": 2
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "submitBuild",
+      "method": "POST",
+      "path": "/builds",
+      "status": 503,
+      "example": "DiskSpaceLow",
+      "current": {
+        "error": "the server is low on disk space and is not accepting builds; submit the build again later",
+        "code": "disk_space_low"
+      },
+      "with_additive_fields": {
+        "error": "the server is low on disk space and is not accepting builds; submit the build again later",
+        "code": "disk_space_low",
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "disk_space_low"
       },
       "broken_path": "$.error"
     },
@@ -6134,6 +6312,33 @@
       "required_type_broken": {
         "error": 12345,
         "code": "query_busy"
+      },
+      "broken_path": "$.error"
+    },
+    {
+      "operation_id": "queryBuiltDataset",
+      "method": "POST",
+      "path": "/query",
+      "status": 429,
+      "example": "QueryRateLimited",
+      "current": {
+        "error": "you have run as many queries as the server allows for now; try again shortly",
+        "code": "query_rate_limited",
+        "retry_after_seconds": 12
+      },
+      "with_additive_fields": {
+        "error": "you have run as many queries as the server allows for now; try again shortly",
+        "code": "query_rate_limited",
+        "retry_after_seconds": 12,
+        "future_optional_field": "added by a later minor contract version"
+      },
+      "additive_paths": [
+        "$"
+      ],
+      "required_type_broken": {
+        "error": 12345,
+        "code": "query_rate_limited",
+        "retry_after_seconds": 12
       },
       "broken_path": "$.error"
     },

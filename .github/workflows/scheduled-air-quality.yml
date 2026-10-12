@@ -1,9 +1,8 @@
-# 대기오염 — every 2 hours append-only
+# Air quality — NOT scheduled. Publishing is stopped over source license limits (#759, #1244).
+# Do not add a cron line back until the license review in #1244 is done.
 name: "Scheduled: Air Quality"
 
 on:
-  schedule:
-    - cron: "15 */2 * * *"
   workflow_dispatch:
 
 permissions:

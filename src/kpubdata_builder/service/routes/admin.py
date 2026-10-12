@@ -19,11 +19,13 @@ Cannot do:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, get_args
 from urllib.parse import parse_qs
 
 from ... import logging_redaction
-from ...pipeline.failures import reason_sentence
+from ...manifest.endings import RUN_ENDING_CODES, RUN_ENDING_STAGES
+from ...manifest.models import RunFailureStage
+from ...pipeline.failures import SOURCE_FAILURE_REASONS, reason_sentence
 from ...spec import JsonValue
 from ...stages.gold.compose import COMPOSITION_FAILURE_SUMMARIES
 from .. import ownership as ownership_module
@@ -34,6 +36,7 @@ from ..build_runs_api import INTERRUPTED_CODE, SHUTDOWN_QUEUED_ERROR
 from ..jobs import BuildJobSnapshot
 from ..responses import ServiceResponse
 from ..user_ledger import SignupStatus
+from ._parsing import decode_segment
 from ._types import RouteResponse
 
 if TYPE_CHECKING:
@@ -78,7 +81,8 @@ def _decide_user(
     service: BuilderService, principal: Principal, path: str
 ) -> ServiceResponse | None:
     """``POST /admin/users/{user_id}/approve|reject`` (#785), recorded in the audit log."""
-    user_id, _, action = path[len(_USERS) + 1 :].partition("/")
+    raw_id, _, action = path[len(_USERS) + 1 :].partition("/")
+    user_id = decode_segment(raw_id)
     if not user_id or action not in _DECISIONS:
         return None
     audit_action = f"admin.users.{action}"
@@ -115,8 +119,34 @@ def _reason(error: str | None) -> str | None:
 _STAGES = ("bronze", "silver", "gold")
 _COMMIT_REASONS = frozenset({"conflict", "empty_result", "table_exists", "commit_failed"})
 
+#: Every code a failure is recorded with (#1120): a provider's refusal, any other source
+#: failure, a composition's rule, a refused table commit, and why a run was cancelled or
+#: ended without a manifest. ``error_code`` is one of these or null — a value the index
+#: holds that is not one of them is not served.
+FAILURE_CODES: frozenset[str] = frozenset(
+    {
+        *SOURCE_FAILURE_REASONS,
+        "pipeline_failed",
+        *COMPOSITION_FAILURE_SUMMARIES,
+        *_COMMIT_REASONS,
+        *RUN_ENDING_CODES,
+    }
+)
+#: Every stage a failure is recorded at: a manifest's ``failures[].stage`` and how far a
+#: run that left no manifest had got. ``error_stage`` is one of these or null.
+FAILURE_STAGES: frozenset[str] = frozenset(get_args(RunFailureStage)) | RUN_ENDING_STAGES
 
-def _job_failure_line(job: BuildJobSnapshot) -> str | None:
+
+def _allowed(value: str | None, allowed: frozenset[str]) -> str | None:
+    """``value`` when it is one of ``allowed``; None otherwise."""
+    return value if value in allowed else None
+
+
+#: A job row's failure: the line, its code and its stage.
+_JobFailure = tuple[str | None, str | None, str | None]
+
+
+def _job_failure(job: BuildJobSnapshot) -> _JobFailure:
     """A job row's failure line for an administrator, made only of Builder's words (#1221).
 
     The job's ``error`` is written for the run's owner: a failed build's is the first
@@ -126,9 +156,12 @@ def _job_failure_line(job: BuildJobSnapshot) -> str | None:
     refusal reason, the stages completed, a commit's reason — as the index line is
     (#1219). A failure without a build response gets a fixed line by kind. The owner's
     ``GET /builds/{run_id}`` keeps the full message.
+
+    The code and the stage are those the run's manifest records for the same failure
+    (#1120), where the job row can tell them; None where it cannot.
     """
     if job.error is None and job.status != "failed":
-        return None
+        return None, None, None
     raw = getattr(job, "response", None)
     response = raw if isinstance(raw, dict) else {}
     outcomes = response.get("outcomes")
@@ -137,32 +170,42 @@ def _job_failure_line(job: BuildJobSnapshot) -> str | None:
             if not isinstance(outcome, dict) or outcome.get("status") != "failed":
                 continue
             key = str(outcome.get("source_key") or "source")
-            reason = outcome.get("reason")
-            sentence = reason_sentence(reason) if isinstance(reason, str) else None
-            if sentence is not None:
-                return f"{key}: {sentence}"
             completed = outcome.get("stages_completed")
             done = completed if isinstance(completed, list) else []
             stage = next((s for s in _STAGES if s not in done), "export")
-            return f"{key}: the source failed at the {stage} stage"
+            reason = outcome.get("reason")
+            if isinstance(reason, str) and (sentence := reason_sentence(reason)) is not None:
+                return f"{key}: {sentence}", reason, stage
+            return f"{key}: the source failed at the {stage} stage", "pipeline_failed", stage
     composition = response.get("composition")
     if isinstance(composition, dict) and composition.get("status") == "failed":
         name = str(composition.get("name") or "composition")
-        return f"{name}: {COMPOSITION_FAILURE_SUMMARIES['composition_failed']}"
+        line = f"{name}: {COMPOSITION_FAILURE_SUMMARIES['composition_failed']}"
+        return line, "composition_failed", "composition"
     warehouse = response.get("warehouse_failures")
     if isinstance(warehouse, dict):
         for key, failure in warehouse.items():
             reason = failure.get("reason") if isinstance(failure, dict) else None
-            code = f" ({reason})" if reason in _COMMIT_REASONS else ""
-            return f"{key}: the table was not committed{code}"
+            known = reason if isinstance(reason, str) and reason in _COMMIT_REASONS else None
+            suffix = f" ({known})" if known else ""
+            return f"{key}: the table was not committed{suffix}", known, "warehouse"
     error = job.error or ""
     if error.startswith(f"{INTERRUPTED_CODE}:"):
-        return "the run lost its provider keys before it finished (credentials_required)"
+        return (
+            "the run lost its provider keys before it finished (credentials_required)",
+            "credentials_required",
+            "queued",
+        )
     if error == SHUTDOWN_QUEUED_ERROR:
-        return "the server shut down before this job started"
+        return "the server shut down before this job started", "server_shutdown", "queued"
     if error.startswith("internal error"):
-        return "the build failed with an internal error"
-    return "the build failed"
+        return "the build failed with an internal error", None, None
+    return "the build failed", None, None
+
+
+def _job_failure_line(job: BuildJobSnapshot) -> str | None:
+    """The line of ``_job_failure`` alone."""
+    return _job_failure(job)[0]
 
 
 def _admin_runs(service: BuilderService, principal: Principal, query: str) -> ServiceResponse:
@@ -210,6 +253,7 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
         # only for terminal jobs; leave it empty while running — using updated_at
         # as-is would read as "this running run just finished".
         finished = job.updated_at if job.status in _TERMINAL_JOB_STATUSES else None
+        line, code, stage = _job_failure(job)
         rows[job.run_id] = (
             finished or job.created_at,
             {
@@ -219,7 +263,9 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
                 "finished_at": finished,
                 "owner_id": job.owner_id,
                 # Never the job's own message, which is the owner's (#1221).
-                "error": _job_failure_line(job),
+                "error": line,
+                "error_code": _allowed(code, FAILURE_CODES),
+                "error_stage": _allowed(stage, FAILURE_STAGES),
             },
         )
     for entry in entries:
@@ -232,6 +278,10 @@ def _admin_runs(service: BuilderService, principal: Principal, query: str) -> Se
                 "finished_at": entry.finished_at,
                 "owner_id": entry.owner_id,
                 "error": _reason(entry.error),
+                # Stable vocabulary only (#1120): a client tells the cause and what to
+                # do from these without parsing the line.
+                "error_code": _allowed(entry.error_code, FAILURE_CODES),
+                "error_stage": _allowed(entry.error_stage, FAILURE_STAGES),
             },
         )
 
