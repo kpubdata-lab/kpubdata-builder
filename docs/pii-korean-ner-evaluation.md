@@ -97,7 +97,9 @@ spaCy 행과 같다. RSS 증가는 `ru_maxrss` 차이라 근사치다.
 | kiwipiepy 0.24.0 | Apache-2.0 | 208.0 | 예 |
 | kiwipiepy_model 0.24.0 | Apache-2.0 | 109.2 | 예 — 모델이 휠에 들어 있다 |
 
-규칙 탐지기는 추가 설치가 없다. spaCy는 Python 3.15용 휠이 없어 소스 빌드가 필요했고,
+`kiwipiepy`의 크기는 의존성인 `kiwipiepy_model`(109.2 MB)을 이미 포함한다. 따라서 Kiwi
+총량은 약 208 MB, spaCy는 모델 메타데이터에 spaCy 의존성이 선언되어 있지 않아 둘을 더한 약
+287 MB다. 규칙 탐지기는 추가 설치가 없다. spaCy는 Python 3.15용 휠이 없어 소스 빌드가 필요했고,
 평가는 Python 3.12 가상환경에서 했다.
 
 ### 오탐·미탐의 내용
