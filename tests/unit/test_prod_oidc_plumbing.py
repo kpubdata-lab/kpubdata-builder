@@ -38,7 +38,9 @@ def test_every_image_variant_keeps_the_default_images_extras() -> None:
     """A build-arg replaces the Dockerfile's default whole, so a variant must repeat it.
 
     The CUBRID image was built with ``EXTRAS=publish cubrid``: no ``auth``, so the one
-    image a CUBRID deployment can pull could not start with OIDC configured (#992).
+    image a CUBRID deployment can pull could not start with OIDC configured (#992). That
+    image went with the CUBRID backend (#1094), and no variant is built now; this holds
+    for the next one.
     """
     dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
     default = re.search(r'^ARG EXTRAS="?([^"\n]*)"?$', dockerfile, re.MULTILINE)
@@ -46,7 +48,6 @@ def test_every_image_variant_keeps_the_default_images_extras() -> None:
     workflow = (_ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
     variants = re.findall(r"^\s*EXTRAS=(.*)$", workflow, re.MULTILINE)
 
-    assert variants
     missing = [
         (variant, extra)
         for variant in variants

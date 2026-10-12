@@ -76,8 +76,6 @@
 
 | 변수명 | 설명 | 기본값 | 필수 여부 |
 | :--- | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_STORAGE_BACKEND` | 상태 백엔드 (`sqlite`=로컬 기본, `cubrid`=CUBRID, ADR 0016) | `sqlite` | 선택 |
-| `KPUBDATA_BUILDER_CUBRID_URL` | CUBRID SQLAlchemy URL (예: `cubrid+pycubrid://user:pass@host:33000/db?charset=utf8`) | 미설정 | `STORAGE_BACKEND=cubrid` 시 필수 |
 | `KPUBDATA_BUILDER_WAREHOUSE` | 테이블 카탈로그 루트(`serve --warehouse` 와 같다). 설정하면 `POST /build` 가 source 별 Gold 를 커밋된 table snapshot 으로 남기고 응답 `materialized` 에 보고한다 — publish 자격증명이 필요 없다(#703). 미설정이면 카탈로그를 쓰지 않고 응답에 `materialized` 키가 없다 | 미설정 | 선택 |
 | `KPUBDATA_BUILDER_READY_MIN_FREE_PERCENT` | 출력 디렉터리가 있는 파일시스템의 여유 공간이 이 비율(%) 아래면 `GET /readyz` 의 `disk` 가 `low` 이고 503 으로 답한다(#1101). `/healthz` 와 build 접수에는 영향이 없다. 이슈가 제안한 값을 기본값으로 두었고 측정 없이 정한 값이다(kpubdata#812). `0` 이면 끔. 0 이상 100 이하의 수가 아니면 `serve` 가 기동을 거부한다 | `15` | 선택 |
 | `KPUBDATA_BUILDER_READY_MIN_FREE_MB` | 출력 디렉터리가 있는 파일시스템의 여유 공간이 이 크기(MB) 아래면 `GET /readyz` 의 `disk` 가 `low` 다(#1101). 비율과 함께 둘 중 하나라도 못 미치면 `low`. 측정 없이 정한 값이다(kpubdata#812). `0` 이면 끔. 0 이상의 정수가 아니면 `serve` 가 기동을 거부한다 | `1024` (1 GiB) | 선택 |
@@ -126,7 +124,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 44 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 42 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |
@@ -153,7 +151,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 - **`error:` — 기동을 거부합니다(종료 코드 1).** 쓸 수 없는 값이 여럿이면 한 번에 모두 출력합니다.
   - DuckDB 자원: `KPUBDATA_DUCKDB_THREADS`, `KPUBDATA_DUCKDB_MEMORY_LIMIT`, `KPUBDATA_DUCKDB_MAX_TEMP_SIZE`
   - 쿼리 자원: `KPUBDATA_QUERY_MAX_CONCURRENCY`, `KPUBDATA_QUERY_MAX_MEMORY_MB`, `KPUBDATA_QUERY_MEMORY_BUDGET_MB`
-  - 상태 저장: `KPUBDATA_BUILDER_STORAGE_BACKEND`, `KPUBDATA_BUILDER_CUBRID_URL`
+  - 제거된 CUBRID 설정: `KPUBDATA_BUILDER_STORAGE_BACKEND`(비어 있거나 `sqlite` 가 아닌 값), `KPUBDATA_BUILDER_CUBRID_URL`(값이 있으면). 이 둘은 `serve` 뿐 아니라 모든 명령을 거부합니다([deploy.md §6.1](./deploy.md), ADR 0022)
   - 비동기 build 대기열: `KPUBDATA_BUILDER_MAX_QUEUED_BUILDS` (`1` 이상 `1000` 이하의 정수)
   - 그 밖: `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS`, `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`, `KPUBDATA_BUILDER_PROVIDER_TEST_TIMEOUT`, `OIDC_JWKS_TTL`
   - `serve` 가 직접 읽는 값: `KPUBDATA_BUILDER_MAX_WORKERS`, `KPUBDATA_BUILDER_MAX_BUILDS`, `KPUBDATA_BUILDER_MAX_PREVIEWS`, `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`. 같은 이름의 플래그(`--max-builds` 등)를 주면 그 변수는 읽지 않으므로 검사하지도 않습니다
@@ -165,7 +163,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
   - 그 밖: `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`, `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS`, `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
   - 켜고 끄는 값(`KPUBDATA_BUILDER_DEV_MODE`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)을 그 설정이 켜짐으로 읽는 말도 `false`/`0` 도 아닌 말로 적은 경우. 켜짐으로 읽는 말은 `true`/`1` 이고, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` 만 `yes`/`on` 도 받습니다. 나머지 셋에서 `yes` 나 `on` 은 **꺼진 것으로 읽힙니다.** 다만 다중 사용자 배포(`OIDC_ISSUER` 또는 `ENFORCE_OWNERSHIP`)는 `ENFORCE_OWNERSHIP` 과 두 `REQUIRE_OWN_*` 를 무엇이 적혀 있든 켜므로, 그때는 "꺼진 것으로 읽힌다" 가 아니라 **"무시된다 — 켜져 있다"** 고 알립니다(`false`/`0` 을 적은 경우에도).
 
-비밀 값을 담는 변수는 메시지에 값을 되풀이하지 않습니다. OIDC 설정의 조합과 CUBRID 연결은 이 검사 뒤에 따로 확인하며, 그때의 거부는 지금처럼 예외로 끝납니다.
+비밀 값을 담는 변수는 메시지에 값을 되풀이하지 않습니다. OIDC 설정의 조합은 이 검사 뒤에 따로 확인하며, 그때의 거부는 지금처럼 예외로 끝납니다.
 
 ### 실제로 쓰이는 설정 보기 (#1108)
 
@@ -183,7 +181,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 | `[flag]` | `serve` 의 플래그가 그 변수를 대신했다. 변수의 값은 읽지 않는다 |
 | (출처 없음) | 설정하지 않았다. `(default: …)` 는 위 표의 기본값이다 |
 
-- **비밀 값은 출력하지 않습니다.** `settings_catalog.py` 에서 `secret` 으로 표시된 설정 — `KPUBDATA_BUILDER_API_KEY`, `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`, `KPUBDATA_BUILDER_CUBRID_URL`, `HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY` — 은 값 자리에 `<redacted>`(설정됨) 또는 `(not set)` 만 나옵니다. 이 출력을 만드는 객체가 그 값을 읽어 두지 않습니다. 그 밖의 설정은 적은 그대로 나오므로, 허용 목록의 이메일 주소(`OIDC_ALLOWED_EMAILS`)나 사용자 식별자는 출력에 보입니다 — 이 출력을 외부에 붙여 넣을 때에는 그 줄을 확인하세요.
+- **비밀 값은 출력하지 않습니다.** `settings_catalog.py` 에서 `secret` 으로 표시된 설정 — `KPUBDATA_BUILDER_API_KEY`, `KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY`, `HF_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY` — 은 값 자리에 `<redacted>`(설정됨) 또는 `(not set)` 만 나옵니다. 이 출력을 만드는 객체가 그 값을 읽어 두지 않습니다. 그 밖의 설정은 적은 그대로 나오므로, 허용 목록의 이메일 주소(`OIDC_ALLOWED_EMAILS`)나 사용자 식별자는 출력에 보입니다 — 이 출력을 외부에 붙여 넣을 때에는 그 줄을 확인하세요.
 - 켜고 끄는 설정은 적힌 말이 아니라 **켜졌는지 꺼졌는지**(`on`/`off`)가 나옵니다. 다중 사용자 배포가 스스로 켜는 설정은 변수가 비어 있어도 `on` 이고 그 이유가 덧붙습니다.
 - 읽을 수 없는 값을 기본값으로 대신하는 설정에 그런 값을 적었다면 `(default: …)` 와 함께 무시됐다고 나옵니다.
 - 값의 범위를 판정하는 것은 여전히 기동 검사입니다. 이 출력은 받은 값을 보여 줄 뿐입니다.

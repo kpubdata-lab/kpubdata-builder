@@ -60,8 +60,8 @@ def normalize_provider(provider: str) -> str:
 def associated_data(owner_id: str, provider: str) -> bytes:
     """AES-GCM AAD. Bind credential to owner_id and provider.
 
-    Must be **identical** regardless of backend (SQLite/CUBRID) for encrypt/decrypt compatibility —
-    both stores share this single function.
+    Changing it makes every stored ciphertext unreadable: the AAD is part of what was
+    encrypted.
     """
     return f"{owner_id}\0{provider}".encode()
 

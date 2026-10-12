@@ -37,13 +37,11 @@ _TAIL = "7c1f0b2e9d4a4c6f8e3b5a1d0c9f2e7b"
 _CANARIES: dict[str, str] = {
     "KPUBDATA_BUILDER_API_KEY": f"canary-api-key-{_TAIL}",
     "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY": _MASTER_KEY,
-    "KPUBDATA_BUILDER_CUBRID_URL": "cubrid+pycubrid://dba:canary-db-password@db:33000/kpub",
     "HF_TOKEN": "hf_canaryTokenValue0123456789",
     "KAGGLE_USERNAME": "canary-kaggle-account",
     "KAGGLE_KEY": f"canarykagglekey{_TAIL[16:]}",
 }
-#: The parts of a canary that must not appear either: a password inside a URL.
-_FRAGMENTS = [*_CANARIES.values(), "canary-db-password"]
+_FRAGMENTS = [*_CANARIES.values()]
 
 
 @pytest.fixture(autouse=True)
@@ -144,7 +142,6 @@ def test_serve_prints_no_secret_when_it_refuses_to_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls = _serve_calls(monkeypatch)
-    monkeypatch.setenv("KPUBDATA_BUILDER_STORAGE_BACKEND", "cubrid")
     monkeypatch.setenv("KPUBDATA_BUILDER_MAX_QUEUED_BUILDS", "0")
 
     assert main(["serve", "--output-dir", str(tmp_path)]) == 1

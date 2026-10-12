@@ -33,7 +33,6 @@ on:
       - "scripts/shutdown_drain_smoke.py"
       - "scripts/compose_profiles_smoke.py"
       - "scripts/image_rescan.py"
-      - "infra/cubrid/docker-compose.yml"
       - ".github/workflows/docker.yml"
   push:
     branches: [main]
@@ -53,7 +52,6 @@ on:
       - "scripts/shutdown_drain_smoke.py"
       - "scripts/compose_profiles_smoke.py"
       - "scripts/image_rescan.py"
-      - "infra/cubrid/docker-compose.yml"
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
@@ -139,8 +137,8 @@ jobs:
           tags: kpubdata-builder:ci
           # Each build keeps its own cache scope (one scope per image and platform set).
           # They all shared the default scope, where each `cache-to` replaces the
-          # scope's index: the single-platform check, the two-platform publish and the
-          # CUBRID image overwrote one another, and a run found only the layers of
+          # scope's index: the single-platform check and the two-platform publish (and
+          # once a CUBRID image) overwrote one another, and a run found only the layers of
           # whichever build wrote last. This one also reads what the last publish left.
           cache-from: |
             type=gha,scope=ci
@@ -267,33 +265,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=publish
           cache-to: type=gha,mode=max,scope=publish
-          sbom: true
-          provenance: mode=max
-
-      # CUBRID 프로파일(ADR 0016)용 이미지. infra/cubrid/docker-compose.yml 의
-      # BUILDER_IMAGE 기본값이 `:cubrid` 를 가리키는데 그 태그를 만드는 워크플로가
-      # 없었다 — CUBRID 배포는 존재하지 않는 이미지를 pull 하려 했다.
-      #
-      # 기본 이미지와 다른 점은 cubrid extra 하나뿐이다. sqlalchemy-cubrid 는 순수
-      # 파이썬이라 C 툴체인 없이 설치된다(Dockerfile 주석 참고). build-arg 는 Dockerfile 의
-      # 기본값을 통째로 덮어쓰므로 기본 이미지의 extra(publish, auth)를 여기에 다시 적는다 —
-      # auth 가 빠지면 이 이미지는 OIDC_ISSUER 를 설정한 배포에서 기동하지 못한다(#992).
-      - name: Build and publish the CUBRID-profile image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            EXTRAS=publish auth cubrid
-          tags: ghcr.io/kpubdata-lab/kpubdata-builder:cubrid
-          labels: ${{ steps.meta.outputs.labels }}
-          # Its own scope: its dependency layer differs from the default image's. The
-          # layers before it are the default image's, so the publish scope is read too.
-          cache-from: |
-            type=gha,scope=cubrid
-            type=gha,scope=publish
-          cache-to: type=gha,mode=max,scope=cubrid
           sbom: true
           provenance: mode=max
 

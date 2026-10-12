@@ -1,12 +1,11 @@
-"""Build index (#309, ADR 0003; backend split ADR 0010/0016).
+"""Build index (#309, ADR 0003; abstraction ADR 0010, SQLite only ADR 0022).
 
 Index completed build metadata to improve list query performance.
 manifest.json is canonical; this index is derivative.
 
-``BuildIndex`` is Protocol (interface); default implementation is single-file SQLite-based
-``SqliteBuildIndex`` (no-external-deps default). CUBRID backend (``CubridBuildIndex``,
-ADR 0016) is in ``build_index_cubrid``; ``make_build_index()`` factory selects
-based on ``KPUBDATA_BUILDER_STORAGE_BACKEND``.
+``BuildIndex`` is Protocol (interface), kept so that another database can be considered
+later (ADR 0022); the implementation is the single-file ``SqliteBuildIndex``.
+``make_build_index()`` refuses a removed storage setting before it opens the index.
 """
 
 from __future__ import annotations
@@ -84,9 +83,9 @@ class BuildEntry:
 
 
 class BuildIndex(Protocol):
-    """Build index interface (ADR 0010/0016).
+    """Build index interface (ADR 0010).
 
-    ``SqliteBuildIndex`` (default) and ``CubridBuildIndex`` implement this Protocol.
+    ``SqliteBuildIndex`` implements this Protocol.
     ADR 0003 contract: manifest.json is canonical, index is derivative; index write
     failure must not cause build failure (``insert_or_replace``/``delete`` swallow
     exceptions).
@@ -693,7 +692,7 @@ def _iter_manifest_entries(output_root: Path) -> Iterator[BuildEntry]:
 
     Compute derived index values from canonical (manifest.json + BuildSpec snapshot).
     Skip corrupted/missing runs — index is derivative so missing runs don't affect
-    canonical. Shared rebuild source across backends (sqlite/cubrid).
+    canonical. The source every rebuild reads.
     """
     import json
 
@@ -850,8 +849,7 @@ def _has_this_releases_table(index_path: Path) -> bool:
 def _rebuild_sqlite(output_root: Path) -> int:
     """Build SQLite index fresh to .tmp, then atomically replace (#366).
 
-    Existing index survives if scan fails. Atomic rename works only for single-file
-    SQLite, so separate from cubrid path. An index of another version is never opened,
+    Existing index survives if scan fails. An index of another version is never opened,
     so this also replaces one a newer release wrote — the remedy its refusal names
     (#1096). This release's own index is refilled in place instead (#1157).
     """
@@ -951,29 +949,16 @@ def _rebuild_sqlite(output_root: Path) -> int:
     return count
 
 
-def _rebuild_cubrid(output_root: Path) -> int:
-    """Rebuild CUBRID index from FS manifest scan (truncate + reinsert)."""
-    from .backend import get_engine
-    from .build_index_cubrid import CubridBuildIndex
-
-    # The one place a newer index is replaced: the operator asked for it (#1096).
-    index = CubridBuildIndex(get_engine(), replace_newer=True)
-    try:
-        return index.rebuild(_iter_index_entries(output_root))
-    finally:
-        index.close()
-
-
 def rebuild_index(output_root: Path) -> int:
-    """Rebuild index from filesystem scan (backend-aware, ADR 0016).
+    """Rebuild index from filesystem scan.
 
     Scan manifest.json canonical, refill derived index. A run that left no manifest
-    is refilled from its recorded ending, kept with the run events (#1120). Per backend:
-    - sqlite, an index of this release's version: refilled where it is, in one
+    is refilled from its recorded ending, kept with the run events (#1120).
+    - An index of this release's version: refilled where it is, in one
       transaction, so a running server's connections see it (#1157). One that cannot
       be written that way is replaced as below.
-    - sqlite, any other index or none: build to .tmp, atomically rename-replace (#366).
-    - cubrid: truncate builds table, reinsert in single transaction.
+    - Any other index or none: build to .tmp, atomically rename-replace (#366).
+    A removed storage setting is refused first (ADR 0022).
 
     Args:
         output_root: Build output root directory
@@ -981,10 +966,9 @@ def rebuild_index(output_root: Path) -> int:
     Returns:
         Number of builds rebuilt
     """
-    from .backend import storage_backend
+    from .backend import refuse_removed_storage_settings
 
-    if storage_backend() == "cubrid":
-        return _rebuild_cubrid(output_root)
+    refuse_removed_storage_settings()
     return _rebuild_sqlite(output_root)
 
 
@@ -1004,16 +988,9 @@ def bring_index_up_to_date(output_root: Path) -> int | None:
         The number of runs indexed, or None when the stored index was already this
         release's and nothing was done.
     """
-    from .backend import storage_backend
+    from .backend import refuse_removed_storage_settings
 
-    if storage_backend() == "cubrid":
-        from .backend import get_engine
-        from .build_index_cubrid import stored_index_version
-
-        found = stored_index_version(get_engine())
-        if found is not None and found >= SCHEMA_VERSION:
-            return None
-        return _rebuild_cubrid(output_root)
+    refuse_removed_storage_settings()
     index_path = output_root / _INDEX_FILENAME
     found = stored_version(index_path)
     if found is not None and found >= SCHEMA_VERSION:
@@ -1025,18 +1002,14 @@ def bring_index_up_to_date(output_root: Path) -> int | None:
 
 
 def make_build_index(output_root: Path) -> BuildIndex:
-    """Create ``BuildIndex`` implementation for selected backend (ADR 0016).
+    """Create the ``BuildIndex``: ``SqliteBuildIndex(output_root)`` (ADR 0022).
 
-    sqlite (default) → ``SqliteBuildIndex(output_root)``; cubrid → ``CubridBuildIndex``
-    sharing global Engine. cubrid module (and sqlalchemy) imported only in cubrid branch.
+    Raises:
+        RemovedStorageSettingError: A removed storage setting is still set.
     """
-    from .backend import storage_backend
+    from .backend import refuse_removed_storage_settings
 
-    if storage_backend() == "cubrid":
-        from .backend import get_engine
-        from .build_index_cubrid import CubridBuildIndex
-
-        return CubridBuildIndex(get_engine())
+    refuse_removed_storage_settings()
     return SqliteBuildIndex(output_root)
 
 

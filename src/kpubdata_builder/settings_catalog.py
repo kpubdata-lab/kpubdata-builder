@@ -81,6 +81,19 @@ class Setting:
 
 
 @dataclass(frozen=True)
+class RemovedSetting:
+    """A setting Builder no longer has. Set to anything but ``harmless``, it stops every
+    command: a value left behind means the deployment still expects what it chose."""
+
+    name: str
+    #: What it chose, as the deployment guide says it.
+    description: str
+    #: Values that chose what Builder still does, compared without case or surrounding
+    #: spaces. Set to one of these, or empty, the variable changes nothing.
+    harmless: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class InternalVariable:
     """A variable an operator does not set: Builder sets it for itself, a child process
     or kpubdata, or a test sets it. Not a setting, but it is in the environment and has
@@ -411,21 +424,6 @@ SETTINGS: tuple[Setting, ...] = (
         kind="integer",
     ),
     Setting(
-        name="KPUBDATA_BUILDER_STORAGE_BACKEND",
-        group="storage",
-        description="상태 백엔드 (`sqlite`=로컬 기본, `cubrid`=CUBRID, ADR 0016)",
-        default="`sqlite`",
-        required="선택",
-    ),
-    Setting(
-        name="KPUBDATA_BUILDER_CUBRID_URL",
-        group="storage",
-        description="CUBRID SQLAlchemy URL (예: `cubrid+pycubrid://user:pass@host:33000/db?charset=utf8`)",
-        default="미설정",
-        required="`STORAGE_BACKEND=cubrid` 시 필수",
-        secret=True,
-    ),
-    Setting(
         name="KPUBDATA_BUILDER_WAREHOUSE",
         group="storage",
         description="테이블 카탈로그 루트(`serve --warehouse` 와 같다). 설정하면 `POST /build` 가 source 별 Gold 를 커밋된 table snapshot 으로 남기고 응답 `materialized` 에 보고한다 — publish 자격증명이 필요 없다(#703). 미설정이면 카탈로그를 쓰지 않고 응답에 `materialized` 키가 없다",
@@ -566,6 +564,21 @@ SETTINGS: tuple[Setting, ...] = (
 )
 
 
+#: Settings that were removed (ADR 0022). Each still has a reader — the one that refuses
+#: it (``store/backend.py``) — and none is in ``SETTINGS``.
+REMOVED_SETTINGS: tuple[RemovedSetting, ...] = (
+    RemovedSetting(
+        name="KPUBDATA_BUILDER_STORAGE_BACKEND",
+        description="상태 백엔드 선택(`sqlite` 또는 `cubrid`, ADR 0016). CUBRID 백엔드는 제거되었다(ADR 0022). 비어 있거나 `sqlite` 이면 아무 일도 하지 않고, 그 밖의 값이면 모든 명령이 시작하지 않는다",
+        harmless=frozenset({"sqlite"}),
+    ),
+    RemovedSetting(
+        name="KPUBDATA_BUILDER_CUBRID_URL",
+        description="CUBRID 데이터베이스의 SQLAlchemy URL(ADR 0016). CUBRID 백엔드는 제거되었다(ADR 0022). 값이 있으면 모든 명령이 시작하지 않는다 — 오류는 값을 다시 적지 않는다",
+    ),
+)
+
+
 INTERNAL_VARIABLES: tuple[InternalVariable, ...] = (
     InternalVariable(
         name="KAGGLE_CONFIG_DIR",
@@ -676,19 +689,27 @@ def internal_names() -> frozenset[str]:
     return frozenset(variable.name for variable in INTERNAL_VARIABLES)
 
 
+def removed_names() -> frozenset[str]:
+    """The names of settings that were removed and are refused."""
+    return frozenset(removed.name for removed in REMOVED_SETTINGS)
+
+
 __all__ = [
     "GROUPS",
     "INTERNAL_VARIABLES",
     "NAME_FAMILIES",
     "NAMING_POLICY",
     "PREFIX",
+    "REMOVED_SETTINGS",
     "SETTINGS",
     "EarlierName",
     "InternalVariable",
     "Kind",
     "NameFamily",
+    "RemovedSetting",
     "Setting",
     "earlier_names",
     "internal_names",
+    "removed_names",
     "setting_names",
 ]

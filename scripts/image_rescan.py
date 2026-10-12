@@ -3,7 +3,7 @@
 
 ``docker.yml`` scans Builder's image when it is built. An image gains advisories
 without anyone building it, and the build never scans the images the compose files
-pull from elsewhere (Caddy, CUBRID). This reads the image references out of the
+pull from elsewhere (Caddy). This reads the image references out of the
 deployment's compose files, scans each with Trivy for HIGH and CRITICAL
 vulnerabilities — those without a fix included — and records what it finds:
 
@@ -44,7 +44,7 @@ from typing import Any, NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 #: The compose files a deployment is started from.
-COMPOSE_FILES = ("docker-compose.prod.app.yml", "infra/cubrid/docker-compose.yml")
+COMPOSE_FILES = ("docker-compose.prod.app.yml",)
 SEVERITIES = ("CRITICAL", "HIGH")
 LABELS = ("epic:distribution", "security")
 #: Rows written into an issue; GitHub refuses a body over 65536 characters.

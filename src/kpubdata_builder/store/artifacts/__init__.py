@@ -1,9 +1,7 @@
-"""Artifact/manifest store abstraction (ADR 0010/0016).
+"""Artifact/manifest store abstraction (ADR 0010; local files only, ADR 0022).
 
-``ArtifactStore`` Protocol and default implementation ``LocalArtifactStore`` (no external deps).
-``make_artifact_store()`` factory switches based on ``KPUBDATA_BUILDER_STORAGE_BACKEND``
-to sqlite/local
-or cubrid implementation. ``CubridArtifactStore`` is lazy imported only on cubrid selection.
+``ArtifactStore`` Protocol and its implementation ``LocalArtifactStore``. The Protocol is
+kept so that another store can be considered later (ADR 0022).
 """
 
 from __future__ import annotations
@@ -15,14 +13,10 @@ from .protocol import ArtifactStore
 
 
 def make_artifact_store(output_root: Path) -> ArtifactStore:
-    """Create ``ArtifactStore`` for selected backend (ADR 0016)."""
-    from ..backend import storage_backend
+    """Create the ``ArtifactStore``, refusing a removed storage setting first (ADR 0022)."""
+    from ..backend import refuse_removed_storage_settings
 
-    if storage_backend() == "cubrid":
-        from ..backend import get_engine
-        from .cubrid import CubridArtifactStore
-
-        return CubridArtifactStore(output_root, get_engine())
+    refuse_removed_storage_settings()
     return LocalArtifactStore(output_root)
 
 

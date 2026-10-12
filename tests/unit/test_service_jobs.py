@@ -1149,7 +1149,7 @@ class TestIndexFailuresAreLoggedNotSwallowed:
         service = _service(tmp_path, threading.Event())
 
         def _boom(*_args: object, **_kwargs: object) -> None:
-            raise RuntimeError("cubrid unreachable")
+            raise RuntimeError("index unreachable")
 
         service._build_index.insert_or_replace = _boom  # type: ignore[method-assign]
 
@@ -1158,5 +1158,5 @@ class TestIndexFailuresAreLoggedNotSwallowed:
 
         #     .
         assert response.status_code < 500
-        assert "cubrid unreachable" in caplog.text
+        assert "index unreachable" in caplog.text
         assert "build index update" in caplog.text

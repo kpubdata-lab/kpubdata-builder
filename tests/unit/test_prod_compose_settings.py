@@ -48,8 +48,6 @@ NOT_PASSED: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS",
         "KPUBDATA_BUILDER_MAX_UPLOAD_BYTES",
         "KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES",
-        "KPUBDATA_BUILDER_STORAGE_BACKEND",
-        "KPUBDATA_BUILDER_CUBRID_URL",
         "KPUBDATA_BUILDER_LOCAL_PUBLISH_ROOT",
         # On whatever it says in a multi-user deployment, which production is (#1113).
         "KPUBDATA_BUILDER_REQUIRE_PII_SCAN_FOR_PUBLISH",

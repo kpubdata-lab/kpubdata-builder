@@ -1,10 +1,7 @@
-"""Persistent Build store (#309, ADR 0003; backend split ADR 0010/0016).
+"""Persistent Build store (#309, ADR 0003; abstraction ADR 0010, SQLite only ADR 0022).
 
 Provide build index to reduce filesystem scan cost, improve scalability/consistency/concurrency.
-``BuildIndex`` is Protocol; default implementation is ``SqliteBuildIndex`` (no external deps).
-``make_build_index()`` factory switches based on ``KPUBDATA_BUILDER_STORAGE_BACKEND``
-to sqlite/cubrid
-implementation. ``CubridBuildIndex`` is lazy imported only on cubrid selection.
+``BuildIndex`` is Protocol; its implementation is ``SqliteBuildIndex`` (no external deps).
 """
 
 from __future__ import annotations

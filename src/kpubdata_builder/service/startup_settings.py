@@ -33,7 +33,7 @@ from ..query.service import (
     query_memory_budget_from_env,
     query_memory_limit_from_env,
 )
-from ..store.backend import cubrid_url, storage_backend
+from ..store.backend import refuse_removed_storage_settings
 from ..tabular.duckdb_runtime import BuildProfile
 from .auth import oidc_enabled
 from .build_limits import resolve_max_queued_builds
@@ -168,8 +168,6 @@ REFUSED: frozenset[str] = frozenset(
         "KPUBDATA_QUERY_MAX_CONCURRENCY",
         "KPUBDATA_QUERY_MAX_MEMORY_MB",
         "KPUBDATA_QUERY_MEMORY_BUDGET_MB",
-        "KPUBDATA_BUILDER_STORAGE_BACKEND",
-        "KPUBDATA_BUILDER_CUBRID_URL",
         "KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS",
         "KPUBDATA_BUILDER_MAX_QUEUED_BUILDS",
         "KPUBDATA_BUILDER_CREDENTIAL_MASTER_KEY",
@@ -179,11 +177,6 @@ REFUSED: frozenset[str] = frozenset(
         "KPUBDATA_BUILDER_READY_MIN_FREE_MB",
     }
 )
-
-
-def _storage() -> None:
-    if storage_backend() == "cubrid":
-        cubrid_url()
 
 
 def _master_key() -> None:
@@ -219,7 +212,7 @@ _READERS: tuple[Callable[[], object], ...] = (
     query_max_concurrency_from_env,
     query_memory_limit_from_env,
     query_memory_budget_from_env,
-    _storage,
+    refuse_removed_storage_settings,
     shutdown_grace_seconds,
     resolve_max_queued_builds,
     _master_key,

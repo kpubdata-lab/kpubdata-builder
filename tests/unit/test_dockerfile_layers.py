@@ -82,6 +82,8 @@ def test_each_image_build_keeps_its_own_cache_scope() -> None:
                 writes.append(options["cache-to"])
                 assert "scope=" in options["cache-from"]
 
-    assert len(writes) == 3
-    assert len(set(writes)) == 3
+    # The single-platform check and the two-platform publish; the CUBRID image's build
+    # went with the backend (#1094).
+    assert len(writes) == 2
+    assert len(set(writes)) == 2
     assert all(re.search(r"\bscope=\w+", w) for w in writes)

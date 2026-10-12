@@ -3,8 +3,8 @@ name: Image re-scan
 # Scan the images a deployment runs again, on a schedule (#1107).
 #
 # docker.yml scans Builder's image when it is built. An image that nobody rebuilds
-# still gains advisories, and the images the compose files pull from elsewhere (Caddy,
-# CUBRID) were never scanned at all. scripts/image_rescan.py reads the image
+# still gains advisories, and the images the compose files pull from elsewhere (Caddy)
+# were never scanned at all. scripts/image_rescan.py reads the image
 # references from the compose files, scans each for HIGH and CRITICAL vulnerabilities
 # — those without a fix included — and keeps one open issue per image: opened when
 # there is something to report, rewritten when the list changes, left alone when it

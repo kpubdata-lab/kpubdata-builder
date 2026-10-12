@@ -750,8 +750,7 @@ def serve(
     # When running in dev-mode, auth is entirely off — log warning and reject
     # conflicting combinations (OIDC config + dev-mode) to prevent prod accidents.
     validate_dev_mode()
-    # Validate storage backend config on startup (fail-closed, ADR 0016). No-op for
-    # sqlite default; cubrid checks URL and driver early.
+    # A removed storage setting (the CUBRID backend's) refuses the start (ADR 0022).
     validate_storage_config()
     # Read now, so a value that cannot be used stops the start rather than the stop.
     grace_seconds = shutdown_grace_seconds()

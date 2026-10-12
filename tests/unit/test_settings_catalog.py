@@ -113,7 +113,7 @@ def variables_in_entrypoint() -> set[str]:
 def test_every_variable_the_code_reads_is_in_the_catalog() -> None:
     """Read a new variable and this fails until it is described."""
     read = variables_in_source()
-    known = catalog.setting_names() | catalog.internal_names()
+    known = catalog.setting_names() | catalog.internal_names() | catalog.removed_names()
 
     assert {name: sorted(files) for name, files in read.items() if name not in known} == {}
     assert sorted(variables_in_entrypoint() - known) == []

@@ -484,10 +484,9 @@ class BuildRunsApiService:
                 # separately (#488).
                 dataset_id=spec_or_error.dataset_id,
             )
-            # ADR 0016: Promote manifest document to authoritative store. sqlite/local
-            # FS file is canonical (same content rewrite harmless), cubrid CUBRID row
-            # canonical + FS mirror. best-effort — canonical/mirror already on FS,
-            # promotion failure doesn't fail build.
+            # Write the manifest document through the store; the FS file is canonical
+            # (same content rewrite harmless). best-effort — the canonical file is
+            # already on FS, so a failure here doesn't fail the build.
             self._store.put_manifest(result.context.run_id, manifest_data)
         except Exception:
             # Index update/manifest promotion failure doesn't fail build (ADR 0003) —
