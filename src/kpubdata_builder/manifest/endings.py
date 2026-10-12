@@ -9,7 +9,8 @@ administrator could read:
   nothing about why or where;
 - a run that **ended without a manifest** — one a restart interrupted, one still queued
   when the server shut down, one whose provider keys were gone when it could start, one
-  that could not be queued, and one cancelled before it produced anything.
+  that could not be queued, one that failed before writing a manifest, and one
+  cancelled before it produced anything.
 
 This module is the vocabulary for both: a stable code for the cause, the stage the run
 had reached, and the sentence made of the two. Every sentence is put together from the
@@ -33,6 +34,7 @@ RunEndingCode = Literal[
     "interrupted",
     "credentials_required",
     "enqueue_failed",
+    "failed_without_manifest",
 ]
 
 #: How far a run that left no manifest had got: not started, started with no stage
@@ -55,6 +57,7 @@ _CAUSES: Final[dict[str, tuple[str, bool]]] = {
         False,
     ),
     "enqueue_failed": ("the run could not be queued for execution", False),
+    "failed_without_manifest": ("the run failed without a manifest", True),
 }
 
 #: Where it stopped, per stage: a manifest's ``failures[].stage`` or a ``RunEndingStage``.

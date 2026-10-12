@@ -192,9 +192,9 @@ class TestAsyncBuildJobs:
         assert response.status_code == 202
         assert completed.wait(timeout=5)
 
-        status = service.build_status("run1")
+        status = _await_terminal(service, "run1")
         entry = service._build_index.get("run1")
-        assert status.body["status"] == "failed"
+        assert status == "failed"
         assert entry is not None
         assert entry.status == "failed"
 
