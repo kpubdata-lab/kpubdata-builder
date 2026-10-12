@@ -280,9 +280,7 @@ def _gh(run: Run, *args: str) -> str:
     return result.stdout
 
 
-def open_issue(
-    title: str, run: Run, *, image: str | None = None
-) -> dict[str, Any] | None:
+def open_issue(title: str, run: Run, *, image: str | None = None) -> dict[str, Any] | None:
     """The existing open issue, including one from before image-tag normalization.
 
     Non-image callers keep an exact-title lookup. For image issues the shorter
