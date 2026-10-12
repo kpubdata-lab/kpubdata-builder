@@ -2,6 +2,13 @@ name: 기능 제안
 description: 새로운 기능이나 개선을 제안합니다
 title: "feat: "
 body:
+  - type: markdown
+    attributes:
+      value: |
+        **안정화 전용 개발 기간:** 새 사용자 기능·Provider·외부 연동은 기본적으로 구현을 보류합니다.
+        기존 이슈의 잔여 작업이나 추가 근거는 새 이슈 대신 해당 이슈·PR에 기록하세요.
+        신규 아이디어는 먼저 Discussions에서 논의하고, 독립적인 안정화 예외에 해당할 때만 이슈로 제안해 주세요.
+        버그·보안 위험 제보는 버그 리포트로 계속 접수합니다.
   - type: textarea
     id: problem
     attributes:
