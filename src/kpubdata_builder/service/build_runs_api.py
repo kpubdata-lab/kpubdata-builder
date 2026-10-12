@@ -841,6 +841,7 @@ class BuildRunsApiService:
         Matches registry snapshot shape — callers need not distinguish paths.
         Does not carry ``response`` — that was build response body memory cache,
         not restorable from manifest. Omit rather than invent missing values.
+        A failed run carries ``error``, its recorded reason in one line.
         """
         manifest = self._store.get_manifest(run_id)
         if manifest is None:
@@ -867,9 +868,17 @@ class BuildRunsApiService:
         retry_of = manifest.get("retry_of")
         if isinstance(retry_of, str):
             body["retry_of"] = retry_of
-        # error not carried. manifest error strings may contain paths (#664 same
-        # reason), detail already provided by ``GET /builds/{run_id}/manifest`` —
-        # no reason to re-expose here.
+        # The reason the registry's job gave while it held the run (#1120): without it
+        # the owner of a failed run read ``error: null`` once the job was evicted or
+        # the server restarted — and always for a synchronous build, which is never in
+        # the registry — while an administrator still read the reason in the list.
+        # It is the line the index and ``GET /admin/runs`` hold, made of the manifest's
+        # ``failures`` only. The manifest's own ``errors`` are not carried: they may
+        # hold paths (#664), and ``GET /builds/{run_id}/manifest`` serves them.
+        if status == "failed":
+            reason = run_failure_summary(manifest)
+            if reason is not None:
+                body["error"] = reason
         return body
 
     def cancel_build(self, run_id: str) -> ServiceResponse:

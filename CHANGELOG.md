@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Configured disk and per-owner run storage admission now applies to synchronous `POST /build` as well as async `POST /builds` (#1099, API contract 1.123.0). Both paths count their reservations under the same registry lock, and a synchronous reservation remains until its result and index handling finish. Defaults remain off; a refused sync request writes no run.
+- A failed run's owner reads why it failed after a restart (#1120, API contract 1.124.0). `GET /builds/{run_id}` answers from the job registry while it holds the job and from the manifest afterwards, and the manifest path carried no `error`: after a restart or an eviction — and always for a synchronous `POST /build`, which is never a job — the owner read `failed` with `error: null`, while `GET /admin/runs` gave an administrator the reason. The answer now carries the line the build index and the admin list hold, made of the manifest's `failures` only; a manifest written before failures were recorded gives the fixed line, never its raw `errors`. No schema change.
 
 - Accepted asynchronous builds that fail before writing a manifest now retain a safe terminal reason in the event store and build index (#1120, API contract 1.122.0). Administrators see `failed_without_manifest` and the reached stage; owners can still read the fixed reason after a restart. Exception and spec text do not enter the shared summary.
 
