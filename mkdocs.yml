@@ -38,6 +38,7 @@ nav:
       - 빌드 상태 머신: BUILD_STATE.md
       - 빌드 알고리즘 명세: ALGORITHM.md
       - 기능 처리 흐름: FEATURE_FLOWS.md
+      - 한국어 이름·주소 후보 탐지 평가: pii-korean-ner-evaluation.md
   - 퍼블리싱:
       - 퍼블리싱 가이드: publishing.md
       - HuggingFace 퍼블리싱 표준: hf-publishing-standards.md
