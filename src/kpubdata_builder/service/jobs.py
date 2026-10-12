@@ -745,6 +745,9 @@ class AsyncBuildExecutor:
         ``sync`` for the job a synchronous ``POST /build`` waits for (#1242).
         ``run_inline`` executes after admission on the caller's thread, which must
         already hold the build slot; this preserves the synchronous slot wait bound.
+        The job counts as ``queued`` until it starts, so it is held to ``max_queued``
+        like any other. An error raised by the inline run itself is logged, not raised:
+        the job is already accepted, and the caller reads how it ended from the registry.
 
         ``owner_id`` passes only to ``registry.create()`` — persisted in snapshot (#496
         follow-up, active run ownership check) — NOT passed to ``runner`` invocation
@@ -759,7 +762,8 @@ class AsyncBuildExecutor:
         (legacy monitoring tests) queue normally without gating.
 
         Reverse (#496 self-review): If ``on_accept`` succeeds (event recorded) but
-        ``self._executor.submit()`` (actual worker pool queueing) fails, ``registry.create()``
+        ``self._executor.submit()`` (actual worker pool queueing, or the check that an
+        inline caller holds its slot) fails, ``registry.create()``
         made "queued" item phantom forever — event (``run_submitted``) append-only so
         can't delete (#496 principle). Replace with ``registry.mark_failed()`` (same
         terminal mechanism already used for job execution failure) then re-raise —
@@ -811,7 +815,6 @@ class AsyncBuildExecutor:
             if run_inline:
                 if self._build_slots is None or not self._build_slots.held_by_current_thread():
                     raise RuntimeError("inline build requires a slot held by its caller")
-                self._run_with_slot(spec_yaml, run_id, created_by, runner, mode)
             else:
                 self._executor.submit(self._run, spec_yaml, run_id, created_by, runner, mode)
         except Exception:
@@ -819,6 +822,14 @@ class AsyncBuildExecutor:
             if on_enqueue_failure is not None:
                 on_enqueue_failure()
             raise
+        if run_inline:
+            # Dispatch is over: whatever fails from here on is not an enqueue failure, so
+            # the job's status and events stay as the run left them. The caller reads
+            # the registry for how the job ended.
+            try:
+                self._run_with_slot(spec_yaml, run_id, created_by, runner, mode)
+            except Exception:
+                _logger.exception("inline build job %s raised after it was dispatched", run_id)
         return BuildJobSubmitResult(status="accepted", snapshot=snapshot)
 
     def list_all(self) -> list[BuildJobSnapshot]:

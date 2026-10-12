@@ -285,3 +285,35 @@ def test_a_job_cancelled_before_it_ran_answers_with_a_code(
         _assert_declared(answer)
     finally:
         service._async_builds.shutdown()
+
+
+def test_an_error_after_the_run_finished_does_not_turn_it_into_an_enqueue_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the dispatch is an enqueue failure. A failure while the finished job is
+    being logged leaves its status, its events and the answer as the run made them."""
+    import kpubdata_builder.service.jobs as jobs_module
+
+    def broken_ended(*_args: object, **_kwargs: object) -> None:
+        raise OSError("log stream is gone")
+
+    monkeypatch.setattr(jobs_module.build_log, "ended", broken_ended)
+    service = BuilderService(output_root=tmp_path, client_factory=lambda **_: _SlowSource(0))
+    try:
+        answer = dispatch(service, "POST", "/build", {"spec": _spec(1), "run_id": "after"})
+
+        assert isinstance(answer, ServiceResponse)
+        assert answer.status_code == 200, answer.body
+        assert answer.body["status"] == "ok"
+        snapshot = service._async_builds.get("after")
+        assert snapshot is not None
+        assert snapshot.status == "succeeded"
+        events = cast(
+            dict[str, Any], service.get_build_events("after", limit=500, tail=False).body
+        )["events"]
+        names = [e["event"] for e in events]
+        assert "run_finished" in names
+        assert "run_failed" not in names
+        assert all(e.get("code") != "enqueue_failed" for e in events)
+    finally:
+        service._async_builds.shutdown()
