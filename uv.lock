@@ -939,8 +939,8 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6,<4" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5,<1" },
-    { name = "sqlalchemy-cubrid", extras = ["pycubrid"], marker = "extra == 'cubrid'", specifier = ">=1.7.1,<1.9" },
-    { name = "sqlalchemy-cubrid", extras = ["pycubrid"], marker = "extra == 'dev'", specifier = ">=1.7.1,<1.9" },
+    { name = "sqlalchemy-cubrid", extras = ["pycubrid"], marker = "extra == 'cubrid'", specifier = ">=1.7.1,<1.10" },
+    { name = "sqlalchemy-cubrid", extras = ["pycubrid"], marker = "extra == 'dev'", specifier = ">=1.7.1,<1.10" },
     { name = "sqlglot", specifier = ">=30.17,<31" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "typing-extensions", specifier = ">=4.5,<5" },
@@ -1423,11 +1423,33 @@ wheels = [
 
 [[package]]
 name = "pycubrid"
-version = "1.7.1"
+version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/25/92/ee91906344ee949635d780f9b526782cb69ca0f2bfe087f50c752010f471/pycubrid-1.7.1.tar.gz", hash = "sha256:3cdfd707d854e5be5f041f4cffe93ba5e7aab6a6bafe2024f0b85a9b70729a93", size = 183506, upload-time = "2026-09-18T10:30:00.143Z" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "tzdata", marker = "python_full_version < '3.11' and sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1f/c6/2c076b11156d0de1b36b245ab3fd00adc281b291b43e6d3a1ed376f6bb67/pycubrid-1.9.0.tar.gz", hash = "sha256:c75a89ba8653ba9aaee949321b211ba460b0a1c29e514a1348f198bd758e6e4a", size = 586244, upload-time = "2026-10-04T14:07:31.241Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/2d/5b2ad2c204daa5602d4bdbaa3157e826f200274fd5f64e6f3bb2f1c21d91/pycubrid-1.7.1-py3-none-any.whl", hash = "sha256:be56c34b03fa8cce8498b5b22d7056ae822532e533959579879da3db189150a2", size = 68220, upload-time = "2026-09-18T10:29:58.729Z" },
+    { url = "https://files.pythonhosted.org/packages/16/08/85a8b1b3b91166734d29fba6c746ee31d6586f054f5e7c3ab8371e15311e/pycubrid-1.9.0-py3-none-any.whl", hash = "sha256:444f68043fb6c312f8a1e20471d5a28f7e5d0b368b60b0e4d7c0a61e20040c44", size = 132275, upload-time = "2026-10-04T14:07:29.844Z" },
+]
+
+[[package]]
+name = "pycubrid"
+version = "1.11.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+]
+dependencies = [
+    { name = "tzdata", marker = "python_full_version >= '3.11' and sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/be/1d/60ab6ab713ad94550421abb82a1036e72686b87a161220c6ce53da46ee8c/pycubrid-1.11.0.tar.gz", hash = "sha256:6ae65b29e88df1127f87b4ed6d09be19648286f87a3fc1a03b654f1c00c6a950", size = 632629, upload-time = "2026-10-11T22:56:43.072Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/a3/94935884e25bdbae17d8b219cdf278e9245d9e877dd96c8185975a50163d/pycubrid-1.11.0-py3-none-any.whl", hash = "sha256:1e84771a86be5f40fbfec7216a94af06b0e8a061277d221f861fef47707f860e", size = 132345, upload-time = "2026-10-11T22:56:41.502Z" },
 ]
 
 [[package]]
@@ -1736,19 +1758,20 @@ asyncio = [
 
 [[package]]
 name = "sqlalchemy-cubrid"
-version = "1.8.0"
+version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/36/42d397e82741f9416bb2d1ecba904f2a4bd7581087358d7d87c670a5ec30/sqlalchemy_cubrid-1.8.0.tar.gz", hash = "sha256:922ccd63bf10d19479b6914596634c55281dd76bd2628b853f432ab09986cd80", size = 206629, upload-time = "2026-09-28T18:56:24.59Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/97/85/8db5007b66ed827b191e60827b0838e8dd25cb8449fa0ed1eecaadd3c638/sqlalchemy_cubrid-1.9.0.tar.gz", hash = "sha256:d94bd5f420ee329562322de95771e351a721825d47fa81fea3f9bdbd891c084e", size = 322553, upload-time = "2026-10-04T14:45:32.865Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/1e/85afb273b16b26cd683b9c82dfd82e878efdb9031b5c64c86edf65589fe7/sqlalchemy_cubrid-1.8.0-py3-none-any.whl", hash = "sha256:1157138da27fffe8fcfdd835022a7f4af4ed2535f83fd437560a71b788874ad0", size = 67574, upload-time = "2026-09-28T18:56:23.233Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/d1/2951c20269fc0e8b3e2b9bff60e00c18826dd101c463810989fc18a4b02a/sqlalchemy_cubrid-1.9.0-py3-none-any.whl", hash = "sha256:37f6af649c3cb1021d1cb6047ce34c118ecc284e696080ae021e25ebd824bbe4", size = 82801, upload-time = "2026-10-04T14:45:31.447Z" },
 ]
 
 [package.optional-dependencies]
 pycubrid = [
-    { name = "pycubrid" },
+    { name = "pycubrid", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pycubrid", version = "1.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
