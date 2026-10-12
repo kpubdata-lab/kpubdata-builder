@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan the images a deployment runs again, and keep one issue per image (#1107).
+"""Scan deployed images repeatedly and keep one issue per image component (#1107).
 
 ``docker.yml`` scans Builder's image when it is built. An image gains advisories
 without anyone building it, and the build never scans the images the compose files
@@ -7,9 +7,9 @@ pull from elsewhere (Caddy). This reads the image references out of the
 deployment's compose files, scans each with Trivy for HIGH and CRITICAL
 vulnerabilities — those without a fix included — and records what it finds:
 
-- no open issue for the image, and findings: one is opened;
-- an open issue whose list is the same as today's: nothing is written;
-- an open issue whose list differs: its list is rewritten and a comment says what
+- no open issue for the image component, and findings: one is opened;
+- an open issue whose list and digest still match: nothing is written;
+- an open issue whose list, digest or image tag differs: it is updated and a comment says what
   changed. Only the part between the two markers is rewritten, so what a person wrote
   under "Triage" stays;
 - an open issue and no finding today: its list is rewritten to say so. The issue is
