@@ -733,8 +733,10 @@ class AsyncBuildExecutor:
         mode: build_log.BuildMode = "async",
         run_inline: bool = False,
     ) -> BuildJobSubmitResult:
-        """Queue job. If "existing"/"queue_full"/"owner_limit", new submission not
-        counted, so ``on_accept`` not called.
+        """Admit a job for inline execution or the worker pool.
+
+        An existing job, a full queue, or an owner limit does not count as a new
+        submission, so ``on_accept`` is not called.
 
         ``max_active_per_owner`` (#1189) is the most jobs one owner may have queued or
         running; None is no limit.
@@ -749,7 +751,7 @@ class AsyncBuildExecutor:
         (below: ``self._executor.submit(self._run, spec_yaml, run_id, created_by, runner)``).
         The runner reads the owner back from the registry snapshot when it starts (#998).
 
-        ``on_accept`` called before job queued to worker pool (``self._executor.submit``)
+        ``on_accept`` is called before the job executes or reaches the worker pool
         (#496). Caller (``BuilderService.submit_build``) appends "run_submitted" event via
         hook — if append fails and raises, job neither created in registry nor queued to
         worker. This order prevents "event lost but job running" contradiction — job

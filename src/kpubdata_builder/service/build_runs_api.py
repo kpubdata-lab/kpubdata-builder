@@ -642,7 +642,11 @@ class BuildRunsApiService:
                     run_id=resolved_run_id,
                     event="run_submitted",
                     status="ok",
-                    message="build accepted for async execution",
+                    message=(
+                        "build accepted for synchronous execution"
+                        if run_inline
+                        else "build accepted for async execution"
+                    ),
                 )
             )
             # Whose run this is, kept where it survives a restart (#996): the registry
