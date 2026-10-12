@@ -19,13 +19,13 @@ KPubData Builder의 주요 설계 결정을 기록합니다. 각 ADR은 배경·
 | [0013](./0013-api-contract-release-policy.md) | API 계약 버전과 릴리스 경계 정책 | 승인됨 | #521 |
 | [0014](./0014-source-ingestion-file-url-boundary.md) | Public API·File·URL Source 통합 경계 | 승인됨 | #498 |
 | [0015](./0015-email-password-oidc-idp-keycloak.md) | 사용자 인증 IdP: 이메일/비밀번호-capable OIDC(Keycloak) 전환 | 승인됨 | #515 |
-| [0016](./0016-cubrid-state-backend.md) | CUBRID 상태 백엔드 전환 + OCI Compute VM 배포 | 승인됨 | #579 |
+| [0016](./0016-cubrid-state-backend.md) | CUBRID 상태 백엔드 전환 + OCI Compute VM 배포 | 대체됨(0022, 2026-10-12) | #579 |
 | [0017](./0017-fullstack-oci-deployment.md) | 풀스택 배포 토폴로지: OCI 단일 VM(Builder) + Cloudflare Pages(Studio) | 제안됨 | — |
 | [0018](./0018-legacy-publish-pipeline.md) | 레거시 publish 파이프라인과 BuildSpec 경로의 공존 | 승인됨(2026-09-30, 선택지 C) | #636, #659 |
 | [0019](./0019-column-metadata-semantics.md) | 컬럼 메타: 저장 타입·의미·표시·단위·출처의 분리 | 제안됨 | #813 |
 | [0020](./0020-credential-lifetime-by-deployment.md) | 배포 형태에 따른 자격 증명의 수명 | 승인됨(2026-10-01 소유자 확인) | #682, #683 |
 | [0021](./0021-duckdb-tabular-engine.md) | DuckDB 를 단일 tabular 엔진으로 | 제안됨(소유자 ADR 검토) | #864, #622, #701, #704 |
-| [0022](./0022-sqlite-only-state-and-cubrid-retirement.md) | 상태는 SQLite 와 로컬 파일에만: CUBRID 백엔드를 잃는 것 없이 퇴역 | 제안됨(소유자 승인 대기, 승인되면 0016 을 대체) | #1093, #1094 |
+| [0022](./0022-sqlite-only-state-and-cubrid-retirement.md) | 상태는 SQLite 와 로컬 파일에만: CUBRID 백엔드를 잃는 것 없이 퇴역 | 승인됨(2026-10-12 소유자 승인, 0016 을 대체) | #1093, #1094 |
 | [0023](./0023-public-endpoint-with-auth-and-cors.md) | Builder 는 공개 엔드포인트를 갖는다: 경계는 인증과 CORS allowlist | 승인됨(2026-10-11, 0009 의 결정 3 을 대체) | #1215 |
 | [0024](./0024-derived-snapshots-and-lineage.md) | 파생 snapshot: 입력 snapshot 고정과 카탈로그의 계보 | 제안됨(소유자 검토 대기) | #821, #822 |
 

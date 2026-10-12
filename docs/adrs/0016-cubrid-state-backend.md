@@ -1,6 +1,6 @@
 # ADR 0016 — CUBRID 상태 백엔드 + manifest 정본 이전
 
-- 상태: 수용됨(Accepted)
+- 상태: 대체됨(Superseded) — 2026-10-12 [ADR 0022](./0022-sqlite-only-state-and-cubrid-retirement.md) 가 대체(소유자 승인, #1093). 이전 상태: 수용됨(Accepted)
 - 관련 이슈/문서: [ADR 0003](./0003-persistent-build-store.md)(영속 Build 저장소), [ADR 0010](./0010-artifactstore-state-backend.md)(ArtifactStore·백엔드 분리 — 이 ADR 을 쓸 때는 제안됨, 지금은 승인됨·구현 완료), [ADR 0012](./0012-provider-credential-boundary.md)(credential 경계)
 - 드라이버: `sqlalchemy-cubrid[pycubrid]` (v1.7.1+, SQLAlchemy `>=2.0,<2.3`, 순수 파이썬 `pycubrid` 1.7.1, Python 3.10+)
   - `[pycubrid]` extra 가 필수다. `sqlalchemy-cubrid` 만 설치하면 dialect 만 생기고 드라이버는 없다.
@@ -14,6 +14,9 @@
 > 대체하자고 제안한다 — 소유자가 2026-10-08 에 Builder 는 CUBRID 를 쓰지 않는다고 밝혔다. 0022 가 승인되기 전까지
 > 이 ADR 의 상태는 그대로다. 아래 "마이그레이션" 4번의 "credential 은 자동 이관되지 않는다"는 정확하지 않다:
 > 두 저장소는 같은 암호화와 같은 AAD 를 쓰므로, 같은 master key 라면 암호문을 그대로 옮길 수 있다(0022 §4).
+>
+> **2026-10-12 보충** 소유자가 ADR 0022 를 승인했다(#1093). 이 ADR 은 0022 가 대체한다. CUBRID 로 운영 중인
+> 배포는 없다고 소유자가 확인했고, CUBRID 백엔드는 #1094 가 제거한다. 아래 본문은 그때의 결정을 기록으로 남긴다.
 
 ## 맥락
 
