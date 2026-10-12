@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Configured disk and per-owner run storage admission now applies to synchronous `POST /build` as well as async `POST /builds` (#1099, API contract 1.123.0). Both paths count their reservations under the same registry lock, and a synchronous reservation remains until its result and index handling finish. Defaults remain off; a refused sync request writes no run.
+- Every read the contract offers is swept for declared personal values (#1113; tests only). `tests/unit/test_pii_every_read.py` builds a run whose source declares a personal column and calls every `GET` in the generated operation table, then the `POST` reads (`/query`, `/preview`, the warehouse query, rows, aggregate and export with its download, a saved analysis and its run): 82 answers, none showing a declared value, nothing in the log, and the values on disk only under the run's `bronze/` and `silver/`. A route added to the contract is swept without a change to the test; a path parameter the sweep cannot fill, or a `POST` it has not classified as a read or not, fails it. The same sweep over a run that opts the column out finds the values in 23 answers, which shows it can see them. No behaviour change.
 
 - Accepted asynchronous builds that fail before writing a manifest now retain a safe terminal reason in the event store and build index (#1120, API contract 1.122.0). Administrators see `failed_without_manifest` and the reached stage; owners can still read the fixed reason after a restart. Exception and spec text do not enter the shared summary.
 
