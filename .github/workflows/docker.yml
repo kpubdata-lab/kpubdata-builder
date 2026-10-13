@@ -77,10 +77,12 @@ on:
         description: "The published image's digest; empty when nothing was published."
         value: ${{ jobs.publish.outputs.digest }}
 
+# Read-only for every job. A job-level block replaces this one, so only `publish`
+# can write (#1336): a pull request's build runs unreviewed code and must not hold a
+# token that pushes a package or asks for an OIDC token.
+# scripts/check_workflow_permissions.py holds this.
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 concurrency:
   # The image's ref: `v1.2.3` called by release.yml and `refs/tags/v1.2.3` pushed
@@ -101,6 +103,10 @@ jobs:
     # p95 1.5 minutes over 40 runs (2026-10), from a warm layer cache; a change to
     # uv.lock rebuilds the dependency layer from nothing.
     timeout-minutes: 15
+    # Builds and runs the pull request's own code: read the repository, nothing more.
+    # The layer cache (type=gha) uses the runner's cache token, not this one.
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -224,6 +230,12 @@ jobs:
     timeout-minutes: 45
     needs: build
     if: ${{ github.event_name != 'pull_request' || inputs.publish }}
+    # The only job that writes. When release.yml calls this workflow its `image` job
+    # passes the same three, and a called workflow gets no more than its caller holds.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     outputs:
       digest: ${{ steps.build-publish.outputs.digest }}
     steps:
