@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import base64
 import fnmatch
+import gc
 import hashlib
 import io
 import json
@@ -139,7 +140,14 @@ def _populate(output: Path) -> str:
 
 
 def _tree(root: Path) -> dict[str, str]:
-    """Every file under ``root`` by its SHA-256, the lock and a restore's leftovers aside."""
+    """Every file under ``root`` by its SHA-256, the lock and a restore's leftovers aside.
+
+    Collects first. From Python 3.11 a ``sqlite3`` connection that was dropped without
+    ``close()`` is closed by the cyclic collector, not at its last reference, and until
+    then its ``-wal`` and ``-shm`` lie beside the database. A tree hashed with one still
+    open differs from the same state a moment later, at a moment no test chooses.
+    """
+    gc.collect()
     found: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root).as_posix()
