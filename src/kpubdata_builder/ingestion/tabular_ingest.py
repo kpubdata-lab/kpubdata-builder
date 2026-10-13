@@ -17,7 +17,9 @@ memory is never held whole — not as bytes, not as text, not as a record list:
   (an unclosed quote or an extra field is refused with its line), written again without
   ambiguity, and typed by DuckDB over the whole file — so a batch never decides a type
   the next batch contradicts.
-- **Parquet** is spilled to a file and read in batches by DuckDB.
+- **Parquet** is spilled to a file and read in batches by DuckDB. Where the caller
+  passes :class:`ParquetLimits` (upload admission, #1335), the footer is read first and
+  a file declaring more work than the limits allow is refused before any row is read.
 
 :func:`parse_tabular_bytes` remains for callers holding small content in memory; it
 gives the same records the stream gives.
@@ -35,11 +37,15 @@ import shutil
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 from ..spec import JsonValue
 from .errors import IngestionError
+
+if TYPE_CHECKING:
+    from duckdb import DuckDBPyConnection
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +74,32 @@ _ARRAY_OF_OBJECTS = (
 Batch = list[dict[str, JsonValue]]
 
 
+@dataclass(frozen=True)
+class ParquetLimits:
+    """How much work a Parquet file may ask of the reader (#1335).
+
+    A Parquet file's size says little about what reading it costs: a few kilobytes can
+    declare millions of rows of one repeated value. These are judged from the footer
+    before any row is read. The defaults other than ``max_cells`` were chosen without a
+    measurement, far above what an upload under the byte limit holds in practice.
+
+    Attributes:
+        max_cells: Rows times leaf columns; None for no limit. Reading costs about this.
+        max_columns: Leaf columns, a nested field's leaves each counting as one.
+        max_depth: Levels of nesting in the schema, a list taking two.
+        max_row_groups: Row groups in the file.
+        max_uncompressed_bytes: Column chunk bytes once decompressed.
+        memory_limit: DuckDB's memory limit while reading.
+    """
+
+    max_cells: int | None
+    max_columns: int = 10_000
+    max_depth: int = 32
+    max_row_groups: int = 100_000
+    max_uncompressed_bytes: int = 1024**3
+    memory_limit: str = "1GB"
+
+
 def iter_tabular_batches(
     source: BinaryIO,
     *,
@@ -76,6 +108,7 @@ def iter_tabular_batches(
     read_as: Mapping[str, str] | None = None,
     workdir: Path | None = None,
     batch_records: int = BATCH_RECORDS,
+    parquet_limits: ParquetLimits | None = None,
 ) -> Iterator[Batch]:
     """Parse ``source`` by ``format`` rules, yielding records in order, a batch at a time.
 
@@ -92,6 +125,8 @@ def iter_tabular_batches(
             private temporary directory if omitted. The spill file is removed when the
             iterator finishes or is closed.
         batch_records: Records per batch (the last may hold fewer).
+        parquet_limits: The most work a Parquet file may ask for; refused from its
+            footer when it asks for more. None reads whatever the file declares.
 
     Raises:
         IngestionError: Empty content, unsupported format, decode/parse failure.
@@ -102,7 +137,7 @@ def iter_tabular_batches(
     if format == "parquet":
         with _spill(workdir) as path:
             _copy(stream, path)
-            for batch in _parquet_batches(path, batch_records):
+            for batch in _parquet_batches(path, batch_records, parquet_limits):
                 _refuse_untexted_values(batch)
                 yield batch
         return
@@ -237,10 +272,75 @@ def _untexted_kind(value: object) -> str | None:
 _NESTED_UNFETCHABLE = re.compile(r"\b(?:TIMESTAMP WITH TIME ZONE|UUID)(?=[,)\[]|$)")
 
 
-def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
+def _refuse_over_limits(connection: DuckDBPyConnection, path: Path, limits: ParquetLimits) -> int:
+    """Refuse a file whose footer declares more work than ``limits``; its leaf columns.
+
+    Only the footer is read: the schema, the row and row group counts, and the column
+    chunks' decompressed sizes. Nothing here decompresses a page.
+    """
+    file_row = connection.execute(
+        "SELECT num_rows, num_row_groups FROM parquet_file_metadata(?)", [str(path)]
+    ).fetchone()
+    rows, row_groups = (int(file_row[0] or 0), int(file_row[1] or 0)) if file_row else (0, 0)
+    if row_groups > limits.max_row_groups:
+        raise IngestionError(
+            f"parquet content has {row_groups} row groups, and an upload may have at most "
+            f"{limits.max_row_groups}: write it with larger row groups"
+        )
+    # The schema in pre-order, the root first: each element's depth follows from how
+    # many children the elements above it still have to give.
+    schema = connection.execute(
+        "SELECT num_children FROM parquet_schema(?)", [str(path)]
+    ).fetchall()
+    leaves = depth = 0
+    pending: list[int] = []
+    for (children,) in schema:
+        while pending and pending[-1] == 0:
+            pending.pop()
+        if pending:
+            pending[-1] -= 1
+        depth = max(depth, len(pending))
+        if children:
+            pending.append(int(children))
+        elif pending:
+            leaves += 1
+    if depth > limits.max_depth:
+        raise IngestionError(
+            f"parquet content has a column nested {depth} levels deep, and an upload may "
+            f"nest at most {limits.max_depth}"
+        )
+    if leaves > limits.max_columns:
+        raise IngestionError(
+            f"parquet content has {leaves} columns (a nested field's leaves each count), "
+            f"and an upload may have at most {limits.max_columns}"
+        )
+    cells = rows * max(leaves, 1)
+    if limits.max_cells is not None and cells > limits.max_cells:
+        raise IngestionError(
+            f"parquet content declares {rows} rows x {leaves} columns = {cells} cells, "
+            f"and an upload may hold at most {limits.max_cells}: split it into smaller files"
+        )
+    size_row = connection.execute(
+        "SELECT coalesce(sum(total_uncompressed_size), 0) FROM parquet_metadata(?)",
+        [str(path)],
+    ).fetchone()
+    uncompressed = int(size_row[0]) if size_row else 0
+    if uncompressed > limits.max_uncompressed_bytes:
+        raise IngestionError(
+            f"parquet content would decompress to {uncompressed} bytes, and an upload may "
+            f"decompress to at most {limits.max_uncompressed_bytes}"
+        )
+    return leaves
+
+
+def _parquet_batches(
+    path: Path, batch_records: int, limits: ParquetLimits | None = None
+) -> Iterator[Batch]:
     """The rows of a Parquet file as records, in file order, read by DuckDB.
 
-    An instant (a zoned timestamp) is given as an aware datetime in UTC.
+    An instant (a zoned timestamp) is given as an aware datetime in UTC. With
+    ``limits``, the footer is judged first, and the rows read are counted against the
+    same cell limit — a footer that understates its rows does not buy more work.
     """
     import duckdb
 
@@ -249,6 +349,12 @@ def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
     with duckdb.connect(":memory:") as connection:
         connection.execute("SET TimeZone = 'UTC'")
         try:
+            leaves = 1
+            if limits is not None:
+                connection.execute(f"SET memory_limit = '{limits.memory_limit}'")
+                connection.execute("SET threads = 1")
+                leaves = max(_refuse_over_limits(connection, path, limits), 1)
+            cells = 0
             described = connection.execute(
                 "DESCRIBE SELECT * FROM read_parquet(?)", [str(path)]
             ).fetchall()
@@ -277,6 +383,12 @@ def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
             )
             cursor = connection.execute(f"SELECT {select} FROM read_parquet(?)", [str(path)])
             for rows in iter(lambda: cursor.fetchmany(batch_records), []):
+                cells += len(rows) * leaves
+                if limits is not None and limits.max_cells is not None and cells > limits.max_cells:
+                    raise IngestionError(
+                        f"parquet content holds more than {limits.max_cells} cells, the most "
+                        "an upload may hold: split it into smaller files"
+                    )
                 # Python values, as Polars' ``to_dicts`` gave them: a date, a Decimal.
                 yield [
                     cast(
@@ -292,6 +404,12 @@ def _parquet_batches(path: Path, batch_records: int) -> Iterator[Batch]:
                 ]
         except IngestionError:
             raise
+        except duckdb.OutOfMemoryException as exc:
+            logger.warning("parquet: DuckDB ran out of memory reading the upload: %s", exc)
+            raise IngestionError(
+                "failed to parse parquet content: reading it needs more memory than an "
+                "upload may use"
+            ) from exc
         except duckdb.Error as exc:
             # DuckDB's text names the spill file and the SQL; it stays in the log.
             logger.warning("parquet: DuckDB could not read the upload: %s", exc)
@@ -768,4 +886,4 @@ def _json_batches(chunks: Iterator[str], batch_records: int) -> Iterator[Batch]:
         yield batch
 
 
-__all__ = ["BATCH_RECORDS", "iter_tabular_batches", "parse_tabular_bytes"]
+__all__ = ["BATCH_RECORDS", "ParquetLimits", "iter_tabular_batches", "parse_tabular_bytes"]
