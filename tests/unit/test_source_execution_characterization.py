@@ -32,13 +32,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
+from unittest.mock import patch
 
 import duckdb
 import kpubdata
 import pytest
 
+from kpubdata_builder.catalog_info import DatasetCatalogInfo
 from kpubdata_builder.events.store import events_store_path
-from kpubdata_builder.pipeline import orchestrator
+from kpubdata_builder.pipeline import card_facts, orchestrator
 from kpubdata_builder.service import BuilderService
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages.bronze.build import SourceClient
@@ -422,8 +424,33 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
+#: The fake sources keep dataset-specific provenance without depending on the installed
+#: kpubdata catalog. ``tests/unit/test_dataset_cards.py`` covers the real lookup.
+_CATALOG_BY_DATASET = {
+    "datago.air_station": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr/data/15073861/openapi.do",
+        license_type="공공누리_3유형",
+        attribution="공공누리 제3유형(출처표시, 변경금지) — 한국환경공단 에어코리아 대기오염정보",
+    ),
+    "datago.air_quality": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr",
+        license_type="공공누리_3유형",
+        attribution="공공누리 제3유형(변경금지) — 한국환경공단 대기오염정보",
+    ),
+}
+
+
+@contextmanager
+def _fixed_catalog() -> Iterator[None]:
+    def lookup(dataset_id: str) -> DatasetCatalogInfo | None:
+        return _CATALOG_BY_DATASET.get(dataset_id)
+
+    with patch.object(card_facts, "catalog_info", lookup):
+        yield
+
+
 def _render(name: str) -> str:
-    with TemporaryDirectory() as directory:
+    with _fixed_catalog(), TemporaryDirectory() as directory:
         result = SCENARIOS[name](Path(directory))
     return json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
