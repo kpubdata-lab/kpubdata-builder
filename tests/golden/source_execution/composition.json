@@ -446,6 +446,7 @@
       "row_count": 3,
       "source_refs": null,
       "source_silver": "b",
+      "split_files": null,
       "splits": null
     },
     "gold/b/table.parquet": {
@@ -654,6 +655,7 @@
         "b"
       ],
       "source_silver": "m+b",
+      "split_files": null,
       "splits": null
     },
     "gold/combined/table.parquet": {
@@ -844,6 +846,7 @@
       "row_count": 3,
       "source_refs": null,
       "source_silver": "m",
+      "split_files": null,
       "splits": null
     },
     "gold/m/table.parquet": {
