@@ -42,7 +42,7 @@ from kpubdata_builder.service.ownership import hides_foreign_runs
 from kpubdata_builder.service.pii_reads import (
     PiiDeclarationUnavailable,
     PiiLookup,
-    masked_silver_table,
+    masked_silver_columns,
     run_withheld_columns,
     unavailable_response,
 )
@@ -154,9 +154,11 @@ class QueryApiService:
                 limit=request.limit,
                 semantics=semantics,
             )
-        # Silver keeps declared PII as is (#611): the query runs on a copy with it masked,
-        # so no expression over a declared column sees an original value (#900).
-        # Every declaration is taken as present here; the copy masks those the table has.
+        # Silver keeps declared PII as is (#611): the query's sandbox masks it in the view
+        # it reads, so no expression over a declared column sees an original value
+        # (#900), and the mask costs only the rows the query reads, inside its own
+        # limits (#1331). Every declaration is taken as present here; the columns the
+        # table has are masked.
         try:
             withheld = run_withheld_columns(
                 self._output_root,
@@ -168,31 +170,25 @@ class QueryApiService:
             )
         except PiiDeclarationUnavailable as exc:
             return unavailable_response(exc, what="query results")
-        masked = None
+        masked: tuple[str, ...] = ()
         if withheld:
             try:
-                masked = masked_silver_table(context.table_path, withheld)
+                masked = masked_silver_columns(context.table_path, withheld)
             except (OSError, ValueError, duckdb.Error):
                 # Fail closed: an unreadable table is not read unmasked.
                 return ServiceResponse(
                     400, {"error": "query execution failed", "code": "query_execution_failed"}
                 )
-        if masked is None:
-            return execute_query(
-                self._engine,
-                context.table_path,
-                request.sql,
-                limit=request.limit,
-                semantics=semantics,
-            )
-        try:
-            response = execute_query(
-                self._engine, masked.path, request.sql, limit=request.limit, semantics=semantics
-            )
-        finally:
-            masked.close()
-        if response.status_code == 200:
-            response.body["masked_columns"] = list(masked.columns)
+        response = execute_query(
+            self._engine,
+            context.table_path,
+            request.sql,
+            limit=request.limit,
+            semantics=semantics,
+            masked=frozenset(masked),
+        )
+        if masked and response.status_code == 200:
+            response.body["masked_columns"] = list(masked)
         return response
 
 
@@ -203,6 +199,7 @@ def execute_query(
     *,
     limit: int,
     semantics: Mapping[str, ColumnSemantics] | None = None,
+    masked: frozenset[str] = frozenset(),
 ) -> ServiceResponse:
     """Validate and run ``sql`` against one table file, and classify what went wrong.
 
@@ -210,10 +207,16 @@ def execute_query(
     maps to the same status code and ``code`` whichever way the table was found.
     ``semantics`` describes the table's columns by name (#702); a result column that
     keeps a described name gets its hints, and a text code column is an identifier.
+    ``masked`` names the columns the query's sandbox shows masked (#1331).
     """
     try:
         validated = validate_read_only_sql(sql)
-        result = engine.execute(table_path, validated.canonical_sql, limit=limit)
+        canonical = validated.canonical_sql
+        result = (
+            engine.execute(table_path, canonical, limit=limit, masked=masked)
+            if masked
+            else engine.execute(table_path, canonical, limit=limit)
+        )
     except UnsafeQueryError as exc:
         return ServiceResponse(400, {"error": str(exc), "code": "unsafe_query"})
     except QueryBusyError:

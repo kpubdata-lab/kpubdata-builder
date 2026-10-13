@@ -605,6 +605,10 @@ INTERNAL_VARIABLES: tuple[InternalVariable, ...] = (
         description="쿼리 엔진이 쿼리마다 만든 임시 디렉터리를 자식 프로세스에 넘길 때 설정한다. DuckDB 의 spill 파일이 여기에 생기고, 쿼리가 끝나거나 죽으면 부모가 지운다. 운영자가 정해 두는 값이 아니다 — spill 크기의 상한은 `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` 다",
     ),
     InternalVariable(
+        name="KPUBDATA_QUERY_MASKED_COLUMNS",
+        description="쿼리 엔진이 쿼리마다 자식 프로세스에 넘기는, 마스킹할 열 이름의 JSON 목록이다. Silver 쿼리에서 선언된 개인정보 열은 sandbox 의 뷰가 Gold 와 같은 방식으로 가린다(#1331). 운영자가 정해 두는 값이 아니다 — 부모가 매 쿼리마다 덮어쓴다",
+    ),
+    InternalVariable(
         name="KPUBDATA_BUILDER_REPLAY_DIR",
         description="테스트·CI 가 녹화된 provider 응답 디렉터리를 가리킬 때 설정한다. 설정돼 있으면 Builder 가 아래 두 변수를 kpubdata 에 넘겨 실제 provider 를 부르지 않게 한다. 운영 배포에서는 설정하지 않는다",
     ),

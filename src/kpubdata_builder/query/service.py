@@ -189,9 +189,19 @@ class QueryService:
         """The admission budget, when one is configured — for monitoring and tests."""
         return self._budget
 
-    def execute(self, table_path: Path, canonical_sql: str, *, limit: int) -> QueryResult:
+    def execute(
+        self,
+        table_path: Path,
+        canonical_sql: str,
+        *,
+        limit: int,
+        masked: frozenset[str] = frozenset(),
+    ) -> QueryResult:
+        """Run a validated query; ``masked`` columns are masked in the sandbox (#1331)."""
         with self._admitted():
-            return self._engine.execute(table_path, canonical_sql, limit=limit)
+            if not masked:
+                return self._engine.execute(table_path, canonical_sql, limit=limit)
+            return self._engine.execute(table_path, canonical_sql, limit=limit, masked=masked)
 
     def execute_rows(self, table_path: Path, plan_json: str, *, limit: int) -> QueryResult:
         """Read one page of rows by a validated plan (#815), under the same limits."""

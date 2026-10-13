@@ -6,9 +6,10 @@ and Bronze keep the original values (#611), and the service reads them on four p
 Each shows the same columns masked the same way Gold does — text becomes the mask
 token, any other dtype null — or refuses:
 
-- ``POST /query`` with ``stage: silver`` runs the query on a masked copy of the Silver
-  table, so no SQL expression over a declared column (``upper``, ``substr``, a
-  ``WHERE`` equality) can see an original value.
+- ``POST /query`` with ``stage: silver`` runs the query over a view of the Silver table
+  with the declared columns masked (``query.sandbox``, #1331), so no SQL expression over
+  a declared column (``upper``, ``substr``, a ``WHERE`` equality) can see an original
+  value.
 - ``POST /preview`` masks each source's ``sample``, ``source_sample`` (raw field names,
   mapped through the source's ``schema.coalesce`` and ``schema.rename``) and the
   ``diffs`` of a declared column.
@@ -41,11 +42,9 @@ answer differs — the terms refuse a read, a declaration masks it.
 
 from __future__ import annotations
 
-import json
 import logging
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -55,7 +54,6 @@ from ..spec import BuildSpec, JsonValue, SourceRef
 from ..stages._stage_reader import sanitize_source_segment, silver_source_dir
 from ..stages.bronze.build import SourceClient
 from ..stages.gold.pii import (
-    PII_MASK_TOKEN,
     builder_column_names,
     columns_withheld_from_silver,
     core_pii_columns,
@@ -296,84 +294,19 @@ def _silver_columns(output_root: Path, run_id: str, source_key: str) -> list[str
 # ------------------------------------------------------------------ /query on Silver
 
 
-@dataclass
-class MaskedTable:
-    """A masked copy of a Silver table, removed when the query is done."""
+def masked_silver_columns(table_path: Path, withheld: frozenset[str]) -> tuple[str, ...]:
+    """The withheld columns ``table_path`` has, sorted; read from its metadata only.
 
-    path: Path
-    columns: tuple[str, ...]
-    _directory: tempfile.TemporaryDirectory[str]
-
-    def close(self) -> None:
-        self._directory.cleanup()
-
-
-def masked_silver_table(table_path: Path, withheld: frozenset[str]) -> MaskedTable | None:
-    """A copy of ``table_path`` with the withheld columns masked; None when none are there.
-
-    Written by DuckDB from the file as it is stored (#874): every column keeps its
-    stored type and the copy carries the original's key-value metadata, so the Builder
-    dtypes and real names it records (#891) come back when the copy is queried — a
-    query of the copy reports the same ``column_meta`` as a query of the original.
+    The query's sandbox masks them in its views (``query.sandbox``, #1331), as the query
+    reads the rows, so nothing the size of the table is written before the query runs.
     Text keeps its null pattern and gets the token; any other column becomes null of
     its own type (Gold's masking, ``stages/gold/pii``, #902).
-    """
-    from ..query.sandbox import _kv
-    from ..tabular.builder_kv import KV_KEY, KV_NAMES_KEY
-    from ..tabular.duckdb_runtime import BuildProfile, connect
-    from ..tabular.sql import quote_identifier, quote_literal
 
-    directory = tempfile.TemporaryDirectory(prefix="kpubdata-pii-")
-    spill = Path(directory.name) / "spill"
-    spill.mkdir()
-    path = Path(directory.name) / "table.parquet"
-    try:
-        connection = connect(BuildProfile.from_env(), spill)
-        try:
-            source = f"read_parquet({quote_literal(str(table_path))})"
-            kv = _kv(connection, str(table_path))
-            dtypes, renamed = kv.get(KV_KEY, {}), kv.get(KV_NAMES_KEY, {})
-            stored = connection.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
-            parts: list[str] = []
-            present: list[str] = []
-            for physical, storage, *_ in stored:
-                name = renamed.get(physical, physical)
-                column = quote_identifier(physical)
-                if name not in withheld:
-                    parts.append(column)
-                    continue
-                present.append(name)
-                text = dtypes.get(name, "String" if storage == "VARCHAR" else "") == "String"
-                masked = (
-                    f"CASE WHEN {column} IS NULL THEN NULL ELSE {quote_literal(PII_MASK_TOKEN)} END"
-                    if text
-                    else f"CAST(NULL AS {storage})"
-                )
-                parts.append(f"{masked} AS {column}")
-            if not present:
-                directory.cleanup()
-                return None
-            options = "FORMAT PARQUET"
-            metadata = {
-                key: json.dumps(value)
-                for key, value in ((KV_KEY, dtypes), (KV_NAMES_KEY, renamed))
-                if value
-            }
-            if metadata:
-                pairs = ", ".join(
-                    f"{quote_literal(k)}: {quote_literal(v)}" for k, v in metadata.items()
-                )
-                options += f", KV_METADATA {{{pairs}}}"
-            connection.execute(
-                f"COPY (SELECT {', '.join(parts)} FROM {source}) "
-                f"TO {quote_literal(str(path))} ({options})"
-            )
-        finally:
-            connection.close()
-    except BaseException:
-        directory.cleanup()
-        raise
-    return MaskedTable(path=path, columns=tuple(sorted(present)), _directory=directory)
+    Raises:
+        OSError: The file cannot be read.
+        ValueError: It is not a Parquet file Builder can read.
+    """
+    return tuple(sorted(c for c in table_dtypes(table_path) if c in withheld))
 
 
 # ------------------------------------------------------------------ /preview
@@ -429,13 +362,12 @@ __all__ = [
     "DECLARED_PII_WITHHELD",
     "PII_DECLARATION_UNAVAILABLE",
     "PiiDeclarationUnavailable",
-    "MaskedTable",
     "PiiLookup",
     "artifact_refusal",
     "client_pii_lookup",
     "mask_source_preview",
     "mask_stage_sample",
-    "masked_silver_table",
+    "masked_silver_columns",
     "run_withheld_columns",
     "source_withheld_columns",
     "unavailable_response",

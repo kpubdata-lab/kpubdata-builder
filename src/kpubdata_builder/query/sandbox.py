@@ -20,6 +20,12 @@ around it — and does not rely on the other two:
   and adds the row's position in the file, for the reads Builder writes itself (rows,
   aggregates, profiles) and for reads whose order is a contract (ADR 0021 D8). User SQL
   may name only ``dataset`` (the validator).
+- **Masked columns.** A Silver read names the declared PII columns it must not show
+  (#900); both views give each of them Gold's mask — text becomes the mask token with
+  its nulls kept, any other dtype null of its own type — so no expression over the
+  view sees an original value. The mask is part of the view rather than a copy of the
+  table (#1331): DuckDB applies it to the rows a query reads, and its cost is the
+  query's, inside the child's timeout, memory cap and spill quota.
 
 Paths are written into SQL only through ``quote_literal`` and come from the server,
 never from a request.
@@ -31,12 +37,13 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import duckdb
 
+from ..stages.gold.pii import PII_MASK_TOKEN
 from ..tabular.builder_kv import KV_KEY, KV_NAMES_KEY, NO_COLUMNS, NO_COLUMNS_KEY
 from ..tabular.duckdb_runtime import BuildProfile
 from ..tabular.sql import quote_identifier, quote_literal
@@ -50,6 +57,8 @@ ROW_ORDER = "__kpubdata_row_order"
 _FILE_ROW_NUMBER = "file_row_number"
 #: Set by the query engine in the child: the temporary directory it made for this query.
 TEMP_DIR_ENV = "KPUBDATA_QUERY_TEMP_DIR"
+#: Set by the query engine in the child: a JSON list of the columns to mask (#1331).
+MASKED_COLUMNS_ENV = "KPUBDATA_QUERY_MASKED_COLUMNS"
 
 
 @dataclass(frozen=True)
@@ -92,9 +101,37 @@ def _kv(connection: duckdb.DuckDBPyConnection, path: str) -> dict[str, dict[str,
     return found
 
 
-def _restored(physical: str, dtype: str | None) -> str:
-    """The SQL giving a stored column its Builder dtype back."""
+def _masked(physical: str, storage: str, dtype: str | None) -> str:
+    """The stored column with Gold's mask applied, still of its stored type (#900).
+
+    Text keeps its null pattern and gets the token; any other column becomes null of
+    its own type (``stages/gold/pii``, #902). A column the file records no dtype for is
+    text when it is stored as VARCHAR.
+    """
     column = quote_identifier(physical)
+    if (dtype if dtype is not None else ("String" if storage == "VARCHAR" else "")) == "String":
+        return f"CASE WHEN {column} IS NULL THEN NULL ELSE {quote_literal(PII_MASK_TOKEN)} END"
+    return f"CAST(NULL AS {storage})"
+
+
+def masked_columns_from_env() -> frozenset[str]:
+    """The columns the engine asked this child to mask; none when it asked for none.
+
+    Raises:
+        ValueError: The value is not a JSON list of names — refused rather than read as
+            "mask nothing".
+    """
+    raw = os.environ.get(MASKED_COLUMNS_ENV)
+    if raw is None:
+        return frozenset()
+    decoded = json.loads(raw)
+    if not isinstance(decoded, list) or not all(isinstance(name, str) for name in decoded):
+        raise ValueError(f"{MASKED_COLUMNS_ENV} must be a JSON list of column names")
+    return frozenset(decoded)
+
+
+def _restored(column: str, dtype: str | None) -> str:
+    """The SQL giving a stored column (``column`` is its SQL) its Builder dtype back."""
     if dtype == "Null":
         return "NULL"
     if dtype == "Int128":
@@ -105,8 +142,19 @@ def _restored(physical: str, dtype: str | None) -> str:
 
 
 @contextmanager
-def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Iterator[Sandbox]:
-    """A locked connection whose ``dataset`` is ``table_path``; closed on exit."""
+def open_sandbox(
+    table_path: str,
+    *,
+    profile: BuildProfile | None = None,
+    masked: Collection[str] | None = None,
+) -> Iterator[Sandbox]:
+    """A locked connection whose ``dataset`` is ``table_path``; closed on exit.
+
+    Args:
+        masked: Columns, by real name, that both views show masked (#1331). None reads
+            :data:`MASKED_COLUMNS_ENV`, which the query engine sets in its child.
+    """
+    withheld = frozenset(masked) if masked is not None else masked_columns_from_env()
     limits = profile or BuildProfile.from_env()
     given = os.environ.get(TEMP_DIR_ENV)
     temp_dir = given or tempfile.mkdtemp(prefix="kpubdata-query-")
@@ -142,9 +190,11 @@ def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Ite
         renamed = kv.get(KV_NAMES_KEY, {})
         plain = f"read_parquet({quote_literal(path)})"
         placeholder = kv.get(NO_COLUMNS_KEY, {}).get("") == "true"
-        described = [
-            str(row[0]) for row in connection.execute(f"DESCRIBE SELECT * FROM {plain}").fetchall()
-        ]
+        storage = {
+            str(row[0]): str(row[1])
+            for row in connection.execute(f"DESCRIBE SELECT * FROM {plain}").fetchall()
+        }
+        described = list(storage)
         stored = [name for name in described if not (placeholder and name == NO_COLUMNS)]
         if any(name.casefold() == _FILE_ROW_NUMBER for name in described):
             # DuckDB will not add its row-number column to a file that has a column of
@@ -159,8 +209,14 @@ def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Ite
             source = f"read_parquet({quote_literal(path)}, file_row_number = true)"
             row_order = "file_row_number"
         names = [renamed.get(physical, physical) for physical in stored]
+        recorded = kv.get(KV_KEY, {})
         restored = [
-            _restored(physical, dtypes.get(name))
+            _restored(
+                _masked(physical, storage[physical], recorded.get(name))
+                if name in withheld
+                else quote_identifier(physical),
+                dtypes.get(name),
+            )
             for physical, name in zip(stored, names, strict=True)
         ]
         internal = ", ".join(f"{sql} AS _c{i}" for i, sql in enumerate(restored))
@@ -199,9 +255,11 @@ def open_sandbox(table_path: str, *, profile: BuildProfile | None = None) -> Ite
 
 __all__ = [
     "DATASET",
+    "MASKED_COLUMNS_ENV",
     "ORDERED_DATASET",
     "ROW_ORDER",
     "TEMP_DIR_ENV",
     "Sandbox",
+    "masked_columns_from_env",
     "open_sandbox",
 ]
