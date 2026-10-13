@@ -63,6 +63,21 @@ CANCEL_CHECK_SECONDS = 0.1
 WorkerFn = Callable[[Connection, str, str, int, int], None]
 
 
+def _limit_malloc_arenas(count: int) -> None:
+    """Cap glibc's malloc arenas in this process; a no-op off glibc (``M_ARENA_MAX``)."""
+    import ctypes
+    import ctypes.util
+    import sys
+
+    if not sys.platform.startswith("linux"):
+        return
+    name = ctypes.util.find_library("c")
+    if name is None:
+        return
+    with suppress(OSError, AttributeError):
+        ctypes.CDLL(name).mallopt(-8, count)  # M_ARENA_MAX
+
+
 def _bounded_worker(
     memory_limit_bytes: int | None,
     temp_dir: str,
@@ -90,6 +105,15 @@ def _bounded_worker(
     os.environ[TEMP_DIR_ENV] = temp_dir
     # Always set, so the sandbox masks what this query was given and nothing inherited.
     os.environ[MASKED_COLUMNS_ENV] = json.dumps(masked)
+    # A masked Silver query reads its file through pyarrow (#1331), imported later in
+    # this child. Its default allocator reserves a 1 GiB arena on import and glibc a
+    # 64 MiB arena for each thread that allocates; under the address-space cap either
+    # fails a query DuckDB alone would answer. The system allocator, two arenas and two
+    # threads in each of pyarrow's pools keep what it adds near the size of its library.
+    os.environ["ARROW_DEFAULT_MEMORY_POOL"] = "system"
+    os.environ["ARROW_IO_THREADS"] = "2"
+    os.environ["OMP_NUM_THREADS"] = "2"
+    _limit_malloc_arenas(2)
     if memory_limit_bytes is not None:
         try:
             import resource
@@ -166,10 +190,11 @@ def _query_worker(
 ) -> None:
     try:
         from .result import stream_result
-        from .sandbox import open_sandbox
+        from .sandbox import masked_columns_from_env, open_sandbox
         from .stored_columns import stored_null_outputs
 
-        with open_sandbox(table_path) as sandbox:
+        # Passed explicitly: a child not told what to mask refuses rather than masks none.
+        with open_sandbox(table_path, masked=masked_columns_from_env()) as sandbox:
             # Startup ends after spawn, imports and the locked connection, before the query.
             startup_ms = _elapsed_ms(parent_started_ns)
             engine_started_ns = time.monotonic_ns()

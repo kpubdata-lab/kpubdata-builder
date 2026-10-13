@@ -116,7 +116,10 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 | :--- | :--- |
 | `KAGGLE_CONFIG_DIR` | Kaggle 게시를 실행하는 동안 Builder 가 빈 임시 디렉터리로 설정한다 — 호스트의 `~/.kaggle/kaggle.json` 을 읽지 않게 하기 위해서다. 게시가 끝나면 원래 값으로 되돌린다 |
 | `KPUBDATA_QUERY_TEMP_DIR` | 쿼리 엔진이 쿼리마다 만든 임시 디렉터리를 자식 프로세스에 넘길 때 설정한다. DuckDB 의 spill 파일이 여기에 생기고, 쿼리가 끝나거나 죽으면 부모가 지운다. 운영자가 정해 두는 값이 아니다 — spill 크기의 상한은 `KPUBDATA_DUCKDB_MAX_TEMP_SIZE` 다 |
-| `KPUBDATA_QUERY_MASKED_COLUMNS` | 쿼리 엔진이 쿼리마다 자식 프로세스에 넘기는, 마스킹할 열 이름의 JSON 목록이다. Silver 쿼리에서 선언된 개인정보 열은 sandbox 의 뷰가 Gold 와 같은 방식으로 가린다(#1331). 운영자가 정해 두는 값이 아니다 — 부모가 매 쿼리마다 덮어쓴다 |
+| `KPUBDATA_QUERY_MASKED_COLUMNS` | 쿼리 엔진이 쿼리마다 자식 프로세스에 넘기는, 마스킹할 열 이름의 JSON 목록이다. Silver 쿼리에서 선언된 개인정보 열은 sandbox 가 DuckDB 에 넘기기 전에 Gold 와 같은 방식으로 가리고, 원본 파일은 SQL 이 열 수 없다(#1331). 운영자가 정해 두는 값이 아니다 — 부모가 매 쿼리마다 덮어쓰고, 없으면 자식이 쿼리를 거부한다 |
+| `ARROW_DEFAULT_MEMORY_POOL` | 쿼리 엔진이 자식 프로세스에서 `system` 으로 설정한다. 마스킹된 Silver 쿼리가 pyarrow 로 파일을 읽을 때(#1331) 기본 할당자가 1 GiB 를 예약해 `KPUBDATA_QUERY_MAX_MEMORY_MB` 상한을 넘기지 않게 하기 위해서다. 운영자가 정해 두는 값이 아니다 |
+| `ARROW_IO_THREADS` | 쿼리 엔진이 자식 프로세스에서 `2` 로 설정한다. pyarrow 의 I/O 스레드 수를 줄여 자식의 address space 를 상한 안에 둔다(#1331). 운영자가 정해 두는 값이 아니다 |
+| `OMP_NUM_THREADS` | 쿼리 엔진이 자식 프로세스에서 `2` 로 설정한다. pyarrow 의 CPU 스레드 수를 줄여 자식의 address space 를 상한 안에 둔다(#1331). 운영자가 정해 두는 값이 아니다 |
 | `KPUBDATA_BUILDER_REPLAY_DIR` | 테스트·CI 가 녹화된 provider 응답 디렉터리를 가리킬 때 설정한다. 설정돼 있으면 Builder 가 아래 두 변수를 kpubdata 에 넘겨 실제 provider 를 부르지 않게 한다. 운영 배포에서는 설정하지 않는다 |
 | `KPUBDATA_MODE` | `KPUBDATA_BUILDER_REPLAY_DIR` 가 있을 때 Builder 가 `replay` 로 설정한다. kpubdata 가 읽는 값이다 |
 | `KPUBDATA_REPLAY_DIR` | `KPUBDATA_BUILDER_REPLAY_DIR` 가 있을 때 Builder 가 그 디렉터리의 절대 경로로 설정한다. kpubdata 가 읽는 값이다 |

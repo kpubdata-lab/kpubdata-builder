@@ -51,7 +51,7 @@ def test_installed_duckdb_meets_the_floor_and_has_every_sandbox_setting() -> Non
 def test_an_older_duckdb_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(duckdb, "__version__", "1.1.3")
 
-    with pytest.raises(RuntimeError, match="older than 1.2.0"):
+    with pytest.raises(RuntimeError, match="older than 1.5.0"):
         duckdb_runtime.check_duckdb()
 
 

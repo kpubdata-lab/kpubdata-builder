@@ -42,9 +42,15 @@ dependencies = [
   # The tabular engine the DuckDB migration moves to (ADR 0021, #866). 1.2.0 is the first
   # release with every sandbox setting the query profile needs — allowed_paths,
   # allowed_directories, lock_configuration, enable_external_access,
-  # max_temp_directory_size — checked against the 1.1.3/1.2.0 wheels, and
+  # max_temp_directory_size — checked against the 1.1.3/1.2.0 wheels. 1.5.0 is the first
+  # that asks an Arrow PyCapsule source for a fresh stream on every scan, which the
+  # masked Silver query source relies on (#1331; 1.4.4 and older consume it once).
   # tests/unit/test_duckdb_runtime.py fails if the floor drifts from MINIMUM_DUCKDB_VERSION.
-  "duckdb>=1.2.0,<2",
+  "duckdb>=1.5.0,<2",
+  # Reads a Silver table with declared PII masked before DuckDB sees a row, so the
+  # query sandbox can keep the raw file out of SQL's reach (#1331). 15 is the floor of
+  # the former `parquet` extra and has the PyCapsule stream export (14+).
+  "pyarrow>=15,<26",
   "pyyaml>=6.0,<7",
   "sqlglot>=30.17,<31",
   "typing_extensions>=4.5,<5",
@@ -115,7 +121,7 @@ mypy_path = ["src"]
 # Publishing SDKs come with the optional `publish`/`huggingface` extras; where they are
 # absent, their imports are unchecked rather than annotated line by line (#688).
 [[tool.mypy.overrides]]
-module = ["huggingface_hub.*", "kaggle.*"]
+module = ["huggingface_hub.*", "kaggle.*", "pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
 # 커버리지 게이트 (#594). 지금 수준(실측 90%)을 잠그는 것이 목적이지, 새 커버리지를

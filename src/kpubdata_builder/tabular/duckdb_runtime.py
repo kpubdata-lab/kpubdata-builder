@@ -36,11 +36,13 @@ import duckdb
 from ..errors import TabularError
 from .sql import quote_identifier, quote_literal
 
-#: The oldest DuckDB with every setting Builder's sandbox needs (see REQUIRED_SETTINGS).
-#: Checked against the release wheels: 1.1.3 lacks allowed_paths and
-#: allowed_directories; 1.2.0 has all five and enforces them. pyproject.toml's floor
-#: must say the same, which a test checks.
-MINIMUM_DUCKDB_VERSION = (1, 2, 0)
+#: The oldest DuckDB Builder's sandbox works with. Checked against the release wheels:
+#: 1.1.3 lacks allowed_paths and allowed_directories; 1.2.0 has every setting in
+#: REQUIRED_SETTINGS and enforces them; 1.5.0 is the first to rescan an Arrow PyCapsule
+#: source, which a masked Silver query reads in place of its file (#1331) — 1.4.4 and
+#: older consume the stream on the first scan. pyproject.toml's floor must say the same,
+#: which a test checks.
+MINIMUM_DUCKDB_VERSION = (1, 5, 0)
 
 #: Settings the query sandbox (#874) relies on. Their absence is a startup error, not a
 #: sandbox that silently lets everything through.

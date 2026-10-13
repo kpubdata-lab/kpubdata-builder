@@ -606,7 +606,19 @@ INTERNAL_VARIABLES: tuple[InternalVariable, ...] = (
     ),
     InternalVariable(
         name="KPUBDATA_QUERY_MASKED_COLUMNS",
-        description="쿼리 엔진이 쿼리마다 자식 프로세스에 넘기는, 마스킹할 열 이름의 JSON 목록이다. Silver 쿼리에서 선언된 개인정보 열은 sandbox 의 뷰가 Gold 와 같은 방식으로 가린다(#1331). 운영자가 정해 두는 값이 아니다 — 부모가 매 쿼리마다 덮어쓴다",
+        description="쿼리 엔진이 쿼리마다 자식 프로세스에 넘기는, 마스킹할 열 이름의 JSON 목록이다. Silver 쿼리에서 선언된 개인정보 열은 sandbox 가 DuckDB 에 넘기기 전에 Gold 와 같은 방식으로 가리고, 원본 파일은 SQL 이 열 수 없다(#1331). 운영자가 정해 두는 값이 아니다 — 부모가 매 쿼리마다 덮어쓰고, 없으면 자식이 쿼리를 거부한다",
+    ),
+    InternalVariable(
+        name="ARROW_DEFAULT_MEMORY_POOL",
+        description="쿼리 엔진이 자식 프로세스에서 `system` 으로 설정한다. 마스킹된 Silver 쿼리가 pyarrow 로 파일을 읽을 때(#1331) 기본 할당자가 1 GiB 를 예약해 `KPUBDATA_QUERY_MAX_MEMORY_MB` 상한을 넘기지 않게 하기 위해서다. 운영자가 정해 두는 값이 아니다",
+    ),
+    InternalVariable(
+        name="ARROW_IO_THREADS",
+        description="쿼리 엔진이 자식 프로세스에서 `2` 로 설정한다. pyarrow 의 I/O 스레드 수를 줄여 자식의 address space 를 상한 안에 둔다(#1331). 운영자가 정해 두는 값이 아니다",
+    ),
+    InternalVariable(
+        name="OMP_NUM_THREADS",
+        description="쿼리 엔진이 자식 프로세스에서 `2` 로 설정한다. pyarrow 의 CPU 스레드 수를 줄여 자식의 address space 를 상한 안에 둔다(#1331). 운영자가 정해 두는 값이 아니다",
     ),
     InternalVariable(
         name="KPUBDATA_BUILDER_REPLAY_DIR",

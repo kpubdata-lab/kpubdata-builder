@@ -239,8 +239,9 @@ jobs:
       - name: Run tests against kpubdata ${{ matrix.kpubdata }}
         run: uv run --no-sync pytest -n auto
 
-  # DuckDB's floor (#866): 1.2.0 is pyproject's lower bound because it is the first
-  # release with every sandbox setting Builder relies on. The lock resolves the newest
+  # DuckDB's floor (#866): pyproject's lower bound, 1.5.0 since #1331 — the first release
+  # that rescans the masked Silver query source; 1.2.0 was the first with every sandbox
+  # setting. The lock resolves the newest
   # release, so without this job nothing would notice the floor stop working.
   duckdb-floor:
     name: DuckDB floor

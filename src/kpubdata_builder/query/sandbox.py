@@ -4,10 +4,12 @@ The query child opens one of these and nothing else. It is the second of three
 layers — the SQL validator (``security``) before it, the child process (``engine``)
 around it — and does not rely on the other two:
 
-- **One file, one directory.** The connection may read the pinned ``table.parquet``
-  (``allowed_paths``) and spill into its own temporary directory
-  (``allowed_directories``); every other file system, network or extension access is
-  refused (``enable_external_access = false``). No extension is installed or loaded.
+- **One file at most, one directory.** An unmasked connection may read the pinned
+  ``table.parquet`` (``allowed_paths``); a masked one may read no file at all (below).
+  Either may spill into its own temporary directory (``allowed_directories``); every
+  other file system, network or extension access is refused
+  (``enable_external_access = false``), no extension is installed or loaded, and no
+  Python variable is a table (``python_enable_replacements = false``).
 - **Limits.** Threads, buffer memory and the spill quota come from the deployment
   (``BuildProfile.from_env``, #701); the time zone is UTC.
 - **Locked.** ``lock_configuration`` is set last, so no statement can loosen any of it.
@@ -21,11 +23,17 @@ around it — and does not rely on the other two:
   aggregates, profiles) and for reads whose order is a contract (ADR 0021 D8). User SQL
   may name only ``dataset`` (the validator).
 - **Masked columns.** A Silver read names the declared PII columns it must not show
-  (#900); both views give each of them Gold's mask — text becomes the mask token with
-  its nulls kept, any other dtype null of its own type — so no expression over the
-  view sees an original value. The mask is part of the view rather than a copy of the
-  table (#1331): DuckDB applies it to the rows a query reads, and its cost is the
-  query's, inside the child's timeout, memory cap and spill quota.
+  (#900). Their original values never enter the connection (#1331): the file is read
+  by a pyarrow scanner that applies Gold's mask — text becomes the mask token with its
+  nulls kept, any other dtype null — and DuckDB scans that masked Arrow stream, read
+  afresh for every scan, in place of the file. Both views read it and cast each column
+  back to the type DuckDB gives it in the file, so a masked column keeps its type and
+  every other column reads as it would unmasked. The file's path is then taken out of
+  ``allowed_paths``, so no SQL — ``read_parquet``, a quoted path, ``parquet_metadata``
+  and its statistics — reaches the raw file, whether or not the validator ran. Nothing
+  table-sized is written: the mask is applied to the rows a query reads, inside the
+  child's timeout and address-space cap (pyarrow's buffers sit outside DuckDB's
+  ``memory_limit``, inside the cap).
 
 Paths are written into SQL only through ``quote_literal`` and come from the server,
 never from a request.
@@ -37,9 +45,10 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import duckdb
 
@@ -47,6 +56,9 @@ from ..stages.gold.pii import PII_MASK_TOKEN
 from ..tabular.builder_kv import KV_KEY, KV_NAMES_KEY, NO_COLUMNS, NO_COLUMNS_KEY
 from ..tabular.duckdb_runtime import BuildProfile
 from ..tabular.sql import quote_identifier, quote_literal
+
+if TYPE_CHECKING:
+    import pyarrow.dataset as pads
 
 DATASET = "dataset"
 #: ``dataset`` with :data:`ROW_ORDER` — the row's position in the file — added.
@@ -59,6 +71,12 @@ _FILE_ROW_NUMBER = "file_row_number"
 TEMP_DIR_ENV = "KPUBDATA_QUERY_TEMP_DIR"
 #: Set by the query engine in the child: a JSON list of the columns to mask (#1331).
 MASKED_COLUMNS_ENV = "KPUBDATA_QUERY_MASKED_COLUMNS"
+#: The masked Arrow stream a masked sandbox's views read in place of the file (#1331).
+_MASKED_SOURCE = "_kpubdata_masked_source"
+#: Rows per batch of the masked stream: a page reads a few batches, not a row group.
+_MASKED_BATCH_ROWS = 16_384
+#: Batches the masked stream reads ahead of DuckDB.
+_MASKED_READAHEAD = 4
 
 
 @dataclass(frozen=True)
@@ -101,29 +119,86 @@ def _kv(connection: duckdb.DuckDBPyConnection, path: str) -> dict[str, dict[str,
     return found
 
 
-def _masked(physical: str, storage: str, dtype: str | None) -> str:
-    """The stored column with Gold's mask applied, still of its stored type (#900).
+def _is_text(storage: str, dtype: str | None) -> bool:
+    """Whether Gold masks the column as text (#902): its dtype, or VARCHAR without one."""
+    return (dtype if dtype is not None else ("String" if storage == "VARCHAR" else "")) == "String"
 
-    Text keeps its null pattern and gets the token; any other column becomes null of
-    its own type (``stages/gold/pii``, #902). A column the file records no dtype for is
-    text when it is stored as VARCHAR.
+
+class _MaskedArrowSource:
+    """One Parquet file's columns with Gold's mask applied, as an Arrow stream (#1331).
+
+    DuckDB asks for a fresh stream (``__arrow_c_stream__``) for every scan, so a query
+    that reads ``dataset`` twice — a self-join, a reused CTE, the planning read before
+    the streamed one (#1332) — reads the file twice rather than an exhausted stream.
+    DuckDB also asks while it binds a query, only for the schema, so a stream reads
+    ahead little: a page costs a few batches, not row groups.
     """
-    column = quote_identifier(physical)
-    if (dtype if dtype is not None else ("String" if storage == "VARCHAR" else "")) == "String":
-        return f"CASE WHEN {column} IS NULL THEN NULL ELSE {quote_literal(PII_MASK_TOKEN)} END"
-    return f"CAST(NULL AS {storage})"
+
+    def __init__(self, dataset: pads.Dataset, columns: Mapping[str, pads.Expression]) -> None:
+        self._dataset = dataset
+        self._columns = dict(columns)
+
+    def __arrow_c_stream__(self, requested_schema: object | None = None) -> object:
+        import pyarrow as pa
+
+        scanner = self._dataset.scanner(
+            columns=self._columns,
+            batch_size=_MASKED_BATCH_ROWS,
+            batch_readahead=_MASKED_READAHEAD,
+            fragment_readahead=1,
+            memory_pool=pa.system_memory_pool(),
+        )
+        return scanner.to_reader().__arrow_c_stream__(requested_schema)
+
+
+def _masked_source(
+    path: str, physical: Sequence[str], text: Collection[str], nulled: Collection[str]
+) -> _MaskedArrowSource:
+    """The file's ``physical`` columns, ``text`` given the mask token and ``nulled`` null.
+
+    A masked column's original values are not handed to DuckDB: a text column becomes the
+    token wherever it is not null, and any other masked column is a null constant the
+    scanner never reads from the file. A file pyarrow cannot read (a 128-bit integer
+    Polars wrote) raises, and the query is refused rather than read unmasked.
+    """
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.dataset as pads
+
+    dataset = pads.dataset(path, format="parquet")
+    # Parquet has no duration type: DuckDB reads the stored INT64, while pyarrow gives
+    # back the duration a Polars-written file's Arrow schema records. Read it as stored.
+    schema = pa.schema(
+        [f.with_type(pa.int64()) if pa.types.is_duration(f.type) else f for f in dataset.schema]
+    )
+    if schema != dataset.schema:
+        dataset = pads.dataset(path, format="parquet", schema=schema)
+    columns: dict[str, pads.Expression] = {}
+    for name in physical:
+        column = pads.field(name)
+        if name in text:
+            columns[name] = pc.if_else(
+                pc.is_null(column),
+                pc.scalar(pa.scalar(None, pa.string())),
+                pc.scalar(pa.scalar(PII_MASK_TOKEN, pa.string())),
+            )
+        elif name in nulled:
+            columns[name] = pc.scalar(pa.scalar(None, schema.field(name).type))
+        else:
+            columns[name] = column
+    return _MaskedArrowSource(dataset, columns)
 
 
 def masked_columns_from_env() -> frozenset[str]:
-    """The columns the engine asked this child to mask; none when it asked for none.
+    """The columns the engine asked this child to mask; an empty list masks none.
 
     Raises:
-        ValueError: The value is not a JSON list of names — refused rather than read as
-            "mask nothing".
+        ValueError: The variable is unset, or is not a JSON list of names — refused
+            rather than read as "mask nothing". The engine sets it on every query.
     """
     raw = os.environ.get(MASKED_COLUMNS_ENV)
     if raw is None:
-        return frozenset()
+        raise ValueError(f"{MASKED_COLUMNS_ENV} is not set")
     decoded = json.loads(raw)
     if not isinstance(decoded, list) or not all(isinstance(name, str) for name in decoded):
         raise ValueError(f"{MASKED_COLUMNS_ENV} must be a JSON list of column names")
@@ -146,15 +221,17 @@ def open_sandbox(
     table_path: str,
     *,
     profile: BuildProfile | None = None,
-    masked: Collection[str] | None = None,
+    masked: Collection[str] = (),
 ) -> Iterator[Sandbox]:
     """A locked connection whose ``dataset`` is ``table_path``; closed on exit.
 
     Args:
-        masked: Columns, by real name, that both views show masked (#1331). None reads
-            :data:`MASKED_COLUMNS_ENV`, which the query engine sets in its child.
+        masked: Columns, by real name, that both views show masked (#1331). When any is
+            named — present in the table or not — the connection reads the masked Arrow
+            stream and may open no file. The query child passes what
+            :func:`masked_columns_from_env` says.
     """
-    withheld = frozenset(masked) if masked is not None else masked_columns_from_env()
+    withheld = frozenset(masked)
     limits = profile or BuildProfile.from_env()
     given = os.environ.get(TEMP_DIR_ENV)
     temp_dir = given or tempfile.mkdtemp(prefix="kpubdata-query-")
@@ -196,7 +273,26 @@ def open_sandbox(
         }
         described = list(storage)
         stored = [name for name in described if not (placeholder and name == NO_COLUMNS)]
-        if any(name.casefold() == _FILE_ROW_NUMBER for name in described):
+        names = [renamed.get(physical, physical) for physical in stored]
+        recorded = kv.get(KV_KEY, {})
+        allowed = [path]
+        if withheld:
+            # The views read the masked stream, each column cast back to its stored
+            # type, and the file leaves allowed_paths below. The stream keeps the file's
+            # order, as a scan of the file does, so counting rows gives each one's place.
+            hidden = {p: n for p, n in zip(stored, names, strict=True) if n in withheld}
+            text = {p for p, n in hidden.items() if _is_text(storage[p], recorded.get(n))}
+            projected = stored or [NO_COLUMNS]
+            connection.register(
+                _MASKED_SOURCE, _masked_source(path, projected, text, hidden.keys() - text)
+            )
+            source = quote_identifier(_MASKED_SOURCE)
+            row_order = "(row_number() OVER ()) - 1"
+            read = [
+                f"CAST({quote_identifier(physical)} AS {storage[physical]})" for physical in stored
+            ]
+            allowed = []
+        elif any(name.casefold() == _FILE_ROW_NUMBER for name in described):
             # DuckDB will not add its row-number column to a file that has a column of
             # that name, in any letter case: the read fails outright (#1149). The
             # position is counted instead. A window with no ordering runs as a streaming
@@ -205,20 +301,12 @@ def open_sandbox(
             # the configuration is locked), so the count is the row's place in the file.
             source = plain
             row_order = "(row_number() OVER ()) - 1"
+            read = [quote_identifier(physical) for physical in stored]
         else:
             source = f"read_parquet({quote_literal(path)}, file_row_number = true)"
             row_order = "file_row_number"
-        names = [renamed.get(physical, physical) for physical in stored]
-        recorded = kv.get(KV_KEY, {})
-        restored = [
-            _restored(
-                _masked(physical, storage[physical], recorded.get(name))
-                if name in withheld
-                else quote_identifier(physical),
-                dtypes.get(name),
-            )
-            for physical, name in zip(stored, names, strict=True)
-        ]
+            read = [quote_identifier(physical) for physical in stored]
+        restored = [_restored(sql, dtypes.get(name)) for sql, name in zip(read, names, strict=True)]
         internal = ", ".join(f"{sql} AS _c{i}" for i, sql in enumerate(restored))
         connection.execute(
             f"CREATE VIEW {ORDERED_DATASET} AS SELECT {internal}"
@@ -242,7 +330,8 @@ def open_sandbox(
             )
             connection.execute(f"CREATE VIEW {DATASET} AS SELECT {select} FROM {source}")
 
-        connection.execute(f"SET allowed_paths = [{quote_literal(path)}]")
+        connection.execute(f"SET allowed_paths = [{', '.join(quote_literal(p) for p in allowed)}]")
+        connection.execute("SET python_enable_replacements = false")
         connection.execute(f"SET allowed_directories = [{quote_literal(temp_dir)}]")
         connection.execute("SET enable_external_access = false")
         connection.execute("SET lock_configuration = true")

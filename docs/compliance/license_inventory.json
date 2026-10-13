@@ -394,7 +394,7 @@
     },
     "pyarrow==25.0.1": {
       "version": "25.0.1",
-      "scope": "extra:parquet",
+      "scope": "runtime",
       "license": "",
       "source": "https://pypi.org/project/pyarrow/",
       "basis": "none",

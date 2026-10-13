@@ -6,10 +6,10 @@ and Bronze keep the original values (#611), and the service reads them on four p
 Each shows the same columns masked the same way Gold does — text becomes the mask
 token, any other dtype null — or refuses:
 
-- ``POST /query`` with ``stage: silver`` runs the query over a view of the Silver table
-  with the declared columns masked (``query.sandbox``, #1331), so no SQL expression over
-  a declared column (``upper``, ``substr``, a ``WHERE`` equality) can see an original
-  value.
+- ``POST /query`` with ``stage: silver`` runs the query over the Silver table with the
+  declared columns masked before DuckDB reads a row, on a connection that cannot open
+  the file itself (``query.sandbox``, #1331), so no SQL expression over a declared
+  column (``upper``, ``substr``, a ``WHERE`` equality) can see an original value.
 - ``POST /preview`` masks each source's ``sample``, ``source_sample`` (raw field names,
   mapped through the source's ``schema.coalesce`` and ``schema.rename``) and the
   ``diffs`` of a declared column.
@@ -297,8 +297,9 @@ def _silver_columns(output_root: Path, run_id: str, source_key: str) -> list[str
 def masked_silver_columns(table_path: Path, withheld: frozenset[str]) -> tuple[str, ...]:
     """The withheld columns ``table_path`` has, sorted; read from its metadata only.
 
-    The query's sandbox masks them in its views (``query.sandbox``, #1331), as the query
-    reads the rows, so nothing the size of the table is written before the query runs.
+    The query's sandbox masks them as the query reads the rows (``query.sandbox``,
+    #1331), so nothing the size of the table is written before the query runs; this
+    read only names them in the response.
     Text keeps its null pattern and gets the token; any other column becomes null of
     its own type (Gold's masking, ``stages/gold/pii``, #902).
 

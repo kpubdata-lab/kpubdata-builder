@@ -154,11 +154,12 @@ class QueryApiService:
                 limit=request.limit,
                 semantics=semantics,
             )
-        # Silver keeps declared PII as is (#611): the query's sandbox masks it in the view
-        # it reads, so no expression over a declared column sees an original value
-        # (#900), and the mask costs only the rows the query reads, inside its own
-        # limits (#1331). Every declaration is taken as present here; the columns the
-        # table has are masked.
+        # Silver keeps declared PII as is (#611): the query's sandbox masks it before
+        # DuckDB sees a row and keeps the file itself out of SQL's reach, so no
+        # expression over a declared column sees an original value (#900), and the mask
+        # costs only the rows the query reads, inside its own limits (#1331). The
+        # sandbox is given every declaration and masks the ones the table has; the
+        # metadata read below only says which those are in the response.
         try:
             withheld = run_withheld_columns(
                 self._output_root,
@@ -185,7 +186,7 @@ class QueryApiService:
             request.sql,
             limit=request.limit,
             semantics=semantics,
-            masked=frozenset(masked),
+            masked=withheld,
         )
         if masked and response.status_code == 200:
             response.body["masked_columns"] = list(masked)

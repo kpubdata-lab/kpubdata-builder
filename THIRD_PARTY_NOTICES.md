@@ -125,7 +125,7 @@ Scope: `runtime` is installed with `pip install kpubdata-builder`;
 | polars-runtime-32 | 1.40.1 | extra:legacy-publish | MIT | other-version | needs review | https://www.pola.rs/ |
 | polars | 1.40.1 | extra:legacy-publish | MIT License | other-version | needs review | https://www.pola.rs/ |
 | protobuf | 7.34.1 | extra:publish | (none) | none | needs review | https://pypi.org/project/protobuf/ |
-| pyarrow | 25.0.1 | extra:parquet | (none) | none | needs review | https://pypi.org/project/pyarrow/ |
+| pyarrow | 25.0.1 | runtime | (none) | none | needs review | https://pypi.org/project/pyarrow/ |
 | pycparser | 3.0 | runtime | BSD-3-Clause | other-version | needs review | https://github.com/eliben/pycparser |
 | pygments | 2.20.0 | extra:docs | BSD-2-Clause | other-version | needs review | https://pygments.org |
 | pyjwt | 2.15.0 | extra:auth | MIT | other-version | needs review | https://github.com/jpadilla/pyjwt |
