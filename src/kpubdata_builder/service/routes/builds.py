@@ -19,10 +19,12 @@ from ._guards import (
     refuse_missing_provider_keys,
 )
 from ._parsing import (
+    bounded_limit_value,
     decode_segment,
     optional_if_absent,
     optional_retry_of,
     optional_run_id,
+    positive_limit_query,
     spec_from_body,
 )
 from ._types import RouteResponse
@@ -127,22 +129,13 @@ def route(
         return ownership_error or service.spec(run_id)
 
     if method == "GET" and path == "/builds":
-        limit = 50
-        query_params = parse_qs(query)
-        if "limit" in query_params:
-            raw_limit = query_params["limit"][-1]
-            try:
-                query_limit = int(raw_limit)
-            except ValueError:
-                return ServiceResponse(400, {"error": "'limit' must be a positive integer"})
-            if query_limit < 1:
-                return ServiceResponse(400, {"error": "'limit' must be a positive integer"})
-            limit = query_limit
+        limit: int | ServiceResponse = 50
+        if "limit" in parse_qs(query):
+            limit = positive_limit_query(query)
         elif body is not None and "limit" in body:
-            limit_value = body["limit"]
-            if not isinstance(limit_value, int) or isinstance(limit_value, bool) or limit_value < 1:
-                return ServiceResponse(400, {"error": "'limit' must be a positive integer"})
-            limit = limit_value
+            limit = bounded_limit_value(body["limit"])
+        if isinstance(limit, ServiceResponse):
+            return limit
         dataset_values = parse_qs(query, keep_blank_values=True).get("dataset_id")
         dataset_id = dataset_values[-1] if dataset_values else None
         if dataset_values is not None and not dataset_id:

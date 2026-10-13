@@ -1,6 +1,6 @@
 {
   "fixture_format": 1,
-  "contract_version": "1.124.0",
+  "contract_version": "1.125.0",
   "probe_field": "future_optional_field",
   "rules": "A response may gain optional fields in any minor version; a client ignores fields it does not know. A required field keeps its name and type until the next major version; a client rejects a body whose required field is missing or mistyped.",
   "fixtures": [
@@ -5792,10 +5792,10 @@
       "status": 400,
       "example": "InvalidLimit",
       "current": {
-        "error": "limit must be a positive integer"
+        "error": "'limit' must be a positive integer up to 1000"
       },
       "with_additive_fields": {
-        "error": "limit must be a positive integer",
+        "error": "'limit' must be a positive integer up to 1000",
         "future_optional_field": "added by a later minor contract version"
       },
       "additive_paths": [
