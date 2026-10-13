@@ -126,29 +126,27 @@ def test_a_gold_query_is_unchanged(tmp_path: Path) -> None:
     assert "masked_columns" not in response.body
 
 
-# ------------------------------------------------- the masked copy keeps Builder dtypes
+# ------------------------------------------------- the masked view keeps Builder dtypes
 
 _DTYPE_CASES = ["null only", "duration", "int128", "zoned", "odd names", "list null"]
 
 
 @pytest.mark.parametrize("name", _DTYPE_CASES)
-def test_the_masked_silver_copy_keeps_every_builder_dtype(tmp_path: Path, name: str) -> None:
+def test_the_masked_silver_view_keeps_every_builder_dtype(tmp_path: Path, name: str) -> None:
     """#891 review: DuckDB records Builder dtypes and real names in the file's metadata.
 
-    A query of the masked copy reports the same columns and dtypes as a query of the
-    original — an all-null column stays Null, a Duration, an Int128 and a zoned datetime
-    keep their dtype, and an internally named column keeps its real name.
+    A query with a column masked (#1331: in the sandbox's view, no copy) reports the
+    same columns and dtypes as the same query unmasked — an all-null column stays Null,
+    a Duration, an Int128 and a zoned datetime keep their dtype, and an internally named
+    column keeps its real name.
     """
     import duckdb
 
     from kpubdata_builder.query.service import QueryService
-    from kpubdata_builder.service.pii_reads import masked_silver_table
+    from kpubdata_builder.service.pii_reads import masked_silver_columns
     from kpubdata_builder.service.query_service_api import execute_query
     from kpubdata_builder.tabular.duckdb_load import TableHandle, load_records
-    from tests.support.builder_parquet import (
-        builder_dtypes,
-        read_builder_parquet_schema,
-    )
+    from tests.support.builder_parquet import builder_dtypes
 
     from .test_duckdb_load import CASES
 
@@ -159,20 +157,17 @@ def test_the_masked_silver_copy_keeps_every_builder_dtype(tmp_path: Path, name: 
     TableHandle(connection, loaded, tmp_path).write_parquet(original)
     assert builder_dtypes(original)  # written with the recorded dtypes
 
-    masked = masked_silver_table(original, frozenset({"phone"}))
-    assert masked is not None
-    try:
-        expected = read_builder_parquet_schema(original)
-        assert read_builder_parquet_schema(masked.path) == expected
-        engine = QueryService()
-        plain = execute_query(engine, original, "SELECT * FROM dataset", limit=10)
-        hidden = execute_query(engine, masked.path, "SELECT * FROM dataset", limit=10)
-    finally:
-        masked.close()
+    masked = masked_silver_columns(original, frozenset({"phone", "absent"}))
+    assert masked == ("phone",)
+    engine = QueryService()
+    plain = execute_query(engine, original, "SELECT * FROM dataset", limit=10)
+    hidden = execute_query(
+        engine, original, "SELECT * FROM dataset", limit=10, masked=frozenset(masked)
+    )
 
     if name == "odd names":
         # A column with an empty name cannot be named in SQL (#874): the query is
-        # refused on the original and on the copy alike.
+        # refused masked and unmasked alike.
         assert plain.status_code == hidden.status_code == 400
         return
     assert plain.status_code == hidden.status_code == 200, (plain.body, hidden.body)

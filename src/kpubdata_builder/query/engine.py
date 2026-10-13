@@ -66,6 +66,7 @@ WorkerFn = Callable[[Connection, str, str, int, int], None]
 def _bounded_worker(
     memory_limit_bytes: int | None,
     temp_dir: str,
+    masked: list[str],
     worker: WorkerFn,
     connection: Connection,
     table_path: str,
@@ -83,10 +84,12 @@ def _bounded_worker(
     """
     import os
 
-    from .sandbox import TEMP_DIR_ENV
+    from .sandbox import MASKED_COLUMNS_ENV, TEMP_DIR_ENV
 
     # The parent made this directory and removes it, also after a kill.
     os.environ[TEMP_DIR_ENV] = temp_dir
+    # Always set, so the sandbox masks what this query was given and nothing inherited.
+    os.environ[MASKED_COLUMNS_ENV] = json.dumps(masked)
     if memory_limit_bytes is not None:
         try:
             import resource
@@ -232,7 +235,20 @@ class QueryEngine:
         self._worker = worker
         self._memory_limit_bytes = memory_limit_bytes
 
-    def execute(self, table_path: Path, canonical_sql: str, *, limit: int) -> QueryResult:
+    def execute(
+        self,
+        table_path: Path,
+        canonical_sql: str,
+        *,
+        limit: int,
+        masked: frozenset[str] = frozenset(),
+    ) -> QueryResult:
+        """Run ``canonical_sql`` in a child process and return its result.
+
+        Args:
+            masked: Columns the sandbox's views show masked (#1331): a Silver read's
+                declared PII, masked as the query reads it rather than copied first.
+        """
         started_ns = time.monotonic_ns()
         temp_dir = tempfile.mkdtemp(prefix="kpubdata-query-")
         context = multiprocessing.get_context("spawn")
@@ -242,6 +258,7 @@ class QueryEngine:
             args=(
                 self._memory_limit_bytes,
                 temp_dir,
+                sorted(masked),
                 self._worker,
                 child,
                 str(table_path),
