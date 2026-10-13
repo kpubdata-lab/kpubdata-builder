@@ -18,12 +18,15 @@ from contextlib import suppress
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from ..spec import JsonValue
 from ..tabular.duckdb_runtime import RESOURCE_LIMIT_MESSAGE
 from . import cancellation
 from .models import QueryResult
+
+if TYPE_CHECKING:
+    from .result import StreamedTable
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +130,30 @@ def _timing_from_payload(payload: dict[object, object], field: str) -> int:
     return value
 
 
+#: Rows fetched from the result table at a time while the byte budget is counted.
+_FETCH_BATCH_ROWS = 256
+
+
+def _rows_within_budget(result: StreamedTable, limit: int) -> list[dict[str, JsonValue]] | None:
+    """The first ``limit`` rows encoded for the wire, or None once they cannot fit (#1332).
+
+    The SQL floor refuses a huge text, binary or list cell before it is fetched; after
+    it, rows are read a batch at a time and each one's exact UTF-8 JSON size is added
+    up, so reading stops at the first row past the budget instead of after the last.
+    """
+    budget = MAX_QUERY_RESPONSE_BYTES
+    if result.wire_bytes_floor(limit) > budget:
+        return None
+    rows: list[dict[str, JsonValue]] = []
+    spent = len("[]")
+    for _, row in result.rows(batch_size=_FETCH_BATCH_ROWS, count=limit):
+        spent += len(json.dumps(row, ensure_ascii=False).encode("utf-8")) + len(", ")
+        if spent > budget:
+            return None
+        rows.append(row)
+    return rows
+
+
 def _query_worker(
     connection: Connection,
     table_path: str,
@@ -135,36 +162,41 @@ def _query_worker(
     parent_started_ns: int,
 ) -> None:
     try:
-        from .result import to_wire
+        from .result import stream_result
         from .sandbox import open_sandbox
         from .stored_columns import stored_null_outputs
 
-        bounded_sql = f"SELECT * FROM ({canonical_sql}) AS _kpubdata_result LIMIT {limit + 1}"
         with open_sandbox(table_path) as sandbox:
             # Startup ends after spawn, imports and the locked connection, before the query.
             startup_ms = _elapsed_ms(parent_started_ns)
             engine_started_ns = time.monotonic_ns()
-            relation = sandbox.connection.sql(bounded_sql)
             # A stored Null column read as it is stays Null, as a page of rows reports
             # it: DuckDB types the sandbox's NULL as an INTEGER.
             null = stored_null_outputs(
                 canonical_sql,
-                relation.columns,
+                sandbox.connection.sql(canonical_sql).columns,
                 columns=sandbox.columns,
                 null_columns=[n for n, dtype in sandbox.dtypes.items() if dtype == "Null"],
             )
             stored = None if null is None else ["Null" if flag else None for flag in null]
-            result = to_wire(relation, stored=stored)
+            # Held in a table that spills within the quota and read back a batch at a
+            # time, so the byte budget is spent while reading, not after (#1332).
+            result = stream_result(
+                sandbox.connection, canonical_sql, limit=limit + 1, stored=stored
+            )
+            rows = _rows_within_budget(result, limit)
             engine_execution_ms = _elapsed_ms(engine_started_ns)
+        if rows is None:
+            connection.send({"ok": False})
+            return
         # Wire-encoded by column (#735): a Decimal or an out-of-range integer arrives as
         # its exact decimal text, and `column_meta` says which columns that applies to.
-        rows = result.rows
         payload = {
             "ok": True,
             "columns": result.columns,
             "column_meta": result.column_meta,
-            "rows": rows[:limit],
-            "truncated": len(rows) > limit,
+            "rows": rows,
+            "truncated": result.row_count > limit,
             "startup_ms": startup_ms,
             "engine_execution_ms": engine_execution_ms,
         }
