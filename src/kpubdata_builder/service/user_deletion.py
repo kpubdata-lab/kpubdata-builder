@@ -450,6 +450,7 @@ def _snapshot_blocker(state: _State, snapshot_id: str, own_holds: frozenset[str]
 def _step_warehouse(state: _State, owner_id: str, *, apply: bool) -> StepResult:
     from ..warehouse.errors import (
         ImmutableSnapshot,
+        SnapshotDeleteFailed,
         SnapshotHeld,
         SnapshotInUse,
         SnapshotNotFound,
@@ -483,8 +484,15 @@ def _step_warehouse(state: _State, owner_id: str, *, apply: bool) -> StepResult:
                     delete_snapshot(catalog, snapshot.id)
                 removed += 1
             catalog.forget_table(table_id)
-        except (SnapshotHeld, SnapshotInUse, ImmutableSnapshot, SnapshotStateError) as exc:
-            # A lease or a hold that arrived after the check above.
+        except (
+            SnapshotHeld,
+            SnapshotInUse,
+            ImmutableSnapshot,
+            SnapshotStateError,
+            SnapshotDeleteFailed,
+        ) as exc:
+            # A lease or a hold that arrived after the check above, or files that could
+            # not be removed: the table and its rows stay so that a retry finds them.
             blocked.append(f"table {table_id}: {exc}")
             continue
         table_dir = SnapshotLayout(catalog.root, table_id).table_dir
@@ -512,7 +520,7 @@ def _step_warehouse(state: _State, owner_id: str, *, apply: bool) -> StepResult:
                 delete_snapshot(catalog, snapshot.id)
             except SnapshotNotFound:
                 pass
-            except (SnapshotHeld, SnapshotInUse, ImmutableSnapshot) as exc:
+            except (SnapshotHeld, SnapshotInUse, ImmutableSnapshot, SnapshotDeleteFailed) as exc:
                 blocked.append(f"snapshot {snapshot.id}: {exc}")
                 continue
         removed += 1

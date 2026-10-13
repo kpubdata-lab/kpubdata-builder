@@ -56,6 +56,23 @@ class SnapshotHeld(WarehouseError):
     """
 
 
+class SnapshotDeleteFailed(WarehouseError):
+    """A snapshot's files could not all be removed, so its catalog row was kept (#1334).
+
+    The row stays ``retiring``: no lease or hold can be taken on it, and the next
+    collection pass tries the delete again. Forgetting the row anyway would leave
+    bytes on disk that nothing refers to.
+    """
+
+    def __init__(self, snapshot_id: str, path: str, cause: OSError) -> None:
+        self.snapshot_id = snapshot_id
+        self.path = path
+        super().__init__(
+            f"could not delete the files of snapshot {snapshot_id!r} at {path}: {cause}; "
+            "the catalog row is kept as 'retiring' so that garbage collection retries it"
+        )
+
+
 class BackupInvalid(WarehouseError):
     """A backup, or a restore from one, would not reproduce the warehouse (#705).
 
@@ -73,6 +90,7 @@ __all__ = [
     "BackupInvalid",
     "ImmutableSnapshot",
     "SnapshotConflict",
+    "SnapshotDeleteFailed",
     "SnapshotHeld",
     "SnapshotInUse",
     "SnapshotNotFound",

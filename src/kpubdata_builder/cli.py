@@ -1505,8 +1505,9 @@ def _run_warehouse_gc(
         workspace_id: Restrict to one workspace, or every workspace when None.
 
     Returns:
-        int: 0 always, unless the warehouse directory does not exist. Reclaiming
-        nothing is a normal outcome, not a failure.
+        int: 0, unless the warehouse directory does not exist or a snapshot's files
+        could not be deleted (#1334). Reclaiming nothing is a normal outcome, not a
+        failure.
     """
     root = Path(warehouse)
     if not root.is_dir():
@@ -1521,6 +1522,7 @@ def _run_warehouse_gc(
         return 0
 
     total_removed = 0
+    total_failed = 0
     for table in sorted(tables, key=lambda t: t.logical_name):
         marked = warehouse_gc.abandon_stale(catalog, table.id, before=before)
         report = warehouse_gc.collect(catalog, table.id, keep=keep)
@@ -1536,11 +1538,23 @@ def _run_warehouse_gc(
             details.append(f"kept {len(report.kept_held)} held")
         if report.kept_current:
             details.append(f"kept {len(report.kept_current)} current")
+        if report.delete_failed:
+            total_failed += len(report.delete_failed)
+            details.append(f"failed {len(report.delete_failed)}")
+            print(
+                f"error: {table.logical_name}: could not delete the files of "
+                + ", ".join(report.delete_failed)
+                + "; their catalog rows are kept, run warehouse-gc again once the cause "
+                "is fixed",
+                file=sys.stderr,
+            )
         print(f"  {table.logical_name}: " + ", ".join(details))
 
     unit = "y" if total_removed == 1 else "ies"
     print(f"warehouse {root}: reclaimed {total_removed} director{unit}")
-    return 0
+    # A delete that failed leaves bytes on disk; the rows still refer to them, but an
+    # operator running this from a script has to learn that it did not finish (#1334).
+    return 1 if total_failed else 0
 
 
 def _run_prune_cancelled(*, output_dir: str, ttl_hours: float | None, apply: bool) -> int:
