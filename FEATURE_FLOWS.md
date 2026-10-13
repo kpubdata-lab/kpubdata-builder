@@ -119,6 +119,8 @@ sequenceDiagram
     CLI-->>User: source별 status + manifest 경로 출력
     alt status != "ok"
         CLI-->>User: "error: build failed" + 실패 source 오류 (stderr, exit 1)
+    else warehouse_failures 있음 (--warehouse 커밋 거부)
+        CLI-->>User: "error: build did not commit its table" + source별 사유 코드 (stderr, exit 1)
     else 모두 성공
         CLI-->>User: exit 0
     end

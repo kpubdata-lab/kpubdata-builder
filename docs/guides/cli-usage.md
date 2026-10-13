@@ -274,6 +274,30 @@ error: build failed for one or more sources
   - gangnam_202401: ConfigError: KPUBDATA_DATAGO_API_KEY not set
 ```
 
+`--warehouse` 를 준 빌드는 소스가 모두 성공해도 **테이블 커밋이 거부되면 종료 코드 `1`** 입니다(#1329).
+산출물과 manifest 는 그대로 남고, manifest 의 `warehouse_failures` 와 표준 오류의 사유 코드가 같습니다.
+서비스의 `POST /build` 가 409 로 답하는 것과 같은 경우입니다.
+
+| 사유 코드 | 뜻 |
+|---|---|
+| `conflict` | 이 빌드가 시작한 뒤 다른 빌드가 같은 테이블을 커밋했다. 더 새 snapshot 이 유지된다 |
+| `empty_result` | 빌드 결과가 0행이고 테이블에 이미 snapshot 이 있다. 소스에 `allow_empty: true` 가 없으면 덮어쓰지 않는다 |
+| `commit_failed` | snapshot 을 커밋하지 못했다 |
+
+```console
+$ kpubdata-builder build air_spec.yaml --warehouse ./warehouse
+build: air (run 20240601-153022)
+  - m: ok [bronze, silver, gold]
+manifest: <path>/build/20240601-153022/manifest.json
+  no table committed
+error: build did not commit its table for one or more sources
+  - m: empty_result: the build found no rows; the current snapshot (22 rows) stays current. Declare allow_empty: true on the source to commit an empty result
+$ echo $?
+1
+```
+
+`--warehouse` 없이 실행한 빌드는 커밋을 요청하지 않은 것이므로, 소스가 성공하면 종료 코드 `0` 입니다.
+
 ---
 
 ### warehouse-gc — 창고 회수
