@@ -26,6 +26,7 @@ credential, and a failed publish cannot touch a snapshot that already exists.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -33,8 +34,9 @@ from pathlib import Path
 
 from ..spec import JsonValue
 from .catalog import SnapshotRow, TableCatalog, TableRow
-from .errors import SnapshotConflict, SnapshotStateError
 from .layout import SnapshotLayout, SnapshotManifest, content_digest
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -110,10 +112,12 @@ def materialize(
         SnapshotStateError: Verification found the promoted files empty or changed.
         SnapshotConflict: Another refresh committed first. Not a retry.
 
-    When a commit is refused for either reason, the snapshot is marked ``abandoned``
-    before the exception propagates, so garbage collection can reclaim its files. The
-    commit is never retried — see #699 — but leaving the bytes behind for ever is not
-    the alternative.
+    When a commit is refused for either reason, or any step after ``begin_snapshot``
+    fails — an ``OSError`` while staging, copying, hashing, writing the manifest or
+    promoting (#1333) — the snapshot is marked ``abandoned`` and its staged files are
+    removed before the original exception propagates, so garbage collection can reclaim
+    the rest. The table's current snapshot is never touched. The commit is never
+    retried — see #699 — but leaving the bytes behind for ever is not the alternative.
     """
     if not source_dir.is_dir():
         raise FileNotFoundError(f"no such gold directory: {source_dir}")
@@ -136,6 +140,48 @@ def materialize(
     )
 
     layout = SnapshotLayout(catalog.root, table.id)
+    try:
+        promoted = _stage_and_promote(
+            catalog,
+            layout,
+            snapshot,
+            source_dir=source_dir,
+            logical_name=logical_name,
+        )
+        updated = catalog.commit_snapshot(
+            snapshot.id,
+            expected_revision=(
+                expected_revision
+                if expected_revision is not None
+                else catalog.get_table(table.id).revision
+            ),
+            verify_before_commit=True,
+        )
+    except BaseException:
+        # The snapshot will never be committed, so mark it reclaimable and let the
+        # exception through. A compare-and-swap loss is not retried: #699 documents why
+        # — the loser built on a state that no longer exists, and retrying would
+        # overwrite the commit that won. Without this it stayed `validated` for ever
+        # with its files promoted (#738), and a file operation that failed before the
+        # commit left a `staging` row and partial files nothing would look at (#1333).
+        _abandon(catalog, layout, snapshot.id)
+        raise
+    return MaterializeResult(
+        table=updated,
+        snapshot=catalog.get_snapshot(snapshot.id),
+        snapshot_dir=promoted,
+    )
+
+
+def _stage_and_promote(
+    catalog: TableCatalog,
+    layout: SnapshotLayout,
+    snapshot: SnapshotRow,
+    *,
+    source_dir: Path,
+    logical_name: str,
+) -> Path:
+    """Steps 2 to 5: copy into staging, record the digest, validate and promote."""
     staging = layout.begin(snapshot.id)
     for entry in sorted(source_dir.iterdir()):
         target = staging / entry.name
@@ -150,42 +196,45 @@ def materialize(
         snapshot.id,
         SnapshotManifest(
             snapshot_id=snapshot.id,
-            table_id=table.id,
+            table_id=snapshot.table_id,
             logical_name=logical_name,
-            run_id=run_id,
-            schema_version=schema_version,
-            coverage_hash=coverage_hash,
+            run_id=snapshot.run_id,
+            schema_version=snapshot.schema_version,
+            coverage_hash=snapshot.coverage_hash,
             artifact_digest=digest,
-            row_count=row_count,
+            row_count=snapshot.row_count,
             created_at=snapshot.created_at,
         ),
     )
     catalog.mark_validated(snapshot.id)
-    promoted = layout.promote(snapshot.id)
+    return layout.promote(snapshot.id)
 
+
+def _abandon(catalog: TableCatalog, layout: SnapshotLayout, snapshot_id: str) -> None:
+    """Mark an uncommitted snapshot reclaimable and drop its staged files.
+
+    Called while another exception is propagating, so nothing here may replace it: a
+    cleanup failure is logged and the caller re-raises the original.
+
+    The row is marked first and the staged files removed only once that succeeded. The
+    other order leaves a ``staging`` row pointing at nothing; this one leaves, at worst,
+    a row that ``abandon_stale`` and a collection pass reclaim after a restart. A row the
+    catalog refuses to abandon — one already committed — keeps its files: only an
+    uncommitted snapshot's bytes are ever touched here. Files already promoted are
+    read-only and stay for ``gc.collect``, which reclaims ``abandoned`` snapshots.
+    Running it twice is harmless: ``abandon`` accepts an abandoned row and the staging
+    removal ignores a missing directory.
+    """
     try:
-        updated = catalog.commit_snapshot(
-            snapshot.id,
-            expected_revision=(
-                expected_revision
-                if expected_revision is not None
-                else catalog.get_table(table.id).revision
-            ),
-            verify_before_commit=True,
+        catalog.abandon(snapshot_id)
+    except Exception:
+        logger.warning(
+            "could not mark snapshot %s abandoned; abandon_stale will reclaim it",
+            snapshot_id,
+            exc_info=True,
         )
-    except (SnapshotConflict, SnapshotStateError):
-        # The snapshot will never be committed, so mark it reclaimable and let the
-        # exception through. Not retried: #699 documents why — the loser built on a
-        # state that no longer exists, and retrying would overwrite the commit that
-        # won. Without this it stayed `validated` for ever with its files promoted,
-        # and nothing would ever look at it again (#738).
-        catalog.abandon(snapshot.id)
-        raise
-    return MaterializeResult(
-        table=updated,
-        snapshot=catalog.get_snapshot(snapshot.id),
-        snapshot_dir=promoted,
-    )
+        return
+    layout.discard_staging(snapshot_id)
 
 
 __all__ = ["MaterializeResult", "materialize"]
