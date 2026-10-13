@@ -110,14 +110,42 @@ class StreamedTable:
             for name, dtype, encoding in zip(self.columns, self.dtypes, self.encodings, strict=True)
         ]
 
+    def wire_bytes_floor(self, count: int) -> int:
+        """A lower bound on the UTF-8 bytes the first ``count`` rows' cells take on the wire.
+
+        Measured in SQL, so a huge text, binary or list cell is counted without being
+        read into Python (#1332): text is at least its bytes and two quotes, binary its
+        hex digits and two quotes, and a list at least one character and a separator
+        (``", "``) per item. Other columns count nothing, so the bound never exceeds what
+        ``json.dumps`` of the encoded rows gives.
+        """
+        terms: list[str] = []
+        for name, dtype in zip(self.columns, self.dtypes, strict=True):
+            column = quote_identifier(name)
+            base = dtype.split("(", 1)[0]
+            if base == "String":
+                terms.append(f"coalesce(sum(strlen({column}) + 2), 0)")
+            elif base == "Binary":
+                terms.append(f"coalesce(sum(2 * octet_length({column}) + 2), 0)")
+            elif base == "List":
+                terms.append(f"coalesce(sum(3 * len({column})), 0)")
+        if not terms:
+            return 0
+        found = self.connection.execute(
+            f"SELECT {' + '.join(terms)} FROM "
+            f"(SELECT * FROM {self.table} LIMIT {int(count)}) AS _kpubdata_head"
+        ).fetchone()
+        return int(found[0]) if found and found[0] is not None else 0
+
     def rows(
-        self, *, batch_size: int = 10_000
+        self, *, batch_size: int = 10_000, count: int | None = None
     ) -> Iterator[tuple[tuple[Any, ...], dict[str, JsonValue]]]:
-        """``(raw, encoded)`` for every row, in the result's order."""
+        """``(raw, encoded)`` for every row — or the first ``count`` — in the result's order."""
         cursor = self.connection.cursor()
+        head = "" if count is None else f" LIMIT {int(count)}"
         try:
             # A table is read back in the order it was written (preserve_insertion_order).
-            cursor.execute(f"SELECT {_readable(self.columns, self.zoned)} FROM {self.table}")
+            cursor.execute(f"SELECT {_readable(self.columns, self.zoned)} FROM {self.table}{head}")
             while batch := cursor.fetchmany(batch_size):
                 for row in batch:
                     raw = _mark_utc(row, self.zoned)
@@ -134,11 +162,17 @@ class StreamedTable:
             cursor.close()
 
 
-def stream_result(connection: duckdb.DuckDBPyConnection, sql: str, *, limit: int) -> StreamedTable:
+def stream_result(
+    connection: duckdb.DuckDBPyConnection,
+    sql: str,
+    *,
+    limit: int,
+    stored: Sequence[str | None] | None = None,
+) -> StreamedTable:
     """``sql``'s first ``limit`` rows, kept in a temporary table and described for the wire.
 
     The rows are not read into Python here: an integer column's wire encoding is decided
-    from its minimum and maximum in SQL.
+    from its minimum and maximum in SQL. ``stored`` is as for :func:`to_wire`.
 
     Raises:
         ResultError: Two columns share a name, or a column's type has no Builder name.
@@ -152,6 +186,11 @@ def stream_result(connection: duckdb.DuckDBPyConnection, sql: str, *, limit: int
         dtypes = [result_dtype(t) for t in types]
     except ValueError as exc:
         raise ResultError(str(exc)) from exc
+    if stored is not None:
+        dtypes = [
+            "Null" if recorded == "Null" else dtype
+            for dtype, recorded in zip(dtypes, stored, strict=True)
+        ]
     zoned = _zoned_columns(columns, types)
     table = "_kpubdata_result"
     connection.execute(
