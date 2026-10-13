@@ -20,6 +20,7 @@ import pytest
 from kpubdata_builder.cli import main
 from kpubdata_builder.service import BuilderService, ServiceResponse, dispatch
 from kpubdata_builder.service import http as http_module
+from kpubdata_builder.service.build_slots import BuildSlots
 
 _SPEC = """\
 dataset_id: slots.{name}
@@ -39,32 +40,82 @@ class _Result:
 
 
 class _Gauge:
-    """Counts the fetches in flight and holds each one until the gate opens."""
+    """Counts the fetches in flight and holds each one until the gate opens.
+
+    It also counts the callers that found no slot free and went on to wait for one
+    (``watch``). Both counts change under one condition, so a test can wait for an
+    exact state instead of sleeping and hoping nothing else was about to happen.
+    """
 
     def __init__(self) -> None:
         self.gate = threading.Event()
-        self._lock = threading.Lock()
+        self._changed = threading.Condition()
         self._inside = 0
         self.peak = 0
         self.entered = 0
+        self.waiting = 0
 
     def fetch(self) -> _Result:
-        with self._lock:
+        with self._changed:
             self._inside += 1
             self.entered += 1
             self.peak = max(self.peak, self._inside)
+            self._changed.notify_all()
         try:
             self.gate.wait(timeout=20)
         finally:
-            with self._lock:
+            with self._changed:
                 self._inside -= 1
         return _Result()
 
+    def watch(self, slots: BuildSlots | threading.BoundedSemaphore) -> None:
+        """Count every caller of ``slots.acquire`` that has to wait for its slot.
+
+        ``slots`` is the service's own limit: its ``BuildSlots`` for builds, its
+        semaphore for previews.
+
+        The production ``acquire`` still decides everything. It is asked once without
+        waiting; only when that is refused — every slot was taken at that moment — is
+        the caller counted, and then it makes the same call production would have
+        made. A counted caller therefore cannot go on until a slot is released, and
+        the test controls that through ``gate``.
+        """
+        acquire = slots.acquire
+
+        def watched(timeout: float | None = None) -> bool:
+            if acquire(timeout=0):
+                return True
+            with self._changed:
+                self.waiting += 1
+                self._changed.notify_all()
+            return acquire(timeout=timeout)
+
+        setattr(slots, "acquire", watched)  # noqa: B010 - an instance patch, on purpose
+
     def wait_for(self, entered: int, *, timeout: float = 10.0) -> None:
-        deadline = time.monotonic() + timeout
-        while self.entered < entered and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert self.entered >= entered, f"only {self.entered} of {entered} fetches started"
+        with self._changed:
+            self._changed.wait_for(lambda: self.entered >= entered, timeout=timeout)
+            assert self.entered >= entered, f"only {self.entered} of {entered} fetches started"
+
+    def settle(self, *, entered: int, waiting: int, timeout: float = 10.0) -> None:
+        """Wait until ``entered`` fetches are in flight and ``waiting`` callers are
+        proven to be waiting for a slot, then check that nothing went past that.
+
+        This is the negative claim without a quiet period: every contender is
+        accounted for — inside its fetch or refused a slot — so "it did not start" is
+        a fact about a known state, not about what happened to be seen in 0.5 s. One
+        fetch too many ends the wait at once, and fails.
+        """
+
+        def settled() -> bool:
+            return self.entered > entered or (self.entered == entered and self.waiting >= waiting)
+
+        with self._changed:
+            self._changed.wait_for(settled, timeout=timeout)
+            assert (self.entered, self.waiting) == (entered, waiting), (
+                f"{self.entered} fetches started and {self.waiting} callers waited for a "
+                f"slot; expected {entered} and {waiting}"
+            )
 
 
 def _factory(gauge: _Gauge) -> Callable[..., object]:
@@ -98,6 +149,7 @@ def _start(target: Callable[[], object]) -> threading.Thread:
 def _run_four_builds(service: BuilderService, gauge: _Gauge, *, expect_running: int) -> int:
     """Two synchronous builds on their own threads and two async jobs; the peak in flight."""
     statuses: list[int] = []
+    gauge.watch(service._build_slots)
 
     def sync(name: str) -> None:
         response = dispatch(service, "POST", "/build", {"spec": _SPEC.format(name=name)})
@@ -110,9 +162,8 @@ def _run_four_builds(service: BuilderService, gauge: _Gauge, *, expect_running: 
         assert isinstance(submitted, ServiceResponse)
         assert submitted.status_code == 202
     try:
-        gauge.wait_for(expect_running)
-        # Long enough for a build that is not held back to reach its fetch.
-        time.sleep(0.5)
+        # All four are accounted for: in their fetch, or refused a slot and waiting.
+        gauge.settle(entered=expect_running, waiting=4 - expect_running)
         return gauge.peak
     finally:
         gauge.gate.set()
@@ -163,6 +214,8 @@ def test_previews_wait_for_a_slot_only_when_a_limit_is_set(
         output_root=tmp_path, client_factory=_factory(gauge), max_concurrent_previews=limit
     )
     statuses: list[int] = []
+    if service._preview_slots is not None:
+        gauge.watch(service._preview_slots)
 
     def preview(name: str) -> None:
         response = dispatch(service, "POST", "/preview", {"spec": _SPEC.format(name=name)})
@@ -171,8 +224,8 @@ def test_previews_wait_for_a_slot_only_when_a_limit_is_set(
 
     threads = [_start(lambda name=name: preview(name)) for name in ("p1", "p2")]
     try:
-        gauge.wait_for(expected_peak)
-        time.sleep(0.5)
+        # Both previews are accounted for: fetching, or refused the one slot.
+        gauge.settle(entered=expected_peak, waiting=2 - expected_peak)
         peak = gauge.peak
     finally:
         gauge.gate.set()
@@ -324,6 +377,7 @@ def test_an_async_job_waiting_for_a_slot_is_queued_not_running(
         async_max_workers=1,
         max_concurrent_builds=1,
     )
+    gauge.watch(service._build_slots)
     holder = _hold_the_only_slot(service, gauge)
 
     submitted = dispatch(
@@ -331,8 +385,8 @@ def test_an_async_job_waiting_for_a_slot_is_queued_not_running(
     )
     assert isinstance(submitted, ServiceResponse)
     assert submitted.status_code == 202
-    # Its worker has picked it up and is waiting for the slot; it has started nothing.
-    time.sleep(0.5)
+    # Its worker has picked it up and was refused the slot; it has started nothing.
+    gauge.settle(entered=1, waiting=1)
 
     assert _status(service, "waiting") == "queued"
     assert gauge.entered == 1
@@ -352,9 +406,11 @@ def test_a_job_cancelled_while_waiting_ends_cancelled_once_and_keeps_the_slots(
         async_max_workers=1,
         max_concurrent_builds=1,
     )
+    gauge.watch(service._build_slots)
     holder = _hold_the_only_slot(service, gauge)
     dispatch(service, "POST", "/builds", {"spec": _SPEC.format(name="doomed"), "run_id": "doomed"})
-    time.sleep(0.3)
+    # The cancel below reaches a job whose worker is proven to be waiting for the slot.
+    gauge.settle(entered=1, waiting=1)
 
     cancelled = dispatch(service, "POST", "/builds/doomed/cancel", None)
 
