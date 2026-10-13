@@ -2,11 +2,52 @@
 
 from __future__ import annotations
 
+import math
+import os
+from collections.abc import Mapping, Sized
 from itertools import product
 
 from .models import JsonValue
 
-__all__ = ["expand_param_grid"]
+__all__ = [
+    "DEFAULT_PARAM_GRID_MAX_COMBINATIONS",
+    "PARAM_GRID_MAX_COMBINATIONS_ENV",
+    "count_param_grid_combinations",
+    "expand_param_grid",
+    "param_grid_max_combinations",
+]
+
+PARAM_GRID_MAX_COMBINATIONS_ENV = "KPUBDATA_BUILDER_PARAM_GRID_MAX_COMBINATIONS"
+#: Chosen without a measurement (#1340): several times the largest grid this repository
+#: declares (1,500 combinations), and far below what a few long axes multiply to.
+DEFAULT_PARAM_GRID_MAX_COMBINATIONS = 10_000
+
+
+def param_grid_max_combinations() -> int | None:
+    """Combinations one source's ``param_grid`` may expand to, or None for no limit.
+
+    An unset, malformed or negative value is the default; the start-up check reports a
+    malformed one (``startup_settings``). ``0`` turns the limit off.
+    """
+    raw = os.environ.get(PARAM_GRID_MAX_COMBINATIONS_ENV, "").strip()
+    value = DEFAULT_PARAM_GRID_MAX_COMBINATIONS
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            parsed = -1
+        if parsed >= 0:
+            value = parsed
+    return value or None
+
+
+def count_param_grid_combinations(param_grid: Mapping[str, Sized]) -> int:
+    """How many calls :func:`expand_param_grid` would return, without expanding.
+
+    The product of the axis lengths: one multiplication per axis, whatever the product
+    comes to. An empty grid is one call; a grid with an empty axis is none.
+    """
+    return math.prod(len(values) for values in param_grid.values())
 
 
 def expand_param_grid(

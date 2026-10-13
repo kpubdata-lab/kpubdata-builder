@@ -61,6 +61,7 @@
 | `KPUBDATA_BUILDER_SHUTDOWN_GRACE_SECONDS` | SIGTERM 뒤 실행 중인 비동기 빌드가 끝나기를 기다리는 시간(초, #1118). 지나면 남은 빌드에 멈추라고 하고 10초를 더 기다린다. `0` 이면 바로 멈추라고 한다. 유한한 0 이상의 수가 아니면(`inf`, `nan`, 음수, 숫자가 아닌 값) `serve` 가 기동을 거부한다. 대기 중이던 작업은 이 값과 무관하게 시작하지 않고 끝난다. 컨테이너의 종료 대기 시간(compose `stop_grace_period`, 기본 설정 120초)을 이 값 + 10초보다 길게 둔다 | `90` | 선택 |
 | `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS` | 동기 `POST /build` 가 build 자리를 기다리는 상한(초, #1040). 넘으면 아무것도 가져오지 않은 채 429 `build_queue_full` 로 답한다. `0` 이면 자리가 없을 때 바로 거절한다. 비동기 `POST /builds` 는 기다리지 않고 큐에 넣는다. 유한한 0 이상의 수여야 한다 — `nan`, `inf`, 음수, 숫자가 아닌 값이면 `serve` 가 기동을 거절하고, 빈 값이면 기본값을 쓴다(#1068). preview 자리 대기에도 같은 상한이 쓰인다 | `30` | 선택 |
 | `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS` | `retry_of` 로 재시도하는 build 가 원본 run 의 `param_grid` checkpoint 를 이어받을 수 있는 최대 나이(초, #1103). checkpoint 의 나이는 그 안의 가장 오래된 기록이 수집된 때부터 세며, 이어받아도 새로워지지 않는다. 넘으면 그 source 를 처음부터 다시 수집하고 manifest 의 `checkpoints_not_reused` 에 `expired` 로 남긴다. `0` 이면 재시도가 checkpoint 를 이어받지 않는다. 읽을 수 없는 값은 기본값으로 읽는다 | `86400` | 선택 |
+| `KPUBDATA_BUILDER_PARAM_GRID_MAX_COMBINATIONS` | source 하나의 `param_grid` 가 펼쳐질 수 있는 조합 수의 상한(#1340). 조합 하나는 provider 호출 하나 이상이다. 조합 수는 축 길이의 곱으로 세고 조합을 만들어 보지 않는다. 넘으면 spec 검증이 `param_grid_too_large` 로 거부하므로 build·preview·publish 가 provider 를 한 번도 부르지 않고 끝난다. 상한 이하인 grid 의 호출 순서와 결과는 그대로다. 측정 없이 정한 출발값이다. `0` 이면 끔. 읽을 수 없는 값은 기본값으로 읽는다 | `10000` | 선택 |
 
 ### 업로드와 URL 소스
 
@@ -124,7 +125,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 42 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 43 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |
@@ -160,6 +161,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
   - 업로드와 URL 소스: `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`, `KPUBDATA_BUILDER_UPLOAD_MAX_FILES`, `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES`, `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS`, `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
   - 사용자별 build 상한: `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER`
   - build 실행 시간 상한: `KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS`
+  - `param_grid` 조합 수 상한: `KPUBDATA_BUILDER_PARAM_GRID_MAX_COMBINATIONS`
   - 그 밖: `KPUBDATA_BUILDER_PROBE_INTERVAL_SECONDS`, `KPUBDATA_BUILDER_JOB_CREDENTIAL_TTL_SECONDS`, `KPUBDATA_BUILDER_CHECKPOINT_MAX_AGE_SECONDS`
   - 켜고 끄는 값(`KPUBDATA_BUILDER_DEV_MODE`, `ENFORCE_OWNERSHIP`, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL`, `KPUBDATA_BUILDER_REQUIRE_OWN_PUBLISH_CREDENTIAL`)을 그 설정이 켜짐으로 읽는 말도 `false`/`0` 도 아닌 말로 적은 경우. 켜짐으로 읽는 말은 `true`/`1` 이고, `KPUBDATA_BUILDER_REQUIRE_OWN_PROVIDER_CREDENTIAL` 만 `yes`/`on` 도 받습니다. 나머지 셋에서 `yes` 나 `on` 은 **꺼진 것으로 읽힙니다.** 다만 다중 사용자 배포(`OIDC_ISSUER` 또는 `ENFORCE_OWNERSHIP`)는 `ENFORCE_OWNERSHIP` 과 두 `REQUIRE_OWN_*` 를 무엇이 적혀 있든 켜므로, 그때는 "꺼진 것으로 읽힌다" 가 아니라 **"무시된다 — 켜져 있다"** 고 알립니다(`false`/`0` 을 적은 경우에도).
 

@@ -35,6 +35,11 @@ from .models import (
     DerivedColumn,
     SourceRef,
 )
+from .param_grid import (
+    PARAM_GRID_MAX_COMBINATIONS_ENV,
+    count_param_grid_combinations,
+    param_grid_max_combinations,
+)
 
 
 @dataclass(frozen=True)
@@ -800,8 +805,12 @@ def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
     Expansion is Cartesian product so one declaration multiplies call count. Bad
     declaration failing at runtime means hundreds of calls already executed; prevent
     at declaration stage.
+
+    The product itself is bounded too (#1340): it is counted from the axis lengths, never
+    by expanding, so a grid too large to hold is refused as quickly as a small one.
     """
     problems: list[ValidationProblem] = []
+    max_combinations = param_grid_max_combinations()
     for i, source in enumerate(spec.sources):
         if not source.param_grid:
             continue
@@ -849,7 +858,26 @@ def _param_grid_problems(spec: BuildSpec) -> list[ValidationProblem]:
                             f"param_grid values must be scalars, got {type(value).__name__}",
                         )
                     )
+        combinations = count_param_grid_combinations(source.param_grid)
+        if max_combinations is not None and combinations > max_combinations:
+            # Every combination is at least one provider request, and the executor
+            # holds the whole expansion before it makes the first.
+            problems.append(
+                _p(
+                    "param_grid_too_large",
+                    prefix,
+                    f"param_grid expands to {_count_text(combinations)} combinations; "
+                    f"at most {max_combinations} are allowed",
+                    hint="Shorten an axis or split the source; an operator can raise "
+                    f"{PARAM_GRID_MAX_COMBINATIONS_ENV}",
+                )
+            )
     return problems
+
+
+def _count_text(count: int) -> str:
+    """A count as digits, or as its size when the digits would fill the message."""
+    return str(count) if count < 10**18 else f"about 10^{int(math.log10(count))}"
 
 
 def _pii_problems(spec: BuildSpec) -> list[ValidationProblem]:
