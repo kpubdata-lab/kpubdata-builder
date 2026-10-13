@@ -91,9 +91,20 @@ def _finished(executor: AsyncBuildExecutor, run_id: str) -> BuildJobSnapshot:
     while time.monotonic() < deadline:
         snapshot = executor.get(run_id)
         if snapshot is not None and snapshot.status in ("succeeded", "failed", "cancelled"):
+            _worker_passed(executor)
             return snapshot
         time.sleep(0.01)
     raise AssertionError(f"job {run_id} did not finish")
+
+
+def _worker_passed(executor: AsyncBuildExecutor) -> None:
+    """Wait until the one worker has left every job handed to it so far.
+
+    The registry ends a job before the worker writes its end line, so a status read as
+    terminal does not mean the line is there yet. A no-op queued behind the job runs
+    only once the worker is done with it, line included.
+    """
+    executor._executor.submit(lambda: None).result(timeout=10)
 
 
 def _answers(status_code: int, body: dict[str, JsonValue]) -> BuildJobRunner:
