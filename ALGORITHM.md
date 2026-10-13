@@ -76,7 +76,7 @@ run_build(spec, client, output_root, run_id):
 | `sources[i].provider` / `.dataset` | 공백이 아닌 문자열 (뒤늦은 fetch 실패 차단, #191) |
 | `sources[i].alias` | 제공되었다면 공백만으로 구성 금지 |
 | `exports` | 최소 1개 이상 |
-| `exports[i].output_path` | 공백이 아닌 문자열 |
+| `exports[i].output_path` | 공백이 아닌 상대 경로. 절대 경로·`..`·Gold 디렉터리 자체(`.`) 금지, Gold 항목(`table.parquet`, `package.json`, `splits`, `README.md`, `card.json`)과 다른 export 경로와 겹치면 안 됨 — 대소문자·NFC·끝의 점/공백을 무시하고 비교 (#1320) |
 | `exports[i].kind` | `EXPORTER_REGISTRY`에 등록된 종류여야 함 |
 | `metadata` 키 | 공백이 아닌 문자열 |
 | `splits` (ratio) | 이름 비공백, 값은 유한수(#192)·양수, 합계 1.0 (±1e-6) |
