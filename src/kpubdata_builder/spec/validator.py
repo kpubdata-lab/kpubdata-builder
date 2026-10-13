@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import codecs
 import math
+import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -149,6 +150,39 @@ def validate_spec(spec: BuildSpec) -> None:
         raise ValidationError([str(p) for p in problems], structured=problems)
 
 
+# Words that name a time column when they are a whole word of a column name (#444).
+_TIME_TOKENS = frozenset(
+    {"date", "datetime", "time", "timestamp", "dt", "ts", "year", "month", "day", "hour"}
+)
+# Words that also name one as the ending of a longer word: ``basedate``, ``regyear``.
+# The short and common ones (``dt``, ``ts``, ``at``, ``day``, ``hour``, ``time``) are
+# left out: they end ordinary words such as ``status``, ``holiday`` or ``lifetime``.
+_TIME_SUFFIXES = ("date", "datetime", "timestamp", "year", "month")
+# Ordinary words that end in ``date`` and say nothing about time.
+_NOT_DATE_WORDS = frozenset(
+    {"update", "candidate", "validate", "invalidate", "mandate", "consolidate", "liquidate"}
+)
+# Words of a column name: ``created_at``, ``createdAt``, ``STDR_DT`` and ``baseDT2``
+# split at separators, case changes and digits.
+_NAME_WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
+
+
+def _looks_like_time_column(name: str) -> bool:
+    """Whether a column name reads as a date or time column (#444, #1344).
+
+    The name is cut into words and each word is compared whole, so ``category`` and
+    ``status`` are not taken for ``at`` or ``ts``. ``at`` counts only as the last word
+    after another one, as in ``created_at``.
+    """
+    words = [word.lower() for word in _NAME_WORD.findall(name)]
+    for word in words:
+        if word in _TIME_TOKENS:
+            return True
+        if word not in _NOT_DATE_WORDS and word.endswith(_TIME_SUFFIXES):
+            return True
+    return len(words) > 1 and words[-1] == "at"
+
+
 def _split_problems(spec: BuildSpec) -> list[ValidationProblem]:
     """Collect validation problems in splits definition."""
     split = spec.splits
@@ -209,32 +243,18 @@ def _split_problems(spec: BuildSpec) -> list[ValidationProblem]:
                 hint="Use 'ratio' or 'key'",
             )
         )
-        # Time series data leakage check (#444). In ratio mode, if key is time
-        # column, random shuffle exposes future information to train.
-    _TIME_INDICATORS = (
-        "date",
-        "time",
-        "dt",
-        "year",
-        "month",
-        "day",
-        "hour",
-        "timestamp",
-        "at",
-        "ts",
-    )
-    if split.mode == "ratio" and split.key:
-        key_lower = split.key.lower()
-        if any(ind in key_lower for ind in _TIME_INDICATORS):
-            problems.append(
-                _p(
-                    "time_column_random_split",
-                    "splits",
-                    f"splits.key {split.key!r} looks like a time column but mode is 'ratio' "
-                    "— random split causes time-series data leakage (#444)",
-                    hint="Use mode='key' for temporal splitting",
-                )
+    # Time series data leakage check (#444). In ratio mode, if key is time
+    # column, random shuffle exposes future information to train.
+    if split.mode == "ratio" and split.key and _looks_like_time_column(split.key):
+        problems.append(
+            _p(
+                "time_column_random_split",
+                "splits",
+                f"splits.key {split.key!r} looks like a time column but mode is 'ratio' "
+                "— random split causes time-series data leakage (#444)",
+                hint="Use mode='key' for temporal splitting",
             )
+        )
     return problems
 
 
