@@ -16,8 +16,10 @@ Each guarantee the deletion makes has a test here:
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Iterable, Iterator
@@ -53,7 +55,7 @@ from kpubdata_builder.service.user_ledger import UserLedger
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.store import state_backup
 from kpubdata_builder.uploads.store import SQLiteUploadRepository
-from kpubdata_builder.warehouse import TableCatalog
+from kpubdata_builder.warehouse import SnapshotLayout, TableCatalog
 
 _ISSUER = "https://idp.example"
 _ALICE = compute_owner_id("oidc", _ISSUER, "alice")
@@ -519,6 +521,45 @@ def test_a_leased_snapshot_stops_the_warehouse_step(
     finally:
         catalog.close()
     assert delete_user(root, _ALICE, warehouse_root=warehouse, apply=True).complete
+
+
+def test_a_failed_snapshot_delete_stops_the_warehouse_step_and_keeps_its_rows(
+    state: tuple[Path, Path, BuilderService], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Files that cannot be removed keep the catalog rows that refer to them (#1334)."""
+    root, warehouse, _service_ = state
+    catalog = TableCatalog(warehouse)
+    try:
+        table = catalog.list_tables(owner_workspace(_ALICE))[0]
+        snapshot_id = table.current_snapshot_id
+        assert snapshot_id is not None
+    finally:
+        catalog.close()
+    table_dir = SnapshotLayout(warehouse, table.id).table_dir
+    original = os.unlink
+
+    def unlink(path: Any, *args: Any, **kwargs: Any) -> None:
+        if os.fsdecode(path).endswith(".parquet"):
+            raise PermissionError(errno.EACCES, "Permission denied", os.fsdecode(path))
+        original(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "unlink", unlink)
+        report = delete_user(root, _ALICE, warehouse_root=warehouse, apply=True)
+
+    assert not report.complete
+    assert any("could not delete" in reason for reason in report.blocked), report.blocked
+    assert "warehouse" in _where(root, warehouse, _ALICE)
+    assert table_dir.is_dir()
+    catalog = TableCatalog(warehouse)
+    try:
+        assert catalog.get_snapshot(snapshot_id).state == "retiring"
+    finally:
+        catalog.close()
+
+    assert delete_user(root, _ALICE, warehouse_root=warehouse, apply=True).complete
+    assert _where(root, warehouse, _ALICE) == set()
+    assert not table_dir.exists()
 
 
 # --------------------------------------------------------------------- crash and resume

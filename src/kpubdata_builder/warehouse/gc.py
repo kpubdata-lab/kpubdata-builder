@@ -24,16 +24,19 @@ What it may remove: staging directories the catalog does not know, snapshots mar
 
 Deletion order matters. Files first, then the catalog row. The other way round
 leaves files that nothing knows about, which is how an orphan is created in the
-first place.
+first place. And "files first" only holds if a failed file delete stops the row
+from being forgotten: the snapshot stays ``retiring`` — no lease or hold can be
+taken on it — and the next pass tries again (#1334).
 """
 
 from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .catalog import TableCatalog
-from .errors import ImmutableSnapshot, SnapshotHeld, SnapshotInUse
+from .errors import ImmutableSnapshot, SnapshotDeleteFailed, SnapshotHeld, SnapshotInUse
 from .layout import SnapshotLayout, thaw
 
 
@@ -47,6 +50,8 @@ class GCReport:
         kept_current: Snapshots skipped for being current.
         kept_leased: Snapshots skipped for having a live lease.
         kept_held: Snapshots skipped for having a live hold (#705).
+        delete_failed: Snapshots whose files could not all be removed. Their rows
+            stay ``retiring`` and the next pass retries them (#1334).
         leases_expired: Expired lease rows purged.
     """
 
@@ -55,6 +60,7 @@ class GCReport:
     kept_current: list[str] = field(default_factory=list)
     kept_leased: list[str] = field(default_factory=list)
     kept_held: list[str] = field(default_factory=list)
+    delete_failed: list[str] = field(default_factory=list)
     leases_expired: int = 0
 
     @property
@@ -77,6 +83,25 @@ def collect_orphan_staging(catalog: TableCatalog, table_id: str) -> list[str]:
     return removed
 
 
+def _remove_tree(snapshot_id: str, directory: Path) -> None:
+    """Remove ``directory`` completely, or raise; absent counts as removed."""
+    if not directory.exists():
+        return
+    # Committed snapshots are read-only, and a read-only directory will not let its
+    # entries be unlinked, so permissions come back before the delete.
+    thaw(directory)
+    try:
+        shutil.rmtree(directory)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise SnapshotDeleteFailed(snapshot_id, str(directory), exc) from exc
+    if directory.exists():
+        raise SnapshotDeleteFailed(
+            snapshot_id, str(directory), OSError(f"{directory} still exists after removal")
+        )
+
+
 def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     """Delete one snapshot's files and then its catalog row.
 
@@ -90,29 +115,34 @@ def delete_snapshot(catalog: TableCatalog, snapshot_id: str) -> None:
     and then deleting in two steps left a gap: a query could resolve the pointer and
     take a lease between them, and lose its data mid-read.
 
+    The row is forgotten only once every file is gone. A failed delete raises
+    :class:`SnapshotDeleteFailed` and leaves the row ``retiring``, which still refers
+    to what is left on disk and admits no new lease or hold. Calling this again —
+    which is what the next collection pass does — finishes the job (#1334).
+
     Raises:
         ImmutableSnapshot: It is the table's current snapshot.
         SnapshotInUse: A query holds a live lease on it.
         SnapshotHeld: A saved analysis, retention period or audit holds it (#705).
         SnapshotNotFound: No such snapshot.
+        SnapshotDeleteFailed: Some of its files could not be removed; the row is kept.
     """
     snapshot = catalog.begin_retiring(snapshot_id)
     layout = SnapshotLayout(catalog.root, snapshot.table_id)
-    directory = layout.snapshot_dir(snapshot_id)
-    if directory.exists():
-        # Committed snapshots are read-only, and a read-only directory will not let
-        # its entries be unlinked, so permissions come back before the delete.
-        thaw(directory)
-        shutil.rmtree(directory, ignore_errors=True)
+    _remove_tree(snapshot_id, layout.snapshot_dir(snapshot_id))
     # A snapshot abandoned before it was promoted still has its bytes in staging, and
     # they are not an orphan yet — the catalog still knows the id, which is exactly
     # what ``collect_orphan_staging`` refuses to touch. Deleting only the promoted
     # path left them for a *later* pass to find, after this one forgot the row (#738).
-    layout.discard_staging(snapshot_id)
+    _remove_tree(snapshot_id, layout.staging_dir(snapshot_id))
     # A profile describes bytes that are now gone (#817).
-    layout.discard_profile(snapshot_id)
-    # Files first, catalog second. The other order creates the orphan it is meant
-    # to clean up.
+    profile = layout.profile_path(snapshot_id)
+    try:
+        profile.unlink(missing_ok=True)
+    except OSError as exc:
+        raise SnapshotDeleteFailed(snapshot_id, str(profile), exc) from exc
+    # Files first, catalog second, and only when the files really are gone. The other
+    # order creates the orphan it is meant to clean up.
     catalog.forget_snapshot(snapshot_id)
 
 
@@ -143,7 +173,8 @@ def collect(
 
     Removes orphaned staging directories, then superseded snapshots beyond the
     ``keep`` most recent, skipping the current snapshot and anything under a live
-    lease or a live hold.
+    lease or a live hold. A snapshot whose files cannot be removed is reported in
+    ``delete_failed`` and does not stop the pass; its row is retried next time.
 
     Args:
         catalog: The catalog to work against.
@@ -176,6 +207,8 @@ def collect(
             report.kept_leased.append(snapshot.id)
         except SnapshotHeld:
             report.kept_held.append(snapshot.id)
+        except SnapshotDeleteFailed:
+            report.delete_failed.append(snapshot.id)
         else:
             report.snapshots_removed.append(snapshot.id)
 
@@ -193,6 +226,8 @@ def collect(
             report.kept_leased.append(snapshot.id)
         except SnapshotHeld:
             report.kept_held.append(snapshot.id)
+        except SnapshotDeleteFailed:
+            report.delete_failed.append(snapshot.id)
         else:
             report.snapshots_removed.append(snapshot.id)
     return report

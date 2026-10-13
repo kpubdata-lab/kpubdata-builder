@@ -1777,6 +1777,14 @@ def _reclaim(catalog: TableCatalog, table_id: str, keep: int | None) -> None:
             len(report.kept_leased),
             table_id,
         )
+    if report.delete_failed:
+        logger.warning(
+            "could not delete the files of %d snapshot(s) of table %s; their catalog "
+            "rows are kept as retiring and the next collection retries them: %s",
+            len(report.delete_failed),
+            table_id,
+            ", ".join(report.delete_failed),
+        )
 
 
 def run_build(
