@@ -762,7 +762,8 @@ def _run_build(
             (#738).
 
     Returns:
-        int: 0 if all sources succeed, 1 on load/validation/build failure.
+        int: 0 if all sources succeed and every table asked for was committed, 1 on
+        load/validation/build failure and when a table commit was refused (#1329).
     """
     try:
         spec = load_spec(Path(spec_path))
@@ -807,6 +808,18 @@ def _run_build(
         for outcome in result.outcomes:
             if outcome.status == "failed":
                 print(f"  - {outcome.source_key}: {outcome.error}", file=sys.stderr)
+        return 1
+    # The build made its artifacts but a table was not committed (#1329). The manifest
+    # records it and every reading of the run says ``failed`` (``run_status_from_manifest``);
+    # the service answers 409 with the same entries. Exit 0 here told a script the table
+    # was refreshed. Only the reason and detail Builder wrote are printed. Without a
+    # catalog no commit was asked for, so there is none to refuse.
+    if catalog is not None and result.warehouse_failures:
+        print("error: build did not commit its table for one or more sources", file=sys.stderr)
+        for key, failure in result.warehouse_failures.items():
+            reason = failure.get("reason", "commit_failed")
+            detail = failure.get("detail", "the table was not committed")
+            print(f"  - {key}: {reason}: {detail}", file=sys.stderr)
         return 1
     return 0
 
