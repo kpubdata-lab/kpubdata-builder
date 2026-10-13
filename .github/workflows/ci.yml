@@ -73,6 +73,12 @@ jobs:
       - name: Action pin gate
         run: python3 scripts/check_action_pins.py
 
+      # A job a pull request can start runs unreviewed code, so its token must not
+      # write or ask for an OIDC token (#1336). The script computes every job's
+      # effective permissions; the exceptions are listed in it, each with a reason.
+      - name: Workflow permission gate
+        run: uv run --no-sources python scripts/check_workflow_permissions.py
+
       - name: License inventory and notice gate
         run: uv run --no-sources python scripts/license_inventory.py --check
 
