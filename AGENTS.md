@@ -29,6 +29,17 @@ only in POLICY section 1.3. Refactoring must preserve run state, cancellation,
 manifest, quality, PII and warehouse semantics; do not duplicate existing
 pipeline logic.
 
+## Issue intake during stabilization
+
+Follow [the canonical stabilization and issue-triage policy](https://github.com/kpubdata-lab/kpubdata/blob/main/docs/governance/POLICY.md)
+(sections 1.3, 13 and 17). Before filing, search issues and PRs across the
+product family. Put extra evidence, unresolved acceptance criteria and
+same-scope review follow-ups in the original issue/PR. Open a distinct issue
+only for an independently reproducible bug, security finding or operational
+failure with different ownership or verification. Do not create new feature
+work or recurring alert responsibilities while scope is frozen. Never suppress
+a real security alert or bug report merely to reduce issue counts.
+
 ## Ground rules
 
 - Do not reimplement `kpubdata`'s provider logic here.

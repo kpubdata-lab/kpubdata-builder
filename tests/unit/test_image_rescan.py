@@ -1,4 +1,4 @@
-"""Deployed images are scanned again, and a finding set is one issue (#1107).
+"""Deployed images are scanned again, with one incident per image component (#1107).
 
 ``docker.yml`` scans Builder's image when it is built; nothing scanned it afterwards,
 or the images the compose files pull from elsewhere. ``scripts/image_rescan.py`` does,
@@ -38,7 +38,7 @@ def _load_script(name: str) -> ModuleType:
 rescan = _load_script("image_rescan")
 
 _IMAGE = "caddy:2.11.6-alpine"
-_TITLE = "fix(security): caddy:2.11.6-alpine has HIGH or CRITICAL vulnerabilities"
+_TITLE = "fix(security): caddy image has HIGH or CRITICAL vulnerabilities"
 
 
 def _vulnerability(identifier: str, fixed: str | None = "1.2.4", **extra: str) -> dict[str, Any]:
@@ -212,6 +212,79 @@ def test_the_same_findings_are_not_filed_or_written_again(tmp_path: Path) -> Non
 
     assert [call[1:3] for call in tools.calls if call[0] == "gh"] == [["issue", "list"]]
     assert done == "caddy:2.11.6-alpine: #7 already lists these findings"
+
+
+def test_component_key_is_stable_across_tags_digests_and_registry_ports() -> None:
+    assert rescan.component_for("caddy:2.8-alpine") == "caddy"
+    assert rescan.component_for("caddy:2.11.6-alpine") == "caddy"
+    assert rescan.component_for("caddy@sha256:" + "a" * 64) == "caddy"
+    assert rescan.component_for("ghcr.io/org/app:latest") == "ghcr.io/org/app"
+    assert rescan.component_for("registry:5000/org/app:1") == "registry:5000/org/app"
+    assert rescan.component_for("registry:5000/org/app") == "registry:5000/org/app"
+    assert rescan.title_for("caddy:2.8-alpine") == _TITLE
+    assert rescan.title_for("caddy:2.11.6-alpine") == _TITLE
+
+
+def test_old_tag_issue_is_reused_and_retitled_without_losing_human_triage(
+    tmp_path: Path,
+) -> None:
+    before = _Tools(_report(_vulnerability("CVE-2026-0001")))
+    old = _filed_body(before, tmp_path).replace(_IMAGE, "caddy:2.8-alpine")
+    old = old.replace(
+        "- Reachable in this deployment: not assessed",
+        "- Reachable in this deployment: no, reviewed by a maintainer",
+    )
+    tools = _Tools(_report(_vulnerability("CVE-2026-0001")))
+    tools.issues = [
+        {
+            "number": 1314,
+            "title": "fix(security): caddy:2.8-alpine has HIGH or CRITICAL vulnerabilities",
+            "body": old,
+        }
+    ]
+
+    assert _record(tools, tmp_path) == f"{_IMAGE}: updated #1314"
+    assert tools.gh("issue", "create") == []
+    (edit,) = tools.gh("issue", "edit")
+    assert edit[3] == "1314"
+    assert edit[edit.index("--title") + 1] == _TITLE
+    new_body, comment = tools.bodies
+    assert f"in `{_IMAGE}`" in new_body
+    assert "no, reviewed by a maintainer" in new_body
+    assert "finding set is unchanged" in comment
+
+
+def test_same_findings_new_digest_refreshes_existing_issue(
+    tmp_path: Path,
+) -> None:
+    tools = _Tools(_report(_vulnerability("CVE-2026-0001")))
+    old = _filed_body(tools, tmp_path).replace(
+        "caddy@sha256:" + "a" * 64,
+        "caddy@sha256:" + "b" * 64,
+    )
+    tools.issues = [{"number": 17, "title": _TITLE, "body": old}]
+
+    assert _record(tools, tmp_path) == f"{_IMAGE}: updated #17"
+    assert tools.gh("issue", "create") == []
+    (updated, comment) = tools.bodies
+    assert "caddy@sha256:" + "a" * 64 in updated
+    assert "finding set is unchanged" in comment
+
+
+def test_a_different_image_does_not_take_over_caddy_incident(tmp_path: Path) -> None:
+    tools = _Tools(_report(_vulnerability("CVE-2026-0001")))
+    tools.issues = [
+        {
+            "number": 42,
+            "title": "fix(security): caddy-proxy:2.8-alpine has HIGH or CRITICAL vulnerabilities",
+            "body": "",
+        }
+    ]
+
+    _record(tools, tmp_path)
+
+    assert len(tools.gh("issue", "create")) == 1
+    assert tools.gh("issue", "edit") == []
 
 
 def test_a_changed_list_rewrites_the_issue_and_keeps_what_a_person_wrote(tmp_path: Path) -> None:

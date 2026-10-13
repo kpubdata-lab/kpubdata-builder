@@ -25,6 +25,11 @@ jobs:
     name: File or update the freshness incident
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Two runs for the same scheduled dataset must not both see "no open issue"
+    # and create duplicates. Other dataset workflows remain independent.
+    concurrency:
+      group: freshness-incident-${{ github.repository }}-${{ inputs.workflow }}
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write

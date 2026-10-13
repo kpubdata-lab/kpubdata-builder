@@ -1,54 +1,30 @@
 name: Dataset automation report
 
-# Run the agent commands on a schedule and report what they find (kpubdata#448).
+# Paused during stabilization (kpubdata POLICY 1.3).
+# Discovery and approval monitoring support future dataset expansion, which is
+# frozen. Run manually for diagnosis only; the workflow cannot write an issue.
+# Keep the existing script and its tests for an explicitly approved unfreeze.
 #
-# scripts/dataset_automation_report.py runs `kpubdata-builder monitor --check` over
-# the datasets kpubdata's catalogue marks application_required, and `discover` over
-# the data.go.kr pages they name, then keeps one issue: opened when an application
-# was approved or a page yields a draft, rewritten when that changes, left alone
-# otherwise.
-#
-#   schedule            runs, then files or updates the issue
-#   workflow_dispatch   the same; `dry_run` prints instead
-#   pull_request        a change to this file or the script: runs and prints only
-#
-# Read-only and report-only: nothing here records fixtures, writes a spec, runs
-# `pipeline` or opens a pull request. Without the KPUBDATA_DATAGO_API_KEY secret
-# (kpubdata#900) the script prints a notice that the secret is not configured and
-# exits 0.
+# No scheduled trigger, no pull_request trigger, no issues:write permission.
+# A manual execution uses --dry-run even if an operator supplies a valid key.
 
 on:
-  schedule:
-    - cron: "43 2 * * *"  # daily, 02:43 UTC
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Run and print; write no issue."
-        required: false
-        type: boolean
-        default: false
-  pull_request:
-    paths:
-      - ".github/workflows/dataset-automation.yml"
-      - "scripts/dataset_automation_report.py"
 
 permissions:
   contents: read
 
 concurrency:
-  # One run at a time writes the issue; a pull request's run is superseded by its
-  # next push.
-  group: dataset-automation-${{ github.event_name == 'pull_request' && github.ref || 'issue' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: dataset-automation-manual
+  cancel-in-progress: false
 
 jobs:
   report:
-    name: Monitor approvals and discover spec drafts
+    name: Inspect dataset approvals and discover drafts (no writes)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
-      issues: write  # the report is recorded as an issue
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -59,18 +35,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --no-sources
 
-      - name: Run, then file or update the issue
+      - name: Inspect without creating or updating an issue
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           KPUBDATA_DATAGO_API_KEY: ${{ secrets.KPUBDATA_DATAGO_API_KEY }}
-          # A pull request only prints: its run must not write issues about a branch.
-          DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          args=(--run-url "${RUN_URL}" --work-dir "${RUNNER_TEMP}")
-          if [ "${DRY_RUN}" = "true" ]; then
-            args+=(--dry-run)
-          fi
-          uv run --no-sources python scripts/dataset_automation_report.py "${args[@]}"
+          uv run --no-sources python scripts/dataset_automation_report.py \
+            --dry-run --run-url "${RUN_URL}" --work-dir "${RUNNER_TEMP}"

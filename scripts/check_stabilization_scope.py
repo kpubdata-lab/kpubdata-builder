@@ -22,6 +22,11 @@ _ISSUE = re.compile(r"(?im)^(?:Closes|Fixes|Refs|Relates)\s+(?:(?:[\w.-]+/){1,2}
 _ROUTE = re.compile(r"^\s{2}/\S+:\s*$")
 _STUDIO_ROUTE = re.compile(r"^\s*path:\s*['\"]")
 _CRON = re.compile(r"^\s*(?:-\s*)?cron\s*:")
+_ISSUE_WRITER = re.compile(
+    r"\bgh\s+issue\s+create\b"
+    r"|[\"']issue[\"']\s*,\s*[\"']create[\"']"
+    r"|\b(?:rest\.)?issues\.create\s*\("
+)
 
 
 def scope_indicators(repository: str, title: str, name_status: str, patch: str) -> list[str]:
@@ -58,6 +63,12 @@ def scope_indicators(repository: str, title: str, name_status: str, patch: str) 
             added = line[1:]
             if path.startswith(".github/workflows/") and _CRON.match(added):
                 reasons.append(f"new schedule line: {path}")
+            if (
+                (path.startswith(".github/workflows/") or path.startswith("scripts/"))
+                and not Path(path).name.startswith("test_")
+                and _ISSUE_WRITER.search(added)
+            ):
+                reasons.append(f"new automatic issue creator: {path}")
             if path == "contract/builder-api.yaml" and _ROUTE.match(added):
                 reasons.append("new Builder HTTP route")
             if path == "src/app/router.tsx" and _STUDIO_ROUTE.match(added):
@@ -140,6 +151,7 @@ def main() -> int:
                 "HEAD",
                 "--",
                 ".github/workflows",
+                "scripts",
                 "contract/builder-api.yaml",
                 "src/app/router.tsx",
                 "src/kpubdata/__init__.py",

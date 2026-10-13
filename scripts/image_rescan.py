@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan the images a deployment runs again, and keep one issue per image (#1107).
+"""Scan deployed images repeatedly and keep one issue per image component (#1107).
 
 ``docker.yml`` scans Builder's image when it is built. An image gains advisories
 without anyone building it, and the build never scans the images the compose files
@@ -7,9 +7,9 @@ pull from elsewhere (Caddy). This reads the image references out of the
 deployment's compose files, scans each with Trivy for HIGH and CRITICAL
 vulnerabilities — those without a fix included — and records what it finds:
 
-- no open issue for the image, and findings: one is opened;
-- an open issue whose list is the same as today's: nothing is written;
-- an open issue whose list differs: its list is rewritten and a comment says what
+- no open issue for the image component, and findings: one is opened;
+- an open issue whose list and digest still match: nothing is written;
+- an open issue whose list, digest or image tag differs: it is updated and a comment says what
   changed. Only the part between the two markers is rewritten, so what a person wrote
   under "Triage" stays;
 - an open issue and no finding today: its list is rewritten to say so. The issue is
@@ -162,8 +162,20 @@ def fingerprint(findings: Sequence[Finding]) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
 
 
+def component_for(image: str) -> str:
+    """Stable image repository identity across changes of tag or digest.
+
+    A colon after the final slash introduces a tag; one inside a registry
+    hostname (registry:5000/image) is not a tag.
+    """
+    source = image.split("@", maxsplit=1)[0]
+    tag = source.rfind(":")
+    return source[:tag] if tag > source.rfind("/") else source
+
+
 def title_for(image: str) -> str:
-    return f"fix(security): {image} has HIGH or CRITICAL vulnerabilities"
+    """Use a stable component title, not a tag that creates another issue."""
+    return f"fix(security): {component_for(image)} image has HIGH or CRITICAL vulnerabilities"
 
 
 def _cell(value: str) -> str:
@@ -268,8 +280,15 @@ def _gh(run: Run, *args: str) -> str:
     return result.stdout
 
 
-def open_issue(title: str, run: Run) -> dict[str, Any] | None:
-    """The open issue with exactly this title, or ``None``."""
+def open_issue(title: str, run: Run, *, image: str | None = None) -> dict[str, Any] | None:
+    """The existing open issue, including one from before image-tag normalization.
+
+    Non-image callers keep an exact-title lookup. For image issues the shorter
+    search term finds a legacy title with an old tag, but a strict comparison
+    prevents one image from accidentally taking over another image's issue.
+    """
+    component = component_for(image) if image is not None else None
+    search = component.rsplit("/", maxsplit=1)[-1] if component else title
     listed = json.loads(
         _gh(
             run,
@@ -278,14 +297,30 @@ def open_issue(title: str, run: Run) -> dict[str, Any] | None:
             "--state",
             "open",
             "--search",
-            f'in:title "{title}"',
+            f'in:title "{search}"',
             "--json",
             "number,title,body",
             "--limit",
-            "50",
+            "100",
         )
     )
-    matching = [issue for issue in listed if issue["title"] == title]
+    legacy_prefix = f"fix(security): {component}:" if component else ""
+    legacy_suffix = " has HIGH or CRITICAL vulnerabilities"
+    matching = [
+        issue
+        for issue in listed
+        if issue["title"] == title
+        or (
+            component is not None
+            and issue["title"].startswith(legacy_prefix)
+            and issue["title"].endswith(legacy_suffix)
+        )
+    ]
+    if len(matching) > 1 and component is not None:
+        print(
+            f"::warning::multiple open security issues for {component}; "
+            "update the oldest and triage the duplicate issues"
+        )
     return min(matching, key=lambda issue: int(issue["number"])) if matching else None
 
 
@@ -293,7 +328,7 @@ def record(scan: Scan, run: Run, *, today: str, run_url: str, directory: Path) -
     """File or update the issue for one image; return what was done, in a line."""
     title = title_for(scan.image)
     block = render_block(scan, today=today, run_url=run_url)
-    issue = open_issue(title, run)
+    issue = open_issue(title, run, image=scan.image)
     body_file = directory / "body.md"
     if issue is None:
         if not scan.findings:
@@ -305,12 +340,28 @@ def record(scan: Scan, run: Run, *, today: str, run_url: str, directory: Path) -
         )
         return f"{scan.image}: opened {created.strip()}"
     number = str(issue["number"])
-    recorded = _BEGIN.search(issue["body"] or "")
-    if recorded and recorded.group(1) == fingerprint(scan.findings):
+    old_body = issue["body"] or ""
+    recorded = _BEGIN.search(old_body)
+    same_findings = bool(recorded and recorded.group(1) == fingerprint(scan.findings))
+    same_image = f"in `{scan.image}`" in old_body
+    same_digest = f"- Digest scanned: `{scan.digest}`" in old_body
+    same_title = issue["title"] == title
+    if same_findings and same_image and same_digest and same_title:
         return f"{scan.image}: #{number} already lists these findings"
-    body_file.write_text(replace_block(issue["body"] or "", block), encoding="utf-8")
-    _gh(run, "issue", "edit", number, "--body-file", str(body_file))
-    body_file.write_text(change_comment(issue["body"] or "", scan), encoding="utf-8")
+
+    body_file.write_text(replace_block(old_body, block), encoding="utf-8")
+    edit = ["issue", "edit", number, "--body-file", str(body_file)]
+    if not same_title:
+        edit.extend(("--title", title))
+    _gh(run, *edit)
+    if same_findings:
+        comment = (
+            f"Image reference or digest updated to `{scan.image}` "
+            f"(`{scan.digest}`); the finding set is unchanged."
+        )
+    else:
+        comment = change_comment(old_body, scan)
+    body_file.write_text(comment, encoding="utf-8")
     _gh(run, "issue", "comment", number, "--body-file", str(body_file))
     return f"{scan.image}: updated #{number}"
 

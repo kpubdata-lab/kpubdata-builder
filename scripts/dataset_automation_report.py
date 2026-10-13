@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Run the agent commands on a schedule and keep one report issue (kpubdata#448).
+"""Inspect dataset approval and discovery without writing new specs (kpubdata#448).
 
-Builder has ``discover``, ``monitor`` and ``pipeline`` commands; nothing ran them.
-This runs the two that can run without writing anything, and reports:
+During stabilization the GitHub Actions workflow is manual-only and always
+uses ``--dry-run`` with no issue write permission. The script retains its report
+helpers for the separately approved post-freeze workflow; do not re-enable
+scheduled issue creation by adjusting the script without updating the canonical
+product-family policy.
+
+This runs Builder's two read-only commands (``discover`` and ``monitor``):
 
 - ``monitor --check`` over every dataset kpubdata's catalogue marks
   ``application_required``, from a state file in the work directory. A dataset it
