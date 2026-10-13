@@ -7,11 +7,13 @@ validation failures are converted to SpecLoadError.
 Main functions:
     - load_spec: Convert YAML file path to BuildSpec.
     - parse_spec: Parse already-loaded mapping into BuildSpec.
+    - load_spec_yaml: Read BuildSpec YAML text with alias expansion and depth bounded.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -62,6 +64,93 @@ _QUALITY_SEVERITIES = ("warn", "fail")
 # expression/eval is forbidden; only this set is allowed — invalid operators are
 # rejected immediately at parse time.
 _COMPARE_COLUMNS_OPERATORS = ("eq", "ne", "gt", "gte", "lt", "lte")
+
+
+#: The most nodes a BuildSpec may hold once every alias is expanded (#1322). An alias
+#: is shared by the YAML loader but copied by the parser, so ten-way nested aliases
+#: in a few hundred bytes name a billion nodes. Real specs hold a few hundred.
+MAX_SPEC_NODES = 100_000
+
+#: The deepest a BuildSpec may nest (#1322). Composing and parsing recurse once per
+#: level, so an unbounded depth ends in ``RecursionError``. Real specs nest under ten.
+MAX_SPEC_DEPTH = 64
+
+
+class SpecYamlLimitError(yaml.YAMLError):
+    """BuildSpec YAML exceeds the node or depth bound (#1322).
+
+    A ``yaml.YAMLError`` so every caller that already turns malformed YAML into a
+    user error treats an oversized document the same way.
+    """
+
+
+class _BoundedSafeLoader(yaml.SafeLoader):
+    """``SafeLoader`` that counts expanded nodes and depth while composing (#1322).
+
+    The count is taken on the node graph before any Python object is constructed:
+    an alias adds the full size of the node it names, so an alias bomb is refused
+    after composing its few hundred real nodes, never by expanding it.
+    """
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._node_count = 0
+        self._depth = 0
+        self._sizes: dict[int, int] = {}
+        self._open_anchors: set[str] = set()
+
+    def compose_node(self, parent: yaml.Node | None, index: int) -> yaml.Node | None:
+        # The stubs leave Parser.peek_event untyped; name the type it returns.
+        peek_event: Callable[[], yaml.Event] = self.peek_event
+        event = peek_event()
+        if isinstance(event, yaml.AliasEvent):
+            anchor = event.anchor
+            if anchor in self._open_anchors:
+                raise SpecYamlLimitError(f"alias *{anchor} is a circular reference")
+            alias_node = super().compose_node(parent, index)
+            self._add_nodes(self._sizes.get(id(alias_node), 1))
+            return alias_node
+
+        if self._depth >= MAX_SPEC_DEPTH:
+            raise SpecYamlLimitError(f"spec is nested deeper than {MAX_SPEC_DEPTH} levels")
+        anchor = getattr(event, "anchor", None)
+        if anchor is not None:
+            self._open_anchors.add(anchor)
+        start = self._node_count
+        self._add_nodes(1)
+        self._depth += 1
+        try:
+            node = super().compose_node(parent, index)
+        finally:
+            self._depth -= 1
+            if anchor is not None:
+                self._open_anchors.discard(anchor)
+        if node is not None:
+            self._sizes[id(node)] = self._node_count - start
+        return node
+
+    def _add_nodes(self, count: int) -> None:
+        self._node_count += count
+        if self._node_count > MAX_SPEC_NODES:
+            raise SpecYamlLimitError(
+                f"spec holds more than {MAX_SPEC_NODES} values once aliases are expanded"
+            )
+
+
+def load_spec_yaml(text: str) -> object:
+    """Read BuildSpec YAML with expanded size and depth bounded (#1322).
+
+    Raises:
+        yaml.YAMLError: The text is not YAML, or it is beyond ``MAX_SPEC_NODES``
+            or ``MAX_SPEC_DEPTH`` (``SpecYamlLimitError``).
+    """
+    loader = _BoundedSafeLoader(text)
+    # The stubs leave Parser.dispose untyped.
+    dispose: Callable[[], None] = loader.dispose
+    try:
+        return cast(object, loader.get_single_data())
+    finally:
+        dispose()
 
 
 def parse_spec(data: dict[str, object]) -> BuildSpec:
@@ -141,7 +230,7 @@ def parse_spec(data: dict[str, object]) -> BuildSpec:
 def load_spec(path: Path) -> BuildSpec:
     """Read YAML file and convert to BuildSpec."""
     try:
-        raw_data = cast(object, yaml.safe_load(path.read_text(encoding="utf-8")))
+        raw_data = load_spec_yaml(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, yaml.YAMLError) as exc:
         raise SpecLoadError(f"Failed to load build spec from {path}: {exc}") from exc
 
@@ -224,6 +313,10 @@ def _validate_json_value(
         marker = id(value)
         if marker in _ancestors:
             raise ValueError(f"{field_name} contains a circular reference")
+        # A mapping handed to parse_spec directly never went through the bounded
+        # YAML loader, so bound the depth here too rather than hit RecursionError.
+        if len(_ancestors) >= MAX_SPEC_DEPTH:
+            raise ValueError(f"{field_name} is nested deeper than {MAX_SPEC_DEPTH} levels")
         child_ancestors = _ancestors | {marker}
         if isinstance(value, list):
             return [

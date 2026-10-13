@@ -387,6 +387,26 @@ class TestInvalidJsonRequest:
         assert "invalid JSON body" in str(body.get("error", ""))
 
 
+class TestHostileSpecYaml:
+    """A small spec whose aliases or nesting explode is a 400, not a stuck worker (#1322)."""
+
+    def test_alias_bomb_returns_400(self, http_server: str) -> None:
+        leaves = ",".join(['"x"'] * 10)
+        lines = [VALID_SPEC_YAML.rstrip(), "anchors:", f"  l0: &l0 [{leaves}]"]
+        for level in range(1, 10):
+            lines.append(f"  l{level}: &l{level} [{','.join([f'*l{level - 1}'] * 10)}]")
+        status, body = _post(http_server, "/validate", {"spec": "\n".join(lines) + "\n"})
+        assert status == 400
+        assert body["status"] == "error"
+        assert "more than" in str(body["error"])
+
+    def test_deep_nesting_returns_400(self, http_server: str) -> None:
+        spec = VALID_SPEC_YAML + "metadata: {deep: " + "[" * 5000 + "]" * 5000 + "}\n"
+        status, body = _post(http_server, "/validate", {"spec": spec})
+        assert status == 400
+        assert "nested deeper than" in str(body["error"])
+
+
 class TestNonObjectJsonRequest:
     def test_array_json_body_returns_400(self, http_server: str) -> None:
         req = urllib.request.Request(

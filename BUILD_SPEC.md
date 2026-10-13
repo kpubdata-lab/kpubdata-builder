@@ -28,6 +28,8 @@ exports:
     output_path: artifacts/weather_report.md
 ```
 
+BuildSpec YAML은 크기 한도 안에서만 읽습니다 (#1322). YAML anchor/alias는 쓸 수 있지만, alias를 모두 펼친 값이 100,000개를 넘거나 중첩이 64단을 넘거나 alias가 자기 자신을 가리키면 거부합니다. 파일(`load_spec`, 템플릿), CLI, HTTP 본문 모두 같은 한도이고, HTTP는 400 `status: error`로 답합니다.
+
 ## 3. 필드 분류
 
 ### 3.1 Required fields
