@@ -119,8 +119,19 @@ something could not be reclaimed.
 
 HOLD_KINDS: tuple[HoldKind, ...] = ("saved_analysis", "retention", "audit")
 
-_HOLDS_TABLE = (
-    "CREATE TABLE IF NOT EXISTS snapshot_holds ("
+# The column lists of the two tables that reference table_snapshots, kept apart from
+# their CREATE statements so the foreign-key repair can rebuild them under a new name.
+_LEASES_COLUMNS = (
+    " lease_id TEXT PRIMARY KEY,"
+    " snapshot_id TEXT NOT NULL REFERENCES table_snapshots(id),"
+    " acquired_at TEXT NOT NULL,"
+    " expires_at TEXT NOT NULL)"
+)
+_LEASES_TABLE = "CREATE TABLE IF NOT EXISTS snapshot_leases (" + _LEASES_COLUMNS
+_LEASES_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_leases_snapshot ON snapshot_leases(snapshot_id, expires_at)"
+)
+_HOLDS_COLUMNS = (
     " hold_id TEXT PRIMARY KEY,"
     " snapshot_id TEXT NOT NULL REFERENCES table_snapshots(id),"
     " kind TEXT NOT NULL CHECK (kind IN ('saved_analysis','retention','audit')),"
@@ -128,9 +139,29 @@ _HOLDS_TABLE = (
     " created_at TEXT NOT NULL,"
     " expires_at TEXT)"
 )
+_HOLDS_TABLE = "CREATE TABLE IF NOT EXISTS snapshot_holds (" + _HOLDS_COLUMNS
 _HOLDS_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_holds_snapshot ON snapshot_holds(snapshot_id, expires_at)"
 )
+
+# What the version 2 -> 3 step used to leave behind (#1319): it renamed table_snapshots
+# to table_snapshots_v2 with foreign keys on, SQLite 3.26+ rewrote the references in
+# these tables to the new name, and the renamed table was then dropped. Each entry is
+# the columns and index to rebuild the table with. Only these dangling references are
+# repaired; any other is reported, because a repair has to be proven correct.
+_BROKEN_PARENT = "table_snapshots_v2"
+_REPAIRABLE: Mapping[str, tuple[str, str, str]] = {
+    "snapshot_leases": (
+        _LEASES_COLUMNS,
+        _LEASES_INDEX,
+        "lease_id, snapshot_id, acquired_at, expires_at",
+    ),
+    "snapshot_holds": (
+        _HOLDS_COLUMNS,
+        _HOLDS_INDEX,
+        "hold_id, snapshot_id, kind, reason, created_at, expires_at",
+    ),
+}
 
 # A hold with no expiry lasts until it is released. Leases always expire; holds need
 # not, because an audit does not end on a timer.
@@ -155,9 +186,15 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
     # A CHECK constraint cannot be altered in SQLite, so widening the state vocabulary
     # means rebuilding the table. Every row is copied, which is the point: this catalog
     # is canonical and a migration that loses rows is not a migration.
+    #
+    # The rebuild is SQLite's documented procedure (https://sqlite.org/lang_altertable.html,
+    # "Making Other Kinds Of Table Schema Changes"): create the new table under another
+    # name, copy, drop the old one, rename the new one into place. It runs with foreign
+    # keys off (_init_db), and the references are checked before it commits. Renaming
+    # the *old* table instead, as this step once did, made SQLite rewrite the foreign
+    # keys of snapshot_leases and snapshot_holds to the name that was then dropped (#1319).
     2: (
-        "ALTER TABLE table_snapshots RENAME TO table_snapshots_v2",
-        "CREATE TABLE table_snapshots ("
+        "CREATE TABLE table_snapshots_new ("
         " id TEXT PRIMARY KEY,"
         " table_id TEXT NOT NULL REFERENCES tables(id),"
         " run_id TEXT NOT NULL,"
@@ -173,11 +210,12 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
         " coverage_fingerprint TEXT,"
         " source_params_fingerprint TEXT,"
         " schema_contract_version TEXT)",
-        "INSERT INTO table_snapshots SELECT id, table_id, run_id, schema_version,"
+        "INSERT INTO table_snapshots_new SELECT id, table_id, run_id, schema_version,"
         " coverage_hash, artifact_digest, row_count, state, created_at, committed_at,"
         " owner_id, coverage_fingerprint, source_params_fingerprint,"
-        " schema_contract_version FROM table_snapshots_v2",
-        "DROP TABLE table_snapshots_v2",
+        " schema_contract_version FROM table_snapshots",
+        "DROP TABLE table_snapshots",
+        "ALTER TABLE table_snapshots_new RENAME TO table_snapshots",
         "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
         " ON table_snapshots(table_id, created_at DESC)",
     ),
@@ -357,7 +395,7 @@ class TableCatalog:
             _migration_path(found)
         self._init_db()
 
-    def _copy_before_migration(self, found: int) -> Path:
+    def _copy_before_migration(self, found: int, *, purpose: str = "before-migration") -> Path:
         """Copy the catalog as it is before its schema is changed (#1096, #1163).
 
         A migration runs in one transaction, so a failure leaves the old version. This
@@ -380,8 +418,10 @@ class TableCatalog:
 
         It is the catalog only — the snapshot files it names are not copied, and
         putting it back over a warehouse that has moved on loses what was written since.
+
+        ``purpose`` names the copy; the foreign-key repair (#1319) keeps its own.
         """
-        copy = self._path.with_name(f"{self._path.name}.v{found}.before-migration")
+        copy = self._path.with_name(f"{self._path.name}.v{found}.{purpose}")
         partial = copy.with_name(f"{copy.name}.{uuid.uuid4().hex}.partial")
         try:
             with (
@@ -445,7 +485,22 @@ class TableCatalog:
         conn.execute("COMMIT")
 
     def _init_db(self) -> None:
-        """Create the schema, or verify the version of an existing one."""
+        """Create the schema, or verify the version of an existing one.
+
+        Foreign keys are off for the length of this transaction and back on after it,
+        whatever happens (#1319). Rebuilding a table that others reference needs them
+        off — SQLite's documented procedure — and the pragma does nothing inside a
+        transaction, so it is set around it. Whatever was rebuilt is checked with
+        ``PRAGMA foreign_key_check`` and ``integrity_check`` before the commit.
+        """
+        self._conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self._create_or_upgrade()
+        finally:
+            self._conn.execute("PRAGMA foreign_keys=ON")
+
+    def _create_or_upgrade(self) -> None:
+        """The body of ``_init_db``, run with foreign keys off."""
         with self._immediate() as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version ("
@@ -491,21 +546,113 @@ class TableCatalog:
                 "CREATE INDEX IF NOT EXISTS idx_snapshots_table"
                 " ON table_snapshots(table_id, created_at DESC)"
             )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS snapshot_leases ("
-                " lease_id TEXT PRIMARY KEY,"
-                " snapshot_id TEXT NOT NULL REFERENCES table_snapshots(id),"
-                " acquired_at TEXT NOT NULL,"
-                " expires_at TEXT NOT NULL)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_leases_snapshot"
-                " ON snapshot_leases(snapshot_id, expires_at)"
-            )
+            conn.execute(_LEASES_TABLE)
+            conn.execute(_LEASES_INDEX)
             conn.execute(_HOLDS_TABLE)
             conn.execute(_HOLDS_INDEX)
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+            repaired = self._repair_dangling_references(conn)
+            if repaired or (row is not None and row[0] != SCHEMA_VERSION):
+                self._verify_references(conn, repaired=repaired)
+
+    def _repair_dangling_references(self, conn: sqlite3.Connection) -> list[str]:
+        """Rebuild the tables the old version 2 -> 3 step left referencing a dropped table.
+
+        Runs inside the caller's transaction with foreign keys off. Each table is rebuilt
+        the documented way — create under a new name, copy every row, drop, rename into
+        place — and its row count is compared before and after. The catalog is copied
+        first, beside it, under ``.before-foreign-key-repair``.
+
+        Returns:
+            The tables rebuilt; empty when every reference names a table that exists.
+
+        Raises:
+            SnapshotStateError: A reference names a missing table and is not the damage
+                the old migration did, so no repair can be shown to be right. Nothing
+                is changed.
+        """
+        tables = {
+            str(name).lower()
+            for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        dangling: list[tuple[str, str]] = []
+        for table in sorted(tables):
+            for (parent,) in conn.execute(
+                'SELECT DISTINCT "table" FROM pragma_foreign_key_list(?)', (table,)
+            ):
+                if str(parent).lower() not in tables:
+                    dangling.append((table, str(parent)))
+        if not dangling:
+            return []
+        unknown = [
+            (table, parent)
+            for table, parent in dangling
+            if table not in _REPAIRABLE or parent.lower() != _BROKEN_PARENT
+        ]
+        if unknown:
+            named = ", ".join(f"{table} -> {parent}" for table, parent in unknown)
+            raise SnapshotStateError(
+                f"catalog {self._path} has foreign keys that name a table that does not "
+                f"exist ({named}), and this release only knows how to repair "
+                f"snapshot_leases and snapshot_holds naming {_BROKEN_PARENT} (#1319). "
+                "Nothing was changed. Being canonical, the catalog is never rebuilt "
+                "on a guess: restore it from a backup or report the schema above."
+            )
+        self._copy_before_migration(SCHEMA_VERSION, purpose="before-foreign-key-repair")
+        repaired = []
+        for table, _ in dangling:
+            columns, index, names = _REPAIRABLE[table]
+            (before,) = conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
+            conn.execute(f"CREATE TABLE {table}_repaired ({columns}")
+            conn.execute(
+                f"INSERT INTO {table}_repaired ({names}) SELECT {names} FROM {table}"  # noqa: S608
+            )
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}_repaired RENAME TO {table}")
+            conn.execute(index)
+            (after,) = conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
+            if after != before:
+                raise SnapshotStateError(
+                    f"repairing {table} in {self._path} copied {after} of {before} rows; "
+                    "the repair was rolled back and nothing was changed."
+                )
+            repaired.append(table)
+        return repaired
+
+    def _verify_references(self, conn: sqlite3.Connection, *, repaired: list[str]) -> None:
+        """Refuse to commit a migration or repair that left a broken reference or file.
+
+        Raising rolls back the caller's transaction, so the catalog stays as it was
+        found, every row included. A row that names a missing parent is not deleted to
+        make the check pass: which of the two is wrong is a person's call.
+
+        Raises:
+            SnapshotStateError: ``foreign_key_check`` found a row whose parent is
+                missing, or ``integrity_check`` did not answer ``ok``.
+        """
+        action = f"repair of {', '.join(repaired)}" if repaired else "migration"
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            shown = "; ".join(
+                f"{table} rowid {rowid} names a missing {parent} row"
+                for table, rowid, parent, _ in violations[:10]
+            )
+            more = f" (and {len(violations) - 10} more)" if len(violations) > 10 else ""
+            raise SnapshotStateError(
+                f"the {action} of catalog {self._path} was rolled back: "
+                f"PRAGMA foreign_key_check found {len(violations)} row(s) that reference "
+                f"nothing — {shown}{more}. Nothing was changed. Release or remove those "
+                "rows with the release that wrote them, or restore the catalog from a "
+                "backup, then open it again."
+            )
+        integrity = [str(result) for (result,) in conn.execute("PRAGMA integrity_check")]
+        if integrity != ["ok"]:
+            raise SnapshotStateError(
+                f"the {action} of catalog {self._path} was rolled back: "
+                f"PRAGMA integrity_check reported {'; '.join(integrity[:10])}. Nothing was "
+                "changed. Restore the catalog from a backup."
+            )
 
     def _migrate(self, conn: sqlite3.Connection, found: int) -> None:
         """Walk an older catalog up to ``SCHEMA_VERSION``.
