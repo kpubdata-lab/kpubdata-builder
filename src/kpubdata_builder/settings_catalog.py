@@ -400,6 +400,14 @@ SETTINGS: tuple[Setting, ...] = (
         kind="integer",
     ),
     Setting(
+        name="KPUBDATA_BUILDER_UPLOAD_MAX_CELLS",
+        group="ingestion",
+        description="업로드 파일 하나를 읽는 작업량의 상한: 행 수 x 열 수(중첩 필드는 잎마다 한 열, #1335). 파일 크기와 따로 센다 — 작은 Parquet 파일도 같은 값 수백만 행을 선언할 수 있다. Parquet 은 행을 하나도 읽기 전에 footer 로 판단하고, 넘으면 `POST /uploads` 가 400 으로 거부하며 아무것도 저장하지 않는다. 열 수(10000), 중첩 깊이(32), row group 수(100000), 압축을 푼 크기(1 GiB)는 고정 상한이다. 모든 배포에 적용한다. `0` 이면 끔. 읽을 수 없는 값은 기본값으로 읽는다",
+        default="`50000000`",
+        required="선택",
+        kind="integer",
+    ),
+    Setting(
         name="KPUBDATA_BUILDER_UPLOAD_MAX_FILES",
         group="ingestion",
         description="다중 사용자 배포에서 사용자 한 명이 가질 수 있는 업로드 수(#1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다",

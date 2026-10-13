@@ -22,7 +22,11 @@ from kpubdata_builder.ingestion import IngestionError
 from kpubdata_builder.ingestion.tabular_ingest import iter_tabular_batches
 from kpubdata_builder.service.auth import Principal
 from kpubdata_builder.service.responses import ServiceResponse
-from kpubdata_builder.service.upload_limits import UploadLimits, resolve_upload_limits
+from kpubdata_builder.service.upload_limits import (
+    UploadLimits,
+    resolve_upload_limits,
+    resolve_upload_parquet_limits,
+)
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.spec.models import SOURCE_FILE_FORMATS
 from kpubdata_builder.uploads import UploadMetadata, UploadRepository
@@ -179,8 +183,15 @@ class UploadsService:
                 {"error": f"format must be one of {SOURCE_FILE_FORMATS}, got {format!r}"},
             )
         try:
-            # Parsed to prove it parses; the batches are dropped as they come (#622).
-            for _batch in iter_tabular_batches(io.BytesIO(raw), format=format, encoding=encoding):
+            # Parsed to prove it parses; the batches are dropped as they come (#622). A
+            # Parquet file declaring more work than an upload may cost is refused from its
+            # footer before a row is read (#1335).
+            for _batch in iter_tabular_batches(
+                io.BytesIO(raw),
+                format=format,
+                encoding=encoding,
+                parquet_limits=resolve_upload_parquet_limits(),
+            ):
                 pass
         except IngestionError as exc:
             return ServiceResponse(400, {"error": str(exc)})

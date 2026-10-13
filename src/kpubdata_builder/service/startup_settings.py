@@ -129,6 +129,7 @@ FALLS_BACK: dict[str, tuple[Callable[[str], bool], str]] = {
     ),
     "KPUBDATA_BUILDER_MAX_UPLOAD_BYTES": (_is_positive_integer, "an integer > 0"),
     "KPUBDATA_BUILDER_UPLOAD_MAX_FILES": (_is_non_negative_integer, "an integer >= 0"),
+    "KPUBDATA_BUILDER_UPLOAD_MAX_CELLS": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_QUERY_RATE_PER_MINUTE": (_is_non_negative_integer, "an integer >= 0"),
     "KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE": (

@@ -68,6 +68,7 @@
 | 변수명 | 설명 | 기본값 | 필수 여부 |
 | :--- | :--- | :--- | :--- |
 | `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES` | `POST /uploads`가 받는 최대 본문 크기(바이트). 초과분은 413 | 코드 기본값 | 선택 |
+| `KPUBDATA_BUILDER_UPLOAD_MAX_CELLS` | 업로드 파일 하나를 읽는 작업량의 상한: 행 수 x 열 수(중첩 필드는 잎마다 한 열, #1335). 파일 크기와 따로 센다 — 작은 Parquet 파일도 같은 값 수백만 행을 선언할 수 있다. Parquet 은 행을 하나도 읽기 전에 footer 로 판단하고, 넘으면 `POST /uploads` 가 400 으로 거부하며 아무것도 저장하지 않는다. 열 수(10000), 중첩 깊이(32), row group 수(100000), 압축을 푼 크기(1 GiB)는 고정 상한이다. 모든 배포에 적용한다. `0` 이면 끔. 읽을 수 없는 값은 기본값으로 읽는다 | `50000000` | 선택 |
 | `KPUBDATA_BUILDER_UPLOAD_MAX_FILES` | 다중 사용자 배포에서 사용자 한 명이 가질 수 있는 업로드 수(#1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔. 단일 사용자 배포에는 적용하지 않는다 | `50` | 선택 |
 | `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES` | 다중 사용자 배포에서 사용자 한 명의 업로드 합계 크기(바이트, #1045). 넘으면 409 `upload_quota_exceeded`. `0` 이면 끔 | `1073741824` (1 GiB) | 선택 |
 | `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS` | 다중 사용자 배포에서 업로드를 보관하는 일수(#1045). 지난 업로드는 서비스가 뜰 때, 그 사용자가 다음에 업로드할 때, 그리고 그 사용자가 자기 업로드를 **읽을 때**(조회·목록·preview·build, #1067) **삭제된다**. 그래서 이 값을 **줄이면** 그 순간부터 사용자가 목록을 여는 것만으로 새 기한을 넘긴 업로드가 지워진다 — 그것을 가리키는 저장 스펙의 다음 빌드는 업로드를 찾지 못한다. `0` 이면 끔 | `30` | 선택 |
@@ -125,7 +126,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
 
 | 이름 | 무엇의 설정인가 | 설정 수 |
 | :--- | :--- | :--- |
-| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 43 |
+| `KPUBDATA_BUILDER_*` | Builder 서비스와 CLI 의 설정. **새 설정의 이름은 모두 이렇게 시작한다** | 44 |
 | `KPUBDATA_DUCKDB_*` | DuckDB 연결 하나의 자원 한도(#701). build 와 query 가 같은 값을 읽는다 | 3 |
 | `KPUBDATA_QUERY_*` | query 를 실행하는 child process 의 수와 메모리 한도(#701) | 3 |
 | `OIDC_*` | OIDC 로그인(ADR 0015). OIDC 가 쓰는 말(issuer, audience, JWKS)을 그대로 딴 이름이다 | 7 |
@@ -158,7 +159,7 @@ Builder 가 스스로, 또는 테스트가 설정한다. 운영 배포에서 정
   - `serve` 가 직접 읽는 값: `KPUBDATA_BUILDER_MAX_WORKERS`, `KPUBDATA_BUILDER_MAX_BUILDS`, `KPUBDATA_BUILDER_MAX_PREVIEWS`, `KPUBDATA_BUILDER_BUILD_WAIT_SECONDS`. 같은 이름의 플래그(`--max-builds` 등)를 주면 그 변수는 읽지 않으므로 검사하지도 않습니다
 - **`warning:` — 기동은 합니다.** 읽을 수 없는 값을 기본값으로 대신하는 설정입니다. 적은 값이 아니라 기본값으로 돌고 있다는 사실을 표준 오류에 한 줄로 알립니다.
   - 인증 실패 제한: `KPUBDATA_BUILDER_AUTH_FAILURE_LIMIT`, `KPUBDATA_BUILDER_AUTH_FAILURE_WINDOW_SECONDS`
-  - 업로드와 URL 소스: `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`, `KPUBDATA_BUILDER_UPLOAD_MAX_FILES`, `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES`, `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS`, `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
+  - 업로드와 URL 소스: `KPUBDATA_BUILDER_MAX_UPLOAD_BYTES`, `KPUBDATA_BUILDER_UPLOAD_MAX_FILES`, `KPUBDATA_BUILDER_UPLOAD_MAX_TOTAL_BYTES`, `KPUBDATA_BUILDER_UPLOAD_RETENTION_DAYS`, `KPUBDATA_BUILDER_UPLOAD_MAX_CELLS`, `KPUBDATA_BUILDER_URL_FETCH_MAX_BYTES`
   - 사용자별 build 상한: `KPUBDATA_BUILDER_MAX_ACTIVE_BUILDS_PER_OWNER`
   - build 실행 시간 상한: `KPUBDATA_BUILDER_BUILD_TIME_LIMIT_SECONDS`
   - `param_grid` 조합 수 상한: `KPUBDATA_BUILDER_PARAM_GRID_MAX_COMBINATIONS`
