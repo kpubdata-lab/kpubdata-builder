@@ -582,6 +582,7 @@
         "row_count": 8,
         "source_refs": null,
         "source_silver": "datago.air_quality",
+        "split_files": null,
         "splits": null
       },
       "gold/datago.air_quality/table.parquet": {
