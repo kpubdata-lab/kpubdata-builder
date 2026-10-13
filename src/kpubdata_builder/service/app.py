@@ -600,6 +600,9 @@ class BuilderService:
         # caller write a catalog anywhere the process can reach (#703).
         self._warehouse_root = warehouse_root
         self._catalog: TableCatalog | None = None
+        # The service is threaded: two first warehouse requests must not each open a
+        # catalog (#1342).
+        self._catalog_lock = threading.Lock()
         # Opened on first use, so that a deployment that never materialises has no
         # catalog file; one that is already there is opened now. A catalog this release
         # cannot use, or cannot migrate, then stops the start and not the first request
@@ -919,11 +922,17 @@ class BuilderService:
         file it will not use, and returns None rather than a catalog under a default
         path — writing a catalog somewhere nobody asked for is worse than not writing
         one.
+
+        Threads that arrive together get the same catalog (#1342). The attribute is
+        assigned only after the constructor returns, so a catalog that fails to open is
+        never published and the next call tries again.
         """
         if self._warehouse_root is None:
             return None
         if self._catalog is None:
-            self._catalog = TableCatalog(self._warehouse_root)
+            with self._catalog_lock:
+                if self._catalog is None:
+                    self._catalog = TableCatalog(self._warehouse_root)
         return self._catalog
 
     def _upload_repository_for(self, spec: BuildSpec) -> UploadRepository | None:
