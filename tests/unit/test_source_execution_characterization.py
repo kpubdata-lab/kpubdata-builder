@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
+from unittest.mock import patch
 
 import duckdb
 import kpubdata
@@ -423,31 +424,29 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
-#: What every source's card reads from the catalog, whatever dataset it names. The
-#: sources are fakes, so the catalog facts of the datasets they are named after are not
-#: under test here, and reading them from the installed kpubdata would move these
-#: baselines whenever a kpubdata release corrects them (kpubdata#932, kpubdata#933).
-#: ``tests/unit/test_dataset_cards.py`` covers the lookup itself. The values are what
-#: kpubdata declares for ``datago.air_station``, read from its data.go.kr page.
-_CATALOG = DatasetCatalogInfo(
-    source_url="https://www.data.go.kr/data/15073861/openapi.do",
-    license_type="공공누리_3유형",
-    attribution="공공누리 제3유형(출처표시, 변경금지) — 한국환경공단 에어코리아 대기오염정보",
-)
+#: The fake sources keep dataset-specific provenance without depending on the installed
+#: kpubdata catalog. ``tests/unit/test_dataset_cards.py`` covers the real lookup.
+_CATALOG_BY_DATASET = {
+    "datago.air_station": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr/data/15073861/openapi.do",
+        license_type="공공누리_3유형",
+        attribution="공공누리 제3유형(출처표시, 변경금지) — 한국환경공단 에어코리아 대기오염정보",
+    ),
+    "datago.air_quality": DatasetCatalogInfo(
+        source_url="https://www.data.go.kr",
+        license_type="공공누리_3유형",
+        attribution="공공누리 제3유형(변경금지) — 한국환경공단 대기오염정보",
+    ),
+}
 
 
 @contextmanager
 def _fixed_catalog() -> Iterator[None]:
-    original = getattr(card_facts, "catalog_info")  # noqa: B009
+    def lookup(dataset_id: str) -> DatasetCatalogInfo | None:
+        return _CATALOG_BY_DATASET.get(dataset_id)
 
-    def lookup(_dataset_id: str) -> DatasetCatalogInfo:
-        return _CATALOG
-
-    setattr(card_facts, "catalog_info", lookup)  # noqa: B010 - also run outside pytest
-    try:
+    with patch.object(card_facts, "catalog_info", lookup):
         yield
-    finally:
-        setattr(card_facts, "catalog_info", original)  # noqa: B010
 
 
 def _render(name: str) -> str:
