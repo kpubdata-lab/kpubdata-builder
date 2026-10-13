@@ -18,7 +18,7 @@ from pathlib import Path
 import yaml
 
 from ..errors import SpecLoadError
-from .loader import parse_spec
+from .loader import load_spec_yaml, parse_spec
 from .models import BuildSpec
 
 _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
@@ -44,7 +44,7 @@ def _render_template_data(path: str | Path, params: dict[str, str]) -> dict[str,
     """
     try:
         raw = Path(path).read_text(encoding="utf-8")
-        loaded = yaml.safe_load(raw)
+        loaded = load_spec_yaml(raw)
     except (OSError, yaml.YAMLError) as exc:
         raise SpecLoadError(f"Failed to load template from {path}: {exc}") from exc
 

@@ -44,6 +44,7 @@ from ..manifest.endings import (
 )
 from ..pipeline import CancellationProbe, run_build
 from ..spec import BuildSpec, JsonValue
+from ..spec.loader import load_spec_yaml
 from ..stages._path_safety import validate_path_segment
 from ..stages.bronze.build import SourceClient
 from ..store.artifacts import ArtifactStore
@@ -86,7 +87,7 @@ def _declared_dataset_id(spec_yaml: str) -> str | None:
     refresh is queued or running before the run finishes.
     """
     try:
-        document = yaml.safe_load(spec_yaml)
+        document = load_spec_yaml(spec_yaml)
     except yaml.YAMLError:
         return None
     if not isinstance(document, dict):

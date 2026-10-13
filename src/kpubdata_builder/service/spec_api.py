@@ -27,6 +27,7 @@ from ..pipeline.preview import SourcePreview
 from ..quality import QualityCheckResult
 from ..rate_limit import RateLimited
 from ..spec import BuildSpec, JsonValue, parse_spec
+from ..spec.loader import load_spec_yaml
 from ..spec.validator import validate_spec
 from ..stages.bronze.build import SourceClient
 from ..stages.gold.pii import core_pii_columns
@@ -279,7 +280,7 @@ def parse_spec_text(spec_yaml: str) -> BuildSpec:
     400 — otherwise sync path returns 500 and async worker never terminates.
     """
     try:
-        raw = cast(object, yaml.safe_load(spec_yaml))
+        raw = load_spec_yaml(spec_yaml)
     except yaml.YAMLError as exc:
         raise SpecLoadError(f"spec is not valid YAML: {exc}") from exc
     if not isinstance(raw, dict):
