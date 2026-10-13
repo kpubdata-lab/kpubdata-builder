@@ -183,8 +183,16 @@ def test_a_failed_profile_delete_keeps_the_catalog_row(
     layout.profiles_root.mkdir(parents=True, exist_ok=True)
     layout.profile_path(oldest).write_text("{}", encoding="utf-8")
 
+    original = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        # Path.unlink does not go through os.unlink on Python 3.10, so patch it directly.
+        if self.name == f"{oldest}.json":
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        original(self, missing_ok=missing_ok)
+
     with monkeypatch.context() as patch:
-        _fail_unlink_of(f"{oldest}.json")(patch)
+        patch.setattr(Path, "unlink", unlink)
         with pytest.raises(SnapshotDeleteFailed):
             warehouse_gc.delete_snapshot(catalog, oldest)
     assert catalog.get_snapshot(oldest).state == "retiring"
