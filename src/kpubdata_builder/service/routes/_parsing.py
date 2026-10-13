@@ -9,6 +9,13 @@ from ...spec import JsonValue
 from ...stages._path_safety import validate_path_segment
 from ..responses import ServiceResponse
 
+# Upper bound of a history listing's ``limit`` (#1327): ``GET /builds``, ``/datasets``,
+# ``/datasets/{id}/runs`` and ``/datasets/{id}/quality/history``. It is checked before
+# any persisted run is read, so a request cannot make a listing unbounded. It equals
+# the event and preview bounds (MAX_EVENTS_LIMIT, MAX_PREVIEW_LIMIT).
+MAX_LIST_LIMIT = 1000
+_LIMIT_ERROR = f"'limit' must be a positive integer up to {MAX_LIST_LIMIT}"
+
 
 def decode_segment(raw: str) -> str:
     """Percent-decode one path segment, exactly once (#1277).
@@ -33,13 +40,19 @@ def positive_limit_query(query: str, *, default: int = 50) -> int | ServiceRespo
     query_params = parse_qs(query)
     if "limit" not in query_params:
         return default
-    raw_limit = query_params["limit"][-1]
     try:
-        value = int(raw_limit)
+        value = int(query_params["limit"][-1])
     except ValueError:
-        return ServiceResponse(400, {"error": "'limit' must be a positive integer"})
-    if value < 1:
-        return ServiceResponse(400, {"error": "'limit' must be a positive integer"})
+        return ServiceResponse(400, {"error": _LIMIT_ERROR})
+    if not 1 <= value <= MAX_LIST_LIMIT:
+        return ServiceResponse(400, {"error": _LIMIT_ERROR})
+    return value
+
+
+def bounded_limit_value(value: JsonValue) -> int | ServiceResponse:
+    """A ``limit`` sent in a JSON body, held to the same bound as the query one."""
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= MAX_LIST_LIMIT:
+        return ServiceResponse(400, {"error": _LIMIT_ERROR})
     return value
 
 

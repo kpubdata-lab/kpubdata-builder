@@ -544,7 +544,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.123.0 -> 1.124.0: GET /builds/{run_id} carries a failed run's error after the
 #   registry has let the job go — a restart, an eviction, a synchronous build — as the
 #   line GET /admin/runs gives (#1120, additive; no schema changes).
-API_CONTRACT_VERSION = "1.124.0"
+# 1.124.0 -> 1.125.0: the history listings' limit (GET /builds, /datasets,
+#   /datasets/{id}/runs, /datasets/{id}/quality/history) is bounded at 1000; a larger
+#   one is 400 before any run is read (#1327).
+API_CONTRACT_VERSION = "1.125.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short
