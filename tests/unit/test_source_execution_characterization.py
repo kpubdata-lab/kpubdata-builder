@@ -37,8 +37,9 @@ import duckdb
 import kpubdata
 import pytest
 
+from kpubdata_builder.catalog_info import DatasetCatalogInfo
 from kpubdata_builder.events.store import events_store_path
-from kpubdata_builder.pipeline import orchestrator
+from kpubdata_builder.pipeline import card_facts, orchestrator
 from kpubdata_builder.service import BuilderService
 from kpubdata_builder.spec import JsonValue
 from kpubdata_builder.stages.bronze.build import SourceClient
@@ -422,8 +423,35 @@ SCENARIOS: dict[str, Scenario] = {
 }
 
 
+#: What every source's card reads from the catalog, whatever dataset it names. The
+#: sources are fakes, so the catalog facts of the datasets they are named after are not
+#: under test here, and reading them from the installed kpubdata would move these
+#: baselines whenever a kpubdata release corrects them (kpubdata#932, kpubdata#933).
+#: ``tests/unit/test_dataset_cards.py`` covers the lookup itself. The values are what
+#: kpubdata declares for ``datago.air_station``, read from its data.go.kr page.
+_CATALOG = DatasetCatalogInfo(
+    source_url="https://www.data.go.kr/data/15073861/openapi.do",
+    license_type="공공누리_3유형",
+    attribution="공공누리 제3유형(출처표시, 변경금지) — 한국환경공단 에어코리아 대기오염정보",
+)
+
+
+@contextmanager
+def _fixed_catalog() -> Iterator[None]:
+    original = getattr(card_facts, "catalog_info")  # noqa: B009
+
+    def lookup(_dataset_id: str) -> DatasetCatalogInfo:
+        return _CATALOG
+
+    setattr(card_facts, "catalog_info", lookup)  # noqa: B010 - also run outside pytest
+    try:
+        yield
+    finally:
+        setattr(card_facts, "catalog_info", original)  # noqa: B010
+
+
 def _render(name: str) -> str:
-    with TemporaryDirectory() as directory:
+    with _fixed_catalog(), TemporaryDirectory() as directory:
         result = SCENARIOS[name](Path(directory))
     return json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
