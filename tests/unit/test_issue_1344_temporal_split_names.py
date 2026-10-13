@@ -89,7 +89,7 @@ def _spec(key: str, mode: str = "ratio") -> BuildSpec:
         title="Sample",
         description="desc",
         sources=(SourceRef(provider="datago", dataset="air_quality"),),
-        exports=(ExportTarget(kind="markdown", output_path="README.md"),),
+        exports=(ExportTarget(kind="markdown", output_path="report.md"),),
         splits=SplitSpec(mode=mode, ratios=ratios, key=key),
     )
 

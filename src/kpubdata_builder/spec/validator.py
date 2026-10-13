@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 from ..errors import ValidationError
 from ..exporters import registered_exporter_kinds
+from ..exporters.base import export_layout_conflicts, export_path_parts
 from ..tabular.cast_names import FORMATTED_CASTS, NAMED_TARGETS, TEXT_CASTS
 from .models import (
     DERIVED_KINDS,
@@ -135,6 +136,7 @@ def validate_spec(spec: BuildSpec) -> None:
                     hint=f"Use one of: {', '.join(supported)}",
                 )
             )
+    problems.extend(_export_path_problems(spec))
     for key in spec.metadata:
         if not key.strip():
             problems.append(
@@ -153,6 +155,48 @@ def validate_spec(spec: BuildSpec) -> None:
     problems.extend(_gold_selection_problems(spec))
     if problems:
         raise ValidationError([str(p) for p in problems], structured=problems)
+
+
+def _export_path_problems(spec: BuildSpec) -> list[ValidationProblem]:
+    """Reject export paths that leave, replace or share an entry of the Gold directory (#1320).
+
+    Every export writes into the run's Gold directory, next to ``table.parquet``,
+    ``package.json``, ``splits/`` and the dataset card, and a Hugging Face export
+    replaces its whole directory. A path naming the directory itself, a Gold entry, or
+    an entry another export also writes would overwrite data the manifest points to.
+    Paths are compared the way case-insensitive and normalizing filesystems compare
+    them, before any source is read. Symlinks are checked again when the files are
+    written, since only the filesystem knows them.
+    """
+    problems: list[ValidationProblem] = []
+    layouts: list[tuple[int, str, tuple[str, ...]]] = []
+    for i, export in enumerate(spec.exports):
+        if not export.output_path.strip():
+            continue  # reported as empty_field
+        try:
+            parts = export_path_parts(export.output_path)
+        except ValueError as error:
+            problems.append(
+                _p(
+                    "unsafe_export_path",
+                    f"exports[{i}].output_path",
+                    f"exports[{i}].{error}",
+                    hint="Use a relative path below the build output, such as data/out.jsonl",
+                )
+            )
+            continue
+        layouts.append((i, export.kind, parts))
+    for i, code, message in export_layout_conflicts(layouts):
+        problems.append(
+            _p(
+                code,
+                f"exports[{i}].output_path",
+                message,
+                hint="Give every export its own path, outside table.parquet, package.json, "
+                "splits/, README.md and card.json",
+            )
+        )
+    return problems
 
 
 # Words that name a time column when they are a whole word of a column name (#444).

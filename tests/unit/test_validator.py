@@ -25,14 +25,14 @@ def test_validate_spec_accepts_valid_spec() -> None:
         title="Sample Dataset",
         description="Sample description",
         sources=(SourceRef(provider="datago", dataset="air_quality"),),
-        exports=(ExportTarget(kind="markdown", output_path="README.md"),),
+        exports=(ExportTarget(kind="markdown", output_path="report.md"),),
     )
 
     validate_spec(spec)
 
 
 _SRC = (SourceRef(provider="datago", dataset="air_quality"),)
-_EXP = (ExportTarget(kind="markdown", output_path="README.md"),)
+_EXP = (ExportTarget(kind="markdown", output_path="report.md"),)
 
 
 @pytest.mark.parametrize(
@@ -303,7 +303,7 @@ def _spec_with_schema(schema: SchemaContract) -> BuildSpec:
         title="Trades",
         description="Seoul apartment trades",
         sources=(SourceRef(provider="datago", dataset="apt_trade", schema=schema),),
-        exports=(ExportTarget(kind="markdown", output_path="README.md"),),
+        exports=(ExportTarget(kind="markdown", output_path="report.md"),),
     )
 
 

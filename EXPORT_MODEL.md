@@ -346,6 +346,18 @@ Some exporters may intentionally provide partial output (e.g., for large-scale d
 Exporters cannot write files outside `output_dir`:
 - The `ensure_output_dir()` helper must be used to guarantee path safety (#210).
 - Malicious `output_path` (e.g., `../../../etc/passwd`) is rejected with `PathTraversalError`.
+- Every export writes into the run's Gold directory, beside `table.parquet`, `package.json`,
+  `splits/`, `README.md` and `card.json` (#1320). `validate_spec` rejects an `output_path` that
+  is absolute, contains `..`, names the Gold directory itself (`.`) (`unsafe_export_path`),
+  names one of those Gold entries (`reserved_export_path`), or equals or contains another
+  export's path, including a Kaggle export's `dataset-metadata.json` and card copies
+  (`export_path_collision`). Names are compared NFC-normalized, case-folded and without
+  trailing dots or spaces, the way macOS and Windows filesystems compare them. Empty and `.`
+  segments are dropped, so `./data.csv` is `data.csv`; Kaggle exports in one directory may
+  share its metadata file.
+- `export_gold_package` repeats the check on the resolved paths before any exporter runs, so a
+  symlink cannot lead an export onto a Gold entry or another export; it raises `ExportError`
+  and writes nothing.
 
 ```python
 from .base import ensure_output_dir
