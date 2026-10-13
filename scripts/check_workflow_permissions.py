@@ -117,10 +117,6 @@ ALLOWED: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"issues"}),
         "opens an issue on schedule; a pull request run is a dry run",
     ),
-    "dataset-automation.yml:report": (
-        frozenset({"issues"}),
-        "opens an issue on schedule; a pull request run is a dry run",
-    ),
     "image-rescan.yml:rescan": (
         frozenset({"issues"}),
         "opens issues on schedule; a pull request run is a dry run",
