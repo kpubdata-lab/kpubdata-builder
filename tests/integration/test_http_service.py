@@ -33,6 +33,7 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterable
@@ -43,7 +44,7 @@ from urllib.parse import quote
 
 import pytest
 
-from kpubdata_builder.service import API_CONTRACT_VERSION, BuilderService, run_storage
+from kpubdata_builder.service import API_CONTRACT_VERSION, BuilderService, metrics, run_storage
 from kpubdata_builder.service.http import _MAX_BODY_BYTES, make_handler
 from kpubdata_builder.service.readiness import DiskUsage
 from kpubdata_builder.spec import JsonValue
@@ -385,6 +386,80 @@ class TestInvalidJsonRequest:
         assert exc_info.value.code == 400
         body = cast(dict[str, object], json.loads(exc_info.value.read()))
         assert "invalid JSON body" in str(body.get("error", ""))
+
+
+def _post_raw(base_url: str, path: str, data: bytes) -> tuple[int, dict[str, object]]:
+    req = urllib.request.Request(
+        f"{base_url}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_CLIENT_TIMEOUT) as resp:
+            return resp.status, cast(dict[str, object], json.loads(resp.read()))
+    except urllib.error.HTTPError as exc:
+        return exc.code, cast(dict[str, object], json.loads(exc.read()))
+
+
+class TestHostileJsonBody:
+    """Bad Unicode or deep nesting in a JSON body is a counted 400, never a 500 (#1326)."""
+
+    @pytest.mark.parametrize(
+        ("data", "message"),
+        [
+            # Invalid UTF-8: a lone continuation byte and a truncated sequence.
+            (b'{"spec": "\x80secret-token"}', "not valid UTF-8"),
+            (b'{"spec": "\xe2\x82"}', "not valid UTF-8"),
+            # A lone surrogate, raw (CESU-style bytes) and as a JSON escape.
+            (b'{"spec": "\xed\xa0\x80"}', "not valid Unicode"),
+            (b'{"spec": "\\ud800secret-token"}', "not valid Unicode"),
+            (b'{"\\udfff": 1}', "not valid Unicode"),
+            # Deeper than the C scanner can recurse, and deeper than the bound.
+            (b"[" * 200_000 + b"]" * 200_000, "nested too deeply"),
+            (b'{"a":' * 200_000 + b"1" + b"}" * 200_000, "nested too deeply"),
+            (b'{"spec": ' + b"[" * 200 + b"]" * 200 + b"}", "nested too deeply"),
+            (b"not-json{{", "invalid JSON body"),
+        ],
+        ids=[
+            "continuation-byte",
+            "truncated-sequence",
+            "raw-surrogate",
+            "escaped-surrogate",
+            "escaped-surrogate-key",
+            "deep-array",
+            "deep-object",
+            "past-the-bound",
+            "malformed",
+        ],
+    )
+    def test_answers_400_and_counts_it(
+        self,
+        http_server: str,
+        caplog: pytest.LogCaptureFixture,
+        data: bytes,
+        message: str,
+    ) -> None:
+        assert len(data) <= _MAX_BODY_BYTES
+        before = metrics.REGISTRY.response_count(400)
+        status, body = _post_raw(http_server, "/validate", data)
+        assert status == 400
+        assert message in str(body["error"])
+        assert "secret-token" not in json.dumps(body)
+        assert "secret-token" not in caplog.text
+        assert "Traceback" not in caplog.text
+        # The handler counts the answer after it has sent it, so wait for the count.
+        deadline = time.monotonic() + 5.0
+        while metrics.REGISTRY.response_count(400) <= before and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert metrics.REGISTRY.response_count(400) == before + 1
+
+    def test_valid_json_below_the_bound_still_reaches_the_service(self, http_server: str) -> None:
+        nested: JsonValue = "leaf"
+        for _ in range(40):
+            nested = [nested]
+        status, body = _post(http_server, "/validate", {"spec": VALID_SPEC_YAML, "x": nested})
+        assert status == 200, body
 
 
 class TestHostileSpecYaml:

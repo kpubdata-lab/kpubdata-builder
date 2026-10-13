@@ -33,6 +33,7 @@ from urllib.parse import urlsplit
 
 from ..query import cancellation
 from ..spec import JsonValue
+from ..spec.loader import MAX_SPEC_DEPTH
 from ..store.backend import validate_storage_config
 from ..uploads import resolve_max_upload_bytes
 from . import metrics, request_log
@@ -51,6 +52,12 @@ _MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB
 # uploads.resolve_max_upload_bytes() (adjustable via environment variable) to avoid
 # maintaining two different numbers in two places.
 _UPLOADS_PATH = "/uploads"
+
+# How deep a JSON request body may nest (#1326). A body carries a spec one or two
+# levels down, so this sits well above the spec's own bound (#1322) and a deep spec
+# still gets the spec loader's message. ``json.loads`` recurses once per level and
+# ends in ``RecursionError`` long before 10 MiB of brackets run out.
+_MAX_JSON_DEPTH = 2 * MAX_SPEC_DEPTH
 
 # Socket read timeout (seconds). Prevents slow clients/slowloris attacks from
 # indefinitely occupying a thread (#219). Each connection thread is released
@@ -161,6 +168,33 @@ _logger = logging.getLogger(__name__)
 #: The status the request log and the metrics give a request whose client left while
 #: its query ran (#1245). Nothing is sent with it.
 CLIENT_CLOSED_STATUS = 499
+
+
+def _json_body_problem(value: object) -> str | None:
+    """Say why a parsed JSON body cannot be served, or ``None`` when it can (#1326).
+
+    Walks the value without recursion. A string or key holding a lone surrogate
+    (``"\\ud800"`` decodes to one) cannot be written back as UTF-8, so it is refused here
+    rather than failing later in a store, a log line or a response.
+    """
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return "request body is not valid Unicode"
+        elif isinstance(item, dict | list):
+            if depth > _MAX_JSON_DEPTH:
+                return "JSON body is nested too deeply"
+            if isinstance(item, dict):
+                for key, child in item.items():
+                    stack.append((key, depth))
+                    stack.append((child, depth + 1))
+            else:
+                stack.extend((child, depth + 1) for child in item)
+    return None
 
 
 def _never() -> bool:
@@ -353,8 +387,17 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
             if is_binary_upload:
                 raw_body = raw
             elif raw:
+                # Every way a body can fail to parse is a 400 (#1326). The messages
+                # are fixed: the exception text quotes the body, and the body may
+                # hold a credential.
                 try:
                     parsed = cast(object, json.loads(raw))
+                except UnicodeDecodeError:
+                    self._write(400, {"error": "request body is not valid UTF-8"})
+                    return
+                except RecursionError:
+                    self._write(400, {"error": "JSON body is nested too deeply"})
+                    return
                 except json.JSONDecodeError:
                     self._write(400, {"error": "invalid JSON body"})
                     return
@@ -362,6 +405,10 @@ def make_handler(service: BuilderService) -> type[BaseHTTPRequestHandler]:
                 # mappings (objects). Reject scalar/array body with 400 instead of TypeError (#183).
                 if not isinstance(parsed, dict):
                     self._write(400, {"error": "JSON body must be an object"})
+                    return
+                problem = _json_body_problem(parsed)
+                if problem is not None:
+                    self._write(400, {"error": problem})
                     return
                 body = cast(dict[str, JsonValue], parsed)
             # If dispatch() raises unexpected exception, return JSON 500 instead of dropping
