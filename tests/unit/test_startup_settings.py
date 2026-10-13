@@ -32,6 +32,7 @@ from kpubdata_builder.service.run_storage import (
 )
 from kpubdata_builder.service.startup_settings import check_settings
 from kpubdata_builder.service.upload_limits import resolve_upload_limits
+from kpubdata_builder.spec.param_grid import param_grid_max_combinations
 from kpubdata_builder.stages.bronze.checkpoint import checkpoint_max_age_seconds
 from kpubdata_builder.uploads.store import resolve_max_upload_bytes
 
@@ -220,6 +221,12 @@ _FALLBACK_CASES: list[tuple[str, Callable[[], object], list[str], list[str]]] = 
         checkpoint_max_age_seconds,
         ["soon", "-1", "inf", "nan"],
         ["7", "0"],
+    ),
+    (
+        "KPUBDATA_BUILDER_PARAM_GRID_MAX_COMBINATIONS",
+        param_grid_max_combinations,
+        ["many", "-1", "1.5"],
+        ["7"],
     ),
     (
         "KPUBDATA_BUILDER_MAX_UPLOAD_BYTES",

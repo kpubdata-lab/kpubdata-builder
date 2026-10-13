@@ -384,6 +384,14 @@ SETTINGS: tuple[Setting, ...] = (
         kind="number",
     ),
     Setting(
+        name="KPUBDATA_BUILDER_PARAM_GRID_MAX_COMBINATIONS",
+        group="builds",
+        description="source 하나의 `param_grid` 가 펼쳐질 수 있는 조합 수의 상한(#1340). 조합 하나는 provider 호출 하나 이상이다. 조합 수는 축 길이의 곱으로 세고 조합을 만들어 보지 않는다. 넘으면 spec 검증이 `param_grid_too_large` 로 거부하므로 build·preview·publish 가 provider 를 한 번도 부르지 않고 끝난다. 상한 이하인 grid 의 호출 순서와 결과는 그대로다. 측정 없이 정한 출발값이다. `0` 이면 끔. 읽을 수 없는 값은 기본값으로 읽는다",
+        default="`10000`",
+        required="선택",
+        kind="integer",
+    ),
+    Setting(
         name="KPUBDATA_BUILDER_MAX_UPLOAD_BYTES",
         group="ingestion",
         description="`POST /uploads`가 받는 최대 본문 크기(바이트). 초과분은 413",
