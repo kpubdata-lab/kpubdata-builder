@@ -801,7 +801,7 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 
 | 항목 | 값 |
 | :--- | :--- |
-| 대상 | `docker-compose.prod.app.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:latest`, `caddy:2.11.6-alpine` |
+| 대상 | `docker-compose.prod.app.yml` 의 `image:` 전부. `${이름:-기본값}` 은 기본값으로 읽는다. 기본값이 없는 필수 변수(`${BUILDER_IMAGE:?…}`)는 운영자가 고르는 값이라 저장소가 알 수 없으므로, 스크립트의 `REQUIRED_IMAGES` 가 정한 것(Builder 는 최신 `main` 빌드, 다음 릴리스가 나올 곳)을 읽는다. 지금은 `ghcr.io/kpubdata-lab/kpubdata-builder:main`, `caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9` |
 | severity | `CRITICAL,HIGH`. **수정본이 없는 것도 포함한다** — 빌드 게이트(`ignore-unfixed: true`)와 다르다 |
 | 결과 | 이미지마다 열린 이슈 하나(`fix(security): <이미지> has HIGH or CRITICAL vulnerabilities`, 라벨 `epic:distribution`·`security`). 스캔한 digest 와, 취약점마다 수정본이 나온 버전 또는 `no fix published` 를 적는다 |
 | 중복 | 목록이 지난번과 같으면 아무것도 쓰지 않는다. 달라지면 같은 이슈의 목록을 고쳐 쓰고 무엇이 달라졌는지 댓글을 단다. 새 이슈를 또 열지 않는다 |
@@ -814,8 +814,8 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 - **이슈를 닫지 않는다.** 취약점이 더 보고되지 않으면 이슈에 그렇게 적을 뿐이다. 배포가
   스캔한 digest 를 실제로 쓰고 있는지는 사람이 확인하고 닫는다.
 - **실제로 돌고 있는 digest 를 스캔하려면** 워크플로를 수동 실행하면서 `images` 에
-  `ghcr.io/kpubdata-lab/kpubdata-builder@sha256:...` 를 넣는다. 정기 실행은 compose 의
-  기본 tag 가 지금 가리키는 것을 본다 — VM 이 예전 digest 를 계속 쓰고 있어도 워크플로는
+  VM 의 `BUILDER_IMAGE` 값(`ghcr.io/kpubdata-lab/kpubdata-builder:vX.Y.Z@sha256:...`)을 넣는다.
+  정기 실행은 Builder 의 최신 `main` 빌드를 본다 — VM 이 어느 릴리스를 쓰고 있는지 워크플로는
   알 수 없다.
 - **base 이미지 갱신**은 Dependabot 이 연다(`docker`: Dockerfile 의 `FROM`,
   `docker-compose`: compose 의 tag). 다른 변경과 같은 pull request 이고, `Docker`
@@ -872,14 +872,70 @@ docker compose -f docker-compose.prod.app.yml --profile caddy up -d  # 공개 TL
 docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio up -d  # Studio 도 같은 VM 에
 ```
 
-- **로그인하지 않으면 게시된 이미지가 아니다.** pull 이 `unauthorized` 로 실패하면 compose 는 멈추지 않고
-  받아 둔 저장소에서 Builder 를 빌드해 `BUILDER_IMAGE` 의 이름(`ghcr.io/...:latest`)을 붙인다. 스택은
-  뜨지만 그 이미지는 게시된 것이 아니다. `up` 의 출력에 `Pulling` 다음 `unauthorized` 와 `Building` 이
-  보이면 로그인부터 다시 한다(kpubdata-studio#900 의 리허설에서 그렇게 됐다).
+- **`BUILDER_IMAGE` 는 필수다**(#1337). 아래 "이미지 고정" 을 따라 `.env` 에 승인된 릴리스를 적고
+  `python3 scripts/check_prod_images.py` 가 통과한 뒤에 `up` 한다. 비워 두면 `docker compose` 가
+  `required variable BUILDER_IMAGE is missing a value` 로 멈춘다.
+- **로그인하지 않으면 받지 못한다.** pull 이 `unauthorized` 로 실패하면, digest 가 붙은 이름으로는
+  빌드할 수 없으므로 `up` 이 그대로 실패한다 — 로그인부터 다시 한다. 예전 기본값(`:latest`)에서는
+  compose 가 멈추지 않고 받아 둔 저장소에서 빌드해 같은 이름을 붙였다(kpubdata-studio#900 의 리허설).
+  로컬 이미지 이름(`kpubdata-builder:dev` 같은)을 명시한 개발 실행은 지금도 그렇게 빌드된다.
 - `caddy` 프로필은 호스트의 80·443 을 쓴다. 다른 프로세스가 잡고 있으면 Caddy 가 뜨지 않는다.
 - Studio 는 Bearer 토큰만 보낸다. `STUDIO_BUILDER_API_URL` 을 채우면서 `OIDC_ISSUER` 와
   `STUDIO_OIDC_CLIENT_ID` 를 비우면 Studio 는 로그인 화면에서 "인증 초기화에 실패했습니다" 로 멈춘다.
   인증 서버(#1124)가 아직 없으면 `STUDIO_BUILDER_API_URL` 도 비워 데모로 띄운다.
+
+### 이미지 고정 (#1337)
+
+프로덕션 스택은 바뀌지 않는 이미지로만 뜬다. 태그(`:latest`, `:2.11.6-alpine`)는 옮겨질 수 있어서,
+태그로 받으면 다음 재배포가 승인된 릴리스가 아니라 그 태그가 그때 가리키는 것을 받는다. digest
+(`@sha256:…`)는 이미지 하나만 가리킨다.
+
+| 이미지 | compose 에 적힌 것 | 운영자가 할 일 |
+| :--- | :--- | :--- |
+| Builder | `${BUILDER_IMAGE:?…}` — 기본값 없음 | `.env` 에 `ghcr.io/kpubdata-lab/kpubdata-builder:vX.Y.Z@sha256:…` |
+| Caddy | `caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9` | 없음. Dependabot 이 태그와 digest 를 함께 올린다 |
+| Studio | Studio 저장소의 커밋(`STUDIO_REF`, 기본값은 검증된 커밋) | 바꿀 때는 Builder 릴리스와 짝인 커밋 |
+
+**승인된 릴리스를 고르는 법.** Builder 릴리스는 `release.yml` 이 게이트·스모크·Trivy 스캔을 통과한 이미지만
+올리고, 레지스트리가 그 digest 를 내주는지 확인하고 다시 스캔한 뒤에야 태그와 GitHub Release 를 만든다(#1324).
+그 Release 노트의 맨 끝 줄이 값이다.
+
+```text
+Image: `ghcr.io/kpubdata-lab/kpubdata-builder@sha256:<digest>` (`ghcr.io/kpubdata-lab/kpubdata-builder:vX.Y.Z`), built, smoke-tested and scanned from <commit>.
+```
+
+`.env` 에는 태그와 digest 를 함께 적는다 — 태그는 사람이 읽으라고, digest 는 받는 것을 고정하려고.
+
+```bash
+BUILDER_IMAGE=ghcr.io/kpubdata-lab/kpubdata-builder:vX.Y.Z@sha256:<digest>
+```
+
+Builder 와 Studio 는 같은 버전 번호로 짝을 이룬다(kpubdata ADR 0004). `STUDIO_REF` 를 바꿀 때는 같은 버전의
+Studio 릴리스가 가리키는 커밋을 적는다. 기본값을 쓰면 `tests/unit/test_compose_profiles_smoke.py` 가 지키는
+검증된 커밋으로 빌드된다.
+
+**올리기 전에 확인한다.** `.env` 를 채운 저장소에서:
+
+```bash
+python3 scripts/check_prod_images.py      # compose 가 풀어낸 이미지가 모두 digest 로 고정됐는가
+docker compose -f docker-compose.prod.app.yml --profile caddy up -d
+docker inspect --format '{{index .RepoDigests 0}}' kpubdata-builder   # 실제로 받은 digest
+```
+
+`check_prod_images.py` 는 `docker compose config` 로 `.env` 와 환경변수를 풀어 서비스마다 이미지를 찍고,
+digest 가 없는 것, 그리고 Builder 이미지가 릴리스 태그(`:vX.Y.Z@sha256:…`)가 아니면 실패한다 — digest 로
+고정한 `main` 빌드도 거부한다. `docker inspect` 의 digest 가 Release 노트의 digest 와 같아야 한다.
+
+**올리는 법.** 새 Release 노트의 `Image:` 줄로 `.env` 의 `BUILDER_IMAGE` 를 바꾸고, 위 확인을 다시 한 뒤
+`up -d` 한다. 되돌리기는 이전 릴리스의 값으로 같은 일을 한다. `main` 에 새 빌드가 올라와도 `.env` 를
+바꾸기 전에는 VM 의 이미지가 바뀌지 않는다.
+
+**개발과 CI.** 로컬 이미지는 이름을 명시해 쓴다(`BUILDER_IMAGE=kpubdata-builder:dev docker compose -f
+docker-compose.prod.app.yml up -d --build`). CI 의 smoke 도 `kpubdata-builder:ci` 를 명시한다.
+`check_prod_images.py` 는 이런 값을 거부한다 — 프로덕션 값이 아니기 때문이다.
+
+`tests/unit/test_prod_compose_images.py` 가 커밋된 compose 를 검사한다(`check_prod_images.py --static`):
+`image:` 가 digest 로 고정되지 않았거나, 고정되지 않은 기본값을 가지거나, 필수가 아닌 변수이면 실패한다.
 
 ### 프로필과 기동 smoke (#692)
 
@@ -887,8 +943,8 @@ docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio u
 
 | 프로필 | 올라오는 것 | 이미지 |
 | :--- | :--- | :--- |
-| (없음) | Builder | `BUILDER_IMAGE`, 기본 `ghcr.io/kpubdata-lab/kpubdata-builder:latest` |
-| `caddy` | + Caddy (Cloudflare → Caddy → Builder, 80/443) | `caddy:2.11.6-alpine` |
+| (없음) | Builder | `BUILDER_IMAGE`, 기본값 없음 — 승인된 릴리스의 `:vX.Y.Z@sha256:…` (위 "이미지 고정") |
+| `caddy` | + Caddy (Cloudflare → Caddy → Builder, 80/443) | `caddy:2.11.6-alpine@sha256:…` (digest 고정) |
 | `studio` | + Studio (nginx, `STUDIO_BIND` 기본 `127.0.0.1:8080`) | Studio 저장소의 고정된 커밋(`STUDIO_REF`)에서 빌드 |
 
 - **Studio 는 pull 하지 않고 빌드한다.** Studio 는 아직 이미지를 게시하지 않고, 태그 `v0.4.0` 은 Studio 의
@@ -919,7 +975,8 @@ docker compose -f docker-compose.prod.app.yml --profile caddy --profile studio u
   그 오리진을 허용하는지. 같은 체인의 위조 헤더·보안 헤더·로그는 `proxy_chain_smoke.py` 가, `/data` 의
   보존은 `data_volume_smoke.py` 가, 종료는 `shutdown_drain_smoke.py` 가 본다 — 여기서 되풀이하지 않는다.
 - **이미지 게시** — compose 파일(`docker-compose.prod.app.yml`)의 기본
-  이미지가 레지스트리에 있는지 묻는다. #675 처럼 아무 워크플로도 올리지 않는 태그를 기본값으로 두면 여기서
+  이미지가 레지스트리에 있는지 묻는다. Caddy 는 고정된 digest 를, 기본값이 없는 Builder 는 재스캔과 같은
+  `main` 빌드를 묻는다. #675 처럼 아무 워크플로도 올리지 않는 태그를 기본값으로 두면 여기서
   실패한다. Builder 의 패키지는 비공개라서 이 작업은 패키지 읽기 권한만 가진 토큰으로 로그인한다 — 로그인
   없는 VM 에서 `ghcr.io/kpubdata-lab/kpubdata-builder` 를 받으려면 그 VM 도 로그인해야 한다.
 

@@ -27,7 +27,9 @@ for every service's health check, and then asks, from inside the network:
 ``--published`` asks the registry for every image the deployment compose files name
 (``image_rescan.deployed_images``, the same list the scheduled rescan reads) and fails
 on one that is not there. A private image needs a login first; CI logs in with a token
-that may only read packages.
+that may only read packages. Builder's image has no default (#1337): the operator names
+an approved release, so this asks for the reference ``image_rescan.REQUIRED_IMAGES``
+gives it.
 
 The Studio image is built from the commit the compose file pins, since Studio does not
 publish one; it names no ``image:``, so it is not in the ``--published`` list.
@@ -288,10 +290,7 @@ def main() -> int:
         missing = missing_images(published_images())
         problems = [f"{image} is not published" for image in missing]
     else:
-        declared = compose_profiles()
-        unknown = declared - set(PROFILES)
-        if unknown:
-            problems.append(f"profiles this smoke does not start: {sorted(unknown)}")
+        # Set first: compose refuses even to list the profiles without BUILDER_IMAGE.
         os.environ.update(
             BUILDER_IMAGE=args.image,
             KPUBDATA_BUILDER_API_KEY=SERVICE_KEY,
@@ -304,6 +303,10 @@ def main() -> int:
             BUILDER_BIND="127.0.0.1:0",
             STUDIO_BIND="127.0.0.1:0",
         )
+        declared = compose_profiles()
+        unknown = declared - set(PROFILES)
+        if unknown:
+            problems.append(f"profiles this smoke does not start: {sorted(unknown)}")
         with tempfile.TemporaryDirectory() as scratch:
             override = Path(scratch) / "override.yml"
             override.write_text(_OVERRIDE, encoding="utf-8")

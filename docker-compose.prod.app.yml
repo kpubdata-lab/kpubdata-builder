@@ -15,12 +15,22 @@
 #   docker compose -f docker-compose.prod.app.yml --profile caddy up -d
 #
 # 이미지는 GHCR 에서 pull 한다(BUILDER_IMAGE). 패키지가 비공개라 먼저 docker login ghcr.io 를
-# 한다. pull 이 실패하면 compose 가 build 컨텍스트(.)로 빌드해 같은 이름을 붙인다 — 게시된
-# 이미지가 아니다(docs/deploy.md §12).
+# 한다.
+#
+# 프로덕션 이미지는 바뀌지 않는 참조로만 받는다 (#1337). BUILDER_IMAGE 에는 기본값이 없다 —
+# `:latest` 로 돌아가면 다음 재배포가 승인된 릴리스가 아닌 main 의 새 빌드를 받는다. 비우면
+# `docker compose config` 부터 이유를 밝히고 멈춘다. 값은 릴리스 노트의 `Image:` 줄 그대로,
+# 릴리스 태그와 digest 를 함께 적는다(ghcr.io/kpubdata-lab/kpubdata-builder:vX.Y.Z@sha256:...).
+# Caddy 도 digest 로 고정한다. `python3 scripts/check_prod_images.py` 가 .env 로 풀린 이미지가
+# 모두 digest 로 고정됐는지 보고, 아니면 실패한다(docs/deploy.md §12 "이미지 고정").
+#
+# 로컬 개발과 CI smoke 는 BUILDER_IMAGE=kpubdata-builder:ci 처럼 로컬 이미지 이름을 명시해
+# 쓴다. 그런 이름은 pull 이 실패하면 build 컨텍스트(.)로 빌드된다 — 게시된 이미지가 아니다.
+# digest 가 붙은 이름으로는 빌드되지 않으므로, 프로덕션 값은 pull 이 실패하면 그대로 멈춘다.
 
 services:
   builder:
-    image: ${BUILDER_IMAGE:-ghcr.io/kpubdata-lab/kpubdata-builder:latest}
+    image: ${BUILDER_IMAGE:?set BUILDER_IMAGE to an approved release by tag and digest, e.g. ghcr.io/kpubdata-lab/kpubdata-builder:vX.Y.Z@sha256:... (docs/deploy.md section 12)}
     build:
       context: .
     container_name: kpubdata-builder
@@ -165,7 +175,9 @@ services:
   # 공개 진입 리버스 프록시. Cloudflare → Caddy → builder.
   # Cloudflare SSL mode: Full(strict). `--profile caddy`로 opt-in.
   caddy:
-    image: caddy:2.11.6-alpine
+    # 태그는 읽는 사람을 위해, digest 는 받는 것을 고정하기 위해 함께 적는다 (#1337).
+    # Dependabot(docker-compose)이 둘을 함께 올린다.
+    image: caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9
     container_name: kpubdata-builder-caddy
     restart: unless-stopped
     profiles:
