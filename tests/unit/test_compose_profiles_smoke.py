@@ -123,8 +123,12 @@ def test_studio_listens_on_the_loopback_by_default() -> None:
 def test_the_published_check_reads_the_deployment_compose_file() -> None:
     images = smoke.published_images()
 
-    assert "caddy:2.11.6-alpine" in images
-    assert "ghcr.io/kpubdata-lab/kpubdata-builder:latest" in images
+    caddy = "caddy:2.11.6-alpine@sha256:"
+    assert [image for image in images if image.startswith(caddy)] == [
+        caddy + "d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9"
+    ]
+    assert "ghcr.io/kpubdata-lab/kpubdata-builder:main" in images
+    assert not [image for image in images if image.endswith(":latest")]
     # The CUBRID stack and its `:cubrid` image were removed (ADR 0022, #1094).
     assert not [image for image in images if "cubrid" in image]
 

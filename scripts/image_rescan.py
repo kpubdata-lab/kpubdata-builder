@@ -47,11 +47,19 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILES = ("docker-compose.prod.app.yml",)
 SEVERITIES = ("CRITICAL", "HIGH")
 LABELS = ("epic:distribution", "security")
+#: What is scanned for an image the compose file leaves to the operator
+#: (``${NAME:?message}``, #1337). Production names an approved release by tag and
+#: digest, and which one a VM runs is not in the repository. The scheduled scan reads
+#: the newest ``main`` build instead, which the next release is cut from; the digest a
+#: deployment runs is scanned by passing it with ``--image``.
+REQUIRED_IMAGES = {"BUILDER_IMAGE": "ghcr.io/kpubdata-lab/kpubdata-builder:main"}
 #: Rows written into an issue; GitHub refuses a body over 65536 characters.
 MAX_ROWS = 150
 
-_IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"'#]+)")
+# A ``${...}`` may hold spaces (a required variable's message); nothing else may.
+_IMAGE = re.compile(r"^\s*image:\s*[\"']?((?:\$\{[^}]*\}|[^\s\"'#$])+)")
 _DEFAULT = re.compile(r"\$\{\w+:-([^${}]*)\}")
+_REQUIRED = re.compile(r"\$\{(\w+):\?[^}]*\}")
 _BEGIN = re.compile(r"<!-- image-rescan:begin fingerprint=(\w+) -->")
 _END = "<!-- image-rescan:end -->"
 _BLOCK = re.compile(
@@ -101,8 +109,9 @@ def images_in(text: str) -> list[str]:
     """The image of every service in a compose file, in order.
 
     ``${NAME:-default}`` is read as its default: that is what a deployment which does
-    not set the variable pulls. A reference left without a default is not an image
-    that can be pulled, and is refused.
+    not set the variable pulls. ``${NAME:?message}`` has no default — compose refuses
+    to start without it — and is read as ``REQUIRED_IMAGES[NAME]``. Any other
+    reference left without a default is not an image that can be pulled, and is refused.
     """
     found: list[str] = []
     for line in text.splitlines():
@@ -110,6 +119,7 @@ def images_in(text: str) -> list[str]:
         if match is None:
             continue
         image = _DEFAULT.sub(lambda default: default.group(1), match.group(1))
+        image = _REQUIRED.sub(lambda required: REQUIRED_IMAGES.get(required.group(1), "$"), image)
         if "$" in image:
             raise ValueError(f"an image without a default cannot be scanned: {match.group(1)}")
         found.append(image)

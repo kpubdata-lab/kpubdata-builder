@@ -116,9 +116,11 @@ def test_every_image_of_the_deployment_files_is_scanned() -> None:
         named += [service["image"] for service in services.values() if "image" in service]
 
     assert len(named) == 2
+    # Builder's image is the operator's to name (#1337); the scan reads the newest
+    # main build for it. Caddy is read as pinned, tag and digest.
     assert rescan.deployed_images() == [
-        "ghcr.io/kpubdata-lab/kpubdata-builder:latest",
-        "caddy:2.11.6-alpine",
+        "ghcr.io/kpubdata-lab/kpubdata-builder:main",
+        "caddy:2.11.6-alpine@sha256:d44355d3c2149dc580ce2cac735955d1c08d3d00882c30489c241aa51a5c10d9",
     ]
 
 
@@ -140,6 +142,22 @@ def test_a_variable_is_read_as_its_default_and_one_without_is_refused() -> None:
     assert rescan.images_in(text) == ["example/app:1", "x:2"]
     with pytest.raises(ValueError, match="without a default"):
         rescan.images_in("    image: ${IMAGE}\n")
+
+
+def test_a_required_variable_is_read_from_the_scan_list_and_an_unknown_one_is_refused() -> None:
+    required = "    image: ${BUILDER_IMAGE:?set it to a release, e.g. repo:v1@sha256:...}\n"
+
+    assert rescan.images_in(required) == [rescan.REQUIRED_IMAGES["BUILDER_IMAGE"]]
+    with pytest.raises(ValueError, match="without a default"):
+        rescan.images_in("    image: ${OTHER_IMAGE:?say what to set}\n")
+
+
+def test_a_reference_pinned_by_tag_and_digest_is_read_whole() -> None:
+    pinned = "caddy:2.11.6-alpine@sha256:" + "d" * 64
+
+    assert rescan.images_in(f"    image: {pinned}  # comment\n") == [pinned]
+    assert rescan.component_for(pinned) == "caddy"
+    assert rescan.title_for(pinned) == _TITLE
 
 
 # ------------------------------------------------------------------ what is read
