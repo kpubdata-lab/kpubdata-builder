@@ -14,7 +14,7 @@
 # behind the CVE fixes; by 2026-10 the order had reversed: the same Trivy scan found
 # 57 HIGH/CRITICAL (2 CRITICAL) on bookworm and 44 HIGH (no CRITICAL) on trixie, none of
 # them with a fixed version published (#1313). Python stays 3.12 — polars breaks on 3.14.
-FROM python:3.12-slim-trixie
+FROM python:3.14-slim-trixie
 
 # Apply the Debian security patches published for the base image's packages, and drop
 # `mount`: nothing in this image mounts a filesystem, it ships the setuid mount and
