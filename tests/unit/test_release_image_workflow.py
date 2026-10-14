@@ -156,6 +156,9 @@ def test_the_evaluator_reads_these_expressions() -> None:
 
 # -------------------------------------------------------------------- docker.yml
 
+#: The gated commit release.yml passes as ``ref``; the git tag does not exist yet (#1324).
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+
 #: Each way docker.yml runs: (event docker.yml sees, github.ref, inputs, publishes?).
 WAYS_IN = {
     "an ordinary pull request": ("pull_request", "refs/pull/7/merge", {}, False),
@@ -166,13 +169,13 @@ WAYS_IN = {
     "release.yml, from a merged release pull request": (
         "pull_request",
         "refs/pull/9/merge",
-        {"ref": "v1.2.3", "publish": True},
+        {"ref": _SHA, "tag": "v1.2.3", "publish": True},
         True,
     ),
     "release.yml, from a manual release": (
         "workflow_dispatch",
         "refs/heads/main",
-        {"ref": "v1.2.3", "publish": True},
+        {"ref": _SHA, "tag": "v1.2.3", "publish": True},
         True,
     ),
 }
@@ -213,10 +216,14 @@ def test_publish_is_its_own_input_and_defaults_off() -> None:
 def test_a_tag_push_and_the_release_call_share_one_concurrency_group() -> None:
     concurrency = _load("docker.yml")["concurrency"]
     pushed = _context("push", "refs/tags/v1.2.3")
-    called = _context("pull_request", "refs/pull/9/merge", {"ref": "v1.2.3", "publish": True})
+    called = _context(
+        "pull_request", "refs/pull/9/merge", {"ref": _SHA, "tag": "v1.2.3", "publish": True}
+    )
+    called_by_tag = _context("workflow_dispatch", "refs/heads/main", {"ref": "v1.2.3"})
 
     assert render(concurrency["group"], pushed) == "docker-refs/tags/v1.2.3"
     assert render(concurrency["group"], called) == "docker-refs/tags/v1.2.3"
+    assert render(concurrency["group"], called_by_tag) == "docker-refs/tags/v1.2.3"
     assert render(concurrency["group"], _context("push", "refs/heads/main")) == (
         "docker-refs/heads/main"
     )
@@ -238,13 +245,30 @@ def test_release_yml_asks_for_the_image_to_be_published() -> None:
 
     assert image["uses"] == "./.github/workflows/docker.yml"
     assert image["with"]["publish"] is True
-    assert image["with"]["ref"] == "${{ needs.release.outputs.tag }}"
+    # The gated commit, named by the release tag that does not exist yet (#1324).
+    assert image["with"]["ref"] == "${{ needs.release.outputs.sha }}"
+    assert image["with"]["tag"] == "${{ needs.release.outputs.tag }}"
+
+
+def test_the_called_image_is_checked_and_published_under_the_release_tag() -> None:
+    docker = _load("docker.yml")
+    called = _context("workflow_dispatch", "refs/heads/main", {"ref": _SHA, "tag": "v1.2.3"})
+
+    (version,) = [
+        s for s in docker["jobs"]["build"]["steps"] if s.get("name") == "Version consistency"
+    ]
+    assert evaluate(version["env"]["CALLED_REF"], called) == "v1.2.3"
+    (meta,) = [s for s in docker["jobs"]["publish"]["steps"] if s.get("id") == "meta"]
+    assert "type=raw,value=v1.2.3,enable=True" in render(meta["with"]["tags"], called)
+    for job in ("build", "publish"):
+        (checkout,) = [s for s in docker["jobs"][job]["steps"] if s.get("name") == "Checkout"]
+        assert evaluate(checkout["with"]["ref"], called) == _SHA
 
 
 def test_a_release_without_a_published_image_fails() -> None:
-    job = _load("release.yml")["jobs"]["image-published"]
+    job = _load("release.yml")["jobs"]["tag"]
 
     assert job["needs"] == ["release", "image"]
-    (step,) = job["steps"]
-    assert step["env"]["DIGEST"] == "${{ needs.image.outputs.digest }}"
+    assert job["env"]["DIGEST"] == "${{ needs.image.outputs.digest }}"
+    (step,) = [s for s in job["steps"] if s.get("name") == "The release's image has a digest"]
     assert 'if [ -z "${DIGEST}" ]' in step["run"] and "exit 1" in step["run"]

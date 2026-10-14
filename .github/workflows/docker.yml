@@ -11,11 +11,14 @@ name: Docker
 #   push of a tag v*                `v*` (a tag pushed by a person; one pushed by
 #                                   release.yml's GITHUB_TOKEN does not fire this)
 #   workflow_dispatch               the dispatched branch or tag, `sha-<commit>`
-#   workflow_call from release.yml  the release tag (`ref`) — with `publish: true`,
-#                                   whichever event started the release
+#   workflow_call from release.yml  the release tag (`tag`), built from the gated
+#                                   commit (`ref`) — with `publish: true`, whichever
+#                                   event started the release. The git tag does not
+#                                   exist yet: release.yml creates it only after this
+#                                   workflow's smokes and scan passed (#1324)
 #
 # A release's tag is published by one run at a time: the concurrency group is the
-# image's ref, the same for a tag push and for release.yml's call with that tag.
+# image's tag, the same for a tag push and for release.yml's call with that tag.
 
 on:
   pull_request:
@@ -55,15 +58,20 @@ on:
       - ".github/workflows/docker.yml"
   workflow_dispatch:
 
-  # release.yml calls this after it has tagged. A tag pushed with GITHUB_TOKEN does
-  # not fire `push: tags`, so waiting for that trigger would leave the tag created
-  # and the image never built (#718).
+  # release.yml calls this before it tags (#1324): the image is built, smoke-tested
+  # and scanned first, and the git tag follows only a published, scanned image. A tag
+  # pushed with GITHUB_TOKEN would not fire `push: tags` anyway (#718).
   workflow_call:
     inputs:
       ref:
-        description: "Tag to build and publish."
+        description: "Commit or tag to check out and build."
         required: true
         type: string
+      tag:
+        description: "Release tag to check the version against and publish the image as. Defaults to `ref`."
+        required: false
+        type: string
+        default: ""
       # Whether to publish is its own input, not read from the event (#1142). In a
       # called workflow `github` is the caller's: a release pull request merged into
       # main calls this as a `pull_request` event, and `publish` skipped every time.
@@ -87,7 +95,7 @@ permissions:
 concurrency:
   # The image's ref: `v1.2.3` called by release.yml and `refs/tags/v1.2.3` pushed
   # are one group, so the same release is never published by two runs at once.
-  group: docker-${{ inputs.ref && format('refs/tags/{0}', inputs.ref) || github.ref }}
+  group: docker-${{ (inputs.tag || inputs.ref) && format('refs/tags/{0}', inputs.tag || inputs.ref) || github.ref }}
   # Only a pull request's build is superseded; a publish is never cut off half-way.
   # Pushes to main share one group on purpose: a group keeps one pending run, so when
   # merges come close together the publish still waiting is replaced by the newer
@@ -119,11 +127,12 @@ jobs:
       # to publish rather than ship a label that contradicts its contents.
       - name: Version consistency
         env:
-          CALLED_REF: ${{ inputs.ref }}
+          CALLED_REF: ${{ inputs.tag || inputs.ref }}
         run: |
-          # When called by release.yml the ref is a tag but GITHUB_REF_TYPE says
-          # `branch`, because that describes the caller. Use the input when there is
-          # one, or the label and the contents can disagree unnoticed (#690).
+          # When called by release.yml the release tag is an input (the git tag does
+          # not exist yet, #1324) and GITHUB_REF_TYPE describes the caller. Use the
+          # input when there is one, or the label and the contents can disagree
+          # unnoticed (#690).
           if [ -n "${CALLED_REF}" ]; then
             python scripts/check_version_consistency.py --tag "${CALLED_REF}"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
@@ -260,7 +269,7 @@ jobs:
         with:
           images: ghcr.io/kpubdata-lab/kpubdata-builder
           tags: |
-            type=raw,value=${{ inputs.ref }},enable=${{ inputs.ref != '' }}
+            type=raw,value=${{ inputs.tag || inputs.ref }},enable=${{ (inputs.tag || inputs.ref) != '' }}
             type=ref,event=tag
             type=ref,event=branch
             type=sha,prefix=sha-

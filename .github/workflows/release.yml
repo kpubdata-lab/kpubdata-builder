@@ -21,10 +21,25 @@
 # raising it would leave that version unreleased for ever. The version is read from
 # `pyproject.toml`, never typed, so a wrong number has nowhere to enter.
 #
+# The release itself runs in three jobs, in this order, each only if the one before
+# passed (#1324):
+#
+#   release   the gates: window, version, CHANGELOG, `uv lock --check`, an install
+#             from the lock as it stands, lint, types and tests. Writes nothing.
+#   image     docker.yml, called with the gated commit: build, runtime smokes and the
+#             Trivy scan, and only after those the push to GHCR.
+#   tag       the published digest is read back from the registry and scanned again,
+#             and only then is the git tag pushed and the GitHub Release created,
+#             naming that digest.
+#
+# A failing build, smoke or scan therefore leaves no tag and no release. A failure in
+# `tag` itself can leave the image's version tag in GHCR with no git tag; re-running
+# publishes it again from the same commit, and the git tag is never moved.
+#
 # Two GITHUB_TOKEN limits shape this:
 #
 #   - a tag pushed with GITHUB_TOKEN does not fire `push: tags`, so docker.yml is
-#     called rather than waited for. Waiting leaves the tag created and no image.
+#     called rather than waited for — and it is called before the tag exists.
 #   - a pull request opened with GITHUB_TOKEN does not trigger `pull_request`
 #     workflows, so a release pull request arrives without CI. Correctness does not
 #     depend on it: the gates run below, before anything is tagged.
@@ -162,7 +177,7 @@ jobs:
           printf '%s\n' \
             "\`${TAG}\` 릴리스 준비 (#718)." \
             "" \
-            "병합되면 게이트가 돌고, **통과한 뒤에** 태그·릴리스·GHCR 이미지가 이어진다." \
+            "병합되면 게이트와 이미지 빌드·smoke·스캔이 돌고, **통과한 뒤에** GHCR 이미지, 태그, 릴리스가 이어진다." \
             "실패하면 남는 것이 없다. 다시 눌러도 된다." \
             > /tmp/release-body.md
           # The merge path has no inputs, so a critical patch travels in the body: the
@@ -346,7 +361,7 @@ jobs:
           git push origin "HEAD:${BRANCH}"
 
   release:
-    name: Gate, tag and release
+    name: Gate the release
     runs-on: ubuntu-latest
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.mode == 'release' &&
@@ -357,10 +372,13 @@ jobs:
        (startsWith(github.event.pull_request.head.ref, 'release/') ||
         startsWith(github.event.pull_request.head.ref, 'release-please--branches--main')))
     timeout-minutes: 30
+    # Writes nothing: the tag and the GitHub Release are the `tag` job's, after the
+    # image has passed (#1324).
     permissions:
-      contents: write
+      contents: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       # On the pull request path, the merge commit itself — not `main`, which by then
       # may be whatever merged next, a different tree from the one gated below. On a
@@ -488,11 +506,17 @@ jobs:
       # "Distribution not found at: file:///home/runner/work/kpubdata-builder/kpubdata"
       # before it can run a single test. A release must resolve the published
       # dependency, which is the thing users will install.
+      #
+      # The lock is checked, then installed exactly as it stands (#1324): `--locked`
+      # fails rather than re-resolve, so the gates run against the versions uv.lock
+      # pins — the ones the image installs (the Dockerfile's `uv sync --locked
+      # --no-sources`). `--frozen` is not used: uv refuses it together with
+      # `--no-sources`.
+      - name: The lock file is current
+        run: uv lock --check --no-sources
+
       - name: Install dependencies
-        # No `--frozen`: uv refuses it together with `--no-sources`. ci.yml's line is
-        # `uv sync --extra dev --no-sources`, and the lockfile is held current by the
-        # `uv lock --check` step in its lint job rather than by a flag here.
-        run: uv sync --extra dev --no-sources
+        run: uv sync --locked --extra dev --no-sources
 
       # Everything that has to be true before a tag exists. A failure here leaves no
       # tag, no release and nothing to clean up.
@@ -503,36 +527,17 @@ jobs:
           uv run --no-sources mypy src
           uv run --no-sources pytest -ra
 
-      # The kpubdata this release was tested with — the version uv.lock pinned while
-      # the gates above ran — goes into the notes, so the compatibility table in
-      # kpubdata (docs/compatibility.md) is filled from a fact, not from the pyproject
-      # range (#718).
-      - name: Record what the release was tested with
-        run: python3 scripts/release_facts.py "${{ steps.notes.outputs.file }}"
-
-      - name: Tag and release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${TAG}"
-          git push origin "${TAG}"
-          gh release create "${TAG}" --title "${TAG}" \
-            --notes-file "${{ steps.notes.outputs.file }}" \
-            --target "${{ steps.commit.outputs.sha }}"
-
   image:
     name: Image
     needs: [release]
-    # A tag pushed with GITHUB_TOKEN does not fire `push: tags`, so the image build is
-    # called rather than waited for. Without this the tag exists and nothing is
-    # published, which is exactly the "declared version points at no artifact" problem
-    # #690 is about.
+    # Called, not waited for: a tag pushed with GITHUB_TOKEN does not fire
+    # `push: tags` (#690). Called with the gated commit, before any tag exists
+    # (#1324): docker.yml's `build` job builds, runs the smokes and the Trivy scan, and
+    # its `publish` job pushes only after that job passed.
     uses: ./.github/workflows/docker.yml
     with:
-      ref: ${{ needs.release.outputs.tag }}
+      ref: ${{ needs.release.outputs.sha }}
+      tag: ${{ needs.release.outputs.tag }}
       # Always: a release pull request calls this as a `pull_request` event, which
       # docker.yml otherwise treats as "build, do not publish" (#1142).
       publish: true
@@ -542,21 +547,110 @@ jobs:
       id-token: write
     secrets: inherit
 
-  image-published:
-    name: Image published
+  # Only after the image passed and was published (#1324). No `if:` — this job must be
+  # skipped whenever `release` or `image` did not succeed, and that is what `needs`
+  # does by default.
+  tag:
+    name: Verify the image, then tag and release
     needs: [release, image]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # A skipped publish job leaves the called workflow green. The release is not done
-    # until the image it declares exists (#1142).
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: read
+    env:
+      IMAGE: ghcr.io/kpubdata-lab/kpubdata-builder
+      TAG: ${{ needs.release.outputs.tag }}
+      SHA: ${{ needs.release.outputs.sha }}
+      DIGEST: ${{ needs.image.outputs.digest }}
     steps:
+      # The commit the gates ran on and the image was built from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          fetch-depth: 0
+
+      # A skipped publish job leaves the called workflow green. The release is not done
+      # until the image it declares exists (#1142).
       - name: The release's image has a digest
-        env:
-          TAG: ${{ needs.release.outputs.tag }}
-          DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           if [ -z "${DIGEST}" ]; then
-            echo "::error::no image was published for ${TAG}; the release is incomplete"
+            echo "::error::no image was published for ${TAG}; nothing is tagged"
             exit 1
           fi
-          echo "ghcr.io/kpubdata-lab/kpubdata-builder:${TAG} is ${DIGEST}"
+          echo "${IMAGE}:${TAG} was published as ${DIGEST}"
+
+      # Again, after the build: a tag pushed while the image was building is not moved.
+      - name: The tag must not exist yet
+        run: |
+          git fetch --tags --quiet origin
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::${TAG} already exists; it is not moved."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # What the registry serves under the version tag is what was built and pushed —
+      # not an image another run pushed under the same tag in between.
+      - name: The registry serves the published digest
+        run: |
+          served=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .Manifest}}' \
+            | python3 -c "import json, sys; print(json.load(sys.stdin)['digest'])")
+          if [ "${served}" != "${DIGEST}" ]; then
+            echo "::error::${IMAGE}:${TAG} is ${served}, but this run published ${DIGEST}"
+            exit 1
+          fi
+          echo "${IMAGE}:${TAG} is ${DIGEST}"
+
+      # The digest the release will name, scanned with the policy docker.yml's build
+      # job applies: HIGH or CRITICAL with a fix available fails.
+      - name: Trivy scan of the published digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ needs.image.outputs.digest }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Release notes from the CHANGELOG
+        id: notes
+        uses: kpubdata-lab/kpubdata/.github/actions/release-notes@807c21f6a78f22b6ed64e19b38585225ec95e1f7  # kpubdata-lab/kpubdata main
+        with:
+          command: extract
+          version: ${{ needs.release.outputs.tag }}
+
+      # The kpubdata this release was tested with — the version uv.lock pinned while
+      # the gates ran — goes into the notes, so the compatibility table in kpubdata
+      # (docs/compatibility.md) is filled from a fact, not from the pyproject range
+      # (#718). The image the release is goes in after it, by digest (#1324).
+      - name: Record what the release was tested with
+        env:
+          NOTES: ${{ steps.notes.outputs.file }}
+        run: |
+          python3 scripts/release_facts.py "${NOTES}"
+          printf "\nImage: \`%s@%s\` (\`%s:%s\`), built, smoke-tested and scanned from %s.\n" \
+            "${IMAGE}" "${DIGEST}" "${IMAGE}" "${TAG}" "${SHA}" >> "${NOTES}"
+
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ steps.notes.outputs.file }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}" "${SHA}"
+          git push origin "refs/tags/${TAG}"
+          gh release create "${TAG}" --title "${TAG}" --notes-file "${NOTES}" --verify-tag
