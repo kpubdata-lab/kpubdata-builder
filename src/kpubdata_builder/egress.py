@@ -15,12 +15,16 @@ holds; inside one call of such a dataset it does not.
 
 A build waits for its turn: it is background work, and a refusal would fail it. A
 preview and a probe hold a request thread and a person waiting, so they are refused at
-once with how long to wait (:class:`~kpubdata_builder.rate_limit.RateLimited`).
+once with how long to wait (:class:`~kpubdata_builder.rate_limit.RateLimited`). A build
+that is cancelled while it waits — by its user, its time limit or shutdown — stops
+waiting within half a second and gives its slot back (#1328).
 """
 
 from __future__ import annotations
 
-from .rate_limit import RateLimited, WindowLimiter, per_minute_from_env
+from collections.abc import Callable
+
+from .rate_limit import RateLimited, WaitCancelled, WindowLimiter, per_minute_from_env
 
 PROVIDER_CALLS_PER_MINUTE_ENV = "KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE"
 
@@ -34,9 +38,14 @@ def provider_calls_per_minute() -> int:
 LIMITER = WindowLimiter(provider_calls_per_minute)
 
 
-def wait_for_call(provider: str) -> float:
-    """Wait until ``provider`` may be called; the seconds waited."""
-    return LIMITER.wait(provider)
+def wait_for_call(provider: str, *, cancelled: Callable[[], bool] | None = None) -> float:
+    """Wait until ``provider`` may be called; the seconds waited.
+
+    Raises:
+        WaitCancelled: ``cancelled`` answered True during the wait (#1328). The slot
+            was given back.
+    """
+    return LIMITER.wait(provider, cancelled=cancelled)
 
 
 def admit_call(provider: str) -> None:
@@ -52,6 +61,7 @@ __all__ = [
     "LIMITER",
     "PROVIDER_CALLS_PER_MINUTE_ENV",
     "RateLimited",
+    "WaitCancelled",
     "admit_call",
     "provider_calls_per_minute",
     "wait_for_call",

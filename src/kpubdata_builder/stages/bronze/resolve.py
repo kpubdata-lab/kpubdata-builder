@@ -64,6 +64,7 @@ def build_bronze_artifact_for_source(
     checkpoint_path: Path | None = None,
     staging_dir: Path | None = None,
     bound: FetchBound | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> BronzeArtifact:
     """fetches per source.kind and writes a BronzeArtifact (#498, #622).
 
@@ -84,6 +85,9 @@ def build_bronze_artifact_for_source(
 
     ``bound`` (#1185) stops a public_api fetch early, for a preview. A file or URL
     source is read whole: it costs no provider quota.
+
+    ``cancelled`` (#1328) ends a public_api fetch that waits for its turn under the
+    provider's egress limit, with ``WaitCancelled``.
     """
     scrub: Scrub | None = (
         (lambda value: scrub_secret_values(value, secret_values)) if secret_values else None
@@ -123,6 +127,7 @@ def build_bronze_artifact_for_source(
             staging_dir=staging_dir,
             scrub=scrub,
             bound=bound,
+            cancelled=cancelled,
         )
     # BuildSpec that bypassed loader validation (direct SourceRef construction) also
     # already rejected, but, resolver itself "else is public_api"implicit

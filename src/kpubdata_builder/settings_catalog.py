@@ -338,7 +338,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         name="KPUBDATA_BUILDER_PROVIDER_CALLS_PER_MINUTE",
         group="builds",
-        description="Builder 가 provider 하나를 60초 동안 부를 수 있는 횟수 — 모든 사용자와 모든 build·preview·probe 를 합쳐서, provider 마다(#1245). provider 는 서버 주소 하나만 보므로, 한 사용자가 그 주소를 막히게 하면 모두가 막힌다. 한 번은 kpubdata 에서 받는 page 하나(`list` 호출 하나, 또는 `list_all` 의 page 하나)와 probe 의 dataset 하나다. build 는 차례를 기다리고, preview 는 429 `provider_egress_limited`(`Retry-After`)로, probe 는 닿지 못한 dataset 을 `not_probed` 로 답한다. 연결 테스트는 세지 않는다. 첫 page 를 넘기기 전에 모든 page 를 요청하는 kpubdata dataset(#481)은 한 호출 안에서는 한꺼번에 나가고, 그 몫은 뒤의 호출이 기다린다. 프로세스 메모리에만 있어 재시작하면 잊는다. `0` 이면 끔. 측정 없이 둔 기본값이다 — 값은 실제 배포에서 provider 의 허용량을 보고 정한다",
+        description="Builder 가 provider 하나를 60초 동안 부를 수 있는 횟수 — 모든 사용자와 모든 build·preview·probe 를 합쳐서, provider 마다(#1245). provider 는 서버 주소 하나만 보므로, 한 사용자가 그 주소를 막히게 하면 모두가 막힌다. 한 번은 kpubdata 에서 받는 page 하나(`list` 호출 하나, 또는 `list_all` 의 page 하나)와 probe 의 dataset 하나다. build 는 차례를 기다리고, preview 는 429 `provider_egress_limited`(`Retry-After`)로, probe 는 닿지 못한 dataset 을 `not_probed` 로 답한다. 기다리던 build 가 취소되면(사용자 취소, 실행 시간 한도, 종료) 0.5초 안에 기다림을 멈추고 잡아 둔 차례를 돌려준다(#1328). 연결 테스트는 세지 않는다. 첫 page 를 넘기기 전에 모든 page 를 요청하는 kpubdata dataset(#481)은 한 호출 안에서는 한꺼번에 나가고, 그 몫은 뒤의 호출이 기다린다. 프로세스 메모리에만 있어 재시작하면 잊는다. `0` 이면 끔. 측정 없이 둔 기본값이다 — 값은 실제 배포에서 provider 의 허용량을 보고 정한다",
         default="`0` (끔)",
         required="선택",
         kind="integer",

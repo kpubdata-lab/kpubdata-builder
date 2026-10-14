@@ -65,6 +65,7 @@ from ..quality import (
     SchemaDriftFinding,
     evaluate_quality,
 )
+from ..rate_limit import WaitCancelled
 from ..spec import (
     BUILDSPEC_SNAPSHOT_FILENAME,
     BuildSpec,
@@ -937,16 +938,23 @@ def _run_source_pipeline(
         # Records are written here as they arrive (#622), and read from here by Silver.
         # Anything a crashed attempt left is removed first.
         shutil.rmtree(staging_dir, ignore_errors=True)
-        bronze = build_bronze_artifact_for_source(
-            source,
-            client=client,
-            upload_repository=upload_repository,
-            owner_id=owner_id,
-            secret_values=secret_values,
-            on_combination_done=after_combination,
-            checkpoint_path=checkpoint_path,
-            staging_dir=staging_dir,
-        )
+        try:
+            bronze = build_bronze_artifact_for_source(
+                source,
+                client=client,
+                upload_repository=upload_repository,
+                owner_id=owner_id,
+                secret_values=secret_values,
+                on_combination_done=after_combination,
+                checkpoint_path=checkpoint_path,
+                staging_dir=staging_dir,
+                # A wait for the provider's egress slot ends on cancellation, which
+                # the time limit and shutdown ask for too, and gives the slot back
+                # (#1328): the fetch is abandoned as at a combination boundary.
+                cancelled=cancellation.cancel_requested if cancellation is not None else None,
+            )
+        except WaitCancelled:
+            raise BuildCancelled from None
         recorder.source_fetch_completed(output_key, record_count=bronze.record_count)
         progress.fetch_completed = True
         bronze = _retag_bronze_artifact(bronze, output_key=output_key)
