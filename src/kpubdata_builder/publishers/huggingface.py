@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import fnmatch
+import hashlib
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -81,6 +83,57 @@ def _repo_path_for(path: Path, common_root: Path | None) -> str:
     return path.name
 
 
+_COMMIT_MESSAGE = "Update dataset via kpubdata-builder"
+#: Prefix of the commit-description line that names the artifact set a commit holds
+#: (#1330). A retry finds it on the remote head and does not commit the set twice.
+_SET_MARKER = "kpubdata-builder-artifact-set: "
+
+
+def _is_ignored(relative: Path) -> bool:
+    """Files ``upload_folder`` never uploaded: anything under ``.git`` or
+    ``.cache/huggingface``. A directory artifact keeps excluding them (#1330)."""
+    parts = relative.parts
+    if ".git" in parts:
+        return True
+    return any(
+        parts[i] == ".cache" and parts[i + 1] == "huggingface" for i in range(len(parts) - 1)
+    )
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _set_digest(files: Mapping[str, Path]) -> str:
+    """One digest for the whole artifact set: every target path and its content.
+
+    Deletions are left out on purpose: once a commit has removed stale files, a
+    retry of the same set finds nothing left to delete, and must still recognise
+    the set as published.
+    """
+    digest = hashlib.sha256()
+    for repo_path in sorted(files):
+        digest.update(f"{repo_path}\0{_file_sha256(files[repo_path])}\n".encode())
+    return digest.hexdigest()
+
+
+def _head(api: Any, destination: str) -> tuple[str, str]:
+    """The dataset repo's head commit: its id and its full message."""
+    commits = api.list_repo_commits(repo_id=destination, repo_type="dataset")
+    if not commits:
+        raise PublishError(f"could not read the head revision of {destination}")
+    head = commits[0]
+    return str(head.commit_id), f"{head.title or ''}\n{head.message or ''}"
+
+
+def _holds_set(message: str, set_digest: str) -> bool:
+    return f"{_SET_MARKER}{set_digest}" in message.splitlines()
+
+
 class HuggingFacePublisher(BasePublisher):
     """Upload artifact files to Hugging Face Hub dataset repository."""
 
@@ -115,8 +168,17 @@ class HuggingFacePublisher(BasePublisher):
         destination: str,
         private: bool = True,
         credentials: Mapping[str, str] | None = None,
+        delete_patterns: tuple[str, ...] = (),
     ) -> PublishResult:
         """Publish artifact to HuggingFace dataset repository.
+
+        The whole artifact set goes up in one Hub commit (#1330): every file, and
+        every deletion, lands together or not at all, so readers see the previous
+        revision or the new one and never a mix. The commit names the repo's head
+        as its parent, so a commit someone else made in between makes it fail
+        instead of being silently mixed with it. Its description carries a digest
+        of the set; when the head already carries that digest — a retry after a
+        commit whose answer was lost — nothing is committed again.
 
         Args:
             artifact_paths: List of files or directories to upload.
@@ -128,12 +190,15 @@ class HuggingFacePublisher(BasePublisher):
                 public or its visibility cannot be confirmed (#901). A public publish
                 (``private=False``) to an existing private repo is not checked: it
                 exposes nothing.
+            delete_patterns: Remote paths (``fnmatch`` patterns) the new set
+                replaces. Matching files the set does not contain are deleted in the
+                same commit. Empty by default: nothing is deleted unless asked.
 
         Raises:
             PublishError: A private publish targets a public or unconfirmable repo.
         """
         try:
-            from huggingface_hub import HfApi
+            from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi
         except ImportError as exc:
             raise RuntimeError(
                 "huggingface_hub is required for HuggingFace publishing. "
@@ -189,33 +254,69 @@ class HuggingFacePublisher(BasePublisher):
         ):
             common_root = None
 
-        seen_repo_paths: dict[str, Path] = {}
+        files: dict[str, Path] = {}
+
+        def _add(repo_path: str, path: Path) -> None:
+            # If two artifacts map to same repo path, one gets buried, so fail explicitly.
+            prior = files.get(repo_path)
+            if prior is not None and prior != path:
+                raise PublishError(
+                    f"duplicate artifact target path {repo_path!r}: "
+                    f"{prior} and {path} would overwrite each other in {destination}"
+                )
+            files[repo_path] = path
+
         for path in artifact_paths:
             if path.is_dir():
-                api.upload_folder(
-                    folder_path=str(path),
-                    repo_id=destination,
-                    repo_type="dataset",
-                    commit_message="Update dataset via kpubdata-builder",
-                )
+                # A directory lands at the repo root, as upload_folder put it.
+                for child in sorted(path.rglob("*")):
+                    relative = child.relative_to(path)
+                    if child.is_file() and not _is_ignored(relative):
+                        _add(relative.as_posix(), child)
             else:
-                repo_path = _repo_path_for(path, common_root)
-                # If two artifacts map to same repo path, one gets buried, so fail explicitly.
-                prior = seen_repo_paths.get(repo_path)
-                if prior is not None and prior != path:
-                    raise PublishError(
-                        f"duplicate artifact target path {repo_path!r}: "
-                        f"{prior} and {path} would overwrite each other in {destination}"
-                    )
-                seen_repo_paths[repo_path] = path
-                api.upload_file(
-                    path_or_fileobj=str(path),
-                    path_in_repo=repo_path,
-                    repo_id=destination,
-                    repo_type="dataset",
-                    commit_message="Update dataset via kpubdata-builder",
-                )
+                _add(_repo_path_for(path, common_root), path)
             count += 1
+
+        if files:
+            parent, head_message = _head(api, destination)
+            deletions: list[str] = []
+            if delete_patterns:
+                remote = api.list_repo_files(
+                    repo_id=destination, repo_type="dataset", revision=parent
+                )
+                deletions = sorted(
+                    remote_path
+                    for remote_path in remote
+                    if remote_path not in files
+                    and any(fnmatch.fnmatchcase(remote_path, p) for p in delete_patterns)
+                )
+            set_digest = _set_digest(files)
+            if not _holds_set(head_message, set_digest):
+                operations: list[Any] = [
+                    CommitOperationDelete(path_in_repo=remote_path) for remote_path in deletions
+                ]
+                operations += [
+                    CommitOperationAdd(path_in_repo=repo_path, path_or_fileobj=str(local))
+                    for repo_path, local in sorted(files.items())
+                ]
+                try:
+                    api.create_commit(
+                        repo_id=destination,
+                        repo_type="dataset",
+                        operations=operations,
+                        commit_message=_COMMIT_MESSAGE,
+                        commit_description=f"{_SET_MARKER}{set_digest}",
+                        parent_commit=parent,
+                    )
+                except Exception:
+                    # The answer may be lost while the commit landed (a timeout). Read
+                    # the head again: the set is there, or the commit did not happen.
+                    try:
+                        _, head_message = _head(api, destination)
+                    except Exception:
+                        head_message = ""
+                    if not _holds_set(head_message, set_digest):
+                        raise
 
         return PublishResult(
             publisher=self.name,

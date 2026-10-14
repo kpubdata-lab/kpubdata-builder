@@ -124,6 +124,9 @@ class TestPublisherPrefersPassedCredentials:
 
         module = types.ModuleType("huggingface_hub")
         module.HfApi = _Api  # type: ignore[attr-defined]
+        # The publisher imports the commit operation types with HfApi (#1330).
+        module.CommitOperationAdd = object  # type: ignore[attr-defined]
+        module.CommitOperationDelete = object  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "huggingface_hub", module)
         monkeypatch.setenv("HF_TOKEN", "server-token")
 
@@ -158,6 +161,9 @@ class TestPublisherPrefersPassedCredentials:
 
         module = types.ModuleType("huggingface_hub")
         module.HfApi = _Api  # type: ignore[attr-defined]
+        # The publisher imports the commit operation types with HfApi (#1330).
+        module.CommitOperationAdd = object  # type: ignore[attr-defined]
+        module.CommitOperationDelete = object  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "huggingface_hub", module)
         monkeypatch.setenv("HF_TOKEN", "server-token")
 
@@ -175,6 +181,8 @@ class TestPublisherPrefersPassedCredentials:
 
         module = types.ModuleType("huggingface_hub")
         module.HfApi = object  # type: ignore[attr-defined]
+        module.CommitOperationAdd = object  # type: ignore[attr-defined]
+        module.CommitOperationDelete = object  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "huggingface_hub", module)
         monkeypatch.delenv("HF_TOKEN", raising=False)
 
@@ -375,6 +383,9 @@ class TestTheSwitchActuallyBlocksPublishing:
 
         module = types.ModuleType("huggingface_hub")
         module.HfApi = _Api  # type: ignore[attr-defined]
+        # The publisher imports the commit operation types with HfApi (#1330).
+        module.CommitOperationAdd = object  # type: ignore[attr-defined]
+        module.CommitOperationDelete = object  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "huggingface_hub", module)
 
     def test_an_empty_mapping_does_not_fall_back_to_the_server_token(
