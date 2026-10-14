@@ -2062,7 +2062,7 @@ def _admit(
     bearer_token: str | None,
     client_id: str | None,
 ) -> Principal | ServiceResponse:
-    """The throttle and the authentication gate: who is asking, or the refusal.
+    """The throttle, the authentication gate and admission: who is asking, or the refusal.
 
     A client with accumulated authentication failures is cut off before authentication
     is attempted, so it incurs no key comparison or signature verification.
@@ -2091,13 +2091,53 @@ def _admit(
             principal.status_code, {"error": principal.reason, "code": principal.code}
         )
 
+    # For the request's log line (#1100): who it is from, as an opaque owner.
+    request_log.note_principal(principal)
+
+    # A token that verifies but is refused admission does not clear the failure record
+    # (#1325): otherwise one pending or rejected account's token, sent between guesses,
+    # keeps the client below the limit for ever. Nor is the refusal counted — the token
+    # is not a guess, and a waiting user's every screen gets this answer.
+    refusal = _admission_refusal(service, principal)
+    if refusal is not None:
+        return refusal
+
     # Successful authentication clears failure record — normal client that received
     # a few 401s due to token expiry doesn't get throttled during subsequent normal
     # use.
     service._auth_throttle.record_success(client_id)
-    # For the request's log line (#1100): who it is from, as an opaque owner.
-    request_log.note_principal(principal)
     return principal
+
+
+def _admission_refusal(service: BuilderService, principal: Principal) -> ServiceResponse | None:
+    """The refusal for an authenticated principal the service does not admit, or None."""
+    # A deleted user (#1102) is refused as a rejected sign-up, before the ledger is read:
+    # reading it would record them anew, as a first sign-in.
+    if principal.owner_id is not None and service.owner_deleted(principal.owner_id):
+        return ServiceResponse(403, dict(REJECTED_BODY))
+
+    # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
+    # administrator; a rejected one is shut out even when a list admits them.
+    if principal.kind == "oidc" and principal.owner_id is not None:
+        try:
+            entry = service._user_ledger().observe(principal)
+        except LedgerUnavailableError:
+            # Not an admission and not a refusal (#1121): the ledger could not be read,
+            # or a first sign-in could not be recorded. An administrator is not held
+            # by the ledger and is let through to see what is wrong.
+            if not principal.is_admin:
+                return ServiceResponse(
+                    503,
+                    {
+                        "error": "sign-up status cannot be checked right now; try again shortly",
+                        "code": "signup_ledger_unavailable",
+                    },
+                )
+            entry = None
+        refusal = None if entry is None else admission_refusal(entry, principal)
+        if refusal is not None:
+            return ServiceResponse(403, refusal)
+    return None
 
 
 def refuse_before_body(
@@ -2112,8 +2152,10 @@ def refuse_before_body(
     The HTTP layer read the whole body — up to the upload limit, 20 MiB by default — and
     only then authenticated, so a request with no token made the server hold that much
     and the failure throttle applied after the cost was paid. This is the same gate
-    ``dispatch`` applies, run first. A request it lets through is authenticated again
-    by ``dispatch``; a refused one is counted once, here, and never reaches it.
+    ``dispatch`` applies, run first — admission included, so an account that is pending,
+    rejected or deleted is refused before its upload is read too (#1325). A request it
+    lets through is authenticated again by ``dispatch``; a refused one is counted once,
+    here, and never reaches it.
     """
     admitted = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
     return admitted if isinstance(admitted, ServiceResponse) else None
@@ -2162,33 +2204,6 @@ def _dispatch_impl(
     principal = _admit(service, api_key=api_key, bearer_token=bearer_token, client_id=client_id)
     if isinstance(principal, ServiceResponse):
         return principal
-
-    # A deleted user (#1102) is refused as a rejected sign-up, before the ledger is read:
-    # reading it would record them anew, as a first sign-in.
-    if principal.owner_id is not None and service.owner_deleted(principal.owner_id):
-        return ServiceResponse(403, dict(REJECTED_BODY))
-
-    # Sign-up ledger (#785): an OIDC user not admitted by a list waits for an
-    # administrator; a rejected one is shut out even when a list admits them.
-    if principal.kind == "oidc" and principal.owner_id is not None:
-        try:
-            entry = service._user_ledger().observe(principal)
-        except LedgerUnavailableError:
-            # Not an admission and not a refusal (#1121): the ledger could not be read,
-            # or a first sign-in could not be recorded. An administrator is not held
-            # by the ledger and is let through to see what is wrong.
-            if not principal.is_admin:
-                return ServiceResponse(
-                    503,
-                    {
-                        "error": "sign-up status cannot be checked right now; try again shortly",
-                        "code": "signup_ledger_unavailable",
-                    },
-                )
-            entry = None
-        refusal = None if entry is None else admission_refusal(entry, principal)
-        if refusal is not None:
-            return ServiceResponse(403, refusal)
 
     # A credential header this route reads could not be parsed (#1105). Said only now:
     # who may not call the service has already been answered above.
