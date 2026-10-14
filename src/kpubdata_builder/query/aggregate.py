@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from ..spec import JsonValue
 from ..tabular.dtypes import is_nested, is_numeric, is_temporal
 from .engine import failure_payload
-from .rows import RowFilter, parse_filters, typed_literal
+from .rows import RowFilter, filter_literals, parse_filters, typed_literals
 
 if TYPE_CHECKING:
     from .result import WireResult
@@ -303,9 +303,7 @@ def check_aggregate_plan(plan: AggregatePlan, schema: Mapping[str, str]) -> None
             is_numeric(dtype) or is_temporal(dtype) or dtype in ("String", "Utf8")
         ):
             raise ValueError(f"{m.fn} needs an ordered column; {m.column!r} is {dtype}")
-    for f in plan.filters:
-        for value in (f.value,) if f.op not in ("in", "is_null", "is_not_null") else f.values:
-            typed_literal(value, schema[f.column])
+    typed_literals(filter_literals(plan.filters, schema))
 
 
 def _measure_sql(measure: Measure, sandbox: Sandbox) -> str:

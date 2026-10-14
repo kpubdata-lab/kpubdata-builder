@@ -228,36 +228,89 @@ def table_dtypes(table_path: str | Path) -> dict[str, str]:
     return dict(zip(columns.names, columns.dtypes, strict=True))
 
 
-def typed_literal(value: JsonValue, dtype: str) -> object:
-    """``value`` as a value of the column's type, or ValueError when it does not fit.
+#: The cast connection's limits (#1341). A request casts at most MAX_FILTERS x
+#: MAX_IN_VALUES scalars, so one thread and a small buffer are plenty; the limits keep
+#: concurrent requests from each taking DuckDB's defaults (every core, most of memory).
+CAST_THREADS = 1
+CAST_MEMORY_LIMIT = "64MB"
+
+
+def typed_literals(items: Sequence[tuple[JsonValue, str]]) -> list[object]:
+    """Each ``(value, dtype)`` as a value of that type, in order, through one connection.
 
     A client sends a Decimal or a large integer as its exact text and a date as ISO 8601
     — the way it received them — so text is cast to the column's type rather than
     compared as text. The cast is the one the query runs (``_sql_predicate``), done
     here first so a value that cannot fit is the client's error, not a failed query.
+
+    One in-memory connection serves every value of a request (#1341): one thread, a
+    small memory limit, no spill directory, no extension loading, no file or network
+    access, and its configuration locked. No connection is opened for no values.
+
+    Raises:
+        ValueError: The first value that is not a scalar or does not fit its type.
     """
     import duckdb
 
     from ..tabular.dtypes import scalar_sql_type
 
-    if isinstance(value, (dict, list)):
-        raise ValueError("a filter value must be a scalar")
-    storage = scalar_sql_type(dtype)
-    zoned = storage == "TIMESTAMP WITH TIME ZONE"
-    # Fetching an instant needs pytz, which is not a dependency (#876 review): read its
-    # UTC wall time and mark it UTC, as the Parquet upload reader does.
-    expression = f"timezone('UTC', CAST(? AS {storage}))" if zoned else f"CAST(? AS {storage})"
-    with duckdb.connect(":memory:") as connection:
+    if not items:
+        return []
+    cast_values: list[object] = []
+    with duckdb.connect(
+        ":memory:",
+        config={
+            "threads": CAST_THREADS,
+            "memory_limit": CAST_MEMORY_LIMIT,
+            # No spill directory: a cast that outgrows the buffer fails, not spills.
+            "temp_directory": "",
+            "autoinstall_known_extensions": False,
+            "autoload_known_extensions": False,
+            "allow_community_extensions": False,
+        },
+    ) as connection:
         connection.execute("SET TimeZone = 'UTC'")
-        try:
-            row = connection.execute(f"SELECT {expression}", [value]).fetchone()
-        except duckdb.Error as exc:
-            raise ValueError(f"{value!r} is not a valid {dtype}") from exc
-    if row is None or row[0] is None:
-        raise ValueError(f"{value!r} is not a valid {dtype}")
-    if zoned and isinstance(row[0], dt.datetime):
-        return row[0].replace(tzinfo=dt.timezone.utc)
-    return row[0]
+        # Set after open: in the connect config it refuses the empty temp_directory.
+        connection.execute("SET enable_external_access = false")
+        connection.execute("SET lock_configuration = true")
+        for value, dtype in items:
+            if isinstance(value, (dict, list)):
+                raise ValueError("a filter value must be a scalar")
+            storage = scalar_sql_type(dtype)
+            zoned = storage == "TIMESTAMP WITH TIME ZONE"
+            # Fetching an instant needs pytz, which is not a dependency (#876 review): read
+            # its UTC wall time and mark it UTC, as the Parquet upload reader does.
+            expression = (
+                f"timezone('UTC', CAST(? AS {storage}))" if zoned else f"CAST(? AS {storage})"
+            )
+            try:
+                row = connection.execute(f"SELECT {expression}", [value]).fetchone()
+            except duckdb.Error as exc:
+                raise ValueError(f"{value!r} is not a valid {dtype}") from exc
+            if row is None or row[0] is None:
+                raise ValueError(f"{value!r} is not a valid {dtype}")
+            if zoned and isinstance(row[0], dt.datetime):
+                cast_values.append(row[0].replace(tzinfo=dt.timezone.utc))
+            else:
+                cast_values.append(row[0])
+    return cast_values
+
+
+def typed_literal(value: JsonValue, dtype: str) -> object:
+    """``value`` as a value of the column's type, or ValueError when it does not fit
+    (:func:`typed_literals` for one value)."""
+    return typed_literals([(value, dtype)])[0]
+
+
+def filter_literals(
+    filters: Sequence[RowFilter], schema: Mapping[str, str]
+) -> list[tuple[JsonValue, str]]:
+    """Every value the filters compare against, with its column's dtype, in order."""
+    return [
+        (value, schema[f.column])
+        for f in filters
+        for value in ((f.value,) if f.op in _VALUE_OPS else f.values)
+    ]
 
 
 def check_plan(plan: RowsPlan, schema: Mapping[str, str]) -> None:
@@ -275,9 +328,7 @@ def check_plan(plan: RowsPlan, schema: Mapping[str, str]) -> None:
     missing = sorted({name for name in named if name not in schema})
     if missing:
         raise ValueError(f"no such columns: {missing}")
-    for f in plan.filters:
-        for value in (f.value,) if f.op in _VALUE_OPS else f.values:
-            typed_literal(value, schema[f.column])
+    typed_literals(filter_literals(plan.filters, schema))
 
 
 def _sql_predicate(
@@ -434,4 +485,5 @@ __all__ = [
     "read_page",
     "rows_worker",
     "typed_literal",
+    "typed_literals",
 ]
