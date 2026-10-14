@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from kpubdata_builder.publishers import (
     LocalPublisher,
     PublishResult,
 )
+from kpubdata_builder.publishers import huggingface as huggingface_module
 from kpubdata_builder.publishers.huggingface import HuggingFacePublisher
 
 
@@ -111,23 +113,83 @@ class GatedRepoError(RepositoryNotFoundError):
 _MISSING = object()
 
 
+class FakeHub:
+    """A dataset repo on a fake Hub: its files, its history, and every write call.
+
+    ``create_commit`` is atomic, as the Hub's is: it applies every operation or none.
+    ``upload_file`` and ``upload_folder`` each make their own commit, so a run of them
+    that dies midway leaves the earlier ones applied. ``fail_on_transfer`` makes the
+    Nth file transfer raise, wherever it happens; ``lose_answer`` lets a commit land
+    and then raises as a timed-out request would; ``before_commit`` runs just before a
+    commit is applied, standing in for another writer.
+    """
+
+    def __init__(self) -> None:
+        self.remote: dict[str, bytes] = {".gitattributes": b"*.parquet lfs\n"}
+        self.history: list[types.SimpleNamespace] = [
+            types.SimpleNamespace(commit_id="c0", title="initial commit", message="")
+        ]
+        self.calls: dict[str, list[dict[str, object]]] = {
+            "repos": [],
+            "files": [],
+            "folders": [],
+            "info": [],
+            "commits": [],
+        }
+        self.transfers = 0
+        self.fail_on_transfer: int | None = None
+        self.lose_answer = False
+        self.before_commit: list[Callable[[], None]] = []
+
+    @property
+    def head(self) -> str:
+        return str(self.history[0].commit_id)
+
+    def _transfer(self, source: str) -> bytes:
+        self.transfers += 1
+        if self.fail_on_transfer is not None and self.transfers >= self.fail_on_transfer:
+            raise ConnectionError("connection reset during upload")
+        return Path(source).read_bytes()
+
+    def _commit(self, title: str, message: str, changes: dict[str, bytes | None]) -> None:
+        for path, content in changes.items():
+            if content is None:
+                self.remote.pop(path, None)
+            else:
+                self.remote[path] = content
+        commit_id = f"c{len(self.history)}"
+        self.history.insert(
+            0, types.SimpleNamespace(commit_id=commit_id, title=title, message=message)
+        )
+
+    def other_writer(self, path: str, content: bytes) -> None:
+        self._commit("someone else", "", {path: content})
+
+
 def _install_fake_hf(
     monkeypatch: pytest.MonkeyPatch,
     *,
     existing: object = _MISSING,
+    hub: FakeHub | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     """Inject huggingface_hub.HfApi as fake and record upload calls.
 
     ``existing`` is what ``repo_info`` reports: ``_MISSING`` (the default) raises
     RepositoryNotFoundError, an exception instance is raised, and anything else is
-    the repo's ``private`` attribute.
+    the repo's ``private`` attribute. ``hub`` holds the fake repo's state; a fresh
+    one is used when it is not given.
     """
-    calls: dict[str, list[dict[str, object]]] = {
-        "repos": [],
-        "files": [],
-        "folders": [],
-        "info": [],
-    }
+    state = hub if hub is not None else FakeHub()
+    calls = state.calls
+
+    class CommitOperationAdd:
+        def __init__(self, *, path_in_repo: str, path_or_fileobj: str) -> None:
+            self.path_in_repo = path_in_repo
+            self.path_or_fileobj = path_or_fileobj
+
+    class CommitOperationDelete:
+        def __init__(self, *, path_in_repo: str) -> None:
+            self.path_in_repo = path_in_repo
 
     class FakeHfApi:
         def __init__(self, token: str | None = None) -> None:
@@ -158,6 +220,50 @@ def _install_fake_hf(
                 }
             )
 
+        def list_repo_commits(self, *, repo_id: str, repo_type: str) -> list[object]:
+            assert repo_type == "dataset"
+            return list(state.history)
+
+        def list_repo_files(self, *, repo_id: str, repo_type: str, revision: str) -> list[str]:
+            assert revision == state.head
+            return sorted(state.remote)
+
+        def create_commit(
+            self,
+            *,
+            repo_id: str,
+            repo_type: str,
+            operations: list[object],
+            commit_message: str,
+            commit_description: str,
+            parent_commit: str,
+        ) -> None:
+            calls["commits"].append(
+                {
+                    "operations": operations,
+                    "commit_message": commit_message,
+                    "commit_description": commit_description,
+                    "parent_commit": parent_commit,
+                }
+            )
+            changes: dict[str, bytes | None] = {}
+            for op in operations:
+                if isinstance(op, CommitOperationAdd):
+                    calls["files"].append(
+                        {"path_in_repo": op.path_in_repo, "src": op.path_or_fileobj}
+                    )
+                    changes[op.path_in_repo] = state._transfer(op.path_or_fileobj)
+                else:
+                    assert isinstance(op, CommitOperationDelete)
+                    changes[op.path_in_repo] = None
+            for hook in state.before_commit:
+                hook()
+            if parent_commit != state.head:
+                raise RuntimeError("412 Precondition Failed: the parent commit moved")
+            state._commit(commit_message, commit_description, changes)
+            if state.lose_answer:
+                raise TimeoutError("read timed out")
+
         def upload_file(
             self,
             *,
@@ -168,14 +274,25 @@ def _install_fake_hf(
             commit_message: str,
         ) -> None:
             calls["files"].append({"path_in_repo": path_in_repo, "src": path_or_fileobj})
+            content = state._transfer(path_or_fileobj)
+            state._commit(commit_message, "", {path_in_repo: content})
 
         def upload_folder(
             self, *, folder_path: str, repo_id: str, repo_type: str, commit_message: str
         ) -> None:
             calls["folders"].append({"folder_path": folder_path})
+            root = Path(folder_path)
+            changes: dict[str, bytes | None] = {
+                f.relative_to(root).as_posix(): state._transfer(str(f))
+                for f in sorted(root.rglob("*"))
+                if f.is_file()
+            }
+            state._commit(commit_message, "", changes)
 
     fake_module = types.ModuleType("huggingface_hub")
     fake_module.HfApi = FakeHfApi  # type: ignore[attr-defined]
+    fake_module.CommitOperationAdd = CommitOperationAdd  # type: ignore[attr-defined]
+    fake_module.CommitOperationDelete = CommitOperationDelete  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_module)
     monkeypatch.setenv("HF_TOKEN", "test-token")
     return calls
@@ -264,26 +381,39 @@ class TestHuggingFacePublisher:
         assert repo_paths == {"a/data.parquet", "b/data.parquet"}
         assert result.artifact_count == 2
 
-    def test_directory_artifacts_use_upload_folder(
+    def test_directory_artifacts_land_at_the_repo_root(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls = _install_fake_hf(monkeypatch)
+        # A directory artifact keeps the layout upload_folder gave it: its files at the
+        # repo root, nothing under .git or .cache/huggingface (#1330).
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
         layout = tmp_path / "dataset"
-        layout.mkdir()
-        _ = (layout / "x.parquet").write_text("x", encoding="utf-8")
+        (layout / "data").mkdir(parents=True)
+        (layout / ".git").mkdir()
+        (layout / ".cache" / "huggingface").mkdir(parents=True)
+        _ = (layout / "README.md").write_text("# t\n", encoding="utf-8")
+        _ = (layout / "data" / "x.parquet").write_text("x", encoding="utf-8")
+        _ = (layout / ".git" / "HEAD").write_text("ref", encoding="utf-8")
+        _ = (layout / ".cache" / "huggingface" / "lock").write_text("l", encoding="utf-8")
 
         result = HuggingFacePublisher().publish((layout,), destination="org/ds")
 
-        assert len(calls["folders"]) == 1
-        assert calls["files"] == []
+        assert len(calls["commits"]) == 1
+        assert calls["folders"] == []
+        assert {c["path_in_repo"] for c in calls["files"]} == {"README.md", "data/x.parquet"}
         assert result.artifact_count == 1
 
     def test_unrelated_absolute_paths_fall_back_to_basename(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Unrelated absolute paths with common root "/" must not leak host paths and
-        # must fall back to basename (#205).
-        calls = _install_fake_hf(monkeypatch)
+        # must fall back to basename (#205). These paths cannot be created under a
+        # test's tmp_path, so the files are never read: only their target paths matter.
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+        monkeypatch.setattr(hub, "_transfer", lambda source: b"")
+        monkeypatch.setattr(huggingface_module, "_file_sha256", lambda path: path.as_posix())
 
         if sys.platform == "win32":
             paths = (Path("C:/tmp/a/f1.parquet"), Path("C:/var/b/f2.parquet"))
@@ -296,11 +426,17 @@ class TestHuggingFacePublisher:
         assert repo_paths == {"f1.parquet", "f2.parquet"}
         assert result.artifact_count == 2
 
-    def test_relative_paths_preserve_layout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_relative_paths_preserve_layout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # commonpath of relative-path artifacts is Path("."), which is parent==self but
         # not absolute, so not a basename fallback candidate. Directory layout must be preserved
         # (#205).
         calls = _install_fake_hf(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        for name in ("a/f1.parquet", "b/f2.parquet"):
+            Path(name).parent.mkdir()
+            _ = Path(name).write_text("x", encoding="utf-8")
 
         result = HuggingFacePublisher().publish(
             (Path("a/f1.parquet"), Path("b/f2.parquet")), destination="org/ds"
@@ -309,6 +445,179 @@ class TestHuggingFacePublisher:
         repo_paths = {c["path_in_repo"] for c in calls["files"]}
         assert repo_paths == {"a/f1.parquet", "b/f2.parquet"}
         assert result.artifact_count == 2
+
+
+class TestHuggingFaceAtomicCommit:
+    """One completed artifact set is one Hub commit: all of it or none of it (#1330)."""
+
+    @staticmethod
+    def _artifact_set(tmp_path: Path, version: str) -> tuple[Path, ...]:
+        (tmp_path / "data").mkdir(exist_ok=True)
+        readme = tmp_path / "README.md"
+        train = tmp_path / "data" / "train.parquet"
+        test = tmp_path / "data" / "test.parquet"
+        _ = readme.write_text(f"# card {version}\n", encoding="utf-8")
+        _ = train.write_text(f"train {version}", encoding="utf-8")
+        _ = test.write_text(f"test {version}", encoding="utf-8")
+        return (readme, train, test)
+
+    @staticmethod
+    def _published_v1(hub: FakeHub) -> dict[str, bytes]:
+        hub.remote.update(
+            {
+                "README.md": b"# card v1\n",
+                "data/train.parquet": b"train v1",
+                "data/test.parquet": b"test v1",
+            }
+        )
+        hub.other_writer("README.md", b"# card v1\n")
+        return dict(hub.remote)
+
+    def test_the_whole_set_is_one_commit_on_the_current_head(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+        parent = hub.head
+
+        result = HuggingFacePublisher().publish(
+            self._artifact_set(tmp_path, "v2"), destination="org/ds"
+        )
+
+        assert len(calls["commits"]) == 1
+        commit = calls["commits"][0]
+        assert commit["parent_commit"] == parent
+        assert {c["path_in_repo"] for c in calls["files"]} == {
+            "README.md",
+            "data/train.parquet",
+            "data/test.parquet",
+        }
+        assert hub.remote["data/train.parquet"] == b"train v2"
+        assert result.artifact_count == 3
+
+    def test_a_failure_midway_leaves_the_previous_revision_whole(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        before = self._published_v1(hub)
+        head = hub.head
+        _install_fake_hf(monkeypatch, hub=hub)
+        hub.fail_on_transfer = 2
+
+        with pytest.raises(ConnectionError):
+            HuggingFacePublisher().publish(self._artifact_set(tmp_path, "v2"), destination="org/ds")
+
+        # Readers still see v1 exactly: no v2 card over v1 shards, no new revision.
+        assert hub.remote == before
+        assert hub.head == head
+
+    def test_a_retry_after_a_lost_answer_does_not_commit_twice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+        artifacts = self._artifact_set(tmp_path, "v2")
+        hub.lose_answer = True
+
+        first = HuggingFacePublisher().publish(artifacts, destination="org/ds")
+        hub.lose_answer = False
+        second = HuggingFacePublisher().publish(artifacts, destination="org/ds")
+
+        # The commit landed although its answer was lost; the head says so, so the
+        # first call reports success and the retry makes no second commit.
+        assert first.status == "ok" and second.status == "ok"
+        assert len(calls["commits"]) == 1
+        assert len(hub.history) == 2
+
+    def test_a_changed_set_is_committed_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+
+        HuggingFacePublisher().publish(self._artifact_set(tmp_path, "v2"), destination="org/ds")
+        HuggingFacePublisher().publish(self._artifact_set(tmp_path, "v3"), destination="org/ds")
+
+        assert len(calls["commits"]) == 2
+        assert hub.remote["README.md"] == b"# card v3\n"
+
+    def test_a_failure_without_the_set_on_the_head_is_raised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        _install_fake_hf(monkeypatch, hub=hub)
+        hub.fail_on_transfer = 1
+
+        with pytest.raises(ConnectionError):
+            HuggingFacePublisher().publish(self._artifact_set(tmp_path, "v2"), destination="org/ds")
+
+    def test_a_commit_made_in_between_is_not_overwritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        _install_fake_hf(monkeypatch, hub=hub)
+        hub.before_commit.append(lambda: hub.other_writer("README.md", b"# theirs\n"))
+
+        with pytest.raises(RuntimeError, match="parent commit moved"):
+            HuggingFacePublisher().publish(self._artifact_set(tmp_path, "v2"), destination="org/ds")
+
+        assert hub.remote["README.md"] == b"# theirs\n"
+        assert "data/train.parquet" not in hub.remote
+
+    def test_nothing_is_deleted_by_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        hub.remote["data/old.parquet"] = b"old"
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+
+        HuggingFacePublisher().publish(self._artifact_set(tmp_path, "v2"), destination="org/ds")
+
+        assert hub.remote["data/old.parquet"] == b"old"
+        assert all(hasattr(op, "path_or_fileobj") for op in calls["commits"][0]["operations"])
+
+    def test_stale_files_are_deleted_in_the_same_commit_when_asked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        hub.remote.update({"data/old.parquet": b"old", "NOTES.txt": b"keep"})
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+
+        HuggingFacePublisher().publish(
+            self._artifact_set(tmp_path, "v2"),
+            destination="org/ds",
+            delete_patterns=("data/*", "README.md"),
+        )
+
+        assert len(calls["commits"]) == 1
+        deleted = [
+            op.path_in_repo
+            for op in calls["commits"][0]["operations"]
+            if not hasattr(op, "path_or_fileobj")
+        ]
+        assert deleted == ["data/old.parquet"]
+        assert set(hub.remote) == {
+            ".gitattributes",
+            "NOTES.txt",
+            "README.md",
+            "data/test.parquet",
+            "data/train.parquet",
+        }
+
+    def test_the_token_is_not_in_the_commit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+
+        HuggingFacePublisher().publish(
+            self._artifact_set(tmp_path, "v2"),
+            destination="org/ds",
+            credentials={"HF_TOKEN": "hf_secret_value"},
+        )
+
+        assert "hf_secret_value" not in repr(calls["commits"])
+        assert "hf_secret_value" not in repr(hub.history)
 
 
 class TestHuggingFacePrivateTarget:

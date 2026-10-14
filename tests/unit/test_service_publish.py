@@ -30,6 +30,7 @@ from kpubdata_builder.spec import JsonValue
 
 from ._openapi import response_schema, validate
 from .conftest import requires_symlinks
+from .test_publishers import FakeHub, _install_fake_hf
 from .test_service import _FakeClient
 from .test_service_contract import _load_contract
 
@@ -665,6 +666,8 @@ class TestPublish:
 
         fake_module = types.ModuleType("huggingface_hub")
         fake_module.HfApi = FailingHfApi  # type: ignore[attr-defined]
+        fake_module.CommitOperationAdd = object  # type: ignore[attr-defined]
+        fake_module.CommitOperationDelete = object  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "huggingface_hub", fake_module)
         _with_credentials(monkeypatch, "huggingface")
         monkeypatch.setitem(
@@ -680,6 +683,55 @@ class TestPublish:
         assert second.status_code == 409
         assert second.body["code"] == "publish_state_unknown"
         assert create_calls == 1
+
+    def test_huggingface_publishes_the_artifact_set_in_one_commit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Through the service, with the real publisher: one commit for the whole set,
+        # and a replay of the same publish makes no second one (#1330).
+        hub = FakeHub()
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+        _with_credentials(monkeypatch, "huggingface")
+        monkeypatch.setitem(
+            publish_api_module.PUBLISHER_REGISTRY, "huggingface", HuggingFacePublisher()
+        )
+        service = _service(tmp_path)
+        _build(service, "run-hf-one-commit", LICENSED_SPEC_YAML)
+
+        first = _publish(service, "run-hf-one-commit")
+        second = _publish(service, "run-hf-one-commit")
+
+        assert first.status_code == 200, first.body
+        assert second.status_code == 200, second.body
+        assert len(calls["commits"]) == 1
+        published = {c["path_in_repo"] for c in calls["files"]}
+        assert published and published <= set(hub.remote)
+        assert "hf_super_secret_token_value" not in json.dumps(first.body)
+
+    def test_huggingface_failure_midway_publishes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = FakeHub()
+        before = dict(hub.remote)
+        calls = _install_fake_hf(monkeypatch, hub=hub)
+        hub.fail_on_transfer = 1
+        _with_credentials(monkeypatch, "huggingface")
+        monkeypatch.setitem(
+            publish_api_module.PUBLISHER_REGISTRY, "huggingface", HuggingFacePublisher()
+        )
+        service = _service(tmp_path)
+        _build(service, "run-hf-midway", LICENSED_SPEC_YAML)
+
+        first = _publish(service, "run-hf-midway")
+        second = _publish(service, "run-hf-midway")
+
+        assert first.status_code == 502
+        assert hub.remote == before
+        # The outcome is recorded as unknown, so the recovery panel's flow applies and
+        # nothing is sent again on its own.
+        assert second.status_code == 409
+        assert second.body["code"] == "publish_state_unknown"
+        assert len(calls["commits"]) == 1
 
     def test_unexpected_exception_does_not_leak_message(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
