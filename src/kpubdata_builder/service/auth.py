@@ -40,7 +40,12 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from jwt import PyJWK, PyJWKSet
 
 # Server-required API key. Injected via environment variable only (#248).
 # Per ADR 0006, operates fail-closed: missing dev-mode and missing API key → deny auth.
@@ -253,8 +258,180 @@ def _verify_api_key(api_key: str | None) -> Principal | AuthError:
 _jwks_client: object | None = None
 _jwks_url_cached: str | None = None
 _jwks_lock = threading.Lock()
-# OIDC discovery result cache: issuer → (jwks_uri, expires_at). #435.
-_discovery_cache: dict[str, tuple[str, float]] = {}
+
+#: Each request to the identity provider (discovery document, keys) gives up after this.
+_IDP_TIMEOUT_SECONDS: float = _DISCOVERY_TIMEOUT_SECONDS
+#: After a failed fetch the provider is not asked again for this long, doubling with
+#: each failure in a row up to the ceiling (#1323).
+_BACKOFF_INITIAL_SECONDS = 2.0
+_BACKOFF_MAX_SECONDS = 60.0
+#: How long past their TTL the last keys fetched keep verifying while the provider cannot
+#: be reached (#1323). Bounded: a key the provider has since revoked must stop working.
+_JWKS_STALE_GRACE_SECONDS = 600.0
+
+#: The clock the caches below read; a test replaces it.
+_clock: Callable[[], float] = time.monotonic
+
+_T = TypeVar("_T")
+
+
+class _IdpUnavailableError(RuntimeError):
+    """The identity provider's discovery document or keys could not be had (#1323).
+
+    The message is for the log only. A client is told ``auth_unavailable`` and nothing
+    about the provider's address or what it answered.
+    """
+
+
+@dataclass
+class _CacheEntry(Generic[_T]):
+    value: _T | None = None
+    fresh_until: float = 0.0
+    fetched_at: float = 0.0
+    failures: int = 0
+    retry_at: float = 0.0
+    in_flight: threading.Event | None = None
+
+
+class _RefreshingCache(Generic[_T]):
+    """A value fetched from the identity provider, one fetch at a time per key (#1323).
+
+    The lock guards only the bookkeeping; the fetch runs outside it. While one request
+    fetches, the others are given the last good value when there is one, and otherwise
+    wait for that one fetch — never for longer than ``_IDP_TIMEOUT_SECONDS`` — instead
+    of each fetching in turn. A failure is remembered: until a backoff that doubles up
+    to ``_BACKOFF_MAX_SECONDS`` has passed, nobody asks the provider again, and the
+    answer is the last good value or ``_IdpUnavailableError`` at once.
+    """
+
+    def __init__(self, fetch: Callable[[str], _T], *, stale_grace: float | None) -> None:
+        self._fetch = fetch
+        #: How long after its TTL a value may stand in for a failed refresh; None: always.
+        self._stale_grace = stale_grace
+        self._lock = threading.Lock()
+        self._entries: dict[str, _CacheEntry[_T]] = {}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+    def get(self, key: str, *, ttl: float, max_age: float | None = None) -> _T:
+        """The value for ``key``; with ``max_age``, one fetched no longer ago than that.
+
+        A ``max_age`` request is never given a value past its TTL in place of a failed
+        fetch: it asks because the value in hand was not enough.
+
+        Raises:
+            _IdpUnavailableError: No usable value, and the provider could not give one.
+        """
+        with self._lock:
+            entry = self._entries.setdefault(key, _CacheEntry())
+            now = _clock()
+            young = max_age is None or now - entry.fetched_at < max_age
+            if entry.value is not None and now < entry.fresh_until and young:
+                return entry.value
+            stale = None if max_age is not None else self._usable_stale(entry, now)
+            if entry.in_flight is None and now >= entry.retry_at:
+                entry.in_flight = threading.Event()
+                flight = entry.in_flight
+                leader = True
+            elif stale is not None:
+                return stale
+            elif entry.in_flight is None:
+                raise _IdpUnavailableError("backing off after a failed fetch")
+            else:
+                flight = entry.in_flight
+                leader = False
+
+        if not leader:
+            if not flight.wait(_IDP_TIMEOUT_SECONDS):
+                raise _IdpUnavailableError("another request's fetch did not finish in time")
+            with self._lock:
+                if entry.failures == 0 and entry.value is not None:
+                    return entry.value
+            raise _IdpUnavailableError("another request's fetch failed")
+
+        try:
+            value = self._fetch(key)
+        except _IdpUnavailableError as exc:
+            with self._lock:
+                entry.failures += 1
+                backoff = _BACKOFF_INITIAL_SECONDS * 2 ** min(entry.failures - 1, 16)
+                entry.retry_at = _clock() + min(backoff, _BACKOFF_MAX_SECONDS)
+            _logger.warning("identity provider fetch failed: %s", exc)
+            if stale is not None:
+                return stale
+            raise
+        else:
+            with self._lock:
+                entry.value = value
+                entry.fetched_at = _clock()
+                entry.fresh_until = entry.fetched_at + ttl
+                entry.failures = 0
+                entry.retry_at = 0.0
+            return value
+        finally:
+            with self._lock:
+                entry.in_flight = None
+            flight.set()
+
+    def _usable_stale(self, entry: _CacheEntry[_T], now: float) -> _T | None:
+        if entry.value is None:
+            return None
+        if self._stale_grace is not None and now >= entry.fresh_until + self._stale_grace:
+            return None
+        return entry.value
+
+
+def _idp_ttl() -> int:
+    return int(os.environ.get(_OIDC_JWKS_TTL_ENV, "") or _DEFAULT_JWKS_TTL_SECONDS)
+
+
+def _read_json_object(url: str, response_body: bytes) -> dict[str, object]:
+    import json
+
+    try:
+        doc = json.loads(response_body)
+    except ValueError as exc:
+        raise _IdpUnavailableError(f"{url} did not answer JSON") from exc
+    if not isinstance(doc, dict):
+        raise _IdpUnavailableError(f"{url} did not answer a JSON object")
+    return doc
+
+
+def _fetch_jwks_uri(issuer: str) -> str:
+    """Read ``jwks_uri`` from the issuer's discovery document (RFC 8414, #435)."""
+    import http.client
+    import urllib.request
+    from urllib.parse import urlparse
+
+    base = issuer if issuer.startswith("http") else "https://" + issuer
+    discovery_url = base.rstrip("/") + "/.well-known/openid-configuration"
+    try:
+        with urllib.request.urlopen(discovery_url, timeout=_IDP_TIMEOUT_SECONDS) as resp:
+            body = resp.read()
+    except (OSError, http.client.HTTPException) as exc:
+        # URLError, HTTPError (4xx/5xx), a timeout and a refused connection are OSErrors.
+        raise _IdpUnavailableError(
+            f"discovery at {discovery_url} failed: {type(exc).__name__}"
+        ) from exc
+    jwks_uri = _read_json_object(discovery_url, body).get("jwks_uri")
+    if not isinstance(jwks_uri, str) or not jwks_uri:
+        raise _IdpUnavailableError(f"discovery at {discovery_url} has no jwks_uri")
+    scheme = urlparse(jwks_uri).scheme.lower()
+    # The keys are fetched over TLS whenever the issuer is: a discovery document cannot
+    # downgrade them to plain HTTP. An issuer configured over plain HTTP is a local setup
+    # its operator chose.
+    allowed = ("https",) if urlparse(base).scheme.lower() == "https" else ("http", "https")
+    if scheme not in allowed:
+        raise _IdpUnavailableError(f"discovery at {discovery_url} names a {scheme!r} jwks_uri")
+    return jwks_uri
+
+
+# OIDC discovery result cache: issuer -> jwks_uri (#435). A discovered URL is served
+# past its TTL while a refresh fails: it says only where to fetch keys, and the keys
+# themselves are checked against their own, bounded, grace.
+_discovery_cache: _RefreshingCache[str] = _RefreshingCache(_fetch_jwks_uri, stale_grace=None)
 
 
 def _oidc_issuers() -> list[str]:
@@ -272,28 +449,14 @@ def _discover_jwks_uri(issuer: str) -> str:
 
     Query issuer's ``/.well-known/openid-configuration`` and return the ``jwks_uri``
     field. JWKS paths differ by IdP (Google, Auth0, Keycloak, etc.), so prior
-    guessing of the path broke. Result is TTL-cached.
+    guessing of the path broke. Result is TTL-cached, fetched once at a time, and a
+    failure backs off (#1323).
+
+    Raises:
+        _IdpUnavailableError: The document could not be fetched or does not name a
+            usable ``jwks_uri``.
     """
-    import json
-    import urllib.request
-
-    now = time.monotonic()
-    cached = _discovery_cache.get(issuer)
-    if cached is not None:
-        jwks_uri, expires_at = cached
-        if now < expires_at:
-            return jwks_uri
-
-    base = issuer if issuer.startswith("http") else "https://" + issuer
-    discovery_url = base.rstrip("/") + "/.well-known/openid-configuration"
-    with urllib.request.urlopen(discovery_url, timeout=_DISCOVERY_TIMEOUT_SECONDS) as resp:
-        doc = json.loads(resp.read())
-    jwks_uri_raw = doc.get("jwks_uri")
-    if not isinstance(jwks_uri_raw, str) or not jwks_uri_raw:
-        raise RuntimeError(f"discovery at {discovery_url} has no jwks_uri")
-    ttl = int(os.environ.get(_OIDC_JWKS_TTL_ENV, "") or _DEFAULT_JWKS_TTL_SECONDS)
-    _discovery_cache[issuer] = (jwks_uri_raw, now + ttl)
-    return jwks_uri_raw
+    return _discovery_cache.get(issuer, ttl=_idp_ttl())
 
 
 def _oidc_jwks_url() -> str:
@@ -511,32 +674,120 @@ def validate_dev_mode() -> None:
 
 
 def _get_jwks_client(issuer: str | None = None) -> object:
-    """Create and cache PyJWKClient lazily (thread-safe).
+    """Create and cache the key source lazily (thread-safe).
 
     Without ``issuer``: the deployment's one set of keys (``OIDC_JWKS_URL``, or the first
-    issuer's). With it: that issuer's keys, kept apart per issuer (#1074).
+    issuer's). With it: that issuer's keys, kept apart per issuer (#1074). Discovery runs
+    before the lock is taken (#1323): a slow provider must not hold every other request.
+
+    Raises:
+        _IdpUnavailableError: The issuer's discovery document could not be had.
     """
     global _jwks_client, _jwks_url_cached
-    with _jwks_lock:
-        if issuer is not None:
-            url = _discover_jwks_uri(issuer)
+    if issuer is not None:
+        url = _discover_jwks_uri(issuer)
+        with _jwks_lock:
             cached = _issuer_jwks_clients.get(issuer)
             if cached is None or cached[0] != url:
                 cached = (url, _new_jwks_client(url))
                 _issuer_jwks_clients[issuer] = cached
             return cached[1]
-        url = _oidc_jwks_url()
+    url = _oidc_jwks_url()
+    with _jwks_lock:
         if _jwks_client is None or _jwks_url_cached != url:
             _jwks_client = _new_jwks_client(url)
             _jwks_url_cached = url
-    return _jwks_client
+        return _jwks_client
 
 
 def _new_jwks_client(url: str) -> object:
-    from jwt import PyJWKClient
+    return _JwksKeys(url)
 
-    ttl = int(os.environ.get(_OIDC_JWKS_TTL_ENV, "") or _DEFAULT_JWKS_TTL_SECONDS)
-    return PyJWKClient(url, cache_jwk_set=True, lifespan=ttl)
+
+#: An unknown ``kid`` refetches the keys only when they are older than this, as
+#: PyJWKClient's ``cooldown_duration`` did: a made-up ``kid`` cannot make every request
+#: a call to the provider.
+_JWKS_REFRESH_COOLDOWN_SECONDS = 30.0
+
+
+def _fetch_jwk_set(url: str) -> PyJWKSet:
+    """The key set at ``url``, or ``_IdpUnavailableError`` (#1323)."""
+    import http.client
+    import urllib.request
+    from urllib.parse import urlparse
+
+    import jwt
+    from jwt import PyJWKSet
+
+    if urlparse(url).scheme.lower() not in ("http", "https"):
+        raise _IdpUnavailableError("the JWKS URL is not http(s)")
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        # As PyJWKClient: the keys are read from the URL configured or discovered,
+        # not from wherever it redirects.
+        def redirect_request(self, *args: object, **kwargs: object) -> None:
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect())
+    try:
+        with opener.open(url, timeout=_IDP_TIMEOUT_SECONDS) as resp:
+            body = resp.read()
+    except (OSError, http.client.HTTPException) as exc:
+        raise _IdpUnavailableError(f"keys at {url} failed: {type(exc).__name__}") from exc
+    doc = _read_json_object(url, body)
+    try:
+        return PyJWKSet.from_dict(doc)
+    except (jwt.PyJWTError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise _IdpUnavailableError(f"keys at {url} hold no usable key") from exc
+
+
+# JWKS URL -> its key set (#1323). Served past its TTL while a refresh fails, for a
+# bounded grace only.
+_jwks_cache: _RefreshingCache[PyJWKSet] = _RefreshingCache(
+    _fetch_jwk_set, stale_grace=_JWKS_STALE_GRACE_SECONDS
+)
+
+
+class _JwksKeys:
+    """The signing keys at one JWKS URL, for ``_verify_bearer_token`` (#1323).
+
+    Replaces PyJWKClient, which holds a lock across its network fetch and keeps no key
+    set once its lifespan ends: during an outage every request fetched, in turn, for up
+    to 30 seconds each. The keys now come from ``_jwks_cache``.
+    """
+
+    def __init__(self, uri: str) -> None:
+        self.uri = uri
+
+    def get_signing_key_from_jwt(self, token: str) -> PyJWK:
+        """The key for the token's ``kid``.
+
+        Raises:
+            jwt.PyJWTError: The token's header cannot be read.
+            jwt.PyJWKClientError: The keys hold no key with this ``kid``.
+            _IdpUnavailableError: The keys could not be had.
+        """
+        import jwt
+        from jwt import PyJWKClientError
+
+        kid = jwt.get_unverified_header(token).get("kid")
+        key = self._match(_jwks_cache.get(self.uri, ttl=_idp_ttl()), kid)
+        if key is None:
+            # A rotated key: ask again, unless the keys in hand are already that recent.
+            fresh = _jwks_cache.get(
+                self.uri, ttl=_idp_ttl(), max_age=_JWKS_REFRESH_COOLDOWN_SECONDS
+            )
+            key = self._match(fresh, kid)
+        if key is None:
+            raise PyJWKClientError(f'Unable to find a signing key that matches: "{kid}"')
+        return key
+
+    @staticmethod
+    def _match(keys: PyJWKSet, kid: object) -> PyJWK | None:
+        for key in keys.keys:
+            if key.key_id and key.key_id == kid and key.public_key_use in ("sig", None):
+                return key
+        return None
 
 
 #: issuer -> (JWKS URL, client), for a deployment with more than one issuer.
@@ -599,6 +850,10 @@ def _verify_bearer_token(token: str) -> Principal | AuthError:
             # before any request goes out for that issuer's keys.
             return AuthError(reason="invalid token")
         signing_key = client.get_signing_key_from_jwt(token)  # type: ignore[attr-defined]
+    except _IdpUnavailableError:
+        # The provider's discovery document or keys could not be had (#1323): the
+        # credentials were not judged. Never a 401 — Studio signs out on one.
+        return AuthError(reason="auth service unavailable (jwks)", status_code=503)
     except PyJWKClientError as exc:
         # "No signing key found" and "couldn't reach JWKS" are completely different
         # events but were grouped. Returning 503 for the former means (a) throttle

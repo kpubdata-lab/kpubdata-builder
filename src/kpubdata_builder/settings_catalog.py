@@ -167,7 +167,11 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         name="OIDC_JWKS_TTL",
         group="access",
-        description="JWKS 캐시 수명(초). 만료되면 다음 Bearer 인증이 다시 가져온다",
+        description=(
+            "discovery 문서와 JWKS 캐시 수명(초). 만료되면 한 요청만 다시 가져오고 나머지는 "
+            "직전 값을 쓴다. 실패하면 2초부터 최대 60초까지 늘어나는 간격 동안 다시 묻지 않고, "
+            "키는 수명이 지나고 최대 10분까지만 쓴다(#1323)"
+        ),
         default="`3600`",
         required="선택",
         kind="integer",
