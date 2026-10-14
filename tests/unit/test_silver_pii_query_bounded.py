@@ -308,8 +308,16 @@ def test_the_engine_sets_what_the_child_masks_and_nothing_inherited(
 def test_a_malformed_mask_list_is_refused_not_read_as_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: str
 ) -> None:
-    from kpubdata_builder.query.sandbox import MASKED_COLUMNS_ENV, open_sandbox
+    from multiprocessing import Pipe
+
+    from kpubdata_builder.query.engine import _query_worker
+    from kpubdata_builder.query.sandbox import MASKED_COLUMNS_ENV, masked_columns_from_env
 
     monkeypatch.setenv(MASKED_COLUMNS_ENV, raw)
-    with pytest.raises(ValueError), open_sandbox(str(_sandbox_table(tmp_path))):
-        pass
+    with pytest.raises(ValueError):
+        masked_columns_from_env()
+
+    # The query worker reads the list itself and refuses the query on a malformed one.
+    receiver, sender = Pipe(duplex=False)
+    _query_worker(sender, str(_sandbox_table(tmp_path)), "SELECT phone FROM dataset", 10, 0)
+    assert receiver.recv() == {"ok": False}
