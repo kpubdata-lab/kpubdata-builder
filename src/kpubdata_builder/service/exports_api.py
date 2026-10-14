@@ -22,7 +22,10 @@ the rows were all of them. This module is the one way out for a query result:
 - **Checked at download.** The caller must own the export (another owner's is absent,
   a 404, like their tables), it must not have expired (410), and the file must still be
   the one that was written (409). Exports expire after ``EXPORT_RETENTION`` and a
-  workspace holds at most ``MAX_LIVE_EXPORTS``.
+  workspace holds at most ``MAX_LIVE_EXPORTS``. A request takes its slot before it pins
+  or queries anything, by counting and reserving under one lock (#1343), so requests
+  arriving together cannot all fit under the last slot; a failed or cancelled request
+  gives its slot back.
 
 An export runs synchronously within ``EXPORT_TIMEOUT_SECONDS``. Queued exports with
 cancellation are a later step; the status vocabulary already names them.
@@ -30,12 +33,15 @@ cancellation are a later step; the status vocabulary already names them.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import re
 import secrets
 import shutil
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -85,11 +91,17 @@ from kpubdata_builder.warehouse import (
 
 EXPORT_RETENTION = timedelta(hours=24)
 MAX_LIVE_EXPORTS = 20
+#: How long a reservation holds a slot when its request never finishes, as when the
+#: process died mid-export. Well past ``EXPORT_TIMEOUT_SECONDS``, so a running export
+#: never loses its slot.
+RESERVATION_TTL = timedelta(minutes=10)
 MANIFEST_VERSION = 1
 _FIELDS = {"table", "snapshot", "sql", "format", "profile", "max_rows"}
 _ID = re.compile(r"^exp_[0-9a-f]{32}$")
 _BUNDLE = "export.zip"
 _RECORD = "export.json"
+_LOCK_SUFFIX = ".lock"
+_RESERVED = "reserved"
 #: Licence words that forbid derivatives: KOGL types 3 and 4 ("no modification"), and
 #: Creative Commons "ND". Matched on the licence identifier and name as declared.
 _NO_DERIVATIVES = re.compile(
@@ -267,6 +279,21 @@ class ExportStore:
             return None
         return self._root / export_id
 
+    @contextmanager
+    def locked(self) -> Iterator[None]:
+        """Hold the store's lock, across service handles and processes alike.
+
+        The lock file sits beside the store, not in it, so it is never taken for an export.
+        """
+        self._root.mkdir(parents=True, exist_ok=True)
+        lock = self._root.with_name(f"{self._root.name}{_LOCK_SUFFIX}")
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
     def create(self) -> tuple[str, Path]:
         export_id = f"exp_{secrets.token_hex(16)}"
         directory = self._root / export_id
@@ -349,12 +376,16 @@ class ExportsApiService:
     def _owned(self, export_id: str, principal: Principal) -> dict[str, JsonValue] | None:
         record = self._store.load(export_id)
         workspace = ownership.warehouse_workspace(principal.owner_id)
-        if record is None or record.get("workspace_id") != workspace:
+        if (
+            record is None
+            or record.get("workspace_id") != workspace
+            or record.get("status") == _RESERVED
+        ):
             return None
         return record
 
     def _live(self, workspace: str) -> list[dict[str, JsonValue]]:
-        """The workspace's unexpired exports; expired ones lose their files here."""
+        """The workspace's unexpired exports and reservations; expired ones lose their files."""
         live: list[dict[str, JsonValue]] = []
         for record in self._store.records():
             if record.get("workspace_id") != workspace:
@@ -366,6 +397,31 @@ class ExportsApiService:
                 continue
             live.append(record)
         return live
+
+    def _reserve(self, workspace: str, principal: Principal) -> tuple[str, Path] | None:
+        """Take one of the workspace's export slots, or None when none is free.
+
+        The count and the reservation are one step under the store's lock (#1343), so
+        two requests for the last slot cannot both find it free. The reservation is a
+        record that counts as live until the finished export replaces it or the request
+        removes it; it is never listed or served.
+        """
+        with self._store.locked():
+            if len(self._live(workspace)) >= MAX_LIVE_EXPORTS:
+                return None
+            export_id, directory = self._store.create()
+            now = self._now()
+            self._store.save(
+                {
+                    "export_id": export_id,
+                    "workspace_id": workspace,
+                    "owner_id": principal.owner_id,
+                    "status": _RESERVED,
+                    "created_at": _utc(now),
+                    "expires_at": _utc(now + RESERVATION_TTL),
+                }
+            )
+            return export_id, directory
 
     # ------------------------------------------------------------------ operations
 
@@ -420,7 +476,8 @@ class ExportsApiService:
             return ServiceResponse(
                 404, {"error": f"no such table: {name}", "code": "table_not_found"}
             )
-        if len(self._live(workspace)) >= MAX_LIVE_EXPORTS:
+        reserved = self._reserve(workspace, principal)
+        if reserved is None:
             return ServiceResponse(
                 429,
                 {
@@ -428,32 +485,49 @@ class ExportsApiService:
                     "code": "export_quota_exceeded",
                 },
             )
+        export_id, directory = reserved
+        kept = False
         try:
-            pin = _pin(catalog, table, snapshot)
-        except (TableNotFound, SnapshotNotFound) as exc:
-            return ServiceResponse(404, {"error": str(exc), "code": "snapshot_not_found"})
-        except SnapshotStateError as exc:
-            return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
-        try:
-            return self._create_pinned(
-                catalog,
-                table,
-                pin.snapshot_id,
-                pin.revision,
-                request={
-                    "table": name,
-                    "snapshot": snapshot,
-                    "sql": sql,
-                    "format": fmt,
-                    "profile": profile,
-                    "max_rows": max_rows,
-                },
-                plan_fields=(canonical_sql, cast(ExportFormat, fmt), cast(ExportProfile, profile)),
-                max_rows=max_rows,
-                principal=principal,
-            )
+            try:
+                pin = _pin(catalog, table, snapshot)
+            except (TableNotFound, SnapshotNotFound) as exc:
+                return ServiceResponse(404, {"error": str(exc), "code": "snapshot_not_found"})
+            except SnapshotStateError as exc:
+                return ServiceResponse(409, {"error": str(exc), "code": "snapshot_unavailable"})
+            try:
+                response = self._create_pinned(
+                    catalog,
+                    table,
+                    pin.snapshot_id,
+                    pin.revision,
+                    export_id=export_id,
+                    directory=directory,
+                    request={
+                        "table": name,
+                        "snapshot": snapshot,
+                        "sql": sql,
+                        "format": fmt,
+                        "profile": profile,
+                        "max_rows": max_rows,
+                    },
+                    plan_fields=(
+                        canonical_sql,
+                        cast(ExportFormat, fmt),
+                        cast(ExportProfile, profile),
+                    ),
+                    max_rows=max_rows,
+                    principal=principal,
+                )
+            finally:
+                catalog.release(pin.lease_id)
+            # Only an export whose record was saved answers 200.
+            kept = response.status_code == 200
+            return response
         finally:
-            catalog.release(pin.lease_id)
+            # Gives the slot back on any refusal, failure or cancellation. Only this
+            # request's own directory is removed, never a sibling's.
+            if not kept:
+                self._store.remove(export_id)
 
     def _create_pinned(
         self,
@@ -462,6 +536,8 @@ class ExportsApiService:
         snapshot_id: str,
         revision: int,
         *,
+        export_id: str,
+        directory: Path,
         request: dict[str, JsonValue],
         plan_fields: tuple[str, ExportFormat, ExportProfile],
         max_rows: int,
@@ -493,157 +569,154 @@ class ExportsApiService:
             )
 
         canonical_sql, fmt, profile = plan_fields
-        export_id, directory = self._store.create()
-        kept = False
+        data_name = f"data.{fmt}"
+        data_path = directory / data_name
+        plan = ExportPlan(
+            canonical_sql=canonical_sql,
+            output_path=str(data_path),
+            format=fmt,
+            profile=profile,
+            max_rows=max_rows,
+            max_bytes=MAX_EXPORT_BYTES,
+        )
         try:
-            data_name = f"data.{fmt}"
-            data_path = directory / data_name
-            plan = ExportPlan(
-                canonical_sql=canonical_sql,
-                output_path=str(data_path),
-                format=fmt,
-                profile=profile,
-                max_rows=max_rows,
-                max_bytes=MAX_EXPORT_BYTES,
+            result = self._engine.execute_export(table_path, plan.to_json())
+        except QueryBusyError:
+            return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
+        except QueryTimeoutError:
+            return ServiceResponse(504, {"error": "export timed out", "code": "query_timeout"})
+        except QueryResourceLimitError as exc:
+            return ServiceResponse(400, {"error": str(exc), "code": "query_resource_limit"})
+        except QueryExecutionError:
+            return ServiceResponse(
+                400, {"error": "export query failed", "code": "query_execution_failed"}
             )
-            try:
-                result = self._engine.execute_export(table_path, plan.to_json())
-            except QueryBusyError:
-                return ServiceResponse(429, {"error": "query is busy", "code": "query_busy"})
-            except QueryTimeoutError:
-                return ServiceResponse(504, {"error": "export timed out", "code": "query_timeout"})
-            except QueryResourceLimitError as exc:
-                return ServiceResponse(400, {"error": str(exc), "code": "query_resource_limit"})
-            except QueryExecutionError:
-                return ServiceResponse(
-                    400, {"error": "export query failed", "code": "query_execution_failed"}
-                )
-            meta = result.meta
-            refusal = meta.get("refusal")
-            if isinstance(refusal, dict):
-                what = "rows" if refusal.get("code") == "row_limit_exceeded" else "bytes"
-                return ServiceResponse(
-                    422,
-                    {
-                        "error": f"the result exceeds the export's limit of {refusal.get('limit')}"
-                        f" {what}; nothing was exported",
-                        "code": str(refusal.get("code")),
-                        "limit": refusal.get("limit"),
-                    },
-                )
-            findings = meta.get("pii")
-            blockers = pii_blockers(
-                spec,
-                [f for f in findings if isinstance(f, dict)] if isinstance(findings, list) else [],
+        meta = result.meta
+        refusal = meta.get("refusal")
+        if isinstance(refusal, dict):
+            what = "rows" if refusal.get("code") == "row_limit_exceeded" else "bytes"
+            return ServiceResponse(
+                422,
+                {
+                    "error": f"the result exceeds the export's limit of {refusal.get('limit')}"
+                    f" {what}; nothing was exported",
+                    "code": str(refusal.get("code")),
+                    "limit": refusal.get("limit"),
+                },
             )
-            if blockers:
-                return ServiceResponse(
-                    403,
-                    {
-                        "error": "the result holds values that look like personal information, "
-                        "and the source's PII policy does not allow them out",
-                        "code": "export_blocked_pii",
-                        "findings": blockers,
-                    },
-                )
+        findings = meta.get("pii")
+        blockers = pii_blockers(
+            spec,
+            [f for f in findings if isinstance(f, dict)] if isinstance(findings, list) else [],
+        )
+        if blockers:
+            return ServiceResponse(
+                403,
+                {
+                    "error": "the result holds values that look like personal information, "
+                    "and the source's PII policy does not allow them out",
+                    "code": "export_blocked_pii",
+                    "findings": blockers,
+                },
+            )
 
-            now = self._now()
-            created_at, expires_at = _utc(now), _utc(now + EXPORT_RETENTION)
-            altered = meta.get("altered")
-            manifest: dict[str, JsonValue] = {
-                "manifest_version": MANIFEST_VERSION,
-                "export_id": export_id,
-                "created_at": created_at,
-                "expires_at": expires_at,
-                "query": {
-                    "sql": request["sql"],
-                    # Any query can reshape, filter or compute; Builder cannot tell one
-                    # that does not, so every query export is recorded as derived.
-                    "user_derived": True,
+        now = self._now()
+        created_at, expires_at = _utc(now), _utc(now + EXPORT_RETENTION)
+        altered = meta.get("altered")
+        manifest: dict[str, JsonValue] = {
+            "manifest_version": MANIFEST_VERSION,
+            "export_id": export_id,
+            "created_at": created_at,
+            "expires_at": expires_at,
+            "query": {
+                "sql": request["sql"],
+                # Any query can reshape, filter or compute; Builder cannot tell one
+                # that does not, so every query export is recorded as derived.
+                "user_derived": True,
+            },
+            "snapshot": {
+                "table_id": table.id,
+                "logical_name": table.logical_name,
+                "snapshot_id": snapshot_id,
+                "revision": revision,
+                "run_id": snapshot.run_id,
+                "artifact_digest": snapshot.artifact_digest,
+                "row_count": snapshot.row_count,
+                "coverage": _coverage(snapshot.coverage),
+            },
+            "source": {
+                "dataset_id": terms.dataset_id,
+                "terms": terms.body(),
+                "provenance": _provenance(
+                    spec, read_manifest(self._output_root, snapshot.run_id), table.logical_name
+                ),
+            },
+            "output": {
+                "format": fmt,
+                "profile": profile,
+                "encoding": "utf-8",
+                "bom": profile == "spreadsheet",
+                "row_count": meta.get("row_count"),
+                "completeness": "full",
+                # Described like the query's columns (#702): a text code column is
+                # an identifier. The file's cells were written as the strings they are.
+                "columns": describe_json_columns(
+                    meta.get("column_meta"),
+                    spec_semantics(spec, table_key(spec, table.logical_name)),
+                ),
+                "values_altered": [
+                    {"column": column, "count": count, "reason": "formula_prefix"}
+                    for column, count in sorted(altered.items())
+                ]
+                if isinstance(altered, dict)
+                else [],
+                "file": {
+                    "name": data_name,
+                    "bytes": meta.get("bytes"),
+                    "sha256": meta.get("sha256"),
                 },
-                "snapshot": {
-                    "table_id": table.id,
-                    "logical_name": table.logical_name,
-                    "snapshot_id": snapshot_id,
-                    "revision": revision,
-                    "run_id": snapshot.run_id,
-                    "artifact_digest": snapshot.artifact_digest,
-                    "row_count": snapshot.row_count,
-                    "coverage": _coverage(snapshot.coverage),
-                },
-                "source": {
-                    "dataset_id": terms.dataset_id,
-                    "terms": terms.body(),
-                    "provenance": _provenance(
-                        spec, read_manifest(self._output_root, snapshot.run_id), table.logical_name
-                    ),
-                },
-                "output": {
-                    "format": fmt,
-                    "profile": profile,
-                    "encoding": "utf-8",
-                    "bom": profile == "spreadsheet",
-                    "row_count": meta.get("row_count"),
-                    "completeness": "full",
-                    # Described like the query's columns (#702): a text code column is
-                    # an identifier. The file's cells were written as the strings they are.
-                    "columns": describe_json_columns(
-                        meta.get("column_meta"),
-                        spec_semantics(spec, table_key(spec, table.logical_name)),
-                    ),
-                    "values_altered": [
-                        {"column": column, "count": count, "reason": "formula_prefix"}
-                        for column, count in sorted(altered.items())
-                    ]
-                    if isinstance(altered, dict)
-                    else [],
-                    "file": {
-                        "name": data_name,
-                        "bytes": meta.get("bytes"),
-                        "sha256": meta.get("sha256"),
-                    },
-                },
-                "pii": {
-                    "policy": spec.pii.mode if spec is not None and spec.pii is not None else None,
-                    "allowed_findings": findings if isinstance(findings, list) else [],
-                },
-            }
-            bundle = directory / _BUNDLE
-            with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                archive.write(data_path, data_name)
-                archive.writestr(
-                    "manifest.json",
-                    json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                )
-                archive.writestr("NOTICE.md", _notice(manifest))
-            data_path.unlink()
-            record: dict[str, JsonValue] = {
-                "export_id": export_id,
-                "workspace_id": ownership.warehouse_workspace(principal.owner_id),
-                "owner_id": principal.owner_id,
-                "status": "completed",
-                "created_at": created_at,
-                "expires_at": expires_at,
-                "request": request,
-                "manifest": manifest,
-                "bundle": {
-                    "filename": _BUNDLE,
-                    "media_type": "application/zip",
-                    "bytes": bundle.stat().st_size,
-                    "sha256": sha256_file(bundle),
-                    "files": [data_name, "manifest.json", "NOTICE.md"],
-                },
-            }
-            self._store.save(record)
-            kept = True
-            return ServiceResponse(200, self._body(record))
-        finally:
-            if not kept:
-                self._store.remove(export_id)
+            },
+            "pii": {
+                "policy": spec.pii.mode if spec is not None and spec.pii is not None else None,
+                "allowed_findings": findings if isinstance(findings, list) else [],
+            },
+        }
+        bundle = directory / _BUNDLE
+        with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(data_path, data_name)
+            archive.writestr(
+                "manifest.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            )
+            archive.writestr("NOTICE.md", _notice(manifest))
+        data_path.unlink()
+        record: dict[str, JsonValue] = {
+            "export_id": export_id,
+            "workspace_id": ownership.warehouse_workspace(principal.owner_id),
+            "owner_id": principal.owner_id,
+            "status": "completed",
+            "created_at": created_at,
+            "expires_at": expires_at,
+            "request": request,
+            "manifest": manifest,
+            "bundle": {
+                "filename": _BUNDLE,
+                "media_type": "application/zip",
+                "bytes": bundle.stat().st_size,
+                "sha256": sha256_file(bundle),
+                "files": [data_name, "manifest.json", "NOTICE.md"],
+            },
+        }
+        self._store.save(record)
+        return ServiceResponse(200, self._body(record))
 
     def list(self, *, principal: Principal) -> ServiceResponse:
         workspace = ownership.warehouse_workspace(principal.owner_id)
-        records = sorted(self._live(workspace), key=lambda r: str(r["created_at"]), reverse=True)
+        records = sorted(
+            (r for r in self._live(workspace) if r.get("status") != _RESERVED),
+            key=lambda r: str(r["created_at"]),
+            reverse=True,
+        )
         return ServiceResponse(200, {"exports": [self._body(r) for r in records]})
 
     def get(self, export_id: str, *, principal: Principal) -> ServiceResponse:
@@ -701,6 +774,7 @@ class ExportsApiService:
 __all__ = [
     "EXPORT_RETENTION",
     "MAX_LIVE_EXPORTS",
+    "RESERVATION_TTL",
     "ExportStore",
     "ExportsApiService",
     "SourceTerms",

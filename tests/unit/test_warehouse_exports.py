@@ -21,6 +21,7 @@ import csv
 import io
 import json
 import multiprocessing
+import threading
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -279,6 +280,181 @@ def test_a_workspace_keeps_a_bounded_number_of_exports(
     service.delete_warehouse_export(first["export_id"], principal=_DEV)
 
     assert (refused.status_code, refused.body["code"]) == (429, "export_quota_exceeded")
+    _ok(_export(service))
+
+
+class _GatedExportEngine(_InProcessExportEngine):
+    """Holds each export in the engine until every request has entered it or returned.
+
+    Under a check made apart from the reservation, every request reaches the engine
+    before any records its export, which is the race (#1343). Under an atomic
+    reservation the requests that found no slot return first, and the gate opens.
+    """
+
+    def __init__(self, requests: int) -> None:
+        self._cond = threading.Condition()
+        self._requests = requests
+        self._settled = 0
+        self._entered: set[int] = set()
+
+    def _settle(self) -> None:
+        with self._cond:
+            self._settled += 1
+            self._cond.notify_all()
+
+    def returned(self) -> None:
+        """Called by a request that is done; it counts if it never entered the engine."""
+        if threading.get_ident() not in self._entered:
+            self._settle()
+
+    def execute(self, table_path: Path, plan_json: str, *, limit: int) -> QueryResult:
+        self._entered.add(threading.get_ident())
+        self._settle()
+        with self._cond:
+            assert self._cond.wait_for(lambda: self._settled >= self._requests, timeout=30)
+        return super().execute(table_path, plan_json, limit=limit)
+
+
+def _handles(
+    service: BuilderService, tmp_path: Path, engine: _InProcessExportEngine, count: int
+) -> list[exports_module.ExportsApiService]:
+    """Separate export services over one output directory and one warehouse."""
+    catalog = _catalog(service)
+    query = QueryService(export_engine=engine, max_concurrency=count)  # type: ignore[arg-type]
+    return [
+        exports_module.ExportsApiService(
+            output_root=tmp_path, table_catalog=lambda: catalog, engine=query
+        )
+        for _ in range(count)
+    ]
+
+
+def _race(
+    handles: list[exports_module.ExportsApiService],
+    gate: _GatedExportEngine,
+    bodies: list[dict[str, Any]],
+) -> list[ServiceResponse]:
+    """Send one request per handle at once, released together by a barrier."""
+    barrier = threading.Barrier(len(handles))
+    responses: list[ServiceResponse | None] = [None] * len(handles)
+
+    def send(index: int) -> None:
+        barrier.wait(timeout=30)
+        try:
+            responses[index] = handles[index].create(
+                {"table": _NAME, "sql": _SQL, **bodies[index]}, principal=_DEV
+            )
+        finally:
+            gate.returned()
+
+    threads = [threading.Thread(target=send, args=(i,)) for i in range(len(handles))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert all(not thread.is_alive() for thread in threads)
+    assert all(response is not None for response in responses)
+    return cast(list[ServiceResponse], responses)
+
+
+def test_concurrent_requests_cannot_take_more_slots_than_remain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(exports_module, "MAX_LIVE_EXPORTS", 2)
+    service = _service(tmp_path)
+    snapshot = _commit(service, tmp_path)
+    _ok(_export(service))  # one slot remains
+    gate = _GatedExportEngine(requests=6)
+    handles = _handles(service, tmp_path, gate, 6)
+
+    responses = _race(handles, gate, [{}] * 6)
+
+    codes = sorted((r.status_code, r.body.get("code")) for r in responses)
+    assert codes == [(200, None)] + [(429, "export_quota_exceeded")] * 5
+    refused = next(r for r in responses if r.status_code == 429)
+    assert refused.body == {
+        "error": "at most 2 exports are kept; delete one first",
+        "code": "export_quota_exceeded",
+    }
+    assert len(_ok(service.list_warehouse_exports(principal=_DEV))["exports"]) == 2
+    assert len(_export_dirs(tmp_path)) == 2
+    assert _catalog(service).live_lease_count(snapshot) == 0
+
+
+def test_a_sibling_failure_does_not_drop_a_concurrent_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(exports_module, "MAX_LIVE_EXPORTS", 2)
+    service = _service(tmp_path)
+    snapshot = _commit(service, tmp_path)
+    gate = _GatedExportEngine(requests=2)
+    handles = _handles(service, tmp_path, gate, 2)
+
+    ok, failed = _race(handles, gate, [{}, {"max_rows": 1}])
+
+    assert (failed.status_code, failed.body["code"]) == (422, "row_limit_exceeded")
+    export_id = _ok(ok)["export_id"]
+    assert [d.name for d in _export_dirs(tmp_path)] == [export_id]
+    assert _csv_rows(_bundle(service, export_id))[1] == ["00123", "12.50"]
+    assert _catalog(service).live_lease_count(snapshot) == 0
+    # The failed request's slot is free again.
+    _ok(_export(service))
+
+
+class _Cancelled(BaseException):
+    """Stands in for a request torn down mid-export (a client gone, a worker stopped)."""
+
+
+def test_a_cancelled_export_releases_its_slot_and_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(exports_module, "MAX_LIVE_EXPORTS", 1)
+    service = _service(tmp_path)
+    snapshot = _commit(service, tmp_path)
+
+    def cancel(*_: object, **__: object) -> QueryResult:
+        raise _Cancelled
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_InProcessExportEngine, "execute", cancel)
+        with pytest.raises(_Cancelled):
+            _export(service)
+
+    assert _export_dirs(tmp_path) == []
+    assert _catalog(service).live_lease_count(snapshot) == 0
+    _ok(_export(service))
+
+
+def test_a_refused_pin_releases_the_reserved_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(exports_module, "MAX_LIVE_EXPORTS", 1)
+    service = _service(tmp_path)
+    _commit(service, tmp_path)
+
+    response = _export(service, snapshot="snap_missing")
+
+    assert (response.status_code, response.body["code"]) == (404, "snapshot_not_found")
+    assert _export_dirs(tmp_path) == []
+    _ok(_export(service))
+
+
+def test_an_abandoned_reservation_stops_counting_once_it_expires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(exports_module, "MAX_LIVE_EXPORTS", 1)
+    service = _service(tmp_path)
+    _commit(service, tmp_path)
+    exports = service._exports_api
+    # A process that died between reserving and finishing leaves its reservation behind.
+    assert exports._reserve(warehouse_workspace(_DEV.owner_id), _DEV) is not None
+
+    refused = _export(service)
+    assert (refused.status_code, refused.body["code"]) == (429, "export_quota_exceeded")
+    assert _ok(service.list_warehouse_exports(principal=_DEV))["exports"] == []
+
+    later = datetime.now(timezone.utc) + exports_module.RESERVATION_TTL + timedelta(seconds=1)
+    exports._now = lambda: later
     _ok(_export(service))
 
 
