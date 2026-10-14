@@ -57,9 +57,16 @@ def test_the_line_is_appended_to_the_notes(tmp_path: Path) -> None:
 
 
 def test_the_release_records_it_before_the_tag_exists() -> None:
-    """After the gates (so the version is the tested one), before the release is created."""
-    workflow = yaml.safe_load((_ROOT / ".github" / "workflows" / "release.yml").read_text("utf-8"))
-    steps = [step.get("name") for step in workflow["jobs"]["release"]["steps"]]
+    """After the gates (so the version is the tested one), before the release is created.
 
+    The gates are the ``release`` job and the tag is the ``tag`` job's, which runs only
+    after it (#1324).
+    """
+    workflow = yaml.safe_load((_ROOT / ".github" / "workflows" / "release.yml").read_text("utf-8"))
+    gates = [step.get("name") for step in workflow["jobs"]["release"]["steps"]]
+    tag_job = workflow["jobs"]["tag"]
+    steps = [step.get("name") for step in tag_job["steps"]]
+
+    assert "Run quality gates" in gates and "release" in tag_job["needs"]
     record = steps.index("Record what the release was tested with")
-    assert steps.index("Run quality gates") < record < steps.index("Tag and release")
+    assert record < steps.index("Tag and release")

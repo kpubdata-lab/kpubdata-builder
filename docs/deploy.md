@@ -853,8 +853,11 @@ split-topology(별도 CUBRID DB VM)와 달리 **DB 서버 없이 단일 app VM +
 - 어떤 경로가 어떤 태그를 올리는지는 `docker.yml` 머리 주석에 있다. 요약하면 다음과 같다.
   - 풀 리퀘스트: 올리지 않는다.
   - `main` push: `main`, `latest`, `sha-…`.
-  - 릴리스: `release.yml` 이 `publish: true` 로 부른다. 릴리스 풀 리퀘스트를 머지한 경우도 같다.
-  - 릴리스 태그의 이미지 digest 가 없으면 `release.yml` 의 `Image published` 작업이 실패한다(#1142).
+  - 릴리스: `release.yml` 이 게이트를 통과한 커밋으로 `publish: true` 를 주어 부른다. 릴리스 풀 리퀘스트를 머지한 경우도 같다.
+    이미지 빌드, 런타임 smoke, Trivy 스캔(수정판이 있는 HIGH/CRITICAL 이면 실패)이 **git 태그보다 먼저** 돈다(#1324).
+    하나라도 실패하면 태그도 GitHub Release 도 만들어지지 않는다.
+  - 그다음 `release.yml` 의 `tag` 작업이 레지스트리가 릴리스 태그로 내주는 digest 가 방금 올린 digest 와 같은지 확인하고
+    그 digest 를 다시 스캔한 뒤에야 태그와 릴리스를 만든다. 릴리스 노트에 그 digest 가 적힌다. digest 가 없으면 이 작업이 실패한다(#1142).
 
 VM 최초 준비. compose 파일, `ops/caddy/`, `.env.app.example` 이 필요하므로 저장소를 받아 그 안에서
 실행한다. Builder 이미지 패키지는 비공개라서 먼저 GHCR 에 로그인한다 — 패키지 읽기(`read:packages`)

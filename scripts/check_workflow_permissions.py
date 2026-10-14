@@ -92,9 +92,9 @@ ALLOWED: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"packages", "id-token"}),
         "calls docker.yml to publish, only after `release` ran for a merged release PR",
     ),
-    "release.yml:release": (
+    "release.yml:tag": (
         frozenset({"contents"}),
-        "tags and creates the release; on a pull request only for a merged release PR",
+        "tags and creates the release after the image passed; merged release PR only",
     ),
     "release.yml:prepare": (
         frozenset({"contents", "pull-requests"}),
