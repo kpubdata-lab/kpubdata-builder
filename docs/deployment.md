@@ -23,7 +23,7 @@
 | `KPUBDATA_BUILDER_TRUSTED_PROXIES` | 리버스 프록시의 주소나 CIDR 블록(콤마 구분). TCP peer 가 그중 하나일 때에만 `X-Forwarded-For` 로 인증 실패 스로틀의 클라이언트를 가린다([deploy.md](deploy.md) "리버스 프록시 뒤에서") | 미설정 (헤더를 읽지 않음) | 선택 |
 | `KPUBDATA_BUILDER_ADMIN_SUBJECTS` | 관리자로 대우할 `<issuer>\|<sub>` 목록(쉼표 구분, #679). 관리 엔드포인트(`GET /admin/runs`, `GET /admin/config`)를 열지만 남의 run 산출물은 열지 않는다. **issuer 를 반드시 함께 적는다** — `sub` 는 issuer 안에서만 유일하고 `OIDC_ISSUER` 는 복수를 허용한다. issuer 없는 항목은 경고와 함께 무시된다. OIDC 배포에서는 이 변수를 컨테이너까지 전달해야 한다 | 미설정 | 다중 사용자 배포 시 선택 |
 | `OIDC_JWKS_URL` | JWKS 엔드포인트를 직접 지정한다. 미설정 시 issuer의 discovery 문서에서 찾는다 | 미설정 | 선택 |
-| `OIDC_JWKS_TTL` | JWKS 캐시 수명(초). 만료되면 다음 Bearer 인증이 다시 가져온다 | `3600` | 선택 |
+| `OIDC_JWKS_TTL` | discovery 문서와 JWKS 캐시 수명(초). 만료되면 한 요청만 다시 가져오고 나머지는 직전 값을 쓴다. 실패하면 2초부터 최대 60초까지 늘어나는 간격 동안 다시 묻지 않고, 키는 수명이 지나고 최대 10분까지만 쓴다(#1323) | `3600` | 선택 |
 | `OIDC_ISSUER` | OIDC 발급자 (설정 시 Bearer 활성, ADR 0015 — Keycloak realm). 쉼표로 여럿을 줄 수 있고, 그때는 아래 허용 목록의 모든 항목이 `<issuer>\|<값>` 이어야 한다(#1074) | 미설정 | 선택 |
 | `OIDC_AUDIENCE` | OIDC audience (OIDC_ISSUER 설정 시 필수) | 미설정 | OIDC 시 필수 |
 | `OIDC_ALLOWED_HD` | 허용 Workspace 도메인. OIDC 배포는 이 셋 중 하나 이상이 필수 — 없으면 기동 거부(#635). 세 목록의 항목은 `<값>` 또는 `<issuer>\|<값>` 이다. issuer 를 적은 항목은 그 issuer 가 말한 값만 들인다 — sub·이메일·도메인은 issuer 안에서만 뜻이 있다. issuer 가 하나면 `<값>` 은 그 issuer 의 것이고, 둘 이상인데 `<값>` 만 적은 항목이 있으면 기동을 거부한다(#1074). issuer 는 `OIDC_ISSUER` 에 적은 그대로 쓴다 | 미설정 | OIDC 시 셋 중 하나 필수 |
