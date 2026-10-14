@@ -14,6 +14,7 @@ import pytest
 
 import kpubdata_builder.query.engine as engine_module
 from kpubdata_builder.query.engine import QueryEngine, QueryExecutionError, QueryTimeoutError
+from kpubdata_builder.query.sandbox import MASKED_COLUMNS_ENV
 
 from .conftest import spawn_timeout_multiplier
 
@@ -185,6 +186,8 @@ def test_worker_rejects_result_over_response_byte_cap(
     pl.DataFrame({"value": ["x" * 200]}).write_parquet(table_path)
     connection = _CaptureConnection()
     monkeypatch.setattr(engine_module, "MAX_QUERY_RESPONSE_BYTES", 100)
+    # The engine tells every child what to mask (#1331); this query masks nothing.
+    monkeypatch.setenv(MASKED_COLUMNS_ENV, "[]")
 
     engine_module._query_worker(
         connection,  # type: ignore[arg-type]

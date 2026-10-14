@@ -166,10 +166,11 @@ def _query_worker(
 ) -> None:
     try:
         from .result import stream_result
-        from .sandbox import open_sandbox
+        from .sandbox import masked_columns_from_env, open_sandbox
         from .stored_columns import stored_null_outputs
 
-        with open_sandbox(table_path) as sandbox:
+        # Passed explicitly: a child not told what to mask refuses rather than masks none.
+        with open_sandbox(table_path, masked=masked_columns_from_env()) as sandbox:
             # Startup ends after spawn, imports and the locked connection, before the query.
             startup_ms = _elapsed_ms(parent_started_ns)
             engine_started_ns = time.monotonic_ns()

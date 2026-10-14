@@ -2,7 +2,8 @@
 
 The query child opens one of these and nothing else. It is the second of three
 layers — the SQL validator (``security``) before it, the child process (``engine``)
-around it — and does not rely on the other two:
+around it. It holds its limits without the other two; what it does not do on its own
+is keep a Silver table's original values away from SQL (see *Masked columns*):
 
 - **One file, one directory.** The connection may read the pinned ``table.parquet``
   (``allowed_paths``) and spill into its own temporary directory
@@ -26,6 +27,14 @@ around it — and does not rely on the other two:
   view sees an original value. The mask is part of the view rather than a copy of the
   table (#1331): DuckDB applies it to the rows a query reads, and its cost is the
   query's, inside the child's timeout, memory cap and spill quota.
+- **The raw Silver file is reachable; the validator keeps SQL off it.** The views read
+  the file, so its path stays on ``allowed_paths`` even when columns are masked: on
+  this connection ``read_parquet('<path>')``, ``FROM '<path>'`` or
+  ``parquet_metadata('<path>')`` (whose statistics are values) would return original
+  values. For Silver, the validator — which lets user SQL name only ``dataset`` and no
+  table function or quoted path — is the only layer that keeps the raw file out of a
+  query (#1331). Keeping it out here too costs pyarrow's memory in the child, which the
+  768 MB default cap does not leave room for (#1363, not taken).
 
 Paths are written into SQL only through ``quote_literal`` and come from the server,
 never from a request.
@@ -115,15 +124,15 @@ def _masked(physical: str, storage: str, dtype: str | None) -> str:
 
 
 def masked_columns_from_env() -> frozenset[str]:
-    """The columns the engine asked this child to mask; none when it asked for none.
+    """The columns the engine asked this child to mask; an empty list masks none.
 
     Raises:
-        ValueError: The value is not a JSON list of names — refused rather than read as
-            "mask nothing".
+        ValueError: The variable is unset, or is not a JSON list of names — refused
+            rather than read as "mask nothing". The engine sets it on every query.
     """
     raw = os.environ.get(MASKED_COLUMNS_ENV)
     if raw is None:
-        return frozenset()
+        raise ValueError(f"{MASKED_COLUMNS_ENV} is not set")
     decoded = json.loads(raw)
     if not isinstance(decoded, list) or not all(isinstance(name, str) for name in decoded):
         raise ValueError(f"{MASKED_COLUMNS_ENV} must be a JSON list of column names")
@@ -146,15 +155,16 @@ def open_sandbox(
     table_path: str,
     *,
     profile: BuildProfile | None = None,
-    masked: Collection[str] | None = None,
+    masked: Collection[str] = (),
 ) -> Iterator[Sandbox]:
     """A locked connection whose ``dataset`` is ``table_path``; closed on exit.
 
     Args:
-        masked: Columns, by real name, that both views show masked (#1331). None reads
-            :data:`MASKED_COLUMNS_ENV`, which the query engine sets in its child.
+        masked: Columns, by real name, that both views show masked (#1331). A name the
+            table does not have is ignored. The query child passes what
+            :func:`masked_columns_from_env` says; nothing else here reads it.
     """
-    withheld = frozenset(masked) if masked is not None else masked_columns_from_env()
+    withheld = frozenset(masked)
     limits = profile or BuildProfile.from_env()
     given = os.environ.get(TEMP_DIR_ENV)
     temp_dir = given or tempfile.mkdtemp(prefix="kpubdata-query-")

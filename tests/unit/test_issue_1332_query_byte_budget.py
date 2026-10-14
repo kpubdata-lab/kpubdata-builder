@@ -16,6 +16,7 @@ import pytest
 
 import kpubdata_builder.query.engine as engine_module
 import kpubdata_builder.query.result as result_module
+from kpubdata_builder.query.sandbox import MASKED_COLUMNS_ENV
 
 
 class _CaptureConnection:
@@ -36,6 +37,12 @@ def _table(tmp_path: Path, values: list[str]) -> Path:
     path = tmp_path / "table.parquet"
     pl.DataFrame({"value": values}).write_parquet(path)
     return path
+
+
+@pytest.fixture(autouse=True)
+def _masks_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The engine tells every child what to mask (#1331); these queries mask nothing."""
+    monkeypatch.setenv(MASKED_COLUMNS_ENV, "[]")
 
 
 def _run(table: Path, sql: str, limit: int) -> object:
