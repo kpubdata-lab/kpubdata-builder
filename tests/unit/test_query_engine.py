@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,32 @@ def _sleeping_worker(
         connection.close()
 
 
+def _slow_pid_worker(
+    connection: Connection,
+    table_path: str,
+    canonical_sql: str,
+    limit: int,
+    parent_started_ns: int,
+) -> None:
+    """Create the pid file empty and fill it later, the window #1370 hit on CI."""
+    del canonical_sql, limit, parent_started_ns
+    try:
+        with open(table_path, "w", encoding="utf-8") as handle:
+            handle.flush()
+            time.sleep(0.3)
+            handle.write(str(os.getpid()))
+        time.sleep(60)
+    finally:
+        connection.close()
+
+
+def _read_pid(pid_file: Path) -> int | None:
+    try:
+        return int(pid_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return None
+
+
 def _pid_is_alive(pid: int) -> bool:
     if os.name == "nt":
         import ctypes
@@ -55,28 +82,35 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def test_timeout_leaves_child_not_alive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("worker", [_sleeping_worker, _slow_pid_worker])
+def test_timeout_leaves_child_not_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker: Callable[..., None]
+) -> None:
     """The timeout is reached once the child has published its pid, not seconds later.
 
     The subject is the child's state after the engine times out; waiting out a real
     timeout only added its length to every run (#1184). Windows spawn imports the test
     module in a fresh interpreter, so the wait for the pid keeps the spawn multiplier.
+    The wait is for a pid that parses, not for the file: the child creates the file
+    before it writes the pid, and reading in between gave an empty string (#1370).
     """
     pid_file = tmp_path / "child.pid"
+    wait_seconds = 20 * spawn_timeout_multiplier()
 
     def timed_out(self: Connection, timeout: float | None = 0.0) -> bool:
-        deadline = time.monotonic() + 20 * spawn_timeout_multiplier()
-        while not pid_file.exists() and time.monotonic() < deadline:
+        deadline = time.monotonic() + wait_seconds
+        while _read_pid(pid_file) is None and time.monotonic() < deadline:
             time.sleep(0.01)
         return False
 
     monkeypatch.setattr(Connection, "poll", timed_out)
-    engine = QueryEngine(timeout_seconds=60, worker=_sleeping_worker)
+    engine = QueryEngine(timeout_seconds=60, worker=worker)
 
     with pytest.raises(QueryTimeoutError):
         engine.execute(pid_file, "SELECT * FROM dataset", limit=1)
 
-    pid = int(pid_file.read_text(encoding="utf-8"))
+    pid = _read_pid(pid_file)
+    assert pid is not None, f"the child did not publish its pid within {wait_seconds}s"
     assert not _pid_is_alive(pid)
 
 
