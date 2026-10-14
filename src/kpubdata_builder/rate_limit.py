@@ -11,6 +11,12 @@ long to wait) or reserves the next free slot and sleeps until it comes
 (:meth:`WindowLimiter.wait`). A reserved slot is counted from the moment it is
 reserved, so callers that wait are served in the order they arrived. A restart forgets
 every window, which errs on the side of allowing.
+
+A wait that ends without its call — cancelled, or interrupted by an exception — gives
+its slot back (#1328), so no later caller waits behind a call that never happens. A
+caller that can be cancelled looks at its slot again every half second: it notices the
+cancellation that soon, and moves up when a slot before its own is given back. A caller
+that cannot be cancelled sleeps once to its slot, which therefore never moves.
 """
 
 from __future__ import annotations
@@ -24,6 +30,9 @@ from collections.abc import Callable
 
 #: The window every limit is counted over, in seconds.
 WINDOW_SECONDS = 60.0
+
+#: How long a cancellable wait sleeps before it looks at its slot and signal again.
+POLL_SECONDS = 0.5
 
 
 def per_minute_from_env(name: str) -> int:
@@ -50,6 +59,23 @@ class RateLimited(Exception):
         self.retry_after_seconds = retry_after_seconds
 
 
+class WaitCancelled(Exception):
+    """A wait ended because its caller was cancelled; its slot was given back."""
+
+    def __init__(self) -> None:
+        super().__init__("wait cancelled")
+
+
+class _Slot:
+    """One counted event: when it happens, and whether its waiter can move it earlier."""
+
+    __slots__ = ("at", "movable")
+
+    def __init__(self, at: float, *, movable: bool) -> None:
+        self.at = at
+        self.movable = movable
+
+
 class WindowLimiter:
     """At most ``per_minute()`` events per key in any 60 seconds. Thread-safe.
 
@@ -68,25 +94,53 @@ class WindowLimiter:
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
-        self._windows: dict[str, deque[float]] = {}
+        self._windows: dict[str, deque[_Slot]] = {}
 
     def _next_slot(self, key: str, limit: int, now: float) -> float:
         """When the next event of ``key`` may happen; ``now`` when it may at once."""
         # Windows that hold only expired events decide nothing any more.
-        for name in [n for n, w in self._windows.items() if not w or w[-1] <= now - WINDOW_SECONDS]:
+        expired = now - WINDOW_SECONDS
+        for name in [n for n, w in self._windows.items() if not w or w[-1].at <= expired]:
             del self._windows[name]
         window = self._windows.get(key)
         if window is None:
             return now
-        while window and window[0] <= now - WINDOW_SECONDS:
+        while window and window[0].at <= expired:
             window.popleft()
         if len(window) < limit:
             return now
         # The slot frees when the event ``limit`` places back leaves the window.
-        return max(now, window[-limit] + WINDOW_SECONDS)
+        return max(now, window[-limit].at + WINDOW_SECONDS)
 
-    def _record(self, key: str, at: float) -> None:
-        self._windows.setdefault(key, deque()).append(at)
+    def _record(self, key: str, at: float, *, movable: bool = False) -> _Slot:
+        slot = _Slot(at, movable=movable)
+        self._windows.setdefault(key, deque()).append(slot)
+        return slot
+
+    def _release(self, key: str, slot: _Slot) -> None:
+        """Give back ``slot``, whose call will not happen, and move up who waits for it.
+
+        Waiters behind it that can move take the earliest slot the window allows, never
+        before the waiter ahead of them, so they are still served in arrival order.
+        """
+        with self._lock:
+            window = self._windows.get(key)
+            if window is None:
+                return
+            index = next((i for i, held in enumerate(window) if held is slot), None)
+            if index is None:
+                return
+            del window[index]
+            limit = self._per_minute()
+            now = self._clock()
+            for position in range(index, len(window)):
+                later = window[position]
+                if not later.movable or later.at <= now:
+                    continue
+                earliest = max(now, window[position - 1].at) if position else now
+                if limit > 0 and position >= limit:
+                    earliest = max(earliest, window[position - limit].at + WINDOW_SECONDS)
+                later.at = min(later.at, earliest)
 
     def admit(self, key: str) -> None:
         """Count one event of ``key`` now.
@@ -104,19 +158,48 @@ class WindowLimiter:
                 raise RateLimited(max(1, math.ceil(slot - now)))
             self._record(key, now)
 
-    def wait(self, key: str) -> float:
-        """Reserve the next slot of ``key`` and sleep until it comes; the seconds slept."""
+    def wait(self, key: str, *, cancelled: Callable[[], bool] | None = None) -> float:
+        """Reserve the next slot of ``key`` and sleep until it comes; the seconds slept.
+
+        ``cancelled`` is asked before the wait and every :data:`POLL_SECONDS` during it.
+
+        Raises:
+            WaitCancelled: ``cancelled`` answered True. The slot was given back, as it
+                is when anything else interrupts the wait.
+        """
         limit = self._per_minute()
         if limit <= 0:
             return 0.0
         with self._lock:
-            now = self._clock()
-            slot = self._next_slot(key, limit, now)
-            self._record(key, slot)
-        delay = slot - now
-        if delay > 0:
-            self._sleep(delay)
-        return delay
+            start = self._clock()
+            slot = self._record(
+                key, self._next_slot(key, limit, start), movable=cancelled is not None
+            )
+        try:
+            if cancelled is None:
+                delay = slot.at - start
+                if delay > 0:
+                    self._sleep(delay)
+                return delay
+            while True:
+                if cancelled():
+                    raise WaitCancelled
+                with self._lock:
+                    now = self._clock()
+                    remaining = slot.at - now
+                if remaining <= 0:
+                    return now - start
+                self._sleep(min(remaining, POLL_SECONDS))
+        except BaseException:
+            self._release(key, slot)
+            raise
 
 
-__all__ = ["WINDOW_SECONDS", "RateLimited", "WindowLimiter", "per_minute_from_env"]
+__all__ = [
+    "POLL_SECONDS",
+    "WINDOW_SECONDS",
+    "RateLimited",
+    "WaitCancelled",
+    "WindowLimiter",
+    "per_minute_from_env",
+]

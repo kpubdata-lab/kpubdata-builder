@@ -106,6 +106,7 @@ def build_bronze_artifact(
     staging_dir: Path | None = None,
     scrub: Scrub | None = None,
     bound: FetchBound | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> BronzeArtifact:
     """Fetch raw records from a compatible client and write them as Bronze.
 
@@ -141,6 +142,10 @@ def build_bronze_artifact(
             ``max_page_size`` so a build makes as few requests as the provider allows.
             A ``page_size`` in the parameters is the caller's and is kept either way.
             Cannot be combined with ``checkpoint``.
+        cancelled: asked while a page waits for its turn under the egress limit
+            (#1328); when it answers True the wait ends, its slot is given back and
+            ``WaitCancelled`` abandons the fetch as a raising ``on_combination_done``
+            does.
 
     Returns:
         BronzeArtifact: the staged records and their provenance.
@@ -148,6 +153,7 @@ def build_bronze_artifact(
     Raises:
         ValueError: if fetched_at lacks timezone info, or a record holds a value JSON
             cannot (NaN, Infinity — #201).
+        WaitCancelled: ``cancelled`` answered True while a page waited for its turn.
     """
     resolved_params = dict(fetch_params or {})
     resolved_fetched_at = fetched_at or utc_now()
@@ -190,6 +196,7 @@ def build_bronze_artifact(
                         fragment.write_batch,
                         provider=provider,
                         page_size=page_size,
+                        cancelled=cancelled,
                     )
                     total = _call_total(index, reported, fetched=fragment.record_count)
                     use_checkpoint.finish(
@@ -206,6 +213,7 @@ def build_bronze_artifact(
                     provider=provider,
                     page_size=page_size,
                     budget=budget,
+                    cancelled=cancelled,
                 )
                 call_totals.append(
                     _call_total(index, reported, fetched=writer.record_count - before)
@@ -269,12 +277,14 @@ def _fetch_call(
     provider: str = "",
     page_size: int | None = None,
     budget: _Budget | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> list[int | None]:
     """Fetch one call page by page, handing each page to ``write``; returns page totals.
 
     Each page is one call to ``provider`` under the egress limit (#1245, ``egress``):
     a build waits for its turn; a bounded fetch is a preview, which a person is waiting
-    on, and is refused with ``RateLimited`` instead.
+    on, and is refused with ``RateLimited`` instead. A build's wait ends early, with
+    ``WaitCancelled``, once ``cancelled`` answers True (#1328).
 
     With a ``budget``, pages stop once it is spent. ``max_pages`` is passed too, because
     kpubdata's spec datasets request every page before yielding the first (#481): only
@@ -287,7 +297,13 @@ def _fetch_call(
         call_params["page_size"] = page_size
     batches: Iterable[DatasetResult]
     max_pages: int | None = None
-    take_turn = egress.wait_for_call if budget is None else egress.admit_call
+
+    def take_turn(provider: str) -> None:
+        if budget is None:
+            egress.wait_for_call(provider, cancelled=cancelled)
+        else:
+            egress.admit_call(provider)
+
     if not isinstance(dataset, PaginatedSourceDataset):
         take_turn(provider)
         batches = (dataset.list(**call_params),)
