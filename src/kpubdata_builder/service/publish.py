@@ -42,6 +42,7 @@ from ..stages._path_safety import ensure_within
 from ..stages._stage_reader import gold_source_dir
 from ..stages.gold.card import missing_sections
 from . import stages as stages_service
+from .ownership import multi_user_mode
 from .publish_credentials import PublishCredentialResolution
 from .publish_pii_gate import (
     PiiScanCheck,
@@ -65,6 +66,9 @@ from .redistribution import (
 # in ``dataset-metadata.json`` recorded by packaging matches destination (#550
 # reconciliation rule - same as existing CLI semantics).
 HTTP_PUBLISH_TARGETS: tuple[str, ...] = ("huggingface", "kaggle", "local")
+
+#: Targets that hand the data to another service (#1112).
+EXTERNAL_PUBLISH_TARGETS: frozenset[str] = frozenset({"huggingface", "kaggle"})
 
 RunStatus = Literal["queued", "running", "cancelling", "succeeded", "failed", "cancelled"]
 
@@ -683,6 +687,18 @@ def run_status_blocker(status: RunStatus) -> PublishIssue | None:
     return None
 
 
+def hosted_external_publish(target: str) -> bool:
+    """Whether this publish sends data to an external service from a hosted deployment.
+
+    A multi-user deployment (OIDC or ``ENFORCE_OWNERSHIP``) refuses to send data under
+    ``unknown`` source terms to Hugging Face or Kaggle even privately (#1112): a private
+    destination does not show permission to transfer the data to that service. The
+    ``local`` target writes inside the server's own publish root and leaves no service
+    behind, so it keeps the single-user rule.
+    """
+    return multi_user_mode() and target in EXTERNAL_PUBLISH_TARGETS
+
+
 def license_blocker(spec: BuildSpec | None) -> PublishIssue | None:
     """Reuse #443 license/redistribution gate - do not create new license policy.
 
@@ -1174,7 +1190,8 @@ def build_readiness(
             blockers.append(license_issue)
 
         # The source terms (#688): forbidden never publishes, unknown never publishes
-        # publicly, non-commercial needs confirming (and a marker when public).
+        # publicly, non-commercial needs confirming (and a marker when public). A hosted
+        # deployment sends nothing under unknown terms to an external service (#1112).
         redistribution = build_verdict(spec, terms_lookup)
         effective = options if options is not None else dict(_DEFAULT_OPTIONS.get(target, {}))
         blockers.extend(
@@ -1184,6 +1201,7 @@ def build_readiness(
                 public=is_public(target, effective),
                 confirmed_non_commercial=effective.get("confirm_non_commercial") is True,
                 spec=spec,
+                unknown_private_allowed=not hosted_external_publish(target),
             )
         )
         if artifacts is not None:
@@ -1204,6 +1222,7 @@ def build_readiness(
 
 
 __all__ = [
+    "EXTERNAL_PUBLISH_TARGETS",
     "HTTP_PUBLISH_TARGETS",
     "PUBLISH_ISSUE_CODES",
     "card_blockers",
@@ -1217,6 +1236,7 @@ __all__ = [
     "build_readiness",
     "credential_blocker",
     "effective_publish_policy_blockers",
+    "hosted_external_publish",
     "license_blocker",
     "pii_scan_blocker",
     "resolve_gold_artifacts",

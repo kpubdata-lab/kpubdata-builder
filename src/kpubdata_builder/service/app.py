@@ -547,7 +547,10 @@ _BuildListEntry = dict[str, str | None]
 # 1.124.0 -> 1.125.0: the history listings' limit (GET /builds, /datasets,
 #   /datasets/{id}/runs, /datasets/{id}/quality/history) is bounded at 1000; a larger
 #   one is 400 before any run is read (#1327).
-API_CONTRACT_VERSION = "1.125.0"
+# 1.125.0 -> 1.126.0: a multi-user deployment refuses a private Hugging Face or Kaggle
+#   publish of unknown source terms with redistribution_unknown, as a public one already
+#   was (#1112; no schema changes).
+API_CONTRACT_VERSION = "1.126.0"
 
 #: How long a synchronous ``POST /build`` waits for a build slot before it answers
 #: ``build_queue_full`` (#1040). Long enough to ride out a short build ahead of it, short

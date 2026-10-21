@@ -161,7 +161,7 @@ BuildSpec 으로 만든 run 은 **kpubdata 가 데이터셋마다 선언한 조�
 | :--- | :--- | :--- |
 | `allowed` | 허용 (BuildSpec `license` 선언은 여전히 필요, #443) | 허용 |
 | `non_commercial` | `confirm_non_commercial: true` 필요. 공개 게시에는 데이터셋 licence 에 비영리 표시(`cc-by-nc-4.0` 등)도 필요 | 허용 |
-| `unknown` | **비공개만** — 공개 게시는 `redistribution_unknown` 으로 거부 | 허용 |
+| `unknown` | **비공개만** — 공개 게시는 `redistribution_unknown` 으로 거부. 다중 사용자 배포(OIDC 또는 `ENFORCE_OWNERSHIP`)에서는 Hugging Face·Kaggle 비공개 게시도 같은 코드로 거부한다(#1112). 비공개로 둔다는 것이 그 서비스에 데이터를 넘겨도 된다는 허락을 보여 주지 않기 때문이다. `local` target 과 단일 사용자 배포는 그대로다 | 허용 |
 | `forbidden` | 전부 거부 (`redistribution_forbidden`) | **거부** — `/query`, `/preview`, warehouse 프로파일·질의·rows·집계·export·export 다운로드, 분석 생성·실행, artifact 다운로드가 403, stage 상세는 sample 을 빼고 준다 |
 
 - HTTP: `GET /builds/{run_id}/publish/readiness` 가 `redistribution`(판정과 소스별 이유)을 돌려주고, 막힌 `POST .../publish` 도 같은 값을 준다. 판정은 target 의 기본 옵션(비공개)으로 계산하고, POST 가 실제 옵션으로 다시 확인한다.
