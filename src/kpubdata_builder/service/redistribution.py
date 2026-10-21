@@ -16,7 +16,11 @@ What each verdict permits:
   ``/query``, ``/preview``, stage samples, warehouse reads and exports, or artifact
   downloads (:func:`forbidden_response`).
 - **unknown** — no *public* publish. Private publishing and reading are allowed: the
-  terms are undecided, which is what kpubdata#524 is for.
+  terms are undecided, which is what kpubdata#524 is for. A multi-user (hosted)
+  deployment refuses a private publish to an external service too (#1112): marking a
+  destination private does not show that the data may be sent to that service, and
+  the user who asks is not the rights holder. The caller decides by passing
+  ``unknown_private_allowed=False``.
 - **non_commercial** — publishing only with ``confirm_non_commercial: true``, and a
   public publish also needs a non-commercial licence marker on the dataset (e.g.
   ``cc-by-nc-4.0``).
@@ -176,8 +180,13 @@ def publish_issues(
     public: bool,
     confirmed_non_commercial: bool,
     spec: BuildSpec | None,
+    unknown_private_allowed: bool = True,
 ) -> list[PublishTermsIssue]:
-    """What the terms forbid about this publish; empty when they allow it."""
+    """What the terms forbid about this publish; empty when they allow it.
+
+    ``unknown_private_allowed=False`` refuses a private publish of ``unknown`` terms as
+    well (#1112); the single-user default keeps allowing it.
+    """
     restricted = ", ".join(
         f"{s.source} ({s.verdict})" for s in verdict.sources if s.verdict != "allowed"
     )
@@ -195,6 +204,15 @@ def publish_issues(
                 "the source terms are not known, and unknown is not permission to publish "
                 f"publicly: {restricted}. Publish privately, or wait for the terms to be "
                 "declared.",
+            )
+        ]
+    if verdict.verdict == "unknown" and not unknown_private_allowed:
+        return [
+            PublishTermsIssue(
+                "redistribution_unknown",
+                "the source terms are not known, and this deployment does not send data "
+                "under unknown terms to an external service, privately or publicly: "
+                f"{restricted}. Wait for the terms to be declared.",
             )
         ]
     if verdict.verdict == "non_commercial":

@@ -1254,7 +1254,8 @@ class TestReceiptReconcile:
         _with_credentials(monkeypatch, "huggingface")
         failing = _SpyPublisher("huggingface", error=RuntimeError("remote blew up"))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
-        service = _service(tmp_path)
+        # Declared terms, so the multi-user callers reach the publisher (#1112).
+        service = _service(tmp_path, terms="allowed")
         _build(service, run_id, SCANNED_SPEC_YAML)
         # The header is ignored in a single-user deployment and is the only token a
         # multi-user one accepts (#925), so the same helper serves both.
@@ -1434,7 +1435,8 @@ class TestReceiptReconcile:
         _with_credentials(monkeypatch, "huggingface")
         failing = _SpyPublisher("huggingface", error=RuntimeError("boom"))
         monkeypatch.setitem(publish_api_module.PUBLISHER_REGISTRY, "huggingface", failing)
-        service = _service(tmp_path)
+        # Declared terms: a multi-user deployment refuses unknown ones even privately (#1112).
+        service = _service(tmp_path, terms="allowed")
         _build(service, "run-owned-reconcile", SCANNED_SPEC_YAML)
         # Multi-user: the server HF_TOKEN no longer serves anyone (#925).
         assert (
