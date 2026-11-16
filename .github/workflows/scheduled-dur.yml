@@ -2,8 +2,7 @@
 name: "Scheduled: DUR Medication"
 
 on:
-  schedule:
-    - cron: "0 1 * * 6"
+  # Automatic schedule paused at owner request (2026-11-16).
   workflow_dispatch:
 
 permissions:

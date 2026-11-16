@@ -1,6 +1,6 @@
 name: Image re-scan
 
-# Scan the images a deployment runs again, on a schedule (#1107).
+# Scan the images a deployment runs again on demand (#1107).
 #
 # docker.yml scans Builder's image when it is built. An image that nobody rebuilds
 # still gains advisories, and the images the compose files pull from elsewhere (Caddy)
@@ -10,7 +10,7 @@ name: Image re-scan
 # there is something to report, rewritten when the list changes, left alone when it
 # is the same as the last run's.
 #
-#   schedule            scans, then files or updates the issues
+#   schedule            paused at owner request on 2026-11-16
 #   workflow_dispatch   the same; `dry_run` prints instead, `images` adds references
 #                       (the digest a deployment really runs, for one)
 #   pull_request        a change to this file or the script: scans and prints only
@@ -18,8 +18,7 @@ name: Image re-scan
 # Nothing here builds, publishes, merges or closes anything.
 
 on:
-  schedule:
-    - cron: "41 4 * * *"  # daily, 04:41 UTC
+  # Automatic schedule paused at owner request (2026-11-16).
   workflow_dispatch:
     inputs:
       images:

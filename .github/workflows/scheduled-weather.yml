@@ -2,8 +2,7 @@
 name: "Scheduled: Weather"
 
 on:
-  schedule:
-    - cron: "20 */3 * * *"
+  # Automatic schedule paused at owner request (2026-11-16).
   workflow_dispatch:
 
 permissions:
