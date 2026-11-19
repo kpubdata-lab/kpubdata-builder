@@ -6,10 +6,11 @@ name: CI
 # --no-sources: [tool.uv.sources]의 editable ../kpubdata 오버라이드를 무시하고
 # pyproject의 버전 핀(#575)대로 PyPI에서 kpubdata를 해석한다.
 
+# Builder development moves to kpubdata-engine. Keep the checks available on demand,
+# but do not start CI automatically on Builder PRs or pushes to main.
+# To resume normal CI, restore the pull_request and push triggers with review.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
