@@ -1,5 +1,7 @@
 # 데이터 업데이트 주기 전략 (Data Freshness Policy)
 
+> **운영 중지 (2026-11-16):** Builder 저장소의 GitHub Actions `schedule` 트리거는 모두 제거했다. 아래 주기와 Cron은 기존 운영 계획을 기록한 것이며 **현재 자동 수집·게시가 실행되지 않는다.** 필요한 경우 `workflow_dispatch`로 수동 실행할 수 있다. 정기 실행 재개는 별도 검토·승인이 필요하다.
+
 본 문서는 kpubdata-builder가 HuggingFace에 퍼블리시하는 데이터셋의 업데이트 주기와 전략을 정의한다.
 
 ## 원칙

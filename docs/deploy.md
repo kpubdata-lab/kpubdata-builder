@@ -793,7 +793,9 @@ startup 비용 대신 강한 취소·수명 격리를 선택한다. 비동기 bu
 포함되는 파일이 바뀌어야 재스캔이 의미 있음). 문서·테스트 전용 변경은 스캔을
 트리거하지 않으므로 기능 PR과 독립적인 신호를 유지한다.
 
-### 배포 중인 이미지의 정기 재스캔 (#1107)
+### 배포 이미지 재스캔 (#1107)
+
+> **2026-11-16부터 자동 스케줄이 중지되었다.** 아래의 매일 실행 설명은 이전 동작이며, 재스캔이 필요하면 GitHub Actions에서 수동 실행한다.
 
 위 게이트는 이미지를 **빌드할 때** 한 번 본다. 이미지는 아무도 다시 빌드하지 않아도 새
 권고가 붙고, compose 가 다른 곳에서 받아 오는 이미지(Caddy)는 그 게이트가 본 적이
@@ -1202,8 +1204,7 @@ python3 scripts/check_cloudflare_ranges.py --write   # 파일의 목록을 다�
 4. **롤백:** 이전 커밋의 `ops/caddy/trusted_proxies.caddy` 로 되돌리고 2를 다시 한다.
    Caddy 가 새 설정을 읽지 못하면 `caddy reload` 가 실패하고 이전 설정으로 계속 동작한다.
 
-이 비교는 `cloudflare-ranges.yml` 워크플로가 매일(05:17 UTC) `scripts/cloudflare_ranges_watch.py`
-로 돌린다(#1236). 파일이 공개 목록과 다르면 `chore(deploy): Cloudflare's published ranges
+이 비교는 과거 `cloudflare-ranges.yml` 워크플로가 매일(05:17 UTC) `scripts/cloudflare_ranges_watch.py`로 실행했다(#1236). **2026-11-16부터 정기 실행은 중지되고 수동 실행만 가능하다.** 파일이 공개 목록과 다르면 `chore(deploy): Cloudflare's published ranges
 differ from the Caddy trusted proxies` 이슈를 **하나** 연다. 차이가 달라지면 같은 이슈의
 목록을 고쳐 쓰고 댓글을 달며, 같으면 아무것도 쓰지 않는다. 차이가 사라져도 이슈를 닫지
 않는다 — 파일을 고친 풀 리퀘스트가 배포되고 방화벽 목록까지 맞춰졌는지는 사람이 확인한다.

@@ -6,8 +6,8 @@ name: Security
 #   secret scan       does any commit in history carry a credential?
 #   CodeQL            does the Python source have a known-dangerous pattern?
 #
-# They run on every pull request and push to main, and weekly, because a dependency
-# gains an advisory without anyone touching this repository. They are not part of
+# They run on every pull request and push to main; the weekly schedule was paused
+# on 2026-11-16. Dependencies can still gain advisories without a push. They are not part of
 # ci.yml's `CI gate`: whether a new advisory should block every open pull request is a
 # branch-protection decision (#520), not something this file decides.
 #
@@ -18,8 +18,7 @@ on:
   pull_request:
   push:
     branches: [main]
-  schedule:
-    - cron: "17 3 * * 1"  # Monday 03:17 UTC
+  # Automatic schedule paused at owner request (2026-11-16).
   workflow_dispatch:
 
 permissions:
