@@ -1,6 +1,6 @@
 name: Cloudflare ranges
 
-# Compare Caddy's trusted proxies with the ranges Cloudflare publishes, on a schedule
+# Compare Caddy's trusted proxies with the ranges Cloudflare publishes on demand.
 # (#1236).
 #
 # ops/caddy/trusted_proxies.caddy must be Cloudflare's edge ranges and nothing else
@@ -9,7 +9,7 @@ name: Cloudflare ranges
 # differs: opened when there is a difference, rewritten when it changes, left alone
 # when it is the same as the last run's.
 #
-#   schedule            compares, then files or updates the issue
+#   schedule            paused at owner request on 2026-11-16
 #   workflow_dispatch   the same; `dry_run` prints instead
 #   pull_request        a change to this file or the scripts: compares and prints only
 #
@@ -17,8 +17,7 @@ name: Cloudflare ranges
 # only the run's GITHUB_TOKEN.
 
 on:
-  schedule:
-    - cron: "17 5 * * *"  # daily, 05:17 UTC
+  # Automatic schedule paused at owner request (2026-11-16).
   workflow_dispatch:
     inputs:
       dry_run:

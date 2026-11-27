@@ -11,14 +11,9 @@ name: Cross-repo contract
 # 넘긴다 — 그 디렉터리가 있을 때만 tests/integration/test_cross_repo_pipeline.py가
 # 실제 `kpubdata.Client`로 Bronze→Silver→Gold 전 구간을 태운다(네트워크·API 키 없음).
 #
-# PR마다 돌리지 않는 이유: upstream main이 깨졌을 때 Builder의 무관한 PR까지
-# 빨갛게 만들지 않기 위해서다. 대신 매일·수동으로 돌리고, kpubdata 경계에
-# 직접 닿는 파일이 바뀐 PR에서만 함께 돌린다.
-#
-# It no longer runs on every push to main. That run took about 8 minutes on every
-# merge, most of them changes the pull request trigger below had no reason to check,
-# and what it found the nightly run finds within a day — the alarm here is for
-# kpubdata main moving, which a Builder merge does not cause.
+# 모든 PR마다 실행하지는 않는다. upstream main이 불안정해도 무관한 PR의
+# 검증은 계속할 수 있어야 한다. 정기 검사는 2026-11-16부터 중지되었고,
+# 수동 실행 또는 관련 경계 파일을 바꾼 PR에서만 이 계약을 검사한다.
 #
 # Independence Rule 12 (#832): this job is an early warning, not a compatibility
 # contract. kpubdata `main` is not a release, so a pass here promises nothing to a user
@@ -27,9 +22,7 @@ name: Cross-repo contract
 # is tested by the `kpubdata <version>` matrix in ci.yml, which `CI gate` requires.
 
 on:
-  schedule:
-    # 매일 18:00 UTC (KST 03:00).
-    - cron: "0 18 * * *"
+  # Automatic schedule paused at owner request (2026-11-16).
   workflow_dispatch:
   pull_request:
     paths:

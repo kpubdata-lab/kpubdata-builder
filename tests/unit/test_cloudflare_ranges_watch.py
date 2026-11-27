@@ -170,10 +170,10 @@ def _workflow() -> dict[Any, Any]:
     return cast(dict[Any, Any], yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8")))
 
 
-def test_the_workflow_runs_on_a_schedule_and_by_hand() -> None:
+def test_the_workflow_runs_by_hand_and_for_pull_requests_without_a_schedule() -> None:
     triggers = _workflow()[True]  # PyYAML reads the key `on` as a boolean
 
-    assert len(triggers["schedule"]) == 1
+    assert "schedule" not in triggers
     assert set(triggers["workflow_dispatch"]["inputs"]) == {"dry_run"}
     assert ".github/workflows/cloudflare-ranges.yml" in triggers["pull_request"]["paths"]
 
